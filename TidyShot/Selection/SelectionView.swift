@@ -23,6 +23,8 @@ final class SelectionView: NSView {
     private var dragStart: CGPoint?
     private var dragRect: CGRect?
     private var cursor: CGPoint?
+    /// Set once an area selection completes; the hole stays open until the view is discarded.
+    private var completedRect: CGRect?
     private var trackingArea: NSTrackingArea?
 
     private let dimColor = NSColor.black.withAlphaComponent(0.35)
@@ -84,9 +86,6 @@ final class SelectionView: NSView {
             onMouseMoved?(global)
         }
     }
-
-    /// Set once an area selection completes; the hole stays open until the view is discarded.
-    private var completedRect: CGRect?
 
     override func mouseUp(with event: NSEvent) {
         defer {

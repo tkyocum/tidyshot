@@ -59,7 +59,7 @@ final class SelectionController {
     /// Our overlay windows as ScreenCaptureKit sees them, for `excludingWindows`. Matches by window
     /// number so other TidyShot windows are unaffected. Retries briefly because ScreenCaptureKit can
     /// lag the window server. Returns whatever was found after the last attempt. A complete result
-    /// found by the snapshot pass is cached, so the capture after selection does not look up again.
+    /// is cached until `dismiss()`, so the capture after selection does not look up again.
     func overlayWindows() async -> [SCWindow] {
         let wanted = Set(windows.compactMap { $0.windowNumber > 0 ? CGWindowID($0.windowNumber) : nil })
         if let cachedOverlayWindows, cachedOverlayWindows.count >= wanted.count { return cachedOverlayWindows }
@@ -75,13 +75,13 @@ final class SelectionController {
         if found.count < wanted.count {
             NSLog("Overlay exclusion incomplete: found \(found.count) of \(wanted.count) overlay windows")
         }
+        if !wanted.isEmpty, found.count >= wanted.count { cachedOverlayWindows = found }
         return found
     }
 
     /// One screenshot per display with our overlay excluded, delivered to the view on that display.
     private func takeSnapshots() async {
         let overlays = await overlayWindows()
-        if overlays.count >= windows.count { cachedOverlayWindows = overlays }
         // A snapshot taken without every overlay excluded would show the dimming in the loupe; skip instead.
         guard overlays.count >= windows.count else { return }
         for display in displays {
