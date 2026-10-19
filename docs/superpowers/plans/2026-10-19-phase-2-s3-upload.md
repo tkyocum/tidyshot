@@ -10,11 +10,13 @@
 
 Spec: `docs/superpowers/specs/2026-10-19-tidyshot-screenshot-design.md`, sections 2.2, 3, 5, 6 (Phase 2) and 7 (decisions 2, 3, 4).
 
-Builds on Phase 0 and 1 (`docs/superpowers/plans/2026-10-19-phase-0-1-capture-and-save.md`, branch `phase-1-capture`, PR tkyocum/tidyshot#1). Start this plan on a branch cut from `phase-1-capture` (or from `main` once that PR has merged):
+Builds on Phase 0 and 1 (`docs/superpowers/plans/2026-10-19-phase-0-1-capture-and-save.md`), which merged into `main` as commit `b60f41f` (PR tkyocum/tidyshot#1). The branch `phase-2-upload` already exists, was cut from `main`, and is checked out; all work in this plan is committed there. Confirm before starting:
 
 ```bash
-git checkout -b phase-2-upload phase-1-capture
+git branch --show-current
+git merge-base --is-ancestor b60f41f HEAD && echo PHASE1_PRESENT
 ```
+Expected: `phase-2-upload` then `PHASE1_PRESENT`.
 
 ## Global Constraints
 
@@ -110,8 +112,8 @@ TidyShotTests/
   S3DestinationConfigTests.swift
   ObjectKeyNamerTests.swift
   RetryPolicyTests.swift
-  S3DestinationTests.swift                   also defines StubURLProtocol
-  UploadQueueTests.swift                     also defines FakeDestination, EventLog, eventually()
+  S3DestinationTests.swift                   also defines StubURLProtocol, StubSession
+  UploadQueueTests.swift                     also defines FakeDestination, EventLog, eventually(), EventuallyTimedOut
   ConnectionTesterTests.swift
   KeychainCredentialStoreTests.swift
   HistoryStoreTests.swift
@@ -907,6 +909,7 @@ git commit -m "feat: add random object key naming with prefix and length"
   - `var endpoint: String`, `var region: String`, `var bucket: String`, `var keyPrefix: String`, `var usePathStyle: Bool`, `var sendPublicReadACL: Bool`, `var publicURLTemplate: String`, `var keyLength: Int`
   - `init(endpoint:region:bucket:keyPrefix:usePathStyle:sendPublicReadACL:publicURLTemplate:keyLength:)` (defaults: `keyPrefix ""`, flags `false`, `keyLength ObjectKeyNamer.defaultLength`)
   - `static let empty`, `static let keyToken = "{key}"`
+  - `var normalized: S3DestinationConfig` (copy with surrounding whitespace trimmed from `endpoint`, `region`, `bucket`, `keyPrefix` and `publicURLTemplate`). Validation and URL building go through it, so a pasted `" my-bucket "` is accepted and used as `my-bucket`; `S3Destination` (Task 6) and the Upload tab (Task 14) store the normalized copy.
   - `enum ConfigError: LocalizedError, Equatable { case invalidEndpoint, missingBucket, missingRegion, invalidPublicURLTemplate }`
   - `var validationError: ConfigError?`, `var isComplete: Bool`, `var endpointURL: URL?`
   - `func objectPath(for key: String) -> String` (decoded, `/key` or `/bucket/key`)
@@ -993,6 +996,24 @@ struct S3DestinationConfigTests {
         let data = try JSONEncoder().encode(aws)
         #expect(try JSONDecoder().decode(S3DestinationConfig.self, from: data) == aws)
     }
+
+    /// Pasted values often carry spaces; they are trimmed, not rejected.
+    @Test func paddedFieldsAreTrimmedNotRejected() throws {
+        var padded = aws
+        padded.endpoint = " https://s3.us-west-2.amazonaws.com "
+        padded.region = " us-west-2 "
+        padded.bucket = " my-bucket "
+        padded.keyPrefix = " shots "
+        #expect(padded.validationError == nil)
+
+        let clean = padded.normalized
+        #expect(clean.bucket == "my-bucket")
+        #expect(clean.region == "us-west-2")
+        #expect(clean.endpoint == "https://s3.us-west-2.amazonaws.com")
+        #expect(clean.keyPrefix == "shots")
+        #expect(try padded.objectURL(for: "a.png").absoluteString == "https://my-bucket.s3.us-west-2.amazonaws.com/a.png")
+        #expect(padded.objectPath(for: "a.png") == "/a.png")
+    }
 }
 ```
 
@@ -1067,31 +1088,41 @@ nonisolated struct S3DestinationConfig: Codable, Equatable, Sendable {
         }
     }
 
-    /// The first problem with this configuration, or nil when it can be used.
+    /// A copy with surrounding whitespace removed from every text field. Pasted values often
+    /// carry a trailing space or newline; trimming here means " my-bucket " is used as
+    /// "my-bucket" instead of producing a broken host name or signature.
+    var normalized: S3DestinationConfig {
+        var copy = self
+        copy.endpoint = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        copy.region = region.trimmingCharacters(in: .whitespacesAndNewlines)
+        copy.bucket = bucket.trimmingCharacters(in: .whitespacesAndNewlines)
+        copy.keyPrefix = keyPrefix.trimmingCharacters(in: .whitespacesAndNewlines)
+        copy.publicURLTemplate = publicURLTemplate.trimmingCharacters(in: .whitespacesAndNewlines)
+        return copy
+    }
+
+    /// The first problem with this configuration (after trimming), or nil when it can be used.
     var validationError: ConfigError? {
-        guard let endpointURL, ["http", "https"].contains(endpointURL.scheme ?? ""), endpointURL.host() != nil else {
+        let config = normalized
+        guard let endpointURL = config.endpointURL, ["http", "https"].contains(endpointURL.scheme ?? ""),
+              endpointURL.host() != nil else {
             return .invalidEndpoint
         }
-        if bucket.trimmingCharacters(in: .whitespaces).isEmpty { return .missingBucket }
-        if region.trimmingCharacters(in: .whitespaces).isEmpty { return .missingRegion }
-        let template = publicURLTemplate.trimmingCharacters(in: .whitespaces)
-        guard template.contains(Self.keyToken),
-              let probe = URL(string: template.replacingOccurrences(of: Self.keyToken, with: "probe")),
-              ["http", "https"].contains(probe.scheme ?? "") else {
-            return .invalidPublicURLTemplate
-        }
+        if config.bucket.isEmpty { return .missingBucket }
+        if config.region.isEmpty { return .missingRegion }
+        if config.expandTemplate(encodedKey: "probe") == nil { return .invalidPublicURLTemplate }
         return nil
     }
 
     var isComplete: Bool { validationError == nil }
 
     var endpointURL: URL? {
-        URL(string: endpoint.trimmingCharacters(in: .whitespaces))
+        URL(string: endpoint.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     /// The decoded request path for `key`: `/key` (virtual-host) or `/bucket/key` (path-style).
     func objectPath(for key: String) -> String {
-        usePathStyle ? "/\(bucket)/\(key)" : "/\(key)"
+        usePathStyle ? "/\(normalized.bucket)/\(key)" : "/\(key)"
     }
 
     /// The URL the signed request is sent to.
@@ -1101,7 +1132,7 @@ nonisolated struct S3DestinationConfig: Codable, Equatable, Sendable {
             throw ConfigError.invalidEndpoint
         }
         if !usePathStyle {
-            components.host = "\(bucket).\(host)"
+            components.host = "\(normalized.bucket).\(host)"
         }
         components.percentEncodedPath = S3Signer.uriEncode(objectPath(for: key), keepSlash: true)
         components.query = nil
@@ -1119,11 +1150,20 @@ nonisolated struct S3DestinationConfig: Codable, Equatable, Sendable {
 
     /// The public URL for `key`, from `publicURLTemplate`.
     func publicURL(for key: String) throws -> URL {
-        let template = publicURLTemplate.trimmingCharacters(in: .whitespaces)
-        guard template.contains(Self.keyToken),
-              let url = URL(string: template.replacingOccurrences(of: Self.keyToken, with: S3Signer.uriEncode(key, keepSlash: true))),
-              ["http", "https"].contains(url.scheme ?? "") else {
+        guard let url = expandTemplate(encodedKey: S3Signer.uriEncode(key, keepSlash: true)) else {
             throw ConfigError.invalidPublicURLTemplate
+        }
+        return url
+    }
+
+    /// The one template check, shared by `validationError` and `publicURL(for:)`: the trimmed
+    /// template with `{key}` replaced, or nil when it has no `{key}` or is not an http(s) URL.
+    private func expandTemplate(encodedKey: String) -> URL? {
+        let template = normalized.publicURLTemplate
+        guard template.contains(Self.keyToken),
+              let url = URL(string: template.replacingOccurrences(of: Self.keyToken, with: encodedKey)),
+              ["http", "https"].contains(url.scheme ?? "") else {
+            return nil
         }
         return url
     }
@@ -1136,7 +1176,7 @@ Run:
 ```bash
 xcodegen generate && xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build test 2>&1 | grep -E "error:|Test run|✘"
 ```
-Expected: `Test run with 53 tests in 9 suites passed`.
+Expected: `Test run with 54 tests in 9 suites passed`.
 
 - [ ] **Step 5: Commit**
 
@@ -1157,7 +1197,7 @@ git commit -m "feat: add S3 destination config with URL building and validation"
 **Interfaces:**
 - Consumes: nothing new.
 - Produces:
-  - `protocol Destination: Sendable` with `func exists(key: String) async throws -> Bool`, `func upload(_ data: Data, key: String, contentType: String, progress: @escaping @Sendable (Double) -> Void) async throws`, `func delete(key: String) async throws`, `func publicURL(for key: String) throws -> URL`.
+  - `protocol Destination: Sendable` with `func exists(key: String) async throws -> Bool` (false on 404 or 403), `func upload(_ data: Data, key: String, contentType: String, progress: @escaping @Sendable (Double) -> Void) async throws`, `func delete(key: String) async throws`, `func publicURL(for key: String) throws -> URL`.
   - `struct UploadJob: Sendable, Identifiable { let id: UUID; let data: Data; let contentType: String; let fileExtension: String }` (memberwise init).
   - `enum UploadEvent: Sendable, Equatable { case started(id: UUID, attempt: Int); case progress(id: UUID, fraction: Double); case uploaded(id: UUID, url: URL, key: String); case failed(id: UUID, message: String) }`.
   - `enum UploadError: LocalizedError, Equatable, Sendable { case httpStatus(Int, body: String); case noHTTPResponse; case keyCollisionsExhausted; case notConfigured; case fileUnreadable(String) }` with `var isRetryable: Bool` and `static func isRetryable(_ error: Error) -> Bool`.
@@ -1193,7 +1233,15 @@ struct RetryPolicyTests {
 }
 ```
 
-- [ ] **Step 2: Write the protocol and types**
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run:
+```bash
+xcodegen generate && xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build test 2>&1 | grep -E "error:|Test run" | head
+```
+Expected: compile errors containing `cannot find 'RetryPolicy' in scope`.
+
+- [ ] **Step 3: Write the protocol and types**
 
 `TidyShot/Upload/Destination.swift`:
 ```swift
@@ -1202,7 +1250,8 @@ import Foundation
 /// An upload target. One implementation today (`S3Destination`); the protocol keeps the queue,
 /// tests, and a future second backend independent of S3 details.
 nonisolated protocol Destination: Sendable {
-    /// True when an object already exists at `key` (HTTP 200 on HEAD), false on 404.
+    /// True when an object already exists at `key` (HTTP 200 on HEAD), false when it does not
+    /// (404, or 403 from AWS S3 when the caller lacks `s3:ListBucket`; see `S3Destination.exists`).
     func exists(key: String) async throws -> Bool
     /// Uploads `data` to `key`. `progress` receives fractions in 0...1 from the transport thread.
     func upload(_ data: Data, key: String, contentType: String,
@@ -1265,7 +1314,7 @@ nonisolated enum UploadError: LocalizedError, Equatable, Sendable {
 }
 ```
 
-- [ ] **Step 3: Implement the retry policy**
+- [ ] **Step 4: Implement the retry policy**
 
 `TidyShot/Upload/RetryPolicy.swift`:
 ```swift
@@ -1291,15 +1340,15 @@ nonisolated struct RetryPolicy: Sendable, Equatable {
 }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [ ] **Step 5: Run tests to verify they pass**
 
 Run:
 ```bash
 xcodegen generate && xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build test 2>&1 | grep -E "error:|Test run|✘"
 ```
-Expected: `Test run with 56 tests in 10 suites passed`.
+Expected: `Test run with 57 tests in 10 suites passed`.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add TidyShot/Upload/Destination.swift TidyShot/Upload/RetryPolicy.swift TidyShotTests/RetryPolicyTests.swift
@@ -1319,10 +1368,17 @@ git commit -m "feat: add Destination protocol, upload event types, and retry pol
 - Consumes: `S3Signer`, `AWSCredentials` (Task 1), `S3DestinationConfig` (Task 4), `Destination`, `UploadError` (Task 5).
 - Produces:
   - `final class UploadProgressDelegate: NSObject, URLSessionTaskDelegate, Sendable`, `init(onProgress: @escaping @Sendable (Double) -> Void)`.
-  - `struct S3Destination: Destination` with `let config: S3DestinationConfig`, `let credentials: AWSCredentials`, `let session: URLSession`, `let now: @Sendable () -> Date`, `init(config:credentials:session:now:)` (session defaults to `.shared`, now to `{ Date() }`), the four protocol methods, and `func signedRequest(method: String, key: String, body: Data?, extraHeaders: [(name: String, value: String)]) throws -> URLRequest`.
-  - In the test target: `final class StubURLProtocol: URLProtocol` with `static func makeSession() -> URLSession`, `static func reset(_ handler: @escaping @Sendable (URLRequest) -> (status: Int, body: Data))`, `static let requests: Mutex<[URLRequest]>`. Task 8's tests reuse it.
+  - `struct S3Destination: Destination` with `let config: S3DestinationConfig`, `let credentials: AWSCredentials`, `let session: URLSession`, `let now: @Sendable () -> Date`, `init(config:credentials:session:now:)` (session defaults to `.shared`, now to `{ Date() }`; stores `config.normalized`), the four protocol methods, and `func signedRequest(method: String, key: String, body: Data?, extraHeaders: [(name: String, value: String)]) throws -> URLRequest`. `exists(key:)` returns true on 200, false on 404 and on 403, and throws `UploadError.httpStatus` otherwise.
+  - In the test target:
+    - `final class StubURLProtocol: URLProtocol` with `typealias Handler = @Sendable (URLRequest) -> (status: Int, body: Data)`, `static let sessionHeader = "X-Stub-Session"`, `struct Entry: Sendable { var handler: Handler; var requests: [URLRequest] }`, `static let entries: Mutex<[String: Entry]>`. It answers and records each request under the value of its `X-Stub-Session` header.
+    - `final class StubSession: Sendable` with `let id: String`, `static func make(handler: @escaping StubURLProtocol.Handler) -> (URLSession, StubSession)` and `var requests: [URLRequest]` (what this session sent, in order).
+    - Task 8's tests reuse both.
 
 Background: `URLSession.upload(for:from:delegate:)` (macOS 12+, verified in the macOS 27 SDK Foundation interface) accepts a per-task delegate, and `urlSession(_:task:didSendBodyData:totalBytesSent:totalBytesExpectedToSend:)` fires as the body goes out. Under default main-actor isolation the delegate class must be `nonisolated`; the closure it calls is `@Sendable` because it runs on URLSession's queue. The expected signatures in the tests were computed with an independent SigV4 implementation (Python, `hmac`/`hashlib`) for 2026-10-19T12:00:00Z, so they catch wiring mistakes (wrong host header, unsigned content-type) that a self-referential check would miss.
+
+Swift Testing runs tests in parallel, within a suite and across suites, so the stub keeps no global "current handler". Each test calls `StubSession.make(handler:)`, which registers the handler under a fresh UUID and returns a `URLSession` whose `httpAdditionalHeaders` carry `X-Stub-Session: <UUID>`; URLSession adds that header to every request, and the stub uses it to find the handler and to record the request for that test only. The extra header is not signed and does not change the expected signatures. `.serialized` is not needed.
+
+HEAD on a missing key: R2, B2 and MinIO answer 404, but AWS S3 answers 403 when the caller lacks `s3:ListBucket`, which is the normal least-privilege setup for an upload-only key. `exists(key:)` therefore treats 403 like 404.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1333,30 +1389,32 @@ import Synchronization
 import Testing
 @testable import TidyShot
 
-/// Answers every request from a handler and records what was sent.
+/// Answers requests from a per-test handler and records what was sent. State is keyed by the
+/// `X-Stub-Session` header that each test's URLSession adds, so tests running in parallel never
+/// see each other's handlers or requests. Entries are never removed; a test run makes a few dozen.
 nonisolated final class StubURLProtocol: URLProtocol {
     typealias Handler = @Sendable (URLRequest) -> (status: Int, body: Data)
 
-    static let handler = Mutex<Handler?>(nil)
-    static let requests = Mutex<[URLRequest]>([])
+    static let sessionHeader = "X-Stub-Session"
 
-    static func makeSession() -> URLSession {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [StubURLProtocol.self]
-        return URLSession(configuration: configuration)
+    struct Entry: Sendable {
+        var handler: Handler
+        var requests: [URLRequest] = []
     }
 
-    static func reset(_ handler: @escaping Handler) {
-        self.handler.withLock { $0 = handler }
-        requests.withLock { $0 = [] }
-    }
+    static let entries = Mutex<[String: Entry]>([:])
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
-        Self.requests.withLock { $0.append(request) }
-        guard let handler = Self.handler.withLock({ $0 }) else {
+        let request = self.request
+        let id = request.value(forHTTPHeaderField: Self.sessionHeader) ?? ""
+        let handler = Self.entries.withLock { entries -> Handler? in
+            entries[id]?.requests.append(request)
+            return entries[id]?.handler
+        }
+        guard let handler else {
             client?.urlProtocol(self, didFailWithError: URLError(.cannotConnectToHost))
             return
         }
@@ -1370,6 +1428,30 @@ nonisolated final class StubURLProtocol: URLProtocol {
     override func stopLoading() {}
 }
 
+/// One test's stub: a URLSession routed through `StubURLProtocol` and the requests it sent.
+nonisolated final class StubSession: Sendable {
+    let id: String
+
+    private init(id: String) {
+        self.id = id
+    }
+
+    /// Registers `handler` under a fresh id and returns a session whose requests carry that id.
+    static func make(handler: @escaping StubURLProtocol.Handler) -> (URLSession, StubSession) {
+        let stub = StubSession(id: UUID().uuidString)
+        StubURLProtocol.entries.withLock { $0[stub.id] = StubURLProtocol.Entry(handler: handler) }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [StubURLProtocol.self]
+        configuration.httpAdditionalHeaders = [StubURLProtocol.sessionHeader: stub.id]
+        return (URLSession(configuration: configuration), stub)
+    }
+
+    /// Requests sent through this stub's session, in order.
+    var requests: [URLRequest] {
+        StubURLProtocol.entries.withLock { $0[id]?.requests ?? [] }
+    }
+}
+
 struct S3DestinationTests {
     let credentials = AWSCredentials(accessKeyID: "AKIAIOSFODNN7EXAMPLE",
                                      secretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
@@ -1379,20 +1461,16 @@ struct S3DestinationTests {
                                      publicURLTemplate: "https://snap.tky.io/{key}")
     let body = Data("hello".utf8)
 
-    func destination(_ config: S3DestinationConfig) -> S3Destination {
-        S3Destination(config: config, credentials: credentials, session: StubURLProtocol.makeSession(), now: { date })
-    }
-
-    @Test func amzDateForFixedDate() {
-        #expect(S3Signer.amzDateString(date) == "20261019T120000Z")
+    func destination(_ config: S3DestinationConfig, session: URLSession) -> S3Destination {
+        S3Destination(config: config, credentials: credentials, session: session, now: { date })
     }
 
     /// Expected signature computed independently with a reference implementation.
     @Test func putIsSignedWithContentTypeAndNoACLByDefault() async throws {
-        StubURLProtocol.reset { _ in (200, Data()) }
-        try await destination(config).upload(body, key: "aSIS7.png", contentType: "image/png") { _ in }
+        let (session, stub) = StubSession.make { _ in (200, Data()) }
+        try await destination(config, session: session).upload(body, key: "aSIS7.png", contentType: "image/png") { _ in }
 
-        let request = try #require(StubURLProtocol.requests.withLock { $0.first })
+        let request = try #require(stub.requests.first)
         #expect(request.httpMethod == "PUT")
         #expect(request.url?.absoluteString == "https://snap.s3.us-east-1.amazonaws.com/aSIS7.png")
         #expect(request.value(forHTTPHeaderField: "content-type") == "image/png")
@@ -1405,10 +1483,10 @@ struct S3DestinationTests {
     @Test func aclHeaderIsSentAndSignedWhenEnabled() async throws {
         var acl = config
         acl.sendPublicReadACL = true
-        StubURLProtocol.reset { _ in (200, Data()) }
-        try await destination(acl).upload(body, key: "aSIS7.png", contentType: "image/png") { _ in }
+        let (session, stub) = StubSession.make { _ in (200, Data()) }
+        try await destination(acl, session: session).upload(body, key: "aSIS7.png", contentType: "image/png") { _ in }
 
-        let request = try #require(StubURLProtocol.requests.withLock { $0.first })
+        let request = try #require(stub.requests.first)
         #expect(request.value(forHTTPHeaderField: "x-amz-acl") == "public-read")
         #expect(request.value(forHTTPHeaderField: "authorization")?.hasSuffix("SignedHeaders=content-type;host;x-amz-acl;x-amz-content-sha256;x-amz-date, Signature=5a73cf67b570cbc19fd956f9a79769a4e94ba9415f3ff138609de89785481d5f") == true)
     }
@@ -1417,11 +1495,11 @@ struct S3DestinationTests {
         var minio = config
         minio.endpoint = "http://localhost:9000"
         minio.usePathStyle = true
-        StubURLProtocol.reset { _ in (404, Data()) }
-        let exists = try await destination(minio).exists(key: "aSIS7.png")
+        let (session, stub) = StubSession.make { _ in (404, Data()) }
+        let exists = try await destination(minio, session: session).exists(key: "aSIS7.png")
 
         #expect(exists == false)
-        let request = try #require(StubURLProtocol.requests.withLock { $0.first })
+        let request = try #require(stub.requests.first)
         #expect(request.httpMethod == "HEAD")
         #expect(request.url?.absoluteString == "http://localhost:9000/snap/aSIS7.png")
         #expect(request.value(forHTTPHeaderField: "x-amz-content-sha256") == S3Signer.emptyPayloadHash)
@@ -1429,36 +1507,54 @@ struct S3DestinationTests {
     }
 
     @Test func existsMapsStatusCodes() async throws {
-        StubURLProtocol.reset { _ in (200, Data()) }
-        #expect(try await destination(config).exists(key: "a.png") == true)
+        let (found, _) = StubSession.make { _ in (200, Data()) }
+        #expect(try await destination(config, session: found).exists(key: "a.png") == true)
 
-        StubURLProtocol.reset { _ in (403, Data()) }
-        await #expect(throws: UploadError.httpStatus(403, body: "")) {
-            try await destination(config).exists(key: "a.png")
+        let (broken, _) = StubSession.make { _ in (500, Data()) }
+        await #expect(throws: UploadError.httpStatus(500, body: "")) {
+            try await destination(config, session: broken).exists(key: "a.png")
         }
     }
 
+    /// AWS S3 answers HEAD on a missing key with 403 when the key lacks s3:ListBucket.
+    @Test func headTreats403AsMissing() async throws {
+        let (session, stub) = StubSession.make { _ in (403, Data()) }
+        #expect(try await destination(config, session: session).exists(key: "a.png") == false)
+        #expect(stub.requests.map(\.httpMethod) == ["HEAD"])
+    }
+
     @Test func uploadThrowsRetryableErrorOnServerFailure() async throws {
-        StubURLProtocol.reset { _ in (500, Data("<Error>InternalError</Error>".utf8)) }
+        let (session, _) = StubSession.make { _ in (500, Data("<Error>InternalError</Error>".utf8)) }
         await #expect(throws: UploadError.httpStatus(500, body: "<Error>InternalError</Error>")) {
-            try await destination(config).upload(body, key: "a.png", contentType: "image/png") { _ in }
+            try await destination(config, session: session).upload(body, key: "a.png", contentType: "image/png") { _ in }
         }
         #expect(UploadError.httpStatus(500, body: "").isRetryable)
         #expect(!UploadError.httpStatus(403, body: "").isRetryable)
     }
 
-    @Test func deleteAccepts204And404() async throws {
-        StubURLProtocol.reset { _ in (204, Data()) }
-        try await destination(config).delete(key: "a.png")
-        StubURLProtocol.reset { _ in (404, Data()) }
-        try await destination(config).delete(key: "a.png")
-        let methods = StubURLProtocol.requests.withLock { $0.map(\.httpMethod) }
-        #expect(methods == ["DELETE"])
+    @Test func deleteAccepts204() async throws {
+        let (session, stub) = StubSession.make { _ in (204, Data()) }
+        try await destination(config, session: session).delete(key: "a.png")
+        #expect(stub.requests.map(\.httpMethod) == ["DELETE"])
+    }
+
+    @Test func deleteAccepts404() async throws {
+        let (session, stub) = StubSession.make { _ in (404, Data()) }
+        try await destination(config, session: session).delete(key: "a.png")
+        #expect(stub.requests.map(\.httpMethod) == ["DELETE"])
     }
 }
 ```
 
-- [ ] **Step 2: Write the progress delegate**
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run:
+```bash
+xcodegen generate && xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build test 2>&1 | grep -E "error:|Test run" | head
+```
+Expected: compile errors containing `cannot find type 'S3Destination' in scope`.
+
+- [ ] **Step 3: Write the progress delegate**
 
 `TidyShot/Upload/UploadProgressDelegate.swift`:
 ```swift
@@ -1481,7 +1577,7 @@ nonisolated final class UploadProgressDelegate: NSObject, URLSessionTaskDelegate
 }
 ```
 
-- [ ] **Step 3: Implement the destination**
+- [ ] **Step 4: Implement the destination**
 
 `TidyShot/Upload/S3Destination.swift`:
 ```swift
@@ -1497,19 +1593,27 @@ nonisolated struct S3Destination: Destination {
 
     init(config: S3DestinationConfig, credentials: AWSCredentials,
          session: URLSession = .shared, now: @escaping @Sendable () -> Date = { Date() }) {
-        self.config = config
+        self.config = config.normalized
         self.credentials = credentials
         self.session = session
         self.now = now
     }
 
+    /// HEAD Object. 200 means the key is taken; 404 and 403 both mean "use it".
+    ///
+    /// 403 counts as missing because AWS S3 answers HEAD on a missing key with 403, not 404,
+    /// when the caller lacks `s3:ListBucket`, which is the normal setup for an upload-only IAM
+    /// key. Cloudflare R2, Backblaze B2 and MinIO answer 404. A key that also lacks
+    /// `s3:GetObject` gets 403 even for keys that exist, so for such a key the collision check
+    /// cannot see collisions; with 62^6 possible names that risk is accepted. Wrong credentials
+    /// are not hidden by this: the PUT that follows fails with its own 403.
     func exists(key: String) async throws -> Bool {
         let request = try signedRequest(method: "HEAD", key: key, body: nil, extraHeaders: [])
         let (_, response) = try await session.data(for: request)
         let status = try Self.status(of: response)
         switch status {
         case 200: return true
-        case 404: return false
+        case 403, 404: return false
         default: throw UploadError.httpStatus(status, body: "")
         }
     }
@@ -1580,15 +1684,15 @@ nonisolated struct S3Destination: Destination {
 }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [ ] **Step 5: Run tests to verify they pass**
 
 Run:
 ```bash
 xcodegen generate && xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build test 2>&1 | grep -E "error:|Test run|✘"
 ```
-Expected: `Test run with 63 tests in 11 suites passed`.
+Expected: `Test run with 65 tests in 11 suites passed`.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add TidyShot/Upload/UploadProgressDelegate.swift TidyShot/Upload/S3Destination.swift TidyShotTests/S3DestinationTests.swift
@@ -1606,7 +1710,7 @@ git commit -m "feat: add S3Destination with signed PUT, HEAD, DELETE and upload 
 **Interfaces:**
 - Consumes: `Destination`, `UploadJob`, `UploadEvent`, `UploadError` (Task 5), `ObjectKeyNamer` (Task 3), `RetryPolicy` (Task 5).
 - Produces: `actor UploadQueue` with `typealias EventHandler = @MainActor @Sendable (UploadEvent) -> Void`, `typealias Sleeper = @Sendable (Duration) async throws -> Void`, `static let maxKeyAttempts = 5`, `init(destination: any Destination, keyNamer: ObjectKeyNamer, policy: RetryPolicy = .default, sleep: @escaping Sleeper = { try await Task.sleep(for: $0) }, events: @escaping EventHandler)`, `func enqueue(_ job: UploadJob)`, `var isIdle: Bool`.
-- In the test target: `final class FakeDestination: Destination` (scripted with a `Mutex<State>`), `@MainActor final class EventLog`, `@MainActor func eventually(_ condition: () -> Bool) async throws`.
+- In the test target: `final class FakeDestination: Destination` (scripted with a `Mutex<State>`), `@MainActor final class EventLog`, `nonisolated struct EventuallyTimedOut: Error`, and `@MainActor func eventually(_ condition: () async -> Bool) async throws`, which polls `condition` every 10 ms for up to 2 s and throws `EventuallyTimedOut` if it never holds. The condition is `async` so it can read actor state, for example `try await eventually { await queue.isIdle }`. Every wait on queue or event state in this plan goes through it.
 
 Behaviour: `enqueue` appends and starts a drain task if none is running; the drain processes jobs strictly in order. Each job reserves a key (`HEAD` until a 404, at most 5 tries), uploads, resolves the public URL and emits `.uploaded`. Retryable failures wait `policy.delay(beforeAttempt:)` and try again up to `policy.maxAttempts`; anything else emits `.failed`. Progress callbacks arrive on URLSession's queue and are forwarded in their own `Task`, so a progress event can be delivered after `.uploaded`; the history store (Task 10) ignores progress for records that are no longer uploading.
 
@@ -1663,14 +1767,19 @@ final class EventLog {
     var events: [UploadEvent] = []
 }
 
-/// Polls `condition` every 10 ms for up to two seconds.
+nonisolated struct EventuallyTimedOut: Error, CustomStringConvertible {
+    var description: String { "condition did not become true within 2 seconds" }
+}
+
+/// Polls `condition` every 10 ms for up to two seconds and throws `EventuallyTimedOut` if it
+/// never holds, which fails the calling test. `async` so the condition can read actor state.
 @MainActor
-func eventually(_ condition: () -> Bool) async throws {
+func eventually(_ condition: () async -> Bool) async throws {
     for _ in 0..<200 {
-        if condition() { return }
+        if await condition() { return }
         try await Task.sleep(for: .milliseconds(10))
     }
-    Issue.record("condition never became true")
+    throw EventuallyTimedOut()
 }
 
 struct UploadQueueTests {
@@ -1797,13 +1906,20 @@ struct UploadQueueTests {
             }
         }
         #expect(ids == [first, first, second, second])
-        try await eventually { true }
-        #expect(await queue.isIdle)
+        try await eventually { await queue.isIdle }
     }
 }
 ```
 
-- [ ] **Step 2: Implement the actor**
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run:
+```bash
+xcodegen generate && xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build test 2>&1 | grep -E "error:|Test run" | head
+```
+Expected: compile errors containing `cannot find 'UploadQueue' in scope`.
+
+- [ ] **Step 3: Implement the actor**
 
 `TidyShot/Upload/UploadQueue.swift`:
 ```swift
@@ -1893,15 +2009,15 @@ actor UploadQueue {
 }
 ```
 
-- [ ] **Step 3: Run tests to verify they pass**
+- [ ] **Step 4: Run tests to verify they pass**
 
 Run:
 ```bash
 xcodegen generate && xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build test 2>&1 | grep -E "error:|Test run|✘"
 ```
-Expected: `Test run with 70 tests in 12 suites passed`.
+Expected: `Test run with 72 tests in 12 suites passed`.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add TidyShot/Upload/UploadQueue.swift TidyShotTests/UploadQueueTests.swift
@@ -1917,8 +2033,8 @@ git commit -m "feat: add UploadQueue actor with key reservation and retry"
 - Create: `TidyShotTests/ConnectionTesterTests.swift`
 
 **Interfaces:**
-- Consumes: `S3Destination` (Task 6), `ObjectKeyNamer.join(prefix:name:)` (Task 3), `FileNamer.randomString`, `StubURLProtocol` (Task 6 tests).
-- Produces: `struct ConnectionTestResult: Sendable, Equatable { enum Outcome { case readable; case notPublic(status: Int); case uploadFailed(String) }; let probeKey: String; let publicURL: URL?; let outcome: Outcome; var summary: String }` and `enum ConnectionTester { static let probeBody: Data; static func run(destination: S3Destination, session: URLSession = .shared, randomString: @Sendable (Int) -> String = FileNamer.randomString) async -> ConnectionTestResult }`.
+- Consumes: `S3Destination` (Task 6), `ObjectKeyNamer.join(prefix:name:)` (Task 3), `FileNamer.randomString`, `StubSession` and `StubURLProtocol` (Task 6 tests).
+- Produces: `struct ConnectionTestResult: Sendable, Equatable { enum Outcome { case readable; case notPublic(status: Int); case uploadFailed(String) }; let probeKey: String; let publicURL: URL?; let outcome: Outcome; var warning: String? = nil; var summary: String }`, where `warning` is `"Probe object <key> could not be deleted; remove it by hand."` when the cleanup DELETE fails (the Upload tab shows it, Task 14), and `enum ConnectionTester { static let probeBody: Data; static func run(destination: S3Destination, session: URLSession = .shared, randomString: @Sendable (Int) -> String = FileNamer.randomString) async -> ConnectionTestResult }`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1932,50 +2048,74 @@ struct ConnectionTesterTests {
     let config = S3DestinationConfig(endpoint: "https://s3.us-east-1.amazonaws.com", region: "us-east-1", bucket: "snap",
                                      keyPrefix: "p", publicURLTemplate: "https://snap.tky.io/{key}")
 
-    func destination() -> S3Destination {
+    func destination(_ session: URLSession) -> S3Destination {
         S3Destination(config: config,
                       credentials: AWSCredentials(accessKeyID: "AKID", secretAccessKey: "secret"),
-                      session: StubURLProtocol.makeSession())
+                      session: session)
     }
 
     @Test func readableWhenPutSucceedsAndPublicGetReturnsBody() async {
-        StubURLProtocol.reset { request in
+        let (session, stub) = StubSession.make { request in
             switch request.httpMethod {
             case "PUT": (200, Data())
             case "GET": (200, ConnectionTester.probeBody)
             default: (204, Data())
             }
         }
-        let result = await ConnectionTester.run(destination: destination(), session: StubURLProtocol.makeSession(),
+        let result = await ConnectionTester.run(destination: destination(session), session: session,
                                                 randomString: { String(repeating: "Z", count: $0) })
 
         #expect(result.probeKey == "p/tidyshot-probe-ZZZZZZZZ.txt")
         #expect(result.publicURL?.absoluteString == "https://snap.tky.io/p/tidyshot-probe-ZZZZZZZZ.txt")
         #expect(result.outcome == .readable)
-        let sent = StubURLProtocol.requests.withLock { $0.map { "\($0.httpMethod!) \($0.url!.absoluteString)" } }
+        #expect(result.warning == nil)
+        let requests = stub.requests
+        let sent = requests.map { "\($0.httpMethod!) \($0.url!.absoluteString)" }
         #expect(sent == ["PUT https://snap.s3.us-east-1.amazonaws.com/p/tidyshot-probe-ZZZZZZZZ.txt",
                          "GET https://snap.tky.io/p/tidyshot-probe-ZZZZZZZZ.txt",
                          "DELETE https://snap.s3.us-east-1.amazonaws.com/p/tidyshot-probe-ZZZZZZZZ.txt"])
-        #expect(StubURLProtocol.requests.withLock { $0[1].value(forHTTPHeaderField: "authorization") } == nil)
+        #expect(requests[1].value(forHTTPHeaderField: "authorization") == nil)
     }
 
     @Test func notPublicWhenGetIsForbidden() async {
-        StubURLProtocol.reset { request in request.httpMethod == "GET" ? (403, Data()) : (200, Data()) }
-        let result = await ConnectionTester.run(destination: destination(), session: StubURLProtocol.makeSession())
+        let (session, _) = StubSession.make { request in request.httpMethod == "GET" ? (403, Data()) : (200, Data()) }
+        let result = await ConnectionTester.run(destination: destination(session), session: session)
         #expect(result.outcome == .notPublic(status: 403))
         #expect(result.summary.contains("HTTP 403"))
     }
 
     @Test func uploadFailedWhenPutIsRejected() async {
-        StubURLProtocol.reset { _ in (403, Data("AccessDenied".utf8)) }
-        let result = await ConnectionTester.run(destination: destination(), session: StubURLProtocol.makeSession())
+        let (session, stub) = StubSession.make { _ in (403, Data("AccessDenied".utf8)) }
+        let result = await ConnectionTester.run(destination: destination(session), session: session)
         #expect(result.outcome == .uploadFailed("Server returned HTTP 403: AccessDenied"))
-        #expect(StubURLProtocol.requests.withLock { $0.count } == 1)
+        #expect(stub.requests.count == 1)
+    }
+
+    @Test func warnsWhenProbeCannotBeDeleted() async {
+        let (session, _) = StubSession.make { request in
+            switch request.httpMethod {
+            case "PUT": (200, Data())
+            case "GET": (200, ConnectionTester.probeBody)
+            default: (403, Data("AccessDenied".utf8))
+            }
+        }
+        let result = await ConnectionTester.run(destination: destination(session), session: session,
+                                                randomString: { String(repeating: "Z", count: $0) })
+        #expect(result.outcome == .readable)
+        #expect(result.warning == "Probe object p/tidyshot-probe-ZZZZZZZZ.txt could not be deleted; remove it by hand.")
     }
 }
 ```
 
-- [ ] **Step 2: Implement the tester**
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run:
+```bash
+xcodegen generate && xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build test 2>&1 | grep -E "error:|Test run" | head
+```
+Expected: compile errors containing `cannot find 'ConnectionTester' in scope`.
+
+- [ ] **Step 3: Implement the tester**
 
 `TidyShot/Upload/ConnectionTester.swift`:
 ```swift
@@ -1993,6 +2133,8 @@ nonisolated struct ConnectionTestResult: Sendable, Equatable {
     let probeKey: String
     let publicURL: URL?
     let outcome: Outcome
+    /// Set when the probe object could not be deleted afterwards, so it is not left behind silently.
+    var warning: String? = nil
 
     var summary: String {
         switch outcome {
@@ -2024,8 +2166,9 @@ nonisolated enum ConnectionTester {
         do {
             publicURL = try destination.publicURL(for: key)
         } catch {
-            try? await destination.delete(key: key)
-            return ConnectionTestResult(probeKey: key, publicURL: nil, outcome: .uploadFailed(error.localizedDescription))
+            let warning = await deleteProbe(key, destination: destination)
+            return ConnectionTestResult(probeKey: key, publicURL: nil, outcome: .uploadFailed(error.localizedDescription),
+                                        warning: warning)
         }
 
         var request = URLRequest(url: publicURL)
@@ -2038,21 +2181,33 @@ nonisolated enum ConnectionTester {
         } catch {
             outcome = .notPublic(status: 0)
         }
-        try? await destination.delete(key: key)
-        return ConnectionTestResult(probeKey: key, publicURL: publicURL, outcome: outcome)
+        let warning = await deleteProbe(key, destination: destination)
+        return ConnectionTestResult(probeKey: key, publicURL: publicURL, outcome: outcome, warning: warning)
+    }
+
+    /// Deletes the probe object. Returns a warning instead of throwing, so a leaked probe is
+    /// reported without hiding the outcome of the test itself.
+    private static func deleteProbe(_ key: String, destination: S3Destination) async -> String? {
+        do {
+            try await destination.delete(key: key)
+            return nil
+        } catch {
+            NSLog("Probe delete failed: \(error.localizedDescription)")
+            return "Probe object \(key) could not be deleted; remove it by hand."
+        }
     }
 }
 ```
 
-- [ ] **Step 3: Run tests to verify they pass**
+- [ ] **Step 4: Run tests to verify they pass**
 
 Run:
 ```bash
 xcodegen generate && xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build test 2>&1 | grep -E "error:|Test run|✘"
 ```
-Expected: `Test run with 73 tests in 13 suites passed`.
+Expected: `Test run with 76 tests in 13 suites passed`.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add TidyShot/Upload/ConnectionTester.swift TidyShotTests/ConnectionTesterTests.swift
@@ -2069,7 +2224,7 @@ git commit -m "feat: add Test Connection probe (PUT, public GET, DELETE)"
 
 **Interfaces:**
 - Consumes: `AWSCredentials` (Task 1).
-- Produces: `protocol CredentialStore { func load(account: String) throws -> AWSCredentials?; func save(_ credentials: AWSCredentials, account: String) throws; func delete(account: String) throws }`, `struct KeychainError: LocalizedError { let status: OSStatus }`, `final class KeychainCredentialStore: CredentialStore` with `static let defaultAccount = "default"`, `let service: String`, `init(service: String = "io.tky.tidyshot.s3")`, and `final class InMemoryCredentialStore: CredentialStore`.
+- Produces: `protocol CredentialStore { func load(account: String) throws -> AWSCredentials?; func save(_ credentials: AWSCredentials, account: String) throws; func delete(account: String) throws }`, where `load` returns nil only when no item exists (`errSecItemNotFound`) and throws `KeychainError` for any other status (locked keychain, access denied) or a decoding error, so callers can tell "not set up" from "could not read" (Tasks 13 and 14 rely on this), `struct KeychainError: LocalizedError { let status: OSStatus }`, `final class KeychainCredentialStore: CredentialStore` with `static let defaultAccount = "default"`, `let service: String`, `init(service: String = "io.tky.tidyshot.s3")`, and `final class InMemoryCredentialStore: CredentialStore`.
 
 Background: generic-password items (`kSecClassGenericPassword`) in the login keychain work inside the App Sandbox with no extra entitlement; the item is keyed by `kSecAttrService` and `kSecAttrAccount` and holds the credentials JSON in `kSecValueData`. `SecItemUpdate` first, `SecItemAdd` on `errSecItemNotFound`, so saving twice updates in place. The real-keychain test uses its own service name and a unique account, and deletes the item before returning; creating and reading an item from the same process never prompts.
 
@@ -2113,7 +2268,15 @@ struct KeychainCredentialStoreTests {
 }
 ```
 
-- [ ] **Step 2: Implement the stores**
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run:
+```bash
+xcodegen generate && xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build test 2>&1 | grep -E "error:|Test run" | head
+```
+Expected: compile errors containing `cannot find 'InMemoryCredentialStore' in scope`.
+
+- [ ] **Step 3: Implement the stores**
 
 `TidyShot/Upload/KeychainCredentialStore.swift`:
 ```swift
@@ -2121,6 +2284,9 @@ import Foundation
 import Security
 
 protocol CredentialStore {
+    /// Nil when no credentials are stored for `account`. Throws when they exist but cannot be
+    /// read (locked keychain, access denied, corrupt data), so callers never mistake a read
+    /// failure for "not configured".
     func load(account: String) throws -> AWSCredentials?
     func save(_ credentials: AWSCredentials, account: String) throws
     func delete(account: String) throws
@@ -2197,15 +2363,15 @@ final class InMemoryCredentialStore: CredentialStore {
 }
 ```
 
-- [ ] **Step 3: Run tests to verify they pass**
+- [ ] **Step 4: Run tests to verify they pass**
 
 Run:
 ```bash
 xcodegen generate && xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build test 2>&1 | grep -E "error:|Test run|✘"
 ```
-Expected: `Test run with 75 tests in 14 suites passed`. If `keychainStoreRoundTrips` fails with `Keychain error -34018`, something added `kSecUseDataProtectionKeychain`; remove it.
+Expected: `Test run with 78 tests in 14 suites passed`. If `keychainStoreRoundTrips` fails with `Keychain error -34018`, something added `kSecUseDataProtectionKeychain`; remove it.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add TidyShot/Upload/KeychainCredentialStore.swift TidyShotTests/KeychainCredentialStoreTests.swift
@@ -2225,7 +2391,8 @@ git commit -m "feat: store S3 credentials in the login keychain"
 - Consumes: nothing new.
 - Produces:
   - `struct CaptureRecord: Codable, Identifiable, Equatable, Sendable` with `enum UploadState: Codable, Equatable, Sendable { case none; case uploading(fraction: Double); case uploaded(url: URL, key: String); case failed(message: String) }`, `let id: UUID`, `let timestamp: Date`, `var fileURL: URL`, `var pixelWidth: Int`, `var pixelHeight: Int`, `var appName: String?`, `var uploadState: UploadState`, `init(id:timestamp:fileURL:pixelWidth:pixelHeight:appName:uploadState:)` (`id`, `timestamp`, `uploadState` defaulted), `var uploadedURL: URL?`, `var isFailed: Bool`, `var isUploading: Bool`.
-  - `@Observable final class HistoryStore` with `static let fileName = "history.json"`, `private(set) var records: [CaptureRecord]`, `let fileURL: URL`, `init(fileURL: URL, retentionDays: Int = 30, now: @escaping () -> Date = { Date() })`, `static func defaultFileURL() throws -> URL`, `func load()`, `func add(_ record: CaptureRecord)`, `func record(id: UUID) -> CaptureRecord?`, `func update(id: UUID, _ change: (inout CaptureRecord) -> Void)`, `func setProgress(id: UUID, fraction: Double)`, `func remove(id: UUID)`, `var failedRecords: [CaptureRecord]`, `static func pruned(_:retentionDays:now:) -> [CaptureRecord]`.
+  - `@Observable final class HistoryStore` with `static let fileName = "history.json"`, `private(set) var records: [CaptureRecord]`, `let fileURL: URL`, `init(fileURL: URL, retentionDays: @escaping () -> Int = { 30 }, now: @escaping () -> Date = { Date() })`, `static func defaultFileURL() throws -> URL`, `func load()` (an undecodable file is renamed to `history.json.corrupt-<unix seconds>` and the store starts empty), `func add(_ record: CaptureRecord)`, `func record(id: UUID) -> CaptureRecord?`, `func update(id: UUID, _ change: (inout CaptureRecord) -> Void)`, `func setProgress(id: UUID, fraction: Double)`, `func remove(id: UUID)`, `var failedRecords: [CaptureRecord]`, `static func pruned(_:retentionDays:now:) -> [CaptureRecord]`.
+  - `retentionDays` is a closure read at every prune (load and add), so Task 13 passes `{ AppSettings.shared.historyRetentionDays }` and the Overlay tab's stepper takes effect at the next capture without a relaunch.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -2245,7 +2412,7 @@ struct HistoryStoreTests {
     }
 
     func store(retentionDays: Int = 30) -> HistoryStore {
-        HistoryStore(fileURL: dir.appending(path: "history.json"), retentionDays: retentionDays, now: { now })
+        HistoryStore(fileURL: dir.appending(path: "history.json"), retentionDays: { retentionDays }, now: { now })
     }
 
     func record(age: TimeInterval = 0, state: CaptureRecord.UploadState = .none) -> CaptureRecord {
@@ -2309,15 +2476,28 @@ struct HistoryStoreTests {
         #expect(second.records.isEmpty)
     }
 
-    @Test func missingOrCorruptFileLoadsEmpty() throws {
+    @Test func missingFileLoadsEmpty() {
         let fresh = store()
         fresh.load()
         #expect(fresh.records.isEmpty)
+    }
 
-        try Data("not json".utf8).write(to: dir.appending(path: "history.json"))
+    @Test func corruptFileIsSetAsideNotOverwritten() throws {
+        let file = dir.appending(path: "history.json")
+        let garbage = Data("not json".utf8)
+        try garbage.write(to: file)
+
         let corrupt = store()
         corrupt.load()
         #expect(corrupt.records.isEmpty)
+
+        // `now` is 1_792_411_200, so the set-aside name is deterministic.
+        let setAside = dir.appending(path: "history.json.corrupt-1792411200")
+        #expect(try Data(contentsOf: setAside) == garbage)
+
+        corrupt.add(record())
+        #expect(try Data(contentsOf: setAside) == garbage)
+        #expect(FileManager.default.fileExists(atPath: file.path(percentEncoded: false)))
     }
 
     @Test func removeDeletesRecord() {
@@ -2330,7 +2510,15 @@ struct HistoryStoreTests {
 }
 ```
 
-- [ ] **Step 2: Write the record type**
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run:
+```bash
+xcodegen generate && xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build test 2>&1 | grep -E "error:|Test run" | head
+```
+Expected: compile errors containing `cannot find type 'CaptureRecord' in scope`.
+
+- [ ] **Step 3: Write the record type**
 
 `TidyShot/History/CaptureRecord.swift`:
 ```swift
@@ -2381,15 +2569,16 @@ nonisolated struct CaptureRecord: Codable, Identifiable, Equatable, Sendable {
 }
 ```
 
-- [ ] **Step 3: Implement the store**
+- [ ] **Step 4: Implement the store**
 
 `TidyShot/History/HistoryStore.swift`:
 ```swift
 import Foundation
 import Observation
 
-/// Capture records, newest first, persisted as JSON. Records older than `retentionDays` are
-/// dropped on load and on add; their files on disk are left alone.
+/// Capture records, newest first, persisted as JSON. Records older than `retentionDays()` are
+/// dropped on load and on add; their files on disk are left alone. `retentionDays` is a closure
+/// so a changed setting applies at the next prune without recreating the store.
 @Observable
 final class HistoryStore {
     static let fileName = "history.json"
@@ -2397,10 +2586,10 @@ final class HistoryStore {
     private(set) var records: [CaptureRecord] = []
 
     @ObservationIgnored let fileURL: URL
-    @ObservationIgnored private let retentionDays: Int
+    @ObservationIgnored private let retentionDays: () -> Int
     @ObservationIgnored private let now: () -> Date
 
-    init(fileURL: URL, retentionDays: Int = 30, now: @escaping () -> Date = { Date() }) {
+    init(fileURL: URL, retentionDays: @escaping () -> Int = { 30 }, now: @escaping () -> Date = { Date() }) {
         self.fileURL = fileURL
         self.retentionDays = retentionDays
         self.now = now
@@ -2413,8 +2602,10 @@ final class HistoryStore {
         return support.appending(path: "TidyShot", directoryHint: .isDirectory).appending(path: fileName)
     }
 
-    /// Reads the file. A missing or unreadable file yields an empty list. Records still marked
-    /// `uploading` were interrupted by a quit or crash and become `failed` so they can be retried.
+    /// Reads the file. A missing file yields an empty list. A file that cannot be decoded is
+    /// renamed to `history.json.corrupt-<unix seconds>` (so the next save cannot overwrite it)
+    /// and the list starts empty. Records still marked `uploading` were interrupted by a quit or
+    /// crash and become `failed` so they can be retried.
     func load() {
         guard let data = try? Data(contentsOf: fileURL) else {
             records = []
@@ -2422,17 +2613,24 @@ final class HistoryStore {
         }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        var loaded = (try? decoder.decode([CaptureRecord].self, from: data)) ?? []
+        var loaded: [CaptureRecord]
+        do {
+            loaded = try decoder.decode([CaptureRecord].self, from: data)
+        } catch {
+            NSLog("History file could not be decoded, setting it aside: \(error)")
+            setAsideCorruptFile()
+            loaded = []
+        }
         for index in loaded.indices where loaded[index].isUploading {
             loaded[index].uploadState = .failed(message: "Upload was interrupted.")
         }
-        records = Self.pruned(loaded, retentionDays: retentionDays, now: now())
+        records = Self.pruned(loaded, retentionDays: retentionDays(), now: now())
         records.sort { $0.timestamp > $1.timestamp }
     }
 
     func add(_ record: CaptureRecord) {
         records.insert(record, at: 0)
-        records = Self.pruned(records, retentionDays: retentionDays, now: now())
+        records = Self.pruned(records, retentionDays: retentionDays(), now: now())
         save()
     }
 
@@ -2469,6 +2667,17 @@ final class HistoryStore {
         return records.filter { $0.timestamp >= cutoff }
     }
 
+    /// Moves an undecodable history file out of the way, next to the original.
+    private func setAsideCorruptFile() {
+        let stamp = Int(now().timeIntervalSince1970)
+        let target = fileURL.deletingLastPathComponent().appending(path: "\(fileURL.lastPathComponent).corrupt-\(stamp)")
+        do {
+            try FileManager.default.moveItem(at: fileURL, to: target)
+        } catch {
+            NSLog("Could not set aside the history file: \(error.localizedDescription)")
+        }
+    }
+
     private func save() {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
@@ -2484,15 +2693,15 @@ final class HistoryStore {
 }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [ ] **Step 5: Run tests to verify they pass**
 
 Run:
 ```bash
 xcodegen generate && xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build test 2>&1 | grep -E "error:|Test run|✘"
 ```
-Expected: `Test run with 82 tests in 15 suites passed`.
+Expected: `Test run with 86 tests in 15 suites passed`.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add TidyShot/History TidyShotTests/HistoryStoreTests.swift
@@ -2870,7 +3079,7 @@ Run:
 ```bash
 xcodegen generate && xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build test 2>&1 | grep -E "error:|Test run|✘"
 ```
-Expected: `Test run with 84 tests in 16 suites passed`.
+Expected: `Test run with 88 tests in 16 suites passed`.
 
 - [ ] **Step 9: Commit**
 
@@ -2930,7 +3139,15 @@ struct OverlayGeometryTests {
 }
 ```
 
-- [ ] **Step 2: Complete OverlayGeometry.swift**
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run:
+```bash
+xcodegen generate && xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build test 2>&1 | grep -E "error:|Test run" | head
+```
+Expected: compile errors containing `cannot find 'OverlayGeometry' in scope`.
+
+- [ ] **Step 3: Complete OverlayGeometry.swift**
 
 Replace the whole file (the enum from Task 11 plus the geometry):
 
@@ -2975,15 +3192,15 @@ nonisolated enum OverlayGeometry {
 }
 ```
 
-- [ ] **Step 3: Run tests to verify they pass**
+- [ ] **Step 4: Run tests to verify they pass**
 
 Run:
 ```bash
 xcodegen generate && xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build test 2>&1 | grep -E "error:|Test run|✘"
 ```
-Expected: `Test run with 87 tests in 17 suites passed`.
+Expected: `Test run with 91 tests in 17 suites passed`.
 
-- [ ] **Step 4: Write the model**
+- [ ] **Step 5: Write the model**
 
 `TidyShot/Overlay/QuickAccessModel.swift`:
 ```swift
@@ -3014,7 +3231,7 @@ final class QuickAccessModel {
 }
 ```
 
-- [ ] **Step 5: Write the view**
+- [ ] **Step 6: Write the view**
 
 `TidyShot/Overlay/QuickAccessView.swift`:
 ```swift
@@ -3116,7 +3333,7 @@ struct QuickAccessView: View {
 }
 ```
 
-- [ ] **Step 6: Write the panel**
+- [ ] **Step 7: Write the panel**
 
 `TidyShot/Overlay/QuickAccessPanel.swift`:
 ```swift
@@ -3148,7 +3365,7 @@ final class QuickAccessPanel: NSPanel {
 }
 ```
 
-- [ ] **Step 7: Write the controller**
+- [ ] **Step 8: Write the controller**
 
 `TidyShot/Overlay/QuickAccessController.swift`:
 ```swift
@@ -3223,7 +3440,7 @@ final class QuickAccessController {
 }
 ```
 
-- [ ] **Step 8: Build**
+- [ ] **Step 9: Build**
 
 Run:
 ```bash
@@ -3231,7 +3448,7 @@ xcodegen generate && xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -co
 ```
 Expected: `BUILD_OK` with no warnings mentioning `Overlay/`.
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
 git add TidyShot/Overlay TidyShotTests/OverlayGeometryTests.swift
@@ -3249,10 +3466,11 @@ git commit -m "feat: add Quick Access overlay panel with progress, URL, copy and
 
 **Interfaces:**
 - Consumes: everything from Tasks 1 to 12, plus Phase 1's `CaptureEngine`, `SelectionController`, `SaveLocation`, `ImageEncoder`, `FileNamer`, `Pasteboard`, `Notifier`, `SoundPlayer`, `ScreenCapturePermission`, `PermissionWindowController`, `Geometry`.
-- Produces on `AppCoordinator`: `let history: HistoryStore`, `let credentialStore: any CredentialStore`, `private(set) var uploadingIDs: Set<UUID>`, `var isUploading: Bool`, `func makeDestination() -> S3Destination?`, `func destinationDidChange()`, `func retryUpload(recordID: UUID)`, `func retryFailedUploads()`, `func copyURL(recordID: UUID)`, `func reveal(recordID: UUID)`, `func historyItemSelected(_ recordID: UUID)`. `save(_:appName:)` keeps its signature.
-- Produces on `MenuContent`: `static func title(for record: CaptureRecord) -> String`.
+- Produces on `AppCoordinator`: `let history: HistoryStore` (built with `retentionDays: { AppSettings.shared.historyRetentionDays }`, so the Overlay tab's stepper applies at the next capture), `let credentialStore: any CredentialStore`, `private(set) var uploadingIDs: Set<UUID>`, `var isUploading: Bool`, `func makeDestination() -> S3Destination?`, `func destinationDidChange()`, `func retryUpload(recordID: UUID)`, `func retryFailedUploads()`, `func copyURL(recordID: UUID)`, `func reveal(recordID: UUID)`, `func historyItemSelected(_ recordID: UUID)`. `save(_:appName:)` keeps its signature. Private helpers: `@ObservationIgnored private var warnedUploadNotConfigured = false`, `private func warnUploadNotConfiguredOnce(_ message: String)`, `private func startUpload(recordID: UUID, data: Data, destination: S3Destination)`, `private func refreshOverlay(for id: UUID)`.
+- `makeDestination()` returns nil when the Upload tab is incomplete or no credentials are stored. When the keychain read throws (anything other than "item not found", see Task 9), it logs, posts `notifyError("Could not read S3 credentials from the keychain: <error>", title: "Upload not configured")` through `warnUploadNotConfiguredOnce`, and returns nil.
+- Produces on `MenuContent`: `static func title(for record: CaptureRecord) -> String` (plain status words: `Saved`, `Uploading`, `Uploaded`, `Failed`; no emoji).
 
-Flow of `save`: encode PNG; decide `willUpload` (action is upload and a destination exists); copy the image now only if the mode's toggle says so; if upload was wanted but not configured, notify once; write the file (any failure keeps the image on the clipboard and returns, as in Phase 1); play the sound; add a `CaptureRecord`; show the overlay; then either enqueue the upload or post the Phase 1 "saved" notification. Upload events update history and the overlay; `.uploaded` also copies the URL and notifies; `.failed` keeps the record with a retry.
+Flow of `save`: encode PNG; if the action is upload, call `makeDestination()` once (one keychain read per capture) and keep the result; copy the image now if uploading with "Also copy image" on, if upload was wanted but there is no destination (so the clipboard holds the capture instead of a URL), or in save mode with "Copy image to clipboard" on; write the file (any failure keeps the image on the clipboard and returns, as in Phase 1); if upload was wanted but there is no destination, post "Upload not configured" with body "Set up a destination in Settings > Upload. The capture was saved and the image is on the clipboard." the first time per launch only (`warnedUploadNotConfigured`, shared with the keychain-error warning so a launch shows at most one); play the sound; add a `CaptureRecord`; show the overlay; then either enqueue the upload with the destination already in hand or post the Phase 1 "saved" notification. Upload events update history and the overlay through `refreshOverlay(for:)`; `.uploaded` also copies the URL and notifies; `.failed` keeps the record with a retry.
 
 - [ ] **Step 1: Replace AppCoordinator**
 
@@ -3278,6 +3496,8 @@ final class AppCoordinator {
     private let overlay = QuickAccessController()
     @ObservationIgnored private lazy var selector = SelectionController(engine: engine)
     @ObservationIgnored private var queue: UploadQueue?
+    /// Set after the first "Upload not configured" notification so later captures stay quiet.
+    @ObservationIgnored private var warnedUploadNotConfigured = false
 
     private(set) var isCapturing = false
     private(set) var lastCaptureURL: URL?
@@ -3290,7 +3510,7 @@ final class AppCoordinator {
     init() {
         let url = (try? HistoryStore.defaultFileURL())
             ?? FileManager.default.temporaryDirectory.appending(path: HistoryStore.fileName)
-        history = HistoryStore(fileURL: url, retentionDays: AppSettings.shared.historyRetentionDays)
+        history = HistoryStore(fileURL: url, retentionDays: { AppSettings.shared.historyRetentionDays })
     }
 
     func start() {
@@ -3394,31 +3614,49 @@ final class AppCoordinator {
         }
 
         let wantsUpload = settings.afterCaptureAction == .upload
-        let willUpload = wantsUpload && makeDestination() != nil
-        let copyImageNow = willUpload ? settings.alsoCopyImageWhenUploading : settings.copyImageToClipboard
+        // One keychain read per capture; the result is passed to startUpload below.
+        let destination = wantsUpload ? makeDestination() : nil
+        let copyImageNow: Bool
+        if destination != nil {
+            copyImageNow = settings.alsoCopyImageWhenUploading
+        } else if wantsUpload {
+            // Upload wanted but not possible: the clipboard gets the image instead of a URL.
+            copyImageNow = true
+        } else {
+            copyImageNow = settings.copyImageToClipboard
+        }
         if copyImageNow {
             Pasteboard.copy(image: result.image, pngData: png, scale: result.scale)
         }
-        if wantsUpload, !willUpload {
-            notifier.notifyError("Set up a destination in Settings > Upload. The screenshot was saved.", title: "Upload not configured")
-        }
 
         guard let url = await writeFile(png, result: result, appName: appName, alreadyOnClipboard: copyImageNow) else { return }
+        if wantsUpload, destination == nil {
+            warnUploadNotConfiguredOnce("Set up a destination in Settings > Upload. The capture was saved and the image is on the clipboard.")
+        }
         if settings.playSound {
             SoundPlayer.playShutter()
         }
         lastCaptureURL = url
 
         let record = CaptureRecord(fileURL: url, pixelWidth: result.image.width, pixelHeight: result.image.height,
-                                   appName: appName, uploadState: willUpload ? .uploading(fraction: 0) : .none)
+                                   appName: appName, uploadState: destination != nil ? .uploading(fraction: 0) : .none)
         history.add(record)
         showOverlay(for: record, image: result.image, scale: result.scale)
 
-        if willUpload {
-            startUpload(recordID: record.id, data: png)
+        if let destination {
+            startUpload(recordID: record.id, data: png, destination: destination)
         } else if settings.showNotification {
             notifier.notifySaved(fileURL: url)
         }
+    }
+
+    /// Posts "Upload not configured" the first time per launch only. With the default
+    /// after-capture action set to upload, a user without a destination would otherwise get a
+    /// notification for every capture.
+    private func warnUploadNotConfiguredOnce(_ message: String) {
+        guard !warnedUploadNotConfigured else { return }
+        warnedUploadNotConfigured = true
+        notifier.notifyError(message, title: "Upload not configured")
     }
 
     /// Writes the PNG into the save folder. Returns nil after notifying, with the image left on
@@ -3457,11 +3695,20 @@ final class AppCoordinator {
                         reveal: { [weak self] id in self?.reveal(recordID: id) }))
     }
 
-    /// The configured destination, or nil when the Upload tab is incomplete or has no credentials.
+    /// The configured destination, or nil when the Upload tab is incomplete, no credentials are
+    /// stored, or the keychain could not be read. "No item" is the normal not-configured case and
+    /// stays silent here; any other keychain error is logged and reported once per launch.
     func makeDestination() -> S3Destination? {
-        guard let config = settings.s3Config, config.isComplete,
-              let credentials = try? credentialStore.load(account: KeychainCredentialStore.defaultAccount),
-              !credentials.accessKeyID.isEmpty, !credentials.secretAccessKey.isEmpty else {
+        guard let config = settings.s3Config, config.isComplete else { return nil }
+        let stored: AWSCredentials?
+        do {
+            stored = try credentialStore.load(account: KeychainCredentialStore.defaultAccount)
+        } catch {
+            NSLog("Keychain read failed: \(error.localizedDescription)")
+            warnUploadNotConfiguredOnce("Could not read S3 credentials from the keychain: \(error.localizedDescription)")
+            return nil
+        }
+        guard let credentials = stored, !credentials.accessKeyID.isEmpty, !credentials.secretAccessKey.isEmpty else {
             return nil
         }
         return S3Destination(config: config, credentials: credentials)
@@ -3472,11 +3719,9 @@ final class AppCoordinator {
         queue = nil
     }
 
-    private func startUpload(recordID: UUID, data: Data) {
-        guard let destination = makeDestination() else {
-            markFailed(recordID, message: UploadError.notConfigured.localizedDescription)
-            return
-        }
+    /// Enqueues `data` for `recordID`. `destination` is only used when the queue has to be
+    /// created (first upload, or after the Upload tab was saved); callers read it once.
+    private func startUpload(recordID: UUID, data: Data, destination: S3Destination) {
         if queue == nil {
             let config = destination.config
             queue = UploadQueue(destination: destination,
@@ -3486,9 +3731,7 @@ final class AppCoordinator {
         guard let queue else { return }
         uploadingIDs.insert(recordID)
         history.update(id: recordID) { $0.uploadState = .uploading(fraction: 0) }
-        if let record = history.record(id: recordID) {
-            overlay.update(record: record)
-        }
+        refreshOverlay(for: recordID)
         let job = UploadJob(id: recordID, data: data, contentType: "image/png", fileExtension: "png")
         Task { await queue.enqueue(job) }
     }
@@ -3496,9 +3739,13 @@ final class AppCoordinator {
     /// Re-reads the file from the save folder and uploads it again.
     func retryUpload(recordID: UUID) {
         guard let record = history.record(id: recordID) else { return }
+        guard let destination = makeDestination() else {
+            markFailed(recordID, message: UploadError.notConfigured.localizedDescription)
+            return
+        }
         do {
             let data = try saveLocation.read(contentsOf: record.fileURL)
-            startUpload(recordID: recordID, data: data)
+            startUpload(recordID: recordID, data: data, destination: destination)
         } catch {
             markFailed(recordID, message: UploadError.fileUnreadable(record.fileURL.lastPathComponent).localizedDescription)
         }
@@ -3533,10 +3780,15 @@ final class AppCoordinator {
     private func markFailed(_ recordID: UUID, message: String) {
         uploadingIDs.remove(recordID)
         history.update(id: recordID) { $0.uploadState = .failed(message: message) }
-        if let record = history.record(id: recordID) {
+        refreshOverlay(for: recordID)
+        notifier.notifyError(message, title: "Upload failed")
+    }
+
+    /// Pushes the record's current state into the overlay, if the overlay is showing it.
+    private func refreshOverlay(for id: UUID) {
+        if let record = history.record(id: id) {
             overlay.update(record: record)
         }
-        notifier.notifyError(message, title: "Upload failed")
     }
 
     private func handle(_ event: UploadEvent) {
@@ -3547,9 +3799,7 @@ final class AppCoordinator {
             }
         case .progress(let id, let fraction):
             history.setProgress(id: id, fraction: fraction)
-            if let record = history.record(id: id) {
-                overlay.update(record: record)
-            }
+            refreshOverlay(for: id)
         case .uploaded(let id, let url, let key):
             uploadingIDs.remove(id)
             history.update(id: id) { $0.uploadState = .uploaded(url: url, key: key) }
@@ -3557,9 +3807,7 @@ final class AppCoordinator {
             if settings.showNotification {
                 notifier.notifyUploaded(url: url)
             }
-            if let record = history.record(id: id) {
-                overlay.update(record: record)
-            }
+            refreshOverlay(for: id)
         case .failed(let id, let message):
             markFailed(id, message: message)
         }
@@ -3645,12 +3893,14 @@ struct MenuContent: View {
     }
 
     /// The ten newest captures. Uploaded: copies the URL. Failed: retries. Otherwise: reveals the file.
+    /// Always enabled; when empty it shows a disabled "No captures yet" row.
     @ViewBuilder
     private var historyMenu: some View {
         let recent = Array(coordinator.history.records.prefix(10))
         Menu("Recent Captures") {
             if recent.isEmpty {
-                Text("No captures yet")
+                Button("No captures yet") {}
+                    .disabled(true)
             }
             ForEach(recent) { record in
                 Button(Self.title(for: record)) {
@@ -3664,20 +3914,21 @@ struct MenuContent: View {
                 }
             }
         }
-        .disabled(recent.isEmpty)
     }
 
+    /// For example `Uploaded  14:03:22  aSIS7x.png`. Plain words, no emoji, so VoiceOver reads
+    /// the status and the menu looks the same in every font.
     static func title(for record: CaptureRecord) -> String {
         let time = record.timestamp.formatted(date: .omitted, time: .standard)
-        let marker: String
+        let status: String
         switch record.uploadState {
-        case .none: marker = "💾"
-        case .uploading: marker = "⬆️"
-        case .uploaded: marker = "🔗"
-        case .failed: marker = "⚠️"
+        case .none: status = "Saved"
+        case .uploading: status = "Uploading"
+        case .uploaded: status = "Uploaded"
+        case .failed: status = "Failed"
         }
         let name = record.uploadedURL?.lastPathComponent ?? record.fileURL.lastPathComponent
-        return "\(marker) \(time)  \(name)"
+        return "\(status)  \(time)  \(name)"
     }
 
     private func menuTitle(_ title: String, _ name: KeyboardShortcuts.Name) -> String {
@@ -3715,7 +3966,7 @@ Run:
 ```bash
 xcodegen generate && xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build test 2>&1 | grep -E "error:|warning: .*TidyShot/|Test run|✘"
 ```
-Expected: no `error:` or `warning:` lines, and `Test run with 87 tests in 17 suites passed`.
+Expected: no `error:` or `warning:` lines, and `Test run with 91 tests in 17 suites passed`.
 
 - [ ] **Step 5: Smoke-run the save path with upload unconfigured**
 
@@ -3723,7 +3974,7 @@ Run:
 ```bash
 open .build/Build/Products/Debug/TidyShot.app
 ```
-Press `⌃⇧3`. Expected: the screenshot is saved as before, a notification titled "Upload not configured" appears, the Quick Access panel shows the thumbnail with "Saved" in the bottom-right corner and closes after 5 seconds, and the menu's "Recent Captures" submenu lists the capture with a 💾 marker. Quit the app.
+Before the first capture, open the menu's "Recent Captures" submenu. Expected: it opens and shows a greyed-out "No captures yet" row. Press `⌃⇧3`. Expected: the screenshot is saved as before, a notification titled "Upload not configured" appears with the body "Set up a destination in Settings > Upload. The capture was saved and the image is on the clipboard.", pasting into Preview (File > New from Clipboard) gives the image, the Quick Access panel shows the thumbnail with "Saved" in the bottom-right corner and closes after 5 seconds, and "Recent Captures" lists the capture as `Saved  <time>  <file name>`. Press `⌃⇧3` again. Expected: no second "Upload not configured" notification. Quit the app.
 
 - [ ] **Step 6: Commit**
 
@@ -3744,8 +3995,8 @@ git commit -m "feat: upload after capture, copy URL, history menu, and overlay w
 - Modify: `README.md` (one section added)
 
 **Interfaces:**
-- Consumes: `AppCoordinator.credentialStore`, `makeDestination()`, `destinationDidChange()`, `settings` (Task 13), `S3DestinationConfig` (Task 4), `ConnectionTester` (Task 8), `ObjectKeyNamer` (Task 3), `OverlayCorner` (Task 11).
-- Produces: `struct UploadSettingsView: View`, `struct OverlaySettingsView: View`.
+- Consumes: `AppCoordinator.credentialStore`, `makeDestination()`, `destinationDidChange()`, `settings` (Task 13), `S3DestinationConfig` and `normalized` (Task 4), `AWSCredentials.sessionToken` (Task 1), `CredentialStore.load` throwing on read errors (Task 9), `ConnectionTester` and `ConnectionTestResult.warning` (Task 8), `ObjectKeyNamer` (Task 3), `OverlayCorner` (Task 11), `HistoryStore`'s live `retentionDays` closure (Tasks 10 and 13).
+- Produces: `struct UploadSettingsView: View` (adds a "Session token (optional)" secure field that is loaded from and saved to the keychain item, and shows a keychain read error in red under the credential fields instead of silently showing empty fields), `struct OverlaySettingsView: View` (the history retention stepper applies at the next capture, no relaunch needed).
 
 - [ ] **Step 1: Write the Upload tab**
 
@@ -3760,6 +4011,9 @@ struct UploadSettingsView: View {
     @State private var draft = S3DestinationConfig.empty
     @State private var accessKeyID = ""
     @State private var secretAccessKey = ""
+    @State private var sessionToken = ""
+    /// Set when the stored credentials exist but could not be read; shown under the fields.
+    @State private var keychainError: String?
     @State private var statusMessage: String?
     @State private var statusIsError = false
     @State private var isTesting = false
@@ -3781,7 +4035,14 @@ struct UploadSettingsView: View {
             Section("Credentials") {
                 TextField("Access key ID", text: $accessKeyID)
                 SecureField("Secret access key", text: $secretAccessKey)
-                Text("Stored in your login keychain, never in preferences.")
+                SecureField("Session token (optional)", text: $sessionToken)
+                if let keychainError {
+                    Text(keychainError)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .textSelection(.enabled)
+                }
+                Text("Stored in your login keychain, never in preferences. A session token is only needed for temporary credentials.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -3818,11 +4079,19 @@ struct UploadSettingsView: View {
             .makeKey(ext: "png")
     }
 
+    /// Fills the form. No stored item leaves the credential fields empty; a keychain error is
+    /// shown under them so an unreadable item is not mistaken for "never set up".
     private func load() {
         draft = coordinator.settings.s3Config ?? .empty
-        if let credentials = try? coordinator.credentialStore.load(account: KeychainCredentialStore.defaultAccount) {
-            accessKeyID = credentials.accessKeyID
-            secretAccessKey = credentials.secretAccessKey
+        do {
+            keychainError = nil
+            if let credentials = try coordinator.credentialStore.load(account: KeychainCredentialStore.defaultAccount) {
+                accessKeyID = credentials.accessKeyID
+                secretAccessKey = credentials.secretAccessKey
+                sessionToken = credentials.sessionToken ?? ""
+            }
+        } catch {
+            keychainError = "Could not read S3 credentials from the keychain: \(error.localizedDescription)"
         }
     }
 
@@ -3833,19 +4102,23 @@ struct UploadSettingsView: View {
             show(error.localizedDescription, isError: true)
             return false
         }
-        let trimmedID = accessKeyID.trimmingCharacters(in: .whitespaces)
-        let trimmedSecret = secretAccessKey.trimmingCharacters(in: .whitespaces)
+        draft = draft.normalized
+        let trimmedID = accessKeyID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedSecret = secretAccessKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedToken = sessionToken.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedID.isEmpty, !trimmedSecret.isEmpty else {
             show("Access key ID and secret access key are required.", isError: true)
             return false
         }
         do {
-            try coordinator.credentialStore.save(AWSCredentials(accessKeyID: trimmedID, secretAccessKey: trimmedSecret),
+            try coordinator.credentialStore.save(AWSCredentials(accessKeyID: trimmedID, secretAccessKey: trimmedSecret,
+                                                                sessionToken: trimmedToken.isEmpty ? nil : trimmedToken),
                                                  account: KeychainCredentialStore.defaultAccount)
         } catch {
             show(error.localizedDescription, isError: true)
             return false
         }
+        keychainError = nil
         coordinator.settings.s3Config = draft
         coordinator.destinationDidChange()
         show("Saved.", isError: false)
@@ -3857,7 +4130,9 @@ struct UploadSettingsView: View {
         isTesting = true
         defer { isTesting = false }
         let result = await ConnectionTester.run(destination: destination)
-        show(result.summary, isError: result.outcome != .readable)
+        // A leaked probe object is reported on its own line under the outcome.
+        let message = [result.summary, result.warning].compactMap { $0 }.joined(separator: "\n")
+        show(message, isError: result.outcome != .readable || result.warning != nil)
     }
 
     private func show(_ message: String, isError: Bool) {
@@ -3932,7 +4207,7 @@ Run:
 ```bash
 xcodegen generate && xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build test 2>&1 | grep -E "error:|warning: .*TidyShot/|Test run|✘"
 ```
-Expected: no `error:` or `warning:` lines, and `Test run with 87 tests in 17 suites passed`.
+Expected: no `error:` or `warning:` lines, and `Test run with 91 tests in 17 suites passed`.
 
 - [ ] **Step 5: Write the manual checklist**
 
@@ -3951,9 +4226,12 @@ write to, its public URL base (for example `https://snap.tky.io/`), and an acces
 - [ ] Settings > Upload: Save with an empty endpoint shows "Endpoint must be an http or https URL…" in red.
 - [ ] Fill in endpoint, region, bucket, public URL `https://snap.tky.io/{key}`, access key ID and secret; Save shows "Saved."
 - [ ] Quit and relaunch: the fields are filled in again, including the secret (read back from the keychain).
+- [ ] Enter a session token, Save, quit and relaunch: the token field is filled in again; clear it and Save: after relaunch it stays empty.
+- [ ] Paste a bucket name with a trailing space, Save: the field shows the trimmed name and uploads work.
 - [ ] `defaults read io.tky.tidyshot` does not contain the access key ID or secret.
 - [ ] Keychain Access (login keychain) shows an item "TidyShot S3 credentials" with account `default`.
 - [ ] Test Connection with correct settings reports "Upload and public read both work." and the probe object is gone from the bucket afterwards.
+- [ ] Test Connection with a key that may PUT but not DELETE reports the outcome plus "Probe object … could not be deleted; remove it by hand." in red.
 - [ ] Test Connection with a wrong secret reports "Upload failed: Server returned HTTP 403…".
 - [ ] Test Connection with a public URL template pointing at a domain that does not serve the bucket reports "Upload worked, but the public URL returned HTTP …".
 - [ ] Random name length stepper stops at 4 and 32; the example key updates as the prefix and length change.
@@ -3966,7 +4244,8 @@ write to, its public URL base (for example `https://snap.tky.io/`), and an acces
 - [ ] The uploaded object is a PNG with 144 DPI on a Retina display (download it and check with Preview > Tools > Show Inspector).
 - [ ] With "Also copy image" on: immediately after capture, paste gives the image; after the upload finishes, paste gives the URL.
 - [ ] With "Send public-read ACL" on, uploads still succeed on a bucket that allows ACLs, and the object is public.
-- [ ] After-capture action "Save and copy image": no upload happens, paste gives the image, history shows 💾.
+- [ ] After-capture action "Save and copy image": no upload happens, paste gives the image, Recent Captures shows the item as `Saved`.
+- [ ] Delete the "TidyShot S3 credentials" item in Keychain Access, relaunch, leave the action on "Upload and copy URL", capture twice: one "Upload not configured" notification only, and paste gives the image both times. Settings > Upload then shows empty credential fields and no red keychain error.
 - [ ] Set key prefix `shots`: new objects land under `shots/` and the URL is `https://snap.tky.io/shots/XXXXXX.png`.
 - [ ] Path-style on against MinIO (`http://localhost:9000`, region `us-east-1`): upload succeeds.
 
@@ -3981,14 +4260,16 @@ write to, its public URL base (for example `https://snap.tky.io/`), and an acces
 - [ ] A second capture replaces the panel with the new capture.
 
 ## Failures and history
-- [ ] Turn Wi-Fi off, capture: the file is saved, the overlay shows "Upload failed" with Retry, a notification appears, history shows ⚠️, nothing is on the clipboard unless "Also copy image" is on.
+- [ ] Turn Wi-Fi off, capture: the file is saved, the overlay shows "Upload failed" with Retry, a notification appears, Recent Captures shows the item as `Failed`, nothing is on the clipboard unless "Also copy image" is on.
 - [ ] Turn Wi-Fi on, click Retry in the overlay: the upload succeeds and the URL is copied.
-- [ ] Recent Captures > Retry Failed Uploads retries every ⚠️ item.
-- [ ] Choosing a 🔗 history item copies its URL; choosing a 💾 item reveals the file.
-- [ ] Quit while an upload is in flight (slow connection or large capture), relaunch: the item shows ⚠️ "Upload was interrupted." and Retry works.
+- [ ] Recent Captures > Retry Failed Uploads retries every `Failed` item.
+- [ ] Choosing an `Uploaded` history item copies its URL; choosing a `Saved` item reveals the file.
+- [ ] Recent Captures titles contain only words, times and file names, no emoji.
+- [ ] Quit while an upload is in flight (slow connection or large capture), relaunch: the item shows as `Failed` (history.json has "Upload was interrupted.") and Retry works.
 - [ ] Wrong secret: the overlay shows "Upload failed … HTTP 403" after one attempt, no retries in the log.
 - [ ] `~/Library/Containers/io.tky.tidyshot/Data/Library/Application Support/TidyShot/history.json` lists the captures newest first.
-- [ ] Set history retention to 1 day, relaunch after a day: older items are gone, their files are still on disk.
+- [ ] Quit, replace history.json with the text `not json`, relaunch: Recent Captures is empty, and `history.json.corrupt-<number>` next to it still holds `not json` after the next capture.
+- [ ] With captures older than a day in history, set retention to 1 day and take a capture without relaunching: the older items are gone from Recent Captures, their files are still on disk.
 ````
 
 - [ ] **Step 6: Update the README**
@@ -4027,7 +4308,21 @@ git add TidyShot/Settings/UploadSettingsView.swift TidyShot/Settings/OverlaySett
 git commit -m "feat: add Upload and Overlay settings tabs, Phase 2 checklist and README"
 ```
 
-Phase 2 is done when the manual checklist passes. Open a PR from `phase-2-upload` against `main` (after PR tkyocum/tidyshot#1 has merged) with the checklist results in the description.
+- [ ] **Step 9: Push and open the PR**
+
+Phase 2 is done when the manual checklist passes. Phase 1 is already on `main`, so the PR contains only Phase 2 commits. Push `phase-2-upload` and open a PR against `main`, with the checklist results in the description (no Claude Code session URL):
+
+```bash
+git push -u origin phase-2-upload
+gh pr create --base main --head phase-2-upload --title "Phase 2: S3 upload and clipboard URL" --body "$(cat <<'EOF'
+Uploads each capture to an S3-compatible bucket (AWS S3, R2, B2, MinIO) with hand-rolled SigV4, puts the public URL on the clipboard, shows the Quick Access overlay, and keeps a retryable capture history.
+
+- Unit tests: `Test run with 91 tests in 17 suites passed`.
+- Manual checklist `docs/testing/phase-2-manual-checklist.md`: all items pass.
+EOF
+)"
+```
+Expected: `gh` prints the PR URL.
 
 ---
 
