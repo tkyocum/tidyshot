@@ -69,7 +69,7 @@ Verified against the macOS 27.0 SDK shipped with Xcode 27.1 on this machine:
 - Screen Recording permission (TCC) is required for any ScreenCaptureKit capture that is not driven by `SCContentSharingPicker`. The picker is Apple's own window chooser and is not usable for a drag-select rectangle. Plan for the one-time permission prompt and a first-run screen that explains it.
 - `SCStreamConfiguration` exposes `showsCursor`, `ignoreShadowsSingleWindow`, `captureResolution`, `shouldBeOpaque`, and `includeChildWindows`, which cover the window-shot options above.
 
-Prior art: macshot (GPL-3.0) is an open-source Swift app with S3-compatible upload and link copying. Useful for reading how others handled the upload UX. Its licence rules out copying code into a non-GPL project, so **DECIDE** the licence before looking at its source. VivyShot, Capso, and Mio are ScreenCaptureKit-based but have no upload.
+Prior art: macshot (GPL-3.0) is an open-source Swift app with S3-compatible upload and link copying. Useful for reading how others handled the upload UX. Its GPL licence rules out copying code into this private project, so its source is off limits; only its documented behaviour is used as reference. VivyShot, Capso, and Mio are ScreenCaptureKit-based but have no upload.
 
 ## 3. Core workflow in detail
 
@@ -181,7 +181,7 @@ Separate design document. Will reuse Uploader, Naming, History, and Overlay.
 4. **Public read**: decided, rely on a bucket policy or CDN. No ACL header by default; a per-destination "Send public-read ACL" toggle adds `x-amz-acl: public-read`. Test Connection performs a PUT, then an unauthenticated GET on the public URL, and reports if the object is not readable.
 5. **Image format default**: decided, PNG always. A per-destination format override (JPEG, HEIC, quality) is a Phase 3 item.
 6. **Sandbox**: decided, on. Save folder access via security-scoped bookmarks. Consequences: the default save folder is the app container's `Documents` until the user picks one; drag-out from the overlay uses `NSFilePromiseProvider`; the "hide desktop icons" feature must be implemented as a wallpaper-coloured cover window at desktop icon level rather than a Finder `defaults` write; the URL scheme and Carbon hotkeys work unchanged.
-7. **Licence**: open source (MIT) or private. Affects whether macshot's GPL code can even be read for reference.
+7. **Licence**: decided, private and unlicensed for now. Do not read or copy macshot's GPL source; only its public documentation and UI behaviour may be used as reference. Revisit if the project is ever published.
 8. **Project generator**: XcodeGen versus a hand-maintained `.xcodeproj`.
 
 ## 8. Risks
