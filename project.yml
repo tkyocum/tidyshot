@@ -41,6 +41,8 @@ targets:
         CFBundleName: TidyShot
         CFBundleDisplayName: TidyShot
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSUIElement: true
         LSApplicationCategoryType: public.app-category.utilities
         NSHumanReadableCopyright: "Copyright © 2026 Tim Yocum"
