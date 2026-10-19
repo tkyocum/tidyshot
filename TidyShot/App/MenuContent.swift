@@ -1,7 +1,15 @@
 import SwiftUI
 
 struct MenuContent: View {
+    private let coordinator = AppCoordinator.shared
+
     var body: some View {
+        if !coordinator.permissionGranted {
+            Button("Screen Recording permission needed…") {
+                coordinator.showPermissionWindow()
+            }
+            Divider()
+        }
         Button("Quit TidyShot") {
             NSApplication.shared.terminate(nil)
         }
