@@ -64,6 +64,11 @@ targets:
     platform: macOS
     sources:
       - path: TidyShotTests
+        excludes:
+          - "Fixtures/**"
+      - path: TidyShotTests/Fixtures
+        type: folder
+        buildPhase: resources
     settings:
       base:
         SWIFT_VERSION: "6.0"
