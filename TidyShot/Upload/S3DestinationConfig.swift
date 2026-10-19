@@ -89,9 +89,17 @@ nonisolated struct S3DestinationConfig: Codable, Equatable, Sendable {
         URL(string: endpoint.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
+    /// Path-style is used when the user asked for it or when the bucket name contains a dot.
+    /// AWS wildcard certificates (`*.s3.<region>.amazonaws.com`) cover a single label, so a
+    /// virtual-host URL such as `snap.tky.io.s3.amazonaws.com` fails TLS; AWS requires path-style
+    /// for such buckets over HTTPS, and the other providers accept it.
+    var effectivePathStyle: Bool {
+        usePathStyle || normalized.bucket.contains(".")
+    }
+
     /// The decoded request path for `key`: `/key` (virtual-host) or `/bucket/key` (path-style).
     func objectPath(for key: String) -> String {
-        usePathStyle ? "/\(normalized.bucket)/\(key)" : "/\(key)"
+        effectivePathStyle ? "/\(normalized.bucket)/\(key)" : "/\(key)"
     }
 
     /// The URL the signed request is sent to.
@@ -100,7 +108,7 @@ nonisolated struct S3DestinationConfig: Codable, Equatable, Sendable {
               let host = components.host, !host.isEmpty else {
             throw ConfigError.invalidEndpoint
         }
-        if !usePathStyle {
+        if !effectivePathStyle {
             components.host = "\(normalized.bucket).\(host)"
         }
         components.percentEncodedPath = S3Signer.uriEncode(objectPath(for: key), keepSlash: true)

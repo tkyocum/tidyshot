@@ -89,4 +89,24 @@ struct S3DestinationConfigTests {
         #expect(try padded.objectURL(for: "a.png").absoluteString == "https://my-bucket.s3.us-west-2.amazonaws.com/a.png")
         #expect(padded.objectPath(for: "a.png") == "/a.png")
     }
+
+    /// AWS wildcard certificates cover one label, so `snap.tky.io.s3.amazonaws.com` fails TLS;
+    /// a bucket whose name contains a dot must use path-style URLs over HTTPS.
+    @Test func dottedBucketNameForcesPathStyle() throws {
+        let config = S3DestinationConfig(endpoint: "https://s3.dualstack.us-east-1.amazonaws.com",
+                                         region: "us-east-1", bucket: "snap.tky.io",
+                                         usePathStyle: false, publicURLTemplate: "https://snap.tky.io/{key}")
+        #expect(config.effectivePathStyle)
+        #expect(try config.objectURL(for: "abc.png").absoluteString
+                == "https://s3.dualstack.us-east-1.amazonaws.com/snap.tky.io/abc.png")
+        #expect(config.objectPath(for: "abc.png") == "/snap.tky.io/abc.png")
+    }
+
+    @Test func plainBucketNameKeepsVirtualHostStyle() throws {
+        let config = S3DestinationConfig(endpoint: "https://s3.us-east-1.amazonaws.com",
+                                         region: "us-east-1", bucket: "snaptky",
+                                         usePathStyle: false, publicURLTemplate: "https://snap.tky.io/{key}")
+        #expect(!config.effectivePathStyle)
+        #expect(try config.objectURL(for: "abc.png").absoluteString == "https://snaptky.s3.us-east-1.amazonaws.com/abc.png")
+    }
 }
