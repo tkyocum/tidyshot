@@ -64,18 +64,32 @@ final class AppCoordinator {
     }
 
     /// Encode, copy to clipboard, save, play sound, notify. The clipboard copy happens before the
-    /// folder is resolved so a cancelled folder chooser never loses the image.
+    /// folder is resolved, and is used as a fallback whenever the file cannot be written (cancelled
+    /// folder chooser or write failure), so a capture is never dropped.
     func save(_ result: CaptureResult, appName: String?) async {
+        let png: Data
         do {
-            let png = try ImageEncoder.pngData(from: result.image, scale: result.scale)
-            if settings.copyImageToClipboard {
-                Pasteboard.copy(image: result.image, pngData: png, scale: result.scale)
-            }
+            png = try ImageEncoder.pngData(from: result.image, scale: result.scale)
+        } catch {
+            NSLog("Encode failed: \(error.localizedDescription)")
+            notifier.notifyError(error.localizedDescription)
+            return
+        }
+        var copiedToClipboard = settings.copyImageToClipboard
+        if copiedToClipboard {
+            Pasteboard.copy(image: result.image, pngData: png, scale: result.scale)
+        }
+        do {
             guard let folder = await saveLocation.ensureFolder() else {
-                notifier.notifyError("Not saved: no folder was chosen.")
+                if !copiedToClipboard {
+                    Pasteboard.copy(image: result.image, pngData: png, scale: result.scale)
+                    copiedToClipboard = true
+                }
+                notifier.notifyError("Not saved: no folder was chosen. The image is on the clipboard.")
                 return
             }
-            let baseName = FileNamer(template: settings.fileNameTemplate).name(appName: appName, counter: settings.nextCounter())
+            let counter = settings.fileNameTemplate.contains("{counter}") ? settings.nextCounter() : 0
+            let baseName = FileNamer(template: settings.fileNameTemplate).name(appName: appName, counter: counter)
             let url = try saveLocation.write(png, baseName: baseName, ext: "png", in: folder)
             if settings.playSound {
                 SoundPlayer.playShutter()
@@ -86,7 +100,11 @@ final class AppCoordinator {
             }
         } catch {
             NSLog("Save failed: \(error.localizedDescription)")
-            notifier.notifyError(error.localizedDescription)
+            if !copiedToClipboard {
+                Pasteboard.copy(image: result.image, pngData: png, scale: result.scale)
+                copiedToClipboard = true
+            }
+            notifier.notifyError("\(error.localizedDescription) The image is on the clipboard.")
         }
     }
 
