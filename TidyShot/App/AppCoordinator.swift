@@ -3,7 +3,7 @@ import KeyboardShortcuts
 import Observation
 import ScreenCaptureKit
 
-/// Owns app-wide state and wires hotkeys, selection, capture, and output together.
+/// Owns app-wide state and wires hotkeys, selection, capture, output, upload, and history together.
 @Observable
 final class AppCoordinator {
     static let shared = AppCoordinator()
@@ -11,17 +11,33 @@ final class AppCoordinator {
     let engine = CaptureEngine()
     let saveLocation = SaveLocation()
     let settings = AppSettings.shared
+    let history: HistoryStore
+    let credentialStore: any CredentialStore = KeychainCredentialStore()
     private let notifier = Notifier()
     private let permissionWindow = PermissionWindowController()
+    private let overlay = QuickAccessController()
     @ObservationIgnored private lazy var selector = SelectionController(engine: engine)
+    @ObservationIgnored private var queue: UploadQueue?
+    /// Set after the first "Upload not configured" notification so later captures stay quiet.
+    @ObservationIgnored private var warnedUploadNotConfigured = false
 
     private(set) var isCapturing = false
     private(set) var lastCaptureURL: URL?
+    /// Records with an upload in flight; drives the menu bar icon.
+    private(set) var uploadingIDs: Set<UUID> = []
 
     var permissionGranted: Bool { ScreenCapturePermission.isGranted }
+    var isUploading: Bool { !uploadingIDs.isEmpty }
+
+    init() {
+        let url = (try? HistoryStore.defaultFileURL())
+            ?? FileManager.default.temporaryDirectory.appending(path: HistoryStore.fileName)
+        history = HistoryStore(fileURL: url, retentionDays: { AppSettings.shared.historyRetentionDays })
+    }
 
     func start() {
         notifier.setUp()
+        history.load()
         registerShortcuts()
         if !ScreenCapturePermission.isGranted {
             permissionWindow.show()
@@ -104,9 +120,11 @@ final class AppCoordinator {
         }
     }
 
-    /// Encode, copy to clipboard, save, play sound, notify. The clipboard copy happens before the
-    /// folder is resolved, and is used as a fallback whenever the file cannot be written (cancelled
-    /// folder chooser or write failure), so a capture is never dropped.
+    // MARK: Save and upload
+
+    /// Encode, copy to clipboard (image now, or URL later), save, record in history, show the
+    /// overlay, and start the upload. The local file is always written before the upload starts;
+    /// if it cannot be written the image stays on the clipboard, so a capture is never dropped.
     func save(_ result: CaptureResult, appName: String?) async {
         let png: Data
         do {
@@ -116,36 +134,232 @@ final class AppCoordinator {
             notifier.notifyError(error.localizedDescription)
             return
         }
-        let copiedToClipboard = settings.copyImageToClipboard
-        if copiedToClipboard {
+
+        let wantsUpload = settings.afterCaptureAction == .upload
+        // One keychain read per capture; the result is passed to startUpload below.
+        let destination = wantsUpload ? makeDestination() : nil
+        let copyImageNow: Bool
+        if destination != nil {
+            copyImageNow = settings.alsoCopyImageWhenUploading
+        } else if wantsUpload {
+            // Upload wanted but not possible: the clipboard gets the image instead of a URL.
+            copyImageNow = true
+        } else {
+            copyImageNow = settings.copyImageToClipboard
+        }
+        if copyImageNow {
             Pasteboard.copy(image: result.image, pngData: png, scale: result.scale)
         }
-        do {
-            guard let folder = await saveLocation.ensureFolder() else {
-                if !copiedToClipboard {
-                    Pasteboard.copy(image: result.image, pngData: png, scale: result.scale)
-                }
-                notifier.notifyError("No folder was chosen. The image is on the clipboard.", title: "Not saved")
-                return
-            }
-            let counter = settings.fileNameTemplate.contains("{counter}") ? settings.nextCounter() : 0
-            let baseName = FileNamer(template: settings.fileNameTemplate).name(appName: appName, counter: counter)
-            let url = try saveLocation.write(png, baseName: baseName, ext: "png", in: folder)
-            if settings.playSound {
-                SoundPlayer.playShutter()
-            }
-            lastCaptureURL = url
-            if settings.showNotification {
-                notifier.notifySaved(fileURL: url)
-            }
-        } catch {
-            NSLog("Save failed: \(error.localizedDescription)")
-            if !copiedToClipboard {
-                Pasteboard.copy(image: result.image, pngData: png, scale: result.scale)
-            }
-            notifier.notifyError("\(error.localizedDescription) The image is on the clipboard.", title: "Not saved")
+
+        guard let url = await writeFile(png, result: result, appName: appName, alreadyOnClipboard: copyImageNow) else { return }
+        if wantsUpload, destination == nil {
+            warnUploadNotConfiguredOnce("Set up a destination in Settings > Upload. The capture was saved and the image is on the clipboard.")
+        }
+        if settings.playSound {
+            SoundPlayer.playShutter()
+        }
+        lastCaptureURL = url
+
+        let record = CaptureRecord(fileURL: url, pixelWidth: result.image.width, pixelHeight: result.image.height,
+                                   appName: appName, uploadState: destination != nil ? .uploading(fraction: 0) : .none)
+        history.add(record)
+        showOverlay(for: record, image: result.image, scale: result.scale)
+
+        if let destination {
+            startUpload(recordID: record.id, data: png, destination: destination)
+        } else if settings.showNotification {
+            notifier.notifySaved(fileURL: url)
         }
     }
+
+    /// Posts "Upload not configured" the first time per launch only. With the default
+    /// after-capture action set to upload, a user without a destination would otherwise get a
+    /// notification for every capture.
+    private func warnUploadNotConfiguredOnce(_ message: String) {
+        guard !warnedUploadNotConfigured else { return }
+        warnedUploadNotConfigured = true
+        notifier.notifyError(message, title: "Upload not configured")
+    }
+
+    /// Writes the PNG into the save folder. Returns nil after notifying, with the image left on
+    /// the clipboard, when there is no folder or the write fails.
+    private func writeFile(_ png: Data, result: CaptureResult, appName: String?, alreadyOnClipboard: Bool) async -> URL? {
+        func keepOnClipboard() {
+            if !alreadyOnClipboard {
+                Pasteboard.copy(image: result.image, pngData: png, scale: result.scale)
+            }
+        }
+        guard let folder = await saveLocation.ensureFolder() else {
+            keepOnClipboard()
+            notifier.notifyError("No folder was chosen. The image is on the clipboard.", title: "Not saved")
+            return nil
+        }
+        do {
+            let counter = settings.fileNameTemplate.contains("{counter}") ? settings.nextCounter() : 0
+            let baseName = FileNamer(template: settings.fileNameTemplate).name(appName: appName, counter: counter)
+            return try saveLocation.write(png, baseName: baseName, ext: "png", in: folder)
+        } catch {
+            NSLog("Save failed: \(error.localizedDescription)")
+            keepOnClipboard()
+            notifier.notifyError("\(error.localizedDescription) The image is on the clipboard.", title: "Not saved")
+            return nil
+        }
+    }
+
+    private func showOverlay(for record: CaptureRecord, image: CGImage?, scale: CGFloat) {
+        guard settings.showOverlay else { return }
+        let thumbnail = image.map { NSImage(cgImage: $0, size: NSSize(width: CGFloat($0.width) / scale, height: CGFloat($0.height) / scale)) }
+        overlay.show(record: record, thumbnail: thumbnail, corner: settings.overlayCorner,
+                     autoCloseSeconds: settings.overlayAutoCloseSeconds,
+                     actions: QuickAccessController.Actions(
+                        copy: { [weak self] id in self?.copyURL(recordID: id) },
+                        retry: { [weak self] id in self?.retryUpload(recordID: id) },
+                        reveal: { [weak self] id in self?.reveal(recordID: id) }))
+    }
+
+    /// The configured destination, or nil when the Upload tab is incomplete, no credentials are
+    /// stored, or the keychain could not be read. "No item" is the normal not-configured case and
+    /// stays silent here; any other keychain error is logged and reported once per launch.
+    func makeDestination() -> S3Destination? {
+        guard let config = settings.s3Config, config.isComplete else { return nil }
+        let stored: AWSCredentials?
+        do {
+            stored = try credentialStore.load(account: KeychainCredentialStore.defaultAccount)
+        } catch {
+            NSLog("Keychain read failed: \(error.localizedDescription)")
+            warnUploadNotConfiguredOnce("Could not read S3 credentials from the keychain: \(error.localizedDescription)")
+            return nil
+        }
+        guard let credentials = stored, !credentials.accessKeyID.isEmpty, !credentials.secretAccessKey.isEmpty else {
+            return nil
+        }
+        return S3Destination(config: config, credentials: credentials)
+    }
+
+    /// Called by the Upload settings tab after saving, so the next upload uses the new settings.
+    func destinationDidChange() {
+        queue = nil
+    }
+
+    /// Enqueues `data` for `recordID`. `destination` is only used when the queue has to be
+    /// created (first upload, or after the Upload tab was saved); callers read it once.
+    private func startUpload(recordID: UUID, data: Data, destination: S3Destination) {
+        if queue == nil {
+            let config = destination.config
+            queue = UploadQueue(destination: destination,
+                                keyNamer: ObjectKeyNamer(prefix: config.keyPrefix, length: config.keyLength),
+                                events: { [weak self] event in self?.handle(event) })
+        }
+        guard let queue else { return }
+        uploadingIDs.insert(recordID)
+        // `save` adds new records already marked uploading and shows them in the overlay, so
+        // only a retry (a record in another state) needs the write and the overlay refresh.
+        if history.record(id: recordID)?.isUploading != true {
+            history.update(id: recordID) { $0.uploadState = .uploading(fraction: 0) }
+            refreshOverlay(for: recordID)
+        }
+        let job = UploadJob(id: recordID, data: data, contentType: "image/png", fileExtension: "png")
+        Task { await queue.enqueue(job) }
+    }
+
+    /// Re-reads the file from the save folder and uploads it again.
+    func retryUpload(recordID: UUID) {
+        // Ignore a second click while the record is already in flight; otherwise it would upload twice.
+        guard history.record(id: recordID) != nil, !uploadingIDs.contains(recordID) else { return }
+        guard let destination = makeDestination() else {
+            markFailed(recordID, message: UploadError.notConfigured.localizedDescription)
+            return
+        }
+        retry(recordID: recordID, destination: destination)
+    }
+
+    /// Retries every failed upload with one keychain read. Without a destination, posts one
+    /// notification instead of one per record.
+    func retryFailedUploads() {
+        let failed = history.failedRecords
+        guard !failed.isEmpty else { return }
+        guard let destination = makeDestination() else {
+            notifier.notifyError("Set up a destination in Settings > Upload, then retry.", title: "Upload not configured")
+            return
+        }
+        for record in failed {
+            retry(recordID: record.id, destination: destination)
+        }
+    }
+
+    /// Reads the record's file and starts its upload with `destination`.
+    private func retry(recordID: UUID, destination: S3Destination) {
+        guard let record = history.record(id: recordID) else { return }
+        do {
+            let data = try saveLocation.read(contentsOf: record.fileURL)
+            startUpload(recordID: recordID, data: data, destination: destination)
+        } catch {
+            markFailed(recordID, message: UploadError.fileUnreadable(record.fileURL.lastPathComponent).localizedDescription)
+        }
+    }
+
+    func copyURL(recordID: UUID) {
+        guard let url = history.record(id: recordID)?.uploadedURL else { return }
+        Pasteboard.copy(url: url)
+    }
+
+    func reveal(recordID: UUID) {
+        guard let record = history.record(id: recordID) else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([record.fileURL])
+    }
+
+    /// Menu action for a history row: copy the URL, retry a failed upload, or reveal the file.
+    func historyItemSelected(_ recordID: UUID) {
+        guard let record = history.record(id: recordID) else { return }
+        switch record.uploadState {
+        case .uploaded: copyURL(recordID: recordID)
+        case .failed: retryUpload(recordID: recordID)
+        case .none, .uploading: reveal(recordID: recordID)
+        }
+    }
+
+    private func markFailed(_ recordID: UUID, message: String) {
+        uploadingIDs.remove(recordID)
+        history.update(id: recordID) { $0.uploadState = .failed(message: message) }
+        refreshOverlay(for: recordID)
+        notifier.notifyError(message, title: "Upload failed")
+    }
+
+    /// Pushes the record's current state into the overlay, if the overlay is showing it.
+    private func refreshOverlay(for id: UUID) {
+        if let record = history.record(id: id) {
+            overlay.update(record: record)
+        }
+    }
+
+    private func handle(_ event: UploadEvent) {
+        switch event {
+        case .started(let id, let attempt):
+            if attempt > 1 {
+                NSLog("Upload retry \(attempt) for \(id)")
+                // Start the bar again rather than leaving the failed attempt's fraction.
+                if history.setProgress(id: id, fraction: 0) {
+                    refreshOverlay(for: id)
+                }
+            }
+        case .progress(let id, let fraction):
+            if history.setProgress(id: id, fraction: fraction) {
+                refreshOverlay(for: id)
+            }
+        case .uploaded(let id, let url, let key):
+            uploadingIDs.remove(id)
+            history.update(id: id) { $0.uploadState = .uploaded(url: url, key: key) }
+            Pasteboard.copy(url: url)
+            if settings.showNotification {
+                notifier.notifyUploaded(url: url)
+            }
+            refreshOverlay(for: id)
+        case .failed(let id, let message):
+            markFailed(id, message: message)
+        }
+    }
+
+    // MARK: Helpers
 
     /// Fetches shareable content, or shows the permission window and returns nil.
     func loadContent() async -> SCShareableContent? {

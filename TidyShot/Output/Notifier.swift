@@ -1,10 +1,12 @@
 import AppKit
 import UserNotifications
 
-/// Posts "saved" and "failed" notifications. Clicking a saved notification reveals the file in Finder.
+/// Posts "saved", "uploaded" and "failed" notifications. Clicking a saved notification reveals
+/// the file in Finder; clicking an uploaded notification opens the URL.
 final class Notifier: NSObject, UNUserNotificationCenterDelegate {
-    /// Read from the nonisolated delegate callbacks, so it must not be MainActor-isolated.
+    /// Read from the nonisolated delegate callbacks, so they must not be MainActor-isolated.
     nonisolated private static let pathKey = "path"
+    nonisolated private static let urlKey = "url"
     private let center = UNUserNotificationCenter.current()
 
     func setUp() {
@@ -19,6 +21,14 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         content.title = "Screenshot saved"
         content.body = fileURL.lastPathComponent
         content.userInfo = [Self.pathKey: fileURL.path]
+        post(content)
+    }
+
+    func notifyUploaded(url: URL) {
+        let content = UNMutableNotificationContent()
+        content.title = "Uploaded, URL copied"
+        content.body = url.absoluteString
+        content.userInfo = [Self.urlKey: url.absoluteString]
         post(content)
     }
 
@@ -45,10 +55,16 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
 
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
                                             didReceive response: UNNotificationResponse) async {
-        guard let path = response.notification.request.content.userInfo[Self.pathKey] as? String else { return }
-        let url = URL(fileURLWithPath: path)
-        await MainActor.run {
-            NSWorkspace.shared.activateFileViewerSelecting([url])
+        let userInfo = response.notification.request.content.userInfo
+        if let path = userInfo[Self.pathKey] as? String {
+            let url = URL(fileURLWithPath: path)
+            await MainActor.run {
+                NSWorkspace.shared.activateFileViewerSelecting([url])
+            }
+        } else if let string = userInfo[Self.urlKey] as? String, let url = URL(string: string) {
+            await MainActor.run {
+                _ = NSWorkspace.shared.open(url)
+            }
         }
     }
 }

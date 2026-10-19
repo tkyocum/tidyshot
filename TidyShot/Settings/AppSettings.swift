@@ -1,7 +1,23 @@
 import Foundation
 import Observation
 
-/// User preferences, persisted in UserDefaults.
+enum AfterCaptureAction: String, CaseIterable, Identifiable {
+    /// Save the file, upload it, and put the URL on the clipboard when the upload finishes.
+    case upload
+    /// Save the file and copy the image (Phase 1 behaviour).
+    case save
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .upload: "Upload and copy URL"
+        case .save: "Save and copy image"
+        }
+    }
+}
+
+/// User preferences, persisted in UserDefaults. Credentials are never stored here.
 @Observable
 final class AppSettings {
     static let shared = AppSettings()
@@ -13,6 +29,13 @@ final class AppSettings {
         static let playSound = "playSound"
         static let fileNameTemplate = "fileNameTemplate"
         static let counter = "captureCounter"
+        static let afterCaptureAction = "afterCaptureAction"
+        static let alsoCopyImageWhenUploading = "alsoCopyImageWhenUploading"
+        static let showOverlay = "showOverlay"
+        static let overlayCorner = "overlayCorner"
+        static let overlayAutoCloseSeconds = "overlayAutoCloseSeconds"
+        static let historyRetentionDays = "historyRetentionDays"
+        static let s3Config = "s3DestinationConfig"
     }
 
     @ObservationIgnored private let defaults: UserDefaults
@@ -22,6 +45,16 @@ final class AppSettings {
     var showNotification: Bool { didSet { defaults.set(showNotification, forKey: Keys.showNotification) } }
     var playSound: Bool { didSet { defaults.set(playSound, forKey: Keys.playSound) } }
     var fileNameTemplate: String { didSet { defaults.set(fileNameTemplate, forKey: Keys.fileNameTemplate) } }
+    var afterCaptureAction: AfterCaptureAction { didSet { defaults.set(afterCaptureAction.rawValue, forKey: Keys.afterCaptureAction) } }
+    var alsoCopyImageWhenUploading: Bool { didSet { defaults.set(alsoCopyImageWhenUploading, forKey: Keys.alsoCopyImageWhenUploading) } }
+    var showOverlay: Bool { didSet { defaults.set(showOverlay, forKey: Keys.showOverlay) } }
+    var overlayCorner: OverlayCorner { didSet { defaults.set(overlayCorner.rawValue, forKey: Keys.overlayCorner) } }
+    var overlayAutoCloseSeconds: Double { didSet { defaults.set(overlayAutoCloseSeconds, forKey: Keys.overlayAutoCloseSeconds) } }
+    var historyRetentionDays: Int { didSet { defaults.set(historyRetentionDays, forKey: Keys.historyRetentionDays) } }
+    /// Nil until the Upload tab has been saved once. Stored as JSON.
+    var s3Config: S3DestinationConfig? {
+        didSet { defaults.set(s3Config.flatMap { try? JSONEncoder().encode($0) }, forKey: Keys.s3Config) }
+    }
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -31,12 +64,25 @@ final class AppSettings {
             Keys.showNotification: true,
             Keys.playSound: true,
             Keys.fileNameTemplate: FileNamer.defaultTemplate,
+            Keys.afterCaptureAction: AfterCaptureAction.upload.rawValue,
+            Keys.alsoCopyImageWhenUploading: false,
+            Keys.showOverlay: true,
+            Keys.overlayCorner: OverlayCorner.bottomRight.rawValue,
+            Keys.overlayAutoCloseSeconds: 5.0,
+            Keys.historyRetentionDays: 30,
         ])
         showsCursor = defaults.bool(forKey: Keys.showsCursor)
         copyImageToClipboard = defaults.bool(forKey: Keys.copyImageToClipboard)
         showNotification = defaults.bool(forKey: Keys.showNotification)
         playSound = defaults.bool(forKey: Keys.playSound)
         fileNameTemplate = defaults.string(forKey: Keys.fileNameTemplate) ?? FileNamer.defaultTemplate
+        afterCaptureAction = AfterCaptureAction(rawValue: defaults.string(forKey: Keys.afterCaptureAction) ?? "") ?? .upload
+        alsoCopyImageWhenUploading = defaults.bool(forKey: Keys.alsoCopyImageWhenUploading)
+        showOverlay = defaults.bool(forKey: Keys.showOverlay)
+        overlayCorner = OverlayCorner(rawValue: defaults.string(forKey: Keys.overlayCorner) ?? "") ?? .bottomRight
+        overlayAutoCloseSeconds = defaults.double(forKey: Keys.overlayAutoCloseSeconds)
+        historyRetentionDays = defaults.integer(forKey: Keys.historyRetentionDays)
+        s3Config = defaults.data(forKey: Keys.s3Config).flatMap { try? JSONDecoder().decode(S3DestinationConfig.self, from: $0) }
     }
 
     /// Increments and returns the persistent capture counter used by the {counter} token.

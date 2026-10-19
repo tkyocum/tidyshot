@@ -21,7 +21,16 @@ struct GeneralSettingsView: View {
             Text("Tokens: {date} {time} {datetime} {app} {counter} {random} {random:8}")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Toggle("Copy image to clipboard", isOn: $settings.copyImageToClipboard)
+            Picker("After capture", selection: $settings.afterCaptureAction) {
+                ForEach(AfterCaptureAction.allCases) { action in
+                    Text(action.title).tag(action)
+                }
+            }
+            if settings.afterCaptureAction == .upload {
+                Toggle("Also copy image (the URL replaces it when the upload finishes)", isOn: $settings.alsoCopyImageWhenUploading)
+            } else {
+                Toggle("Copy image to clipboard", isOn: $settings.copyImageToClipboard)
+            }
             Toggle("Show notification", isOn: $settings.showNotification)
             Toggle("Play sound", isOn: $settings.playSound)
         }

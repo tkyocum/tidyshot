@@ -52,6 +52,7 @@ targets:
         com.apple.security.app-sandbox: true
         com.apple.security.files.user-selected.read-write: true
         com.apple.security.files.bookmarks.app-scope: true
+        com.apple.security.network.client: true
     dependencies:
       - package: KeyboardShortcuts
     scheme:
@@ -63,6 +64,11 @@ targets:
     platform: macOS
     sources:
       - path: TidyShotTests
+        excludes:
+          - "Fixtures/**"
+      - path: TidyShotTests/Fixtures
+        type: folder
+        buildPhase: resources
     settings:
       base:
         SWIFT_VERSION: "6.0"
