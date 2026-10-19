@@ -15,10 +15,10 @@ write to, its public URL base (for example `https://snap.tky.io/`), and an acces
 - [ ] Paste a bucket name with a trailing space, Save: the field shows the trimmed name and uploads work.
 - [ ] `defaults read io.tky.tidyshot` does not contain the access key ID or secret.
 - [ ] Keychain Access (login keychain) shows an item "TidyShot S3 credentials" with account `default`.
-- [ ] Test Connection with correct settings reports "Upload and public read both work." and the probe object is gone from the bucket afterwards.
-- [ ] Test Connection with a key that may PUT but not DELETE reports the outcome plus "Probe object … could not be deleted; remove it by hand." in red.
-- [ ] Test Connection with a wrong secret reports "Upload failed: Server returned HTTP 403…".
-- [ ] Test Connection with a public URL template pointing at a domain that does not serve the bucket reports "Upload worked, but the public URL returned HTTP …".
+- [ ] Save and Test Connection with correct settings reports "Upload and public read both work." and the probe object is gone from the bucket afterwards.
+- [ ] Save and Test Connection with a key that may PUT but not DELETE reports the outcome plus "Probe object … could not be deleted; remove it by hand." in red.
+- [ ] Save and Test Connection with a wrong secret reports "Upload failed: Server returned HTTP 403…".
+- [ ] Save and Test Connection with a public URL template pointing at a domain that does not serve the bucket reports "Upload worked, but the public URL returned HTTP …".
 - [ ] Random name length stepper stops at 4 and 32; the example key updates as the prefix and length change.
 
 ## Capture and upload (⌃⇧3, ⌃⇧4, ⌃⇧2)

@@ -32,6 +32,8 @@ nonisolated enum UploadEvent: Sendable, Equatable {
 }
 
 nonisolated enum UploadError: LocalizedError, Equatable, Sendable {
+    /// `body` is already a short summary (see `S3Destination.excerpt`), for example
+    /// `AccessDenied: Access Denied`, never the raw response body.
     case httpStatus(Int, body: String)
     case noHTTPResponse
     case keyCollisionsExhausted

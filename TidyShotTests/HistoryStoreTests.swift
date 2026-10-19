@@ -45,13 +45,27 @@ struct HistoryStoreTests {
         #expect(second.failedRecords.map(\.id) == [item.id])
     }
 
+    @Test func uploadingRecordsBecomeFailedOnLoadAndPersist() {
+        let first = store()
+        let item = record(state: .uploading(fraction: 0.4))
+        first.add(item)
+
+        let second = store()
+        second.load()
+        #expect(second.record(id: item.id)?.uploadState == .failed(message: "Upload was interrupted."))
+
+        let third = store()
+        third.load()
+        #expect(third.record(id: item.id)?.uploadState == .failed(message: "Upload was interrupted."))
+    }
+
     @Test func setProgressDoesNotWriteToDisk() throws {
         let first = store()
         let item = record(state: .uploading(fraction: 0))
         first.add(item)
         let file = dir.appending(path: "history.json")
         let before = try Data(contentsOf: file)
-        first.setProgress(id: item.id, fraction: 0.5)
+        #expect(first.setProgress(id: item.id, fraction: 0.5))
         #expect(first.record(id: item.id)?.uploadState == .uploading(fraction: 0.5))
         #expect(try Data(contentsOf: file) == before)
     }
@@ -60,7 +74,7 @@ struct HistoryStoreTests {
         let first = store()
         let item = record(state: .uploaded(url: URL(string: "https://snap.tky.io/a.png")!, key: "a.png"))
         first.add(item)
-        first.setProgress(id: item.id, fraction: 0.9)
+        #expect(first.setProgress(id: item.id, fraction: 0.9) == false)
         #expect(first.record(id: item.id)?.uploadedURL != nil)
     }
 

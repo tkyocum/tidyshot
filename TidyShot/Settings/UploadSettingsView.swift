@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Destination fields, credentials (saved to the Keychain), key naming, and Test Connection.
+/// Destination fields, credentials (saved to the Keychain), key naming, and Save and Test Connection.
 struct UploadSettingsView: View {
     private let coordinator = AppCoordinator.shared
 
@@ -52,7 +52,8 @@ struct UploadSettingsView: View {
                 HStack {
                     Button("Save") { save() }
                         .keyboardShortcut(.defaultAction)
-                    Button("Test Connection") { Task { await test() } }
+                        .disabled(isTesting)
+                    Button("Save and Test Connection") { Task { await test() } }
                         .disabled(isTesting)
                     if isTesting {
                         ProgressView().controlSize(.small)
@@ -121,8 +122,14 @@ struct UploadSettingsView: View {
         return true
     }
 
+    /// Saves the form, then runs the connection test against what was saved.
     private func test() async {
-        guard save(), let destination = coordinator.makeDestination() else { return }
+        guard save() else { return }
+        guard let destination = coordinator.makeDestination() else {
+            show("Saved, but the credentials could not be read back from the keychain. Check the keychain prompt or re-enter them.",
+                 isError: true)
+            return
+        }
         isTesting = true
         defer { isTesting = false }
         let result = await ConnectionTester.run(destination: destination)

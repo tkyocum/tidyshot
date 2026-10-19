@@ -252,30 +252,48 @@ final class AppCoordinator {
         }
         guard let queue else { return }
         uploadingIDs.insert(recordID)
-        history.update(id: recordID) { $0.uploadState = .uploading(fraction: 0) }
-        refreshOverlay(for: recordID)
+        // `save` adds new records already marked uploading and shows them in the overlay, so
+        // only a retry (a record in another state) needs the write and the overlay refresh.
+        if history.record(id: recordID)?.isUploading != true {
+            history.update(id: recordID) { $0.uploadState = .uploading(fraction: 0) }
+            refreshOverlay(for: recordID)
+        }
         let job = UploadJob(id: recordID, data: data, contentType: "image/png", fileExtension: "png")
         Task { await queue.enqueue(job) }
     }
 
     /// Re-reads the file from the save folder and uploads it again.
     func retryUpload(recordID: UUID) {
-        guard let record = history.record(id: recordID) else { return }
+        guard history.record(id: recordID) != nil else { return }
         guard let destination = makeDestination() else {
             markFailed(recordID, message: UploadError.notConfigured.localizedDescription)
             return
         }
+        retry(recordID: recordID, destination: destination)
+    }
+
+    /// Retries every failed upload with one keychain read. Without a destination, posts one
+    /// notification instead of one per record.
+    func retryFailedUploads() {
+        let failed = history.failedRecords
+        guard !failed.isEmpty else { return }
+        guard let destination = makeDestination() else {
+            notifier.notifyError("Set up a destination in Settings > Upload, then retry.", title: "Upload not configured")
+            return
+        }
+        for record in failed {
+            retry(recordID: record.id, destination: destination)
+        }
+    }
+
+    /// Reads the record's file and starts its upload with `destination`.
+    private func retry(recordID: UUID, destination: S3Destination) {
+        guard let record = history.record(id: recordID) else { return }
         do {
             let data = try saveLocation.read(contentsOf: record.fileURL)
             startUpload(recordID: recordID, data: data, destination: destination)
         } catch {
             markFailed(recordID, message: UploadError.fileUnreadable(record.fileURL.lastPathComponent).localizedDescription)
-        }
-    }
-
-    func retryFailedUploads() {
-        for record in history.failedRecords {
-            retryUpload(recordID: record.id)
         }
     }
 
@@ -318,10 +336,15 @@ final class AppCoordinator {
         case .started(let id, let attempt):
             if attempt > 1 {
                 NSLog("Upload retry \(attempt) for \(id)")
+                // Start the bar again rather than leaving the failed attempt's fraction.
+                if history.setProgress(id: id, fraction: 0) {
+                    refreshOverlay(for: id)
+                }
             }
         case .progress(let id, let fraction):
-            history.setProgress(id: id, fraction: fraction)
-            refreshOverlay(for: id)
+            if history.setProgress(id: id, fraction: fraction) {
+                refreshOverlay(for: id)
+            }
         case .uploaded(let id, let url, let key):
             uploadingIDs.remove(id)
             history.update(id: id) { $0.uploadState = .uploaded(url: url, key: key) }

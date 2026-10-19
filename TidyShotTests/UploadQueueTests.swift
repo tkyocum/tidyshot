@@ -11,6 +11,8 @@ nonisolated final class FakeDestination: Destination, Sendable {
         var failure: UploadError = .httpStatus(503, body: "")
         var headKeys: [String] = []
         var uploads: [(key: String, data: Data, contentType: String)] = []
+        /// Every call to `upload`, including ones that throw.
+        var uploadAttempts = 0
     }
 
     let state: Mutex<State>
@@ -25,6 +27,7 @@ nonisolated final class FakeDestination: Destination, Sendable {
 
     func upload(_ data: Data, key: String, contentType: String, progress: @escaping @Sendable (Double) -> Void) async throws {
         let failure: UploadError? = state.withLock {
+            $0.uploadAttempts += 1
             guard $0.failuresRemaining > 0 else { return nil }
             $0.failuresRemaining -= 1
             return $0.failure
@@ -166,6 +169,26 @@ struct UploadQueueTests {
 
         #expect(log.events == [.started(id: id, attempt: 1),
                                .failed(id: id, message: "Server returned HTTP 403: SignatureDoesNotMatch")])
+    }
+
+    @Test func cancelledBackoffEmitsFailedAndStops() async throws {
+        let destination = FakeDestination(.init(failuresRemaining: 1, failure: .httpStatus(503, body: "")))
+        let log = EventLog()
+        let queue = UploadQueue(destination: destination,
+                                keyNamer: ObjectKeyNamer(length: 6, randomString: { String(repeating: "K", count: $0) }),
+                                policy: .immediate,
+                                sleep: { _ in throw CancellationError() },
+                                events: { log.events.append($0) })
+        let id = UUID()
+
+        await queue.enqueue(UploadJob(id: id, data: data, contentType: "image/png", fileExtension: "png"))
+        try await eventually { if case .failed = log.events.last { return true } else { return false } }
+        try await eventually { await queue.isIdle }
+
+        #expect(log.events == [.started(id: id, attempt: 1),
+                               .failed(id: id, message: CancellationError().localizedDescription)])
+        #expect(destination.state.withLock { $0.uploadAttempts } == 1)
+        #expect(destination.state.withLock { $0.uploads.isEmpty })
     }
 
     @Test func processesJobsInOrderOneAtATime() async throws {

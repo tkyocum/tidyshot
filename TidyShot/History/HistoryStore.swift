@@ -76,10 +76,14 @@ final class HistoryStore {
 
     /// In-memory only; progress arrives often and is not worth a disk write each time. Ignored
     /// unless the record is still uploading, because a late progress callback can arrive after
-    /// the upload has already finished.
-    func setProgress(id: UUID, fraction: Double) {
-        guard let index = records.firstIndex(where: { $0.id == id }), records[index].isUploading else { return }
-        records[index].uploadState = .uploading(fraction: fraction)
+    /// the upload has already finished. Returns true when the record's state changed.
+    @discardableResult
+    func setProgress(id: UUID, fraction: Double) -> Bool {
+        guard let index = records.firstIndex(where: { $0.id == id }), records[index].isUploading else { return false }
+        let state = CaptureRecord.UploadState.uploading(fraction: fraction)
+        guard records[index].uploadState != state else { return false }
+        records[index].uploadState = state
+        return true
     }
 
     func remove(id: UUID) {

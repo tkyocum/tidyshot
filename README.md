@@ -51,8 +51,8 @@ Change them in Settings > Shortcuts.
 
 Settings > Upload takes an S3-compatible endpoint (AWS S3, Cloudflare R2, Backblaze B2, MinIO),
 region, bucket, optional key prefix, and a public URL template such as `https://snap.tky.io/{key}`.
-Credentials are stored in your login keychain. Test Connection uploads a small probe object,
-fetches it through the public URL without credentials, and deletes it.
+Credentials are stored in your login keychain. Save and Test Connection saves the form, then
+uploads a small probe object, fetches it through the public URL without credentials, and deletes it.
 
 Object keys are random, 6 characters by default (4 to 32). The app checks that a key is unused
 before uploading. By default no ACL header is sent; turn on "Send public-read ACL" only if your
@@ -66,4 +66,5 @@ list with a retry action.
 
 - Design: `docs/superpowers/specs/2026-10-19-tidyshot-screenshot-design.md`
 - Plans: `docs/superpowers/plans/`
-- Manual test checklist: `docs/testing/phase-1-manual-checklist.md`
+- Phase 1 manual test checklist: `docs/testing/phase-1-manual-checklist.md`
+- Phase 2 manual test checklist: `docs/testing/phase-2-manual-checklist.md`

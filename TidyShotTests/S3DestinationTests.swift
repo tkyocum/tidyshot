@@ -8,13 +8,16 @@ import Testing
 /// see each other's handlers or requests. Entries are never removed; a test run makes a few dozen.
 nonisolated final class StubURLProtocol: URLProtocol {
     typealias Handler = @Sendable (URLRequest) -> (status: Int, body: Data)
+    /// Like `Handler`, plus response headers. A 3xx with a `Location` header is reported to
+    /// URLSession as a redirect, so the session's redirect handling runs as it would for real.
+    typealias HeaderHandler = @Sendable (URLRequest) -> (status: Int, headers: [String: String], body: Data)
 
     static let sessionHeader = "X-Stub-Session"
     /// Return this status from a handler to make the request fail with `URLError(.cannotFindHost)`.
     static let transportFailureStatus = -1
 
     struct Entry: Sendable {
-        var handler: Handler
+        var handler: HeaderHandler
         var requests: [URLRequest] = []
     }
 
@@ -26,7 +29,7 @@ nonisolated final class StubURLProtocol: URLProtocol {
     override func startLoading() {
         let request = self.request
         let id = request.value(forHTTPHeaderField: Self.sessionHeader) ?? ""
-        let handler = Self.entries.withLock { entries -> Handler? in
+        let handler = Self.entries.withLock { entries -> HeaderHandler? in
             entries[id]?.requests.append(request)
             return entries[id]?.handler
         }
@@ -34,12 +37,17 @@ nonisolated final class StubURLProtocol: URLProtocol {
             client?.urlProtocol(self, didFailWithError: URLError(.cannotConnectToHost))
             return
         }
-        let (status, body) = handler(request)
+        let (status, headers, body) = handler(request)
         if status == Self.transportFailureStatus {
             client?.urlProtocol(self, didFailWithError: URLError(.cannotFindHost))
             return
         }
-        let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: "HTTP/1.1", headerFields: nil)!
+        let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: "HTTP/1.1", headerFields: headers)!
+        if (300..<400).contains(status), let location = headers["Location"], let target = URL(string: location) {
+            var redirect = request
+            redirect.url = target
+            client?.urlProtocol(self, wasRedirectedTo: redirect, redirectResponse: response)
+        }
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: body)
         client?.urlProtocolDidFinishLoading(self)
@@ -58,6 +66,14 @@ nonisolated final class StubSession: Sendable {
 
     /// Registers `handler` under a fresh id and returns a session whose requests carry that id.
     static func make(handler: @escaping StubURLProtocol.Handler) -> (URLSession, StubSession) {
+        make(headerHandler: { request in
+            let (status, body) = handler(request)
+            return (status, [:], body)
+        })
+    }
+
+    /// Like `make(handler:)`, for stubs that need response headers.
+    static func make(headerHandler handler: @escaping StubURLProtocol.HeaderHandler) -> (URLSession, StubSession) {
         let stub = StubSession(id: UUID().uuidString)
         StubURLProtocol.entries.withLock { $0[stub.id] = StubURLProtocol.Entry(handler: handler) }
         let configuration = URLSessionConfiguration.ephemeral
@@ -162,5 +178,49 @@ struct S3DestinationTests {
         let (session, stub) = StubSession.make { _ in (404, Data()) }
         try await destination(config, session: session).delete(key: "a.png")
         #expect(stub.requests.map(\.httpMethod) == ["DELETE"])
+    }
+
+    @Test func errorBodyIsSummarisedFromS3XML() async throws {
+        let xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Error><Code>AccessDenied</Code><Message>Access Denied</Message><RequestId>x</RequestId></Error>"
+        let (session, _) = StubSession.make { _ in (403, Data(xml.utf8)) }
+        let error = await #expect(throws: UploadError.self) {
+            try await destination(config, session: session).upload(body, key: "a.png", contentType: "image/png") { _ in }
+        }
+        #expect(error == .httpStatus(403, body: "AccessDenied: Access Denied"))
+        let description = error?.localizedDescription ?? ""
+        #expect(description.contains("AccessDenied: Access Denied"))
+        #expect(!description.contains("RequestId"))
+    }
+
+    @Test func errorBodyIsTruncatedWhenNotXML() async throws {
+        let plain = String(repeating: "x", count: 1000)
+        let (session, _) = StubSession.make { _ in (400, Data(plain.utf8)) }
+        let error = await #expect(throws: UploadError.self) {
+            try await destination(config, session: session).upload(body, key: "a.png", contentType: "image/png") { _ in }
+        }
+        guard case .httpStatus(400, let summary) = error else {
+            Issue.record("expected httpStatus(400, …), got \(String(describing: error))")
+            return
+        }
+        #expect(summary.count == 200)
+        let description = error?.localizedDescription ?? ""
+        #expect(description.count(where: { $0 == "x" }) <= 200)
+    }
+
+    @Test func redirectIsNotFollowed() async throws {
+        let (session, stub) = StubSession.make(headerHandler: { _ in
+            (307, ["Location": "https://snap.s3.eu-west-1.amazonaws.com/a.png"], Data())
+        })
+        await #expect(throws: UploadError.httpStatus(307, body: "redirected to https://snap.s3.eu-west-1.amazonaws.com/a.png; check the endpoint and region")) {
+            try await destination(config, session: session).upload(body, key: "a.png", contentType: "image/png") { _ in }
+        }
+        #expect(stub.requests.count == 1)
+    }
+
+    @Test func headErrorNamesBucketRegion() async throws {
+        let (session, _) = StubSession.make(headerHandler: { _ in (301, ["x-amz-bucket-region": "eu-west-1"], Data()) })
+        await #expect(throws: UploadError.httpStatus(301, body: "the bucket is in region eu-west-1")) {
+            try await destination(config, session: session).exists(key: "a.png")
+        }
     }
 }
