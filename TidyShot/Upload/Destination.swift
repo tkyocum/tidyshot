@@ -60,8 +60,11 @@ nonisolated enum UploadError: LocalizedError, Equatable, Sendable {
     }
 
     /// Whether an arbitrary error thrown during an upload attempt is worth retrying.
+    /// Cancellation (`CancellationError` or `URLError(.cancelled)`) is never retried; other
+    /// `URLError`s are transport failures and are.
     static func isRetryable(_ error: Error) -> Bool {
         if let uploadError = error as? UploadError { return uploadError.isRetryable }
+        if error is CancellationError || (error as? URLError)?.code == .cancelled { return false }
         return error is URLError
     }
 }
