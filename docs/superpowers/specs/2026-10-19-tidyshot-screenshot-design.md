@@ -98,7 +98,7 @@ Behavioural rules:
 | Concern | Choice | Reason |
 |---|---|---|
 | Language / UI | Swift 6, SwiftUI for settings and overlay content, AppKit for the selection overlay, panels, and menu bar | Selection overlay needs `NSWindow` level control, mouse tracking, and multi-display geometry that SwiftUI does not expose |
-| Minimum macOS | **DECIDE**: 15.2 (gets `captureImage(in:)`, covers Sequoia and Tahoe) or 26.0 (gets HDR output and the newer configuration type, simplifies code) | You run 27, so 26 costs nothing personally; 15.2 widens the audience |
+| Minimum macOS | 26.0 (decided 2026-10-19) | Uses `SCScreenshotConfiguration` and `captureScreenshot(rect:configuration:)` with `SCScreenshotOutput`, one API path, HDR available |
 | App type | Menu bar agent (`LSUIElement`), no Dock icon by default | Matches CleanShot and Dropshare |
 | Capture | ScreenCaptureKit only | See 2.3 |
 | Global hotkeys | `KeyboardShortcuts` package (sindresorhus) | Mature, has a SwiftUI recorder view, uses Carbon hotkeys under the hood so no Accessibility permission is needed |
@@ -114,7 +114,7 @@ Behavioural rules:
 
 Each module is a Swift Package target or a folder with one clear owner. Names are suggestions.
 
-- **CaptureEngine**: wraps ScreenCaptureKit. API: `captureArea(CGRect) async throws -> CGImage`, `captureWindow(SCWindow, options) async throws -> CGImage`, `captureDisplay(SCDisplay) async throws -> CGImage`. Also exposes `shareableContent()` for window enumeration and a `permissionState()` check. No UI.
+- **CaptureEngine**: wraps ScreenCaptureKit via `SCScreenshotConfiguration` and `SCScreenshotOutput` (macOS 26). API: `captureArea(CGRect) async throws -> CGImage`, `captureWindow(SCWindow, options) async throws -> CGImage`, `captureDisplay(SCDisplay) async throws -> CGImage`. SDR image is the default output; HDR is kept as a later option. Also exposes `shareableContent()` for window enumeration and a `permissionState()` check. No UI.
 - **SelectionOverlay**: full-screen borderless `NSWindow` per display at `.screenSaver` level. Modes: area, window, fullscreen. Draws dimming, crosshair, magnifier loupe, size label, and window highlight. Returns a `Selection` enum (`.area(CGRect, display)`, `.window(SCWindow)`, `.display(SCDisplay)`). Escape cancels. Freeze-screen mode shows a captured display image underneath.
 - **CaptureRecord / HistoryStore**: value type with id, timestamp, file URL, pixel size, source app, upload state (`none`, `uploading(progress)`, `uploaded(URL)`, `failed(Error)`). Store persists records and prunes by age.
 - **Naming**: template engine for local filenames and S3 object keys. Tokens: `{date}`, `{time}`, `{datetime}`, `{app}`, `{counter}`, `{random:N}`, `{ext}`. Separate templates for local file and object key, because `Screenshot 2026-10-19 at 11.56.03.png` on disk and `aSIS7.png` in the bucket are both desirable.
@@ -175,7 +175,7 @@ Separate design document. Will reuse Uploader, Naming, History, and Overlay.
 
 ## 7. Decisions needed before Phase 1 and 2
 
-1. **Minimum macOS**: 15.2 or 26.0. Recommendation: 26.0 for now, since you are the first user and it keeps the capture code on one API; drop to 15.2 only if someone on Sequoia asks.
+1. **Minimum macOS**: decided, 26.0. Capture uses `SCScreenshotManager.captureScreenshot(rect:configuration:)` and `captureScreenshot(contentFilter:configuration:)` with `SCScreenshotConfiguration`.
 2. **Clipboard in upload mode**: image first then URL, or URL only. Recommendation: URL only when auto-upload is on, with a setting.
 3. **Object key default**: random 6 characters, like your current `aSIS7`, or date-based. Recommendation: random with configurable length and an optional prefix folder.
 4. **Public read**: send `x-amz-acl: public-read`, or rely on a bucket policy. Recommendation: off by default with a toggle, since AWS blocks ACLs on new buckets.
