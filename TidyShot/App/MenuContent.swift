@@ -15,6 +15,10 @@ struct MenuContent: View {
             Task { await coordinator.captureArea() }
         }
         .disabled(coordinator.isCapturing)
+        Button(menuTitle("Capture Window", .captureWindow)) {
+            Task { await coordinator.captureWindow() }
+        }
+        .disabled(coordinator.isCapturing)
         Button(menuTitle("Capture Fullscreen", .captureFullscreen)) {
             Task { await coordinator.captureFullscreen() }
         }

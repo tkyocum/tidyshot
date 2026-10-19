@@ -9,6 +9,8 @@ final class SelectionController {
     private var views: [SelectionView] = []
     private var continuation: CheckedContinuation<Selection?, Never>?
     private var displays: [SCDisplay] = []
+    private var picker: WindowPicker?
+    private var hoveredWindow: SCWindow?
 
     init(engine: CaptureEngine) {
         self.engine = engine
@@ -17,6 +19,7 @@ final class SelectionController {
     func select(mode: SelectionMode, content: SCShareableContent) async -> Selection? {
         guard continuation == nil, !NSScreen.screens.isEmpty else { return nil }
         displays = content.displays
+        picker = WindowPicker(content: content)
 
         for screen in NSScreen.screens {
             let window = SelectionWindow(screen: screen)
@@ -25,6 +28,12 @@ final class SelectionController {
             // Callbacks hop to the next run-loop turn so the view is never torn down inside its own event handler.
             view.onComplete = { [weak self] appKitRect in Task { self?.finishArea(appKitRect) } }
             view.onCancel = { [weak self] in Task { self?.finish(nil) } }
+            view.onMouseMoved = { [weak self] globalPoint in self?.updateHover(at: globalPoint) }
+            // Capture the hovered window now; a mouseMoved could change it before the Task runs.
+            view.onPickWindow = { [weak self] in
+                let picked = self?.hoveredWindow
+                Task { self?.finish(picked.map(Selection.window)) }
+            }
             window.contentView = view
             window.makeFirstResponder(view)
             window.makeKeyAndOrderFront(nil)
@@ -37,6 +46,7 @@ final class SelectionController {
         // activate(ignoringOtherApps:) is marked for future deprecation in the SDK; it compiles without a warning today.
         NSApplication.shared.activate(ignoringOtherApps: true)
         windows.first { $0.frame.contains(NSEvent.mouseLocation) }?.makeKey()
+        updateHover(at: NSEvent.mouseLocation)
 
         return await withCheckedContinuation { continuation = $0 }
     }
@@ -70,6 +80,25 @@ final class SelectionController {
         windows = []
         views = []
         displays = []
+        picker = nil
+        hoveredWindow = nil
+    }
+
+    /// `globalPoint` is in AppKit global coordinates.
+    private func updateHover(at globalPoint: CGPoint) {
+        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
+        let cgPoint = Geometry.cgPoint(fromAppKit: globalPoint, primaryHeight: primaryHeight)
+        hoveredWindow = picker?.window(at: cgPoint)
+
+        let appKitFrame = hoveredWindow.map { Geometry.appKitRect(fromCG: $0.frame, primaryHeight: primaryHeight) }
+        for (window, view) in zip(windows, views) {
+            guard let appKitFrame, window.frame.intersects(appKitFrame) else {
+                view.highlightedRect = nil
+                continue
+            }
+            let inWindow = window.convertFromScreen(appKitFrame)
+            view.highlightedRect = view.convert(inWindow, from: nil).intersection(view.bounds)
+        }
     }
 
     private func finishArea(_ appKitRect: CGRect) {

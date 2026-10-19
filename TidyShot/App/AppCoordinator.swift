@@ -39,6 +39,9 @@ final class AppCoordinator {
         KeyboardShortcuts.onKeyUp(for: .captureArea) { [weak self] in
             Task { await self?.captureArea() }
         }
+        KeyboardShortcuts.onKeyUp(for: .captureWindow) { [weak self] in
+            Task { await self?.captureWindow() }
+        }
     }
 
     func captureFullscreen() async {
@@ -53,6 +56,10 @@ final class AppCoordinator {
 
     func captureArea() async {
         await runSelection(mode: .area)
+    }
+
+    func captureWindow() async {
+        await runSelection(mode: .window)
     }
 
     /// Show the overlay, capture with the overlay excluded, dismiss, then save.
