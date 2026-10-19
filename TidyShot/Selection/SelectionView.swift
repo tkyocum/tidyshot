@@ -14,6 +14,12 @@ final class SelectionView: NSView {
         didSet { if highlightedRect != oldValue { needsDisplay = true } }
     }
 
+    /// Screenshot of this view's display, in pixels, used by the loupe.
+    var snapshot: CGImage? {
+        didSet { needsDisplay = true }
+    }
+    var snapshotScale: CGFloat = 2
+
     private var dragStart: CGPoint?
     private var dragRect: CGRect?
     private var cursor: CGPoint?
@@ -73,6 +79,10 @@ final class SelectionView: NSView {
         dragRect = CGRect(x: min(start.x, point.x), y: min(start.y, point.y),
                           width: abs(point.x - start.x), height: abs(point.y - start.y)).integral
         needsDisplay = true
+        if let window {
+            let global = window.convertToScreen(CGRect(origin: event.locationInWindow, size: .zero)).origin
+            onMouseMoved?(global)
+        }
     }
 
     override func mouseUp(with event: NSEvent) {
@@ -129,6 +139,10 @@ final class SelectionView: NSView {
         if let cursor, !isDragging, mode == .area {
             drawCrosshair(at: cursor)
         }
+
+        if let cursor, mode == .area {
+            drawLoupe(at: cursor)
+        }
     }
 
     private func punchHole(_ rect: CGRect) {
@@ -164,5 +178,56 @@ final class SelectionView: NSView {
         NSColor.black.withAlphaComponent(0.7).setFill()
         NSBezierPath(roundedRect: background, xRadius: 4, yRadius: 4).fill()
         text.draw(at: CGPoint(x: origin.x + padding.width / 2, y: origin.y + padding.height / 2), withAttributes: attributes)
+    }
+
+    private func drawLoupe(at point: CGPoint) {
+        guard let snapshot, let context = NSGraphicsContext.current?.cgContext else { return }
+        let regionPoints: CGFloat = 16
+        let zoom: CGFloat = 8
+        let diameter = regionPoints * zoom
+        let pixelsToPoints = zoom / snapshotScale
+
+        // Source region in snapshot pixels. CGImage rows run top to bottom; the view's y runs bottom to top.
+        let half = regionPoints * snapshotScale / 2
+        let centreX = point.x * snapshotScale
+        let centreY = (bounds.height - point.y) * snapshotScale
+        let source = CGRect(x: centreX - half, y: centreY - half, width: half * 2, height: half * 2)
+        let imageRect = CGRect(x: 0, y: 0, width: snapshot.width, height: snapshot.height)
+        let visible = source.intersection(imageRect)
+        guard !visible.isEmpty, let cropped = snapshot.cropping(to: visible) else { return }
+
+        var origin = CGPoint(x: point.x + 24, y: point.y - 24 - diameter)
+        if origin.x + diameter > bounds.maxX { origin.x = point.x - 24 - diameter }
+        if origin.y < bounds.minY { origin.y = point.y + 24 }
+        let destination = CGRect(origin: origin, size: CGSize(width: diameter, height: diameter))
+
+        // Where the visible part lands inside the circle. Image y is flipped relative to the view.
+        let drawRect = CGRect(x: destination.minX + (visible.minX - source.minX) * pixelsToPoints,
+                              y: destination.minY + (source.maxY - visible.maxY) * pixelsToPoints,
+                              width: visible.width * pixelsToPoints,
+                              height: visible.height * pixelsToPoints)
+
+        context.saveGState()
+        context.addEllipse(in: destination)
+        context.clip()
+        context.setFillColor(NSColor.black.cgColor)
+        context.fill(destination)
+        context.interpolationQuality = .none
+        context.draw(cropped, in: drawRect)
+        context.restoreGState()
+
+        NSColor.white.withAlphaComponent(0.9).setStroke()
+        let cross = NSBezierPath()
+        cross.lineWidth = 1
+        cross.move(to: CGPoint(x: destination.minX, y: destination.midY + 0.5))
+        cross.line(to: CGPoint(x: destination.maxX, y: destination.midY + 0.5))
+        cross.move(to: CGPoint(x: destination.midX + 0.5, y: destination.minY))
+        cross.line(to: CGPoint(x: destination.midX + 0.5, y: destination.maxY))
+        cross.stroke()
+
+        let ring = NSBezierPath(ovalIn: destination.insetBy(dx: 1, dy: 1))
+        ring.lineWidth = 2
+        NSColor.white.setStroke()
+        ring.stroke()
     }
 }

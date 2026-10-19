@@ -11,6 +11,7 @@ final class SelectionController {
     private var displays: [SCDisplay] = []
     private var picker: WindowPicker?
     private var hoveredWindow: SCWindow?
+    private var snapshotTask: Task<Void, Never>?
 
     init(engine: CaptureEngine) {
         self.engine = engine
@@ -47,6 +48,9 @@ final class SelectionController {
         NSApplication.shared.activate(ignoringOtherApps: true)
         windows.first { $0.frame.contains(NSEvent.mouseLocation) }?.makeKey()
         updateHover(at: NSEvent.mouseLocation)
+        if mode == .area {
+            snapshotTask = Task { await takeSnapshots() }
+        }
 
         return await withCheckedContinuation { continuation = $0 }
     }
@@ -71,8 +75,27 @@ final class SelectionController {
         return found
     }
 
+    /// One screenshot per display with our overlay excluded, delivered to the view on that display.
+    private func takeSnapshots() async {
+        let overlays = await overlayWindows()
+        // A snapshot taken without every overlay excluded would show the dimming in the loupe; skip instead.
+        guard overlays.count >= windows.count else { return }
+        for display in displays {
+            guard !Task.isCancelled else { return }
+            guard let index = windows.firstIndex(where: { $0.displayID == display.displayID }) else { continue }
+            guard let result = try? await engine.capture(.display(display),
+                                                         options: CaptureOptions(showsCursor: false),
+                                                         excludingWindows: overlays) else { continue }
+            guard !Task.isCancelled, index < views.count else { return }
+            views[index].snapshotScale = result.scale
+            views[index].snapshot = result.image
+        }
+    }
+
     /// Removes the overlay. Safe to call more than once.
     func dismiss() {
+        snapshotTask?.cancel()
+        snapshotTask = nil
         for window in windows {
             window.orderOut(nil)
             window.contentView = nil
