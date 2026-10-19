@@ -85,6 +85,9 @@ final class SelectionView: NSView {
         }
     }
 
+    /// Set once an area selection completes; the hole stays open until the view is discarded.
+    private var completedRect: CGRect?
+
     override func mouseUp(with event: NSEvent) {
         defer {
             dragStart = nil
@@ -96,6 +99,7 @@ final class SelectionView: NSView {
                 onCancel?()
                 return
             }
+            completedRect = rect
             onComplete?(window.convertToScreen(convert(rect, to: nil)))
         } else if highlightedRect != nil {
             onPickWindow?()
@@ -117,6 +121,15 @@ final class SelectionView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         dimColor.setFill()
         bounds.fill()
+
+        if let completedRect {
+            punchHole(completedRect)
+            NSColor.white.setStroke()
+            let border = NSBezierPath(rect: completedRect.insetBy(dx: 0.5, dy: 0.5))
+            border.lineWidth = 1
+            border.stroke()
+            return
+        }
 
         let isDragging = mode == .area && dragStart != nil && dragRect != nil
 

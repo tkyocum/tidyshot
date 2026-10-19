@@ -12,6 +12,7 @@ final class SelectionController {
     private var picker: WindowPicker?
     private var hoveredWindow: SCWindow?
     private var snapshotTask: Task<Void, Never>?
+    private var cachedOverlayWindows: [SCWindow]?
 
     init(engine: CaptureEngine) {
         self.engine = engine
@@ -57,9 +58,11 @@ final class SelectionController {
 
     /// Our overlay windows as ScreenCaptureKit sees them, for `excludingWindows`. Matches by window
     /// number so other TidyShot windows are unaffected. Retries briefly because ScreenCaptureKit can
-    /// lag the window server. Returns whatever was found after the last attempt.
+    /// lag the window server. Returns whatever was found after the last attempt. A complete result
+    /// found by the snapshot pass is cached, so the capture after selection does not look up again.
     func overlayWindows() async -> [SCWindow] {
-        let wanted = Set(windows.map { CGWindowID($0.windowNumber) })
+        let wanted = Set(windows.compactMap { $0.windowNumber > 0 ? CGWindowID($0.windowNumber) : nil })
+        if let cachedOverlayWindows, cachedOverlayWindows.count >= wanted.count { return cachedOverlayWindows }
         var found: [SCWindow] = []
         for attempt in 0..<4 {
             if attempt > 0 {
@@ -78,6 +81,7 @@ final class SelectionController {
     /// One screenshot per display with our overlay excluded, delivered to the view on that display.
     private func takeSnapshots() async {
         let overlays = await overlayWindows()
+        if overlays.count >= windows.count { cachedOverlayWindows = overlays }
         // A snapshot taken without every overlay excluded would show the dimming in the loupe; skip instead.
         guard overlays.count >= windows.count else { return }
         for display in displays {
@@ -96,6 +100,7 @@ final class SelectionController {
     func dismiss() {
         snapshotTask?.cancel()
         snapshotTask = nil
+        cachedOverlayWindows = nil
         for window in windows {
             window.orderOut(nil)
             window.contentView = nil
@@ -143,6 +148,8 @@ final class SelectionController {
     /// Resumes the waiting caller. Cancel dismisses the overlay at once; success leaves it up.
     private func finish(_ selection: Selection?) {
         guard let continuation else { return }
+        snapshotTask?.cancel()
+        snapshotTask = nil
         self.continuation = nil
         if selection == nil {
             dismiss()

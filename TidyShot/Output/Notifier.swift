@@ -22,9 +22,9 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         post(content)
     }
 
-    func notifyError(_ message: String) {
+    func notifyError(_ message: String, title: String = "Capture failed") {
         let content = UNMutableNotificationContent()
-        content.title = "Capture failed"
+        content.title = title
         content.body = message
         post(content)
     }

@@ -116,7 +116,7 @@ final class AppCoordinator {
             notifier.notifyError(error.localizedDescription)
             return
         }
-        var copiedToClipboard = settings.copyImageToClipboard
+        let copiedToClipboard = settings.copyImageToClipboard
         if copiedToClipboard {
             Pasteboard.copy(image: result.image, pngData: png, scale: result.scale)
         }
@@ -124,9 +124,8 @@ final class AppCoordinator {
             guard let folder = await saveLocation.ensureFolder() else {
                 if !copiedToClipboard {
                     Pasteboard.copy(image: result.image, pngData: png, scale: result.scale)
-                    copiedToClipboard = true
                 }
-                notifier.notifyError("Not saved: no folder was chosen. The image is on the clipboard.")
+                notifier.notifyError("No folder was chosen. The image is on the clipboard.", title: "Not saved")
                 return
             }
             let counter = settings.fileNameTemplate.contains("{counter}") ? settings.nextCounter() : 0
@@ -143,9 +142,8 @@ final class AppCoordinator {
             NSLog("Save failed: \(error.localizedDescription)")
             if !copiedToClipboard {
                 Pasteboard.copy(image: result.image, pngData: png, scale: result.scale)
-                copiedToClipboard = true
             }
-            notifier.notifyError("\(error.localizedDescription) The image is on the clipboard.")
+            notifier.notifyError("\(error.localizedDescription) The image is on the clipboard.", title: "Not saved")
         }
     }
 
@@ -155,7 +153,11 @@ final class AppCoordinator {
             return try await engine.shareableContent()
         } catch {
             NSLog("Shareable content failed: \(error.localizedDescription)")
-            permissionWindow.show()
+            if ScreenCapturePermission.isGranted {
+                notifier.notifyError("Could not list screens and windows: \(error.localizedDescription)")
+            } else {
+                permissionWindow.show()
+            }
             return nil
         }
     }

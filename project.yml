@@ -8,8 +8,8 @@ options:
   createIntermediateGroups: true
 
 configFiles:
-  Debug: Config/Local.xcconfig
-  Release: Config/Local.xcconfig
+  Debug: Config/Base.xcconfig
+  Release: Config/Base.xcconfig
 
 packages:
   KeyboardShortcuts:
