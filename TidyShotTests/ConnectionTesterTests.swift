@@ -36,10 +36,43 @@ struct ConnectionTesterTests {
     }
 
     @Test func notPublicWhenGetIsForbidden() async {
-        let (session, _) = StubSession.make { request in request.httpMethod == "GET" ? (403, Data()) : (200, Data()) }
+        let (session, stub) = StubSession.make { request in request.httpMethod == "GET" ? (403, Data()) : (200, Data()) }
         let result = await ConnectionTester.run(destination: destination(session), session: session)
         #expect(result.outcome == .notPublic(status: 403))
         #expect(result.summary.contains("HTTP 403"))
+        #expect(stub.requests.map(\.httpMethod) == ["PUT", "GET", "DELETE"])
+    }
+
+    @Test func transportErrorOnPublicGetIsReportedDistinctly() async {
+        let (session, stub) = StubSession.make { request in
+            request.httpMethod == "GET" ? (StubURLProtocol.transportFailureStatus, Data()) : (200, Data())
+        }
+        let result = await ConnectionTester.run(destination: destination(session), session: session)
+        let message = URLError(.cannotFindHost).localizedDescription
+        guard case .publicCheckFailed(let reported) = result.outcome else {
+            Issue.record("Expected publicCheckFailed, got \(result.outcome)")
+            return
+        }
+        #expect(reported.contains(message))
+        #expect(stub.requests.map(\.httpMethod) == ["PUT", "GET", "DELETE"])
+    }
+
+    @Test func unexpectedStatusOnPublicGetIsReportedDistinctly() async {
+        let (session, _) = StubSession.make { request in request.httpMethod == "GET" ? (503, Data()) : (200, Data()) }
+        let result = await ConnectionTester.run(destination: destination(session), session: session)
+        #expect(result.outcome == .publicCheckFailed("HTTP 503"))
+    }
+
+    @Test func wrongBodyOn200IsNotReadable() async {
+        let (session, _) = StubSession.make { request in
+            request.httpMethod == "GET" ? (200, Data("<html>parked domain</html>".utf8)) : (200, Data())
+        }
+        let result = await ConnectionTester.run(destination: destination(session), session: session)
+        guard case .publicCheckFailed = result.outcome else {
+            Issue.record("Expected publicCheckFailed, got \(result.outcome)")
+            return
+        }
+        #expect(result.outcome != .readable)
     }
 
     @Test func uploadFailedWhenPutIsRejected() async {

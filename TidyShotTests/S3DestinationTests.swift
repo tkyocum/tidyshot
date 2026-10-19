@@ -10,6 +10,8 @@ nonisolated final class StubURLProtocol: URLProtocol {
     typealias Handler = @Sendable (URLRequest) -> (status: Int, body: Data)
 
     static let sessionHeader = "X-Stub-Session"
+    /// Return this status from a handler to make the request fail with `URLError(.cannotFindHost)`.
+    static let transportFailureStatus = -1
 
     struct Entry: Sendable {
         var handler: Handler
@@ -33,6 +35,10 @@ nonisolated final class StubURLProtocol: URLProtocol {
             return
         }
         let (status, body) = handler(request)
+        if status == Self.transportFailureStatus {
+            client?.urlProtocol(self, didFailWithError: URLError(.cannotFindHost))
+            return
+        }
         let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: "HTTP/1.1", headerFields: nil)!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: body)

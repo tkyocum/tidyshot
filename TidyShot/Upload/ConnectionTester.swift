@@ -6,6 +6,8 @@ nonisolated struct ConnectionTestResult: Sendable, Equatable {
         case readable
         /// PUT succeeded but the public URL did not serve it (bucket policy or URL template problem).
         case notPublic(status: Int)
+        /// PUT succeeded but the public GET could not be judged (network error, unexpected status, wrong content).
+        case publicCheckFailed(String)
         case uploadFailed(String)
     }
 
@@ -21,6 +23,8 @@ nonisolated struct ConnectionTestResult: Sendable, Equatable {
             "Upload and public read both work. \(publicURL?.absoluteString ?? "")"
         case .notPublic(let status):
             "Upload worked, but the public URL returned HTTP \(status). Check the bucket policy, CDN, or the public URL template."
+        case .publicCheckFailed(let message):
+            "The probe was uploaded, but checking its public URL failed: \(message). Check the public URL template and your network."
         case .uploadFailed(let message):
             "Upload failed: \(message)"
         }
@@ -46,7 +50,7 @@ nonisolated enum ConnectionTester {
             publicURL = try destination.publicURL(for: key)
         } catch {
             let warning = await deleteProbe(key, destination: destination)
-            return ConnectionTestResult(probeKey: key, publicURL: nil, outcome: .uploadFailed(error.localizedDescription),
+            return ConnectionTestResult(probeKey: key, publicURL: nil, outcome: .publicCheckFailed("Invalid public URL template: \(error)"),
                                         warning: warning)
         }
 
@@ -56,9 +60,18 @@ nonisolated enum ConnectionTester {
         do {
             let (body, response) = try await session.data(for: request)
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-            outcome = (status == 200 && body == probeBody) ? .readable : .notPublic(status: status)
+            switch status {
+            case 200 where body == probeBody:
+                outcome = .readable
+            case 200:
+                outcome = .publicCheckFailed("the URL returned different content, so it probably points somewhere else")
+            case 403, 404:
+                outcome = .notPublic(status: status)
+            default:
+                outcome = .publicCheckFailed("HTTP \(status)")
+            }
         } catch {
-            outcome = .notPublic(status: 0)
+            outcome = .publicCheckFailed(error.localizedDescription)
         }
         let warning = await deleteProbe(key, destination: destination)
         return ConnectionTestResult(probeKey: key, publicURL: publicURL, outcome: outcome, warning: warning)
