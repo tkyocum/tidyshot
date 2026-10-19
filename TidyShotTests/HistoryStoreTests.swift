@@ -45,16 +45,15 @@ struct HistoryStoreTests {
         #expect(second.failedRecords.map(\.id) == [item.id])
     }
 
-    @Test func setProgressDoesNotWriteToDisk() {
+    @Test func setProgressDoesNotWriteToDisk() throws {
         let first = store()
         let item = record(state: .uploading(fraction: 0))
         first.add(item)
+        let file = dir.appending(path: "history.json")
+        let before = try Data(contentsOf: file)
         first.setProgress(id: item.id, fraction: 0.5)
         #expect(first.record(id: item.id)?.uploadState == .uploading(fraction: 0.5))
-
-        let second = store()
-        second.load()
-        #expect(second.records.first?.uploadState == .failed(message: "Upload was interrupted."))
+        #expect(try Data(contentsOf: file) == before)
     }
 
     @Test func lateProgressDoesNotReopenAFinishedUpload() {
@@ -98,6 +97,24 @@ struct HistoryStoreTests {
         corrupt.add(record())
         #expect(try Data(contentsOf: setAside) == garbage)
         #expect(FileManager.default.fileExists(atPath: file.path(percentEncoded: false)))
+    }
+
+    @Test func corruptFileSetAsideSurvivesNameCollision() throws {
+        let existing = dir.appending(path: "history.json.corrupt-1792411200")
+        let earlier = Data("earlier corrupt".utf8)
+        try earlier.write(to: existing)
+        let garbage = Data("not json".utf8)
+        try garbage.write(to: dir.appending(path: "history.json"))
+
+        store().load()
+
+        #expect(try Data(contentsOf: existing) == earlier)
+        let names = try FileManager.default.contentsOfDirectory(atPath: dir.path(percentEncoded: false))
+        let others = names.filter { $0.hasPrefix("history.json.corrupt-1792411200-") }
+        #expect(others.count == 1)
+        if let name = others.first {
+            #expect(try Data(contentsOf: dir.appending(path: name)) == garbage)
+        }
     }
 
     @Test func removeDeletesRecord() {
