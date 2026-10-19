@@ -1,0 +1,65 @@
+import Foundation
+import Testing
+@testable import TidyShot
+
+struct ConnectionTesterTests {
+    let config = S3DestinationConfig(endpoint: "https://s3.us-east-1.amazonaws.com", region: "us-east-1", bucket: "snap",
+                                     keyPrefix: "p", publicURLTemplate: "https://snap.tky.io/{key}")
+
+    func destination(_ session: URLSession) -> S3Destination {
+        S3Destination(config: config,
+                      credentials: AWSCredentials(accessKeyID: "AKID", secretAccessKey: "secret"),
+                      session: session)
+    }
+
+    @Test func readableWhenPutSucceedsAndPublicGetReturnsBody() async {
+        let (session, stub) = StubSession.make { request in
+            switch request.httpMethod {
+            case "PUT": (200, Data())
+            case "GET": (200, ConnectionTester.probeBody)
+            default: (204, Data())
+            }
+        }
+        let result = await ConnectionTester.run(destination: destination(session), session: session,
+                                                randomString: { String(repeating: "Z", count: $0) })
+
+        #expect(result.probeKey == "p/tidyshot-probe-ZZZZZZZZ.txt")
+        #expect(result.publicURL?.absoluteString == "https://snap.tky.io/p/tidyshot-probe-ZZZZZZZZ.txt")
+        #expect(result.outcome == .readable)
+        #expect(result.warning == nil)
+        let requests = stub.requests
+        let sent = requests.map { "\($0.httpMethod!) \($0.url!.absoluteString)" }
+        #expect(sent == ["PUT https://snap.s3.us-east-1.amazonaws.com/p/tidyshot-probe-ZZZZZZZZ.txt",
+                         "GET https://snap.tky.io/p/tidyshot-probe-ZZZZZZZZ.txt",
+                         "DELETE https://snap.s3.us-east-1.amazonaws.com/p/tidyshot-probe-ZZZZZZZZ.txt"])
+        #expect(requests[1].value(forHTTPHeaderField: "authorization") == nil)
+    }
+
+    @Test func notPublicWhenGetIsForbidden() async {
+        let (session, _) = StubSession.make { request in request.httpMethod == "GET" ? (403, Data()) : (200, Data()) }
+        let result = await ConnectionTester.run(destination: destination(session), session: session)
+        #expect(result.outcome == .notPublic(status: 403))
+        #expect(result.summary.contains("HTTP 403"))
+    }
+
+    @Test func uploadFailedWhenPutIsRejected() async {
+        let (session, stub) = StubSession.make { _ in (403, Data("AccessDenied".utf8)) }
+        let result = await ConnectionTester.run(destination: destination(session), session: session)
+        #expect(result.outcome == .uploadFailed("Server returned HTTP 403: AccessDenied"))
+        #expect(stub.requests.count == 1)
+    }
+
+    @Test func warnsWhenProbeCannotBeDeleted() async {
+        let (session, _) = StubSession.make { request in
+            switch request.httpMethod {
+            case "PUT": (200, Data())
+            case "GET": (200, ConnectionTester.probeBody)
+            default: (403, Data("AccessDenied".utf8))
+            }
+        }
+        let result = await ConnectionTester.run(destination: destination(session), session: session,
+                                                randomString: { String(repeating: "Z", count: $0) })
+        #expect(result.outcome == .readable)
+        #expect(result.warning == "Probe object p/tidyshot-probe-ZZZZZZZZ.txt could not be deleted; remove it by hand.")
+    }
+}
