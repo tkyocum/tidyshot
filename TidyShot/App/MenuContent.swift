@@ -15,6 +15,11 @@ struct MenuContent: View {
         }
         .disabled(coordinator.isCapturing)
         Divider()
+        Button("Reveal Last Capture") {
+            coordinator.revealLastCapture()
+        }
+        .disabled(coordinator.lastCaptureURL == nil)
+        Divider()
         Button("Quit TidyShot") {
             NSApplication.shared.terminate(nil)
         }

@@ -8,12 +8,17 @@ final class AppCoordinator {
     static let shared = AppCoordinator()
 
     let engine = CaptureEngine()
+    let saveLocation = SaveLocation()
+    private let notifier = Notifier()
     private let permissionWindow = PermissionWindowController()
+
     private(set) var isCapturing = false
+    private(set) var lastCaptureURL: URL?
 
     var permissionGranted: Bool { ScreenCapturePermission.isGranted }
 
     func start() {
+        notifier.setUp()
         if !ScreenCapturePermission.isGranted {
             permissionWindow.show()
         }
@@ -25,34 +30,48 @@ final class AppCoordinator {
 
     func captureFullscreen() async {
         await withCaptureLock {
+            let frontApp = NSWorkspace.shared.frontmostApplication?.localizedName
             guard let content = await loadContent() else { return }
             guard let display = Self.display(under: NSEvent.mouseLocation, in: content.displays) else { return }
             guard let result = await capture(.display(display)) else { return }
-            debugOpen(result)
+            await save(result, appName: frontApp)
         }
     }
 
-    /// Runs the engine and logs failures. Returns nil on failure.
+    func revealLastCapture() {
+        guard let lastCaptureURL else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([lastCaptureURL])
+    }
+
+    /// Runs the engine. On failure posts a notification and returns nil.
     func capture(_ target: CaptureTarget, excludingWindows: [SCWindow] = []) async -> CaptureResult? {
         do {
             return try await engine.capture(target, options: CaptureOptions(showsCursor: false), excludingWindows: excludingWindows)
         } catch {
             NSLog("Capture failed: \(error.localizedDescription)")
+            notifier.notifyError(error.localizedDescription)
             return nil
         }
     }
 
-    /// Debug output: encode, write to the temp directory, open in the default viewer.
-    private func debugOpen(_ result: CaptureResult) {
+    /// Encode, copy to clipboard, save, play sound, notify. The clipboard copy happens before the
+    /// folder is resolved so a cancelled folder chooser never loses the image.
+    func save(_ result: CaptureResult, appName: String?) async {
         do {
             let png = try ImageEncoder.pngData(from: result.image, scale: result.scale)
-            let url = FileManager.default.temporaryDirectory
-                .appendingPathComponent("TidyShot-debug-\(Int(Date().timeIntervalSince1970))")
-                .appendingPathExtension("png")
-            try png.write(to: url)
-            NSWorkspace.shared.open(url)
+            Pasteboard.copy(image: result.image, pngData: png, scale: result.scale)
+            guard let folder = await saveLocation.ensureFolder() else {
+                notifier.notifyError("Not saved: no folder was chosen. The image is on the clipboard.")
+                return
+            }
+            let baseName = FileNamer().name(appName: appName, counter: 1)
+            let url = try saveLocation.write(png, baseName: baseName, ext: "png", in: folder)
+            SoundPlayer.playShutter()
+            lastCaptureURL = url
+            notifier.notifySaved(fileURL: url)
         } catch {
-            NSLog("Debug write failed: \(error.localizedDescription)")
+            NSLog("Save failed: \(error.localizedDescription)")
+            notifier.notifyError(error.localizedDescription)
         }
     }
 
