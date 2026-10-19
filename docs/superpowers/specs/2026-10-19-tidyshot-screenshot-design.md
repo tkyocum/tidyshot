@@ -34,7 +34,7 @@ Tiers: **P0** is the MVP, **P1** follows once the upload loop is solid, **P2** i
 | Transparent window / shadow toggle | Keep or drop the window shadow | P1 | `ignoreShadowsSingleWindow` in ScreenCaptureKit |
 | Freeze screen | Snapshot the display before selecting, so moving content is capturable | P1 | Capture full display first, then crop |
 | Self-timer | Delay before capture | P1 | Trivial once capture exists |
-| Hide desktop icons | Clean desktop during capture | P2 | Finder `defaults` toggle |
+| Hide desktop icons | Clean desktop during capture | P2 | Cover window at desktop icon level (sandbox-safe); not a Finder `defaults` write |
 | Scrolling capture | Captures content taller than the screen, any app | P2 | Hardest screenshot feature: synthetic scroll events and image stitching |
 | Annotate | Arrow, rect, ellipse, line, pencil, highlighter, text, counter, blur, pixelate, spotlight, crop; editable project file | P1 (basic set), P2 (blur/pixelate/spotlight/counter) | Biggest UI surface in the app |
 | Background tool | 20 backgrounds, padding, presets, auto balance | P2 | Compositing step shared with "window with background" |
@@ -106,7 +106,7 @@ Behavioural rules:
 | S3 client | Hand-rolled SigV4 signer over `URLSession`, single `PUT Object` request, optional `x-amz-acl: public-read` | One request type is needed; Soto pulls in about 20 packages and a large binary. Multipart is unnecessary for screenshots. Add Soto later only if recordings need multipart |
 | Image encoding | `ImageIO` for PNG and JPEG, with a DPI tag matching the display scale | Retina images should report 144 DPI so they display at the right size when pasted |
 | Persistence | Capture history and settings in `~/Library/Application Support/TidyShot/` as JSON plus files; `UserDefaults` for simple preferences | Small data, no need for Core Data |
-| Distribution | Developer ID signed and notarized, outside the App Store. Hardened runtime on, App Sandbox **DECIDE** | Sandbox is compatible with ScreenCaptureKit but complicates writing to arbitrary save folders and the Finder desktop-icons toggle |
+| Distribution | Developer ID signed and notarized, outside the App Store. Hardened runtime on, App Sandbox on (decided 2026-10-19) | Entitlements: `network.client`, `files.user-selected.read-write`, `files.bookmarks.app-scope`. Save folder chosen via `NSOpenPanel` and persisted as a security-scoped bookmark. Keeps the App Store open as a later channel |
 | Tests | XCTest for the signer (verify against AWS published SigV4 test vectors), naming templates, URL builder, and history store. Manual test checklist for capture UI | Capture UI cannot be unit tested meaningfully |
 | Build | Xcode project generated from `project.yml` with XcodeGen, or a plain Swift Package with an app target | **DECIDE**; XcodeGen keeps diffs readable |
 
@@ -180,7 +180,7 @@ Separate design document. Will reuse Uploader, Naming, History, and Overlay.
 3. **Object key default**: decided, random 6 characters from `[A-Za-z0-9]` plus extension, configurable length (4 to 32) and an optional prefix folder. Collision handling: issue a `HEAD` on the key before `PUT` and regenerate on 200.
 4. **Public read**: decided, rely on a bucket policy or CDN. No ACL header by default; a per-destination "Send public-read ACL" toggle adds `x-amz-acl: public-read`. Test Connection performs a PUT, then an unauthenticated GET on the public URL, and reports if the object is not readable.
 5. **Image format default**: decided, PNG always. A per-destination format override (JPEG, HEIC, quality) is a Phase 3 item.
-6. **Sandbox**: on or off. Recommendation: off for a direct-download Developer ID app; it removes friction around save folders and the desktop-icons toggle.
+6. **Sandbox**: decided, on. Save folder access via security-scoped bookmarks. Consequences: the default save folder is the app container's `Documents` until the user picks one; drag-out from the overlay uses `NSFilePromiseProvider`; the "hide desktop icons" feature must be implemented as a wallpaper-coloured cover window at desktop icon level rather than a Finder `defaults` write; the URL scheme and Carbon hotkeys work unchanged.
 7. **Licence**: open source (MIT) or private. Affects whether macshot's GPL code can even be read for reference.
 8. **Project generator**: XcodeGen versus a hand-maintained `.xcodeproj`.
 
