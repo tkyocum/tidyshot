@@ -264,7 +264,8 @@ final class AppCoordinator {
 
     /// Re-reads the file from the save folder and uploads it again.
     func retryUpload(recordID: UUID) {
-        guard history.record(id: recordID) != nil else { return }
+        // Ignore a second click while the record is already in flight; otherwise it would upload twice.
+        guard history.record(id: recordID) != nil, !uploadingIDs.contains(recordID) else { return }
         guard let destination = makeDestination() else {
             markFailed(recordID, message: UploadError.notConfigured.localizedDescription)
             return
