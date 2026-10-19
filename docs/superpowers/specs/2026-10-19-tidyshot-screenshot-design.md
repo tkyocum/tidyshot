@@ -178,7 +178,7 @@ Separate design document. Will reuse Uploader, Naming, History, and Overlay.
 1. **Minimum macOS**: decided, 26.0. Capture uses `SCScreenshotManager.captureScreenshot(rect:configuration:)` and `captureScreenshot(contentFilter:configuration:)` with `SCScreenshotConfiguration`.
 2. **Clipboard in upload mode**: decided, URL only, with an "Also copy image" setting off by default.
 3. **Object key default**: decided, random 6 characters from `[A-Za-z0-9]` plus extension, configurable length (4 to 32) and an optional prefix folder. Collision handling: issue a `HEAD` on the key before `PUT` and regenerate on 200.
-4. **Public read**: send `x-amz-acl: public-read`, or rely on a bucket policy. Recommendation: off by default with a toggle, since AWS blocks ACLs on new buckets.
+4. **Public read**: decided, rely on a bucket policy or CDN. No ACL header by default; a per-destination "Send public-read ACL" toggle adds `x-amz-acl: public-read`. Test Connection performs a PUT, then an unauthenticated GET on the public URL, and reports if the object is not readable.
 5. **Image format default**: PNG always, or JPEG above a size threshold. Recommendation: PNG, with a per-destination override later.
 6. **Sandbox**: on or off. Recommendation: off for a direct-download Developer ID app; it removes friction around save folders and the desktop-icons toggle.
 7. **Licence**: open source (MIT) or private. Affects whether macshot's GPL code can even be read for reference.
