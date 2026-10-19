@@ -17,4 +17,15 @@ enum Pasteboard {
         pasteboard.clearContents()
         pasteboard.writeObjects([item])
     }
+
+    /// Replaces the pasteboard contents with `url`, as plain text and as a URL.
+    static func copy(url: URL) {
+        let item = NSPasteboardItem()
+        item.setString(url.absoluteString, forType: .string)
+        item.setString(url.absoluteString, forType: .URL)
+
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.writeObjects([item])
+    }
 }

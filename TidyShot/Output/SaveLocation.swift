@@ -59,6 +59,14 @@ final class SaveLocation {
         }
     }
 
+    /// Reads a file inside the save folder (for upload retries), holding security-scoped access.
+    func read(contentsOf fileURL: URL) throws -> Data {
+        guard let currentURL else { throw CocoaError(.fileNoSuchFile) }
+        return try withAccess(to: currentURL) {
+            try Data(contentsOf: fileURL)
+        }
+    }
+
     private func withAccess<T>(to folder: URL, _ body: () throws -> T) rethrows -> T {
         let accessing = folder.startAccessingSecurityScopedResource()
         defer { if accessing { folder.stopAccessingSecurityScopedResource() } }
