@@ -41,19 +41,22 @@ final class SelectionController {
         return await withCheckedContinuation { continuation = $0 }
     }
 
-    /// This process's on-screen windows as ScreenCaptureKit sees them, for `excludingWindows`.
-    /// ScreenCaptureKit can lag a frame behind the window server, so retry briefly until every
-    /// overlay window is listed. Returns whatever was found after the last attempt.
+    /// Our overlay windows as ScreenCaptureKit sees them, for `excludingWindows`. Matches by window
+    /// number so other TidyShot windows are unaffected. Retries briefly because ScreenCaptureKit can
+    /// lag the window server. Returns whatever was found after the last attempt.
     func overlayWindows() async -> [SCWindow] {
-        let selfPID = ProcessInfo.processInfo.processIdentifier
+        let wanted = Set(windows.map { CGWindowID($0.windowNumber) })
         var found: [SCWindow] = []
         for attempt in 0..<4 {
             if attempt > 0 {
                 try? await Task.sleep(for: .milliseconds(50))
             }
             guard let fresh = try? await engine.shareableContent() else { continue }
-            found = fresh.windows.filter { $0.owningApplication?.processID == selfPID }
-            if found.count >= windows.count { break }
+            found = fresh.windows.filter { wanted.contains($0.windowID) }
+            if found.count >= wanted.count { break }
+        }
+        if found.count < wanted.count {
+            NSLog("Overlay exclusion incomplete: found \(found.count) of \(wanted.count) overlay windows")
         }
         return found
     }
