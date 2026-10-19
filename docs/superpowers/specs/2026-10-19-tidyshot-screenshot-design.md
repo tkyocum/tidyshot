@@ -88,7 +88,7 @@ hotkey ─▶ SelectionOverlay ─▶ CaptureEngine ─▶ CaptureRecord (PNG on
 Behavioural rules:
 
 - The file is written to the local save folder before upload starts, so a failed upload loses nothing.
-- Clipboard is written twice when auto-upload is on: the image immediately, then the URL on success. **DECIDE** whether the image copy should happen at all in upload mode, or only the URL (Dropshare copies only the URL).
+- When auto-upload is on, only the URL is written to the clipboard, on upload success. A setting ("Also copy image") additionally writes the image at capture time; the URL then replaces it. When auto-upload is off, the image is copied at capture time.
 - The overlay shows a progress ring during upload, then a checkmark and the URL. Clicking it copies the URL again. Dragging it out drags the local file.
 - Upload failures stay in capture history with a retry button and a notification. The app never silently drops a capture.
 - One menu bar icon state change during upload, so the overlay can auto-close without losing the signal.
@@ -176,7 +176,7 @@ Separate design document. Will reuse Uploader, Naming, History, and Overlay.
 ## 7. Decisions needed before Phase 1 and 2
 
 1. **Minimum macOS**: decided, 26.0. Capture uses `SCScreenshotManager.captureScreenshot(rect:configuration:)` and `captureScreenshot(contentFilter:configuration:)` with `SCScreenshotConfiguration`.
-2. **Clipboard in upload mode**: image first then URL, or URL only. Recommendation: URL only when auto-upload is on, with a setting.
+2. **Clipboard in upload mode**: decided, URL only, with an "Also copy image" setting off by default.
 3. **Object key default**: random 6 characters, like your current `aSIS7`, or date-based. Recommendation: random with configurable length and an optional prefix folder.
 4. **Public read**: send `x-amz-acl: public-read`, or rely on a bucket policy. Recommendation: off by default with a toggle, since AWS blocks ACLs on new buckets.
 5. **Image format default**: PNG always, or JPEG above a size threshold. Recommendation: PNG, with a per-destination override later.
