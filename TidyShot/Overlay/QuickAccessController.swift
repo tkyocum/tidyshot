@@ -41,6 +41,9 @@ final class QuickAccessController {
         model.record = record
         if model.isSettled {
             scheduleClose()
+        } else {
+            closeTask?.cancel()
+            closeTask = nil
         }
     }
 
@@ -52,15 +55,17 @@ final class QuickAccessController {
         model = nil
     }
 
-    /// Waits `autoCloseSeconds`, then keeps waiting while the mouse is over the panel.
+    /// Waits `autoCloseSeconds`; while the mouse is over the panel the countdown restarts.
     private func scheduleClose() {
         closeTask?.cancel()
         let seconds = autoCloseSeconds
         guard seconds > 0 else { return }
         closeTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(seconds))
-            while !Task.isCancelled, self?.model?.isHovered == true {
-                try? await Task.sleep(for: .seconds(1))
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(seconds))
+                guard !Task.isCancelled else { return }
+                if self?.model?.isHovered == true { continue }
+                break
             }
             guard !Task.isCancelled else { return }
             self?.close()

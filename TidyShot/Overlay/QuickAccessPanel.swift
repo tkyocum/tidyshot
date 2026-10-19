@@ -11,7 +11,6 @@ final class QuickAccessPanel: NSPanel {
         level = .floating
         isFloatingPanel = true
         hidesOnDeactivate = false
-        becomesKeyOnlyIfNeeded = true
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
         isOpaque = false
         backgroundColor = .clear
