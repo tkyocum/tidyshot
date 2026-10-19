@@ -54,7 +54,7 @@ Takeaways for TidyShot:
 
 - Model uploads as a `Destination` protocol with one implementation, `S3Destination`, so Backblaze B2, Cloudflare R2, MinIO, and Wasabi work via the S3 API without separate code.
 - Keep the "domain alias" idea: the public URL is built from a configurable base URL template, not from the S3 endpoint. Your existing `https://snap.tky.io/<name>.png` keeps working.
-- Offer three key schemes: random short name (length configurable, default 6), date-based template, and original filename. Random is the sensible default for sharing.
+- Offer three key schemes: random short name (default, length 6, configurable), date-based template, and original filename.
 - Make the ACL header optional. Modern AWS buckets block ACLs by default; a bucket policy or CloudFront handles public reads instead.
 - Skip URL shorteners and landing pages. Your domain is already short.
 
@@ -177,7 +177,7 @@ Separate design document. Will reuse Uploader, Naming, History, and Overlay.
 
 1. **Minimum macOS**: decided, 26.0. Capture uses `SCScreenshotManager.captureScreenshot(rect:configuration:)` and `captureScreenshot(contentFilter:configuration:)` with `SCScreenshotConfiguration`.
 2. **Clipboard in upload mode**: decided, URL only, with an "Also copy image" setting off by default.
-3. **Object key default**: random 6 characters, like your current `aSIS7`, or date-based. Recommendation: random with configurable length and an optional prefix folder.
+3. **Object key default**: decided, random 6 characters from `[A-Za-z0-9]` plus extension, configurable length (4 to 32) and an optional prefix folder. Collision handling: issue a `HEAD` on the key before `PUT` and regenerate on 200.
 4. **Public read**: send `x-amz-acl: public-read`, or rely on a bucket policy. Recommendation: off by default with a toggle, since AWS blocks ACLs on new buckets.
 5. **Image format default**: PNG always, or JPEG above a size threshold. Recommendation: PNG, with a per-destination override later.
 6. **Sandbox**: on or off. Recommendation: off for a direct-download Developer ID app; it removes friction around save folders and the desktop-icons toggle.
