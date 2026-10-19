@@ -144,6 +144,8 @@ DerivedData/
 build/
 # Local signing settings
 Config/Local.xcconfig
+# Subagent-driven-development scratch (briefs, reports, ledger)
+.superpowers/
 # Xcode user state
 xcuserdata/
 *.xcuserstate
@@ -340,12 +342,14 @@ struct MenuContent: View {
 
 `TidyShotTests/SmokeTests.swift`:
 ```swift
+import Foundation
 import Testing
 @testable import TidyShot
 
 struct SmokeTests {
-    @Test func coordinatorSingletonExists() {
-        #expect(AppCoordinator.shared === AppCoordinator.shared)
+    /// The test bundle is hosted inside the app, so Bundle.main is the app bundle.
+    @Test func testsRunInsideTheAppBundle() {
+        #expect(Bundle.main.bundleIdentifier == "io.tky.tidyshot")
     }
 }
 ```
