@@ -1,0 +1,9 @@
+// Copy this file to Config/Local.xcconfig (gitignored).
+// Default: ad-hoc signing, works without an Apple ID. Screen Recording permission
+// must be re-granted after every rebuild with ad-hoc signing.
+// With an Apple ID signed in to Xcode, set:
+//   CODE_SIGN_IDENTITY = Apple Development
+//   DEVELOPMENT_TEAM = YOURTEAMID
+CODE_SIGN_STYLE = Automatic
+CODE_SIGN_IDENTITY = -
+DEVELOPMENT_TEAM =
