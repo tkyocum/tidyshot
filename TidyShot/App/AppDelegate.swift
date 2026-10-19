@@ -10,4 +10,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !Self.isRunningTests else { return }
         AppCoordinator.shared.start()
     }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        false
+    }
 }
