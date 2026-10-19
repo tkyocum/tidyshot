@@ -1,0 +1,9 @@
+// Project-wide signing defaults. Ad-hoc signing works without an Apple ID.
+// Create Config/Local.xcconfig (gitignored) to override, for example:
+//   CODE_SIGN_IDENTITY = Apple Development
+//   DEVELOPMENT_TEAM = YOURTEAMID
+CODE_SIGN_STYLE = Automatic
+CODE_SIGN_IDENTITY = -
+DEVELOPMENT_TEAM =
+
+#include? "Local.xcconfig"
