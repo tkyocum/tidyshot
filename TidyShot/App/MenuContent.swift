@@ -10,6 +10,11 @@ struct MenuContent: View {
             }
             Divider()
         }
+        Button("Capture Fullscreen") {
+            Task { await coordinator.captureFullscreen() }
+        }
+        .disabled(coordinator.isCapturing)
+        Divider()
         Button("Quit TidyShot") {
             NSApplication.shared.terminate(nil)
         }
