@@ -13,6 +13,7 @@ final class AppCoordinator {
     let settings = AppSettings.shared
     private let notifier = Notifier()
     private let permissionWindow = PermissionWindowController()
+    @ObservationIgnored private lazy var selector = SelectionController(engine: engine)
 
     private(set) var isCapturing = false
     private(set) var lastCaptureURL: URL?
@@ -35,6 +36,9 @@ final class AppCoordinator {
         KeyboardShortcuts.onKeyUp(for: .captureFullscreen) { [weak self] in
             Task { await self?.captureFullscreen() }
         }
+        KeyboardShortcuts.onKeyUp(for: .captureArea) { [weak self] in
+            Task { await self?.captureArea() }
+        }
     }
 
     func captureFullscreen() async {
@@ -44,6 +48,36 @@ final class AppCoordinator {
             guard let display = Self.display(under: NSEvent.mouseLocation, in: content.displays) else { return }
             guard let result = await capture(.display(display)) else { return }
             await save(result, appName: frontApp)
+        }
+    }
+
+    func captureArea() async {
+        await runSelection(mode: .area)
+    }
+
+    /// Show the overlay, capture with the overlay excluded, dismiss, then save.
+    private func runSelection(mode: SelectionMode) async {
+        await withCaptureLock {
+            let frontApp = NSWorkspace.shared.frontmostApplication?.localizedName
+            guard let content = await loadContent() else { return }
+            guard let selection = await selector.select(mode: mode, content: content) else { return }
+
+            let result: CaptureResult?
+            let appName: String?
+            switch selection {
+            case .area(let rect, let display):
+                let overlays = await selector.overlayWindows()
+                result = await capture(.area(rect: rect, display: display), excludingWindows: overlays)
+                appName = frontApp
+            case .window(let window):
+                result = await capture(.window(window))
+                appName = window.owningApplication?.applicationName
+            }
+            selector.dismiss()
+
+            if let result {
+                await save(result, appName: appName)
+            }
         }
     }
 

@@ -11,6 +11,10 @@ struct MenuContent: View {
             }
             Divider()
         }
+        Button(menuTitle("Capture Area", .captureArea)) {
+            Task { await coordinator.captureArea() }
+        }
+        .disabled(coordinator.isCapturing)
         Button(menuTitle("Capture Fullscreen", .captureFullscreen)) {
             Task { await coordinator.captureFullscreen() }
         }
