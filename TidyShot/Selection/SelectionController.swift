@@ -9,6 +9,7 @@ final class SelectionController {
     private var views: [SelectionView] = []
     private var continuation: CheckedContinuation<Selection?, Never>?
     private var displays: [SCDisplay] = []
+    private var mode: SelectionMode = .area
     private var picker: WindowPicker?
     private var hoveredWindow: SCWindow?
     private var snapshotTask: Task<Void, Never>?
@@ -21,7 +22,9 @@ final class SelectionController {
     func select(mode: SelectionMode, content: SCShareableContent) async -> Selection? {
         guard continuation == nil, !NSScreen.screens.isEmpty else { return nil }
         displays = content.displays
-        picker = WindowPicker(content: content)
+        self.mode = mode
+        // Window picking is only offered in window mode; area mode shows just the crosshair.
+        picker = mode == .window ? WindowPicker(content: content) : nil
 
         for screen in NSScreen.screens {
             let window = SelectionWindow(screen: screen)
@@ -112,8 +115,9 @@ final class SelectionController {
         hoveredWindow = nil
     }
 
-    /// `globalPoint` is in AppKit global coordinates.
+    /// `globalPoint` is in AppKit global coordinates. No-op outside window mode.
     private func updateHover(at globalPoint: CGPoint) {
+        guard mode == .window else { return }
         let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
         let cgPoint = Geometry.cgPoint(fromAppKit: globalPoint, primaryHeight: primaryHeight)
         hoveredWindow = picker?.window(at: cgPoint)

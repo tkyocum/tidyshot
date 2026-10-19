@@ -29,4 +29,27 @@ struct WindowPickerTests {
     @Test func unknownOwnerIsPickable() {
         #expect(WindowPicker.isPickable(isOnScreen: true, layer: 0, frame: frame, ownerPID: nil, selfPID: 42))
     }
+
+    struct FakeWindow: Equatable {
+        let id: CGWindowID
+        let name: String
+    }
+
+    @Test func orderedSortsByFrontToBackList() {
+        let items = [FakeWindow(id: 30, name: "back"), FakeWindow(id: 10, name: "front"), FakeWindow(id: 20, name: "middle")]
+        let sorted = WindowPicker.ordered(items, frontToBack: [10, 20, 30]) { $0.id }
+        #expect(sorted.map(\.name) == ["front", "middle", "back"])
+    }
+
+    @Test func orderedPutsUnlistedWindowsLastInOriginalOrder() {
+        let items = [FakeWindow(id: 99, name: "unknownA"), FakeWindow(id: 20, name: "listed"), FakeWindow(id: 98, name: "unknownB")]
+        let sorted = WindowPicker.ordered(items, frontToBack: [20]) { $0.id }
+        #expect(sorted.map(\.name) == ["listed", "unknownA", "unknownB"])
+    }
+
+    @Test func orderedWithEmptyListKeepsOriginalOrder() {
+        let items = [FakeWindow(id: 3, name: "a"), FakeWindow(id: 1, name: "b")]
+        let sorted = WindowPicker.ordered(items, frontToBack: []) { $0.id }
+        #expect(sorted == items)
+    }
 }

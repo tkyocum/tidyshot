@@ -41,7 +41,7 @@ Edit `Config/Local.xcconfig` to set `CODE_SIGN_IDENTITY = Apple Development` and
 
 | Action | Shortcut |
 |---|---|
-| Capture area (click a window to capture it) | ⌃⇧4 |
+| Capture area | ⌃⇧4 |
 | Capture window | ⌃⇧2 |
 | Capture fullscreen | ⌃⇧3 |
 

@@ -15,10 +15,11 @@ Setup: fresh build, Screen Recording granted, save folder set to Desktop, defaul
 
 ## Area (⌃⇧4)
 - [ ] Dim, crosshair, loupe appear on all displays, with Safari frontmost before the hotkey.
+- [ ] The loupe follows the cursor and magnifies the pixels under it.
 - [ ] Escape before any click cancels.
 - [ ] Drag shows a clear rectangle, white border, "W × H" label; label flips above when near the bottom.
 - [ ] Release saves `W*scale × H*scale` pixels with no dimming, crosshair, or loupe in the image.
-- [ ] Click on the desktop cancels. Click on a window captures that window.
+- [ ] Click without dragging cancels, on the desktop or on a window. No window highlight appears in area mode.
 - [ ] Hotkey on display A, move to display B, drag there: capture comes from display B.
 - [ ] Loupe at a screen corner shows black outside the screen and keeps the crosshair on the cursor pixel.
 - [ ] Pressing the shortcut while the overlay is up does nothing extra.
