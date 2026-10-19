@@ -1,7 +1,7 @@
 # TidyShot: screenshot MVP design and implementation plan
 
 Date: 2026-10-19
-Status: draft for iteration. Items marked **DECIDE** need your call before the matching phase starts.
+Status: all eight open decisions in section 7 resolved on 2026-10-19. Ready for a detailed Phase 0 and Phase 1 implementation plan.
 
 ## 1. Goal
 
@@ -108,7 +108,7 @@ Behavioural rules:
 | Persistence | Capture history and settings in `~/Library/Application Support/TidyShot/` as JSON plus files; `UserDefaults` for simple preferences | Small data, no need for Core Data |
 | Distribution | Developer ID signed and notarized, outside the App Store. Hardened runtime on, App Sandbox on (decided 2026-10-19) | Entitlements: `network.client`, `files.user-selected.read-write`, `files.bookmarks.app-scope`. Save folder chosen via `NSOpenPanel` and persisted as a security-scoped bookmark. Keeps the App Store open as a later channel |
 | Tests | XCTest for the signer (verify against AWS published SigV4 test vectors), naming templates, URL builder, and history store. Manual test checklist for capture UI | Capture UI cannot be unit tested meaningfully |
-| Build | Xcode project generated from `project.yml` with XcodeGen, or a plain Swift Package with an app target | **DECIDE**; XcodeGen keeps diffs readable |
+| Build | XcodeGen from `project.yml` (decided 2026-10-19); `TidyShot.xcodeproj` is gitignored and regenerated with `xcodegen generate` | Readable diffs, no merge conflicts in project files |
 
 ## 5. Architecture
 
@@ -182,7 +182,7 @@ Separate design document. Will reuse Uploader, Naming, History, and Overlay.
 5. **Image format default**: decided, PNG always. A per-destination format override (JPEG, HEIC, quality) is a Phase 3 item.
 6. **Sandbox**: decided, on. Save folder access via security-scoped bookmarks. Consequences: the default save folder is the app container's `Documents` until the user picks one; drag-out from the overlay uses `NSFilePromiseProvider`; the "hide desktop icons" feature must be implemented as a wallpaper-coloured cover window at desktop icon level rather than a Finder `defaults` write; the URL scheme and Carbon hotkeys work unchanged.
 7. **Licence**: decided, private and unlicensed for now. Do not read or copy macshot's GPL source; only its public documentation and UI behaviour may be used as reference. Revisit if the project is ever published.
-8. **Project generator**: XcodeGen versus a hand-maintained `.xcodeproj`.
+8. **Project generator**: decided, XcodeGen. `project.yml` is the source of truth; `.xcodeproj` is ignored. Swift package dependencies are declared in `project.yml`.
 
 ## 8. Risks
 
