@@ -1,3 +1,4 @@
+import KeyboardShortcuts
 import SwiftUI
 
 struct MenuContent: View {
@@ -10,7 +11,7 @@ struct MenuContent: View {
             }
             Divider()
         }
-        Button("Capture Fullscreen") {
+        Button(menuTitle("Capture Fullscreen", .captureFullscreen)) {
             Task { await coordinator.captureFullscreen() }
         }
         .disabled(coordinator.isCapturing)
@@ -20,9 +21,18 @@ struct MenuContent: View {
         }
         .disabled(coordinator.lastCaptureURL == nil)
         Divider()
+        SettingsLink {
+            Text("Settings…")
+        }
+        .keyboardShortcut(",")
         Button("Quit TidyShot") {
             NSApplication.shared.terminate(nil)
         }
         .keyboardShortcut("q")
+    }
+
+    private func menuTitle(_ title: String, _ name: KeyboardShortcuts.Name) -> String {
+        guard let shortcut = KeyboardShortcuts.getShortcut(for: name) else { return title }
+        return "\(title)  \(shortcut)"
     }
 }

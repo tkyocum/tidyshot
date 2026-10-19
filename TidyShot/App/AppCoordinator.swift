@@ -1,4 +1,5 @@
 import AppKit
+import KeyboardShortcuts
 import Observation
 import ScreenCaptureKit
 
@@ -9,6 +10,7 @@ final class AppCoordinator {
 
     let engine = CaptureEngine()
     let saveLocation = SaveLocation()
+    let settings = AppSettings.shared
     private let notifier = Notifier()
     private let permissionWindow = PermissionWindowController()
 
@@ -19,6 +21,7 @@ final class AppCoordinator {
 
     func start() {
         notifier.setUp()
+        registerShortcuts()
         if !ScreenCapturePermission.isGranted {
             permissionWindow.show()
         }
@@ -26,6 +29,12 @@ final class AppCoordinator {
 
     func showPermissionWindow() {
         permissionWindow.show()
+    }
+
+    private func registerShortcuts() {
+        KeyboardShortcuts.onKeyUp(for: .captureFullscreen) { [weak self] in
+            Task { await self?.captureFullscreen() }
+        }
     }
 
     func captureFullscreen() async {
@@ -46,7 +55,7 @@ final class AppCoordinator {
     /// Runs the engine. On failure posts a notification and returns nil.
     func capture(_ target: CaptureTarget, excludingWindows: [SCWindow] = []) async -> CaptureResult? {
         do {
-            return try await engine.capture(target, options: CaptureOptions(showsCursor: false), excludingWindows: excludingWindows)
+            return try await engine.capture(target, options: CaptureOptions(showsCursor: settings.showsCursor), excludingWindows: excludingWindows)
         } catch {
             NSLog("Capture failed: \(error.localizedDescription)")
             notifier.notifyError(error.localizedDescription)
@@ -59,16 +68,22 @@ final class AppCoordinator {
     func save(_ result: CaptureResult, appName: String?) async {
         do {
             let png = try ImageEncoder.pngData(from: result.image, scale: result.scale)
-            Pasteboard.copy(image: result.image, pngData: png, scale: result.scale)
+            if settings.copyImageToClipboard {
+                Pasteboard.copy(image: result.image, pngData: png, scale: result.scale)
+            }
             guard let folder = await saveLocation.ensureFolder() else {
-                notifier.notifyError("Not saved: no folder was chosen. The image is on the clipboard.")
+                notifier.notifyError("Not saved: no folder was chosen.")
                 return
             }
-            let baseName = FileNamer().name(appName: appName, counter: 1)
+            let baseName = FileNamer(template: settings.fileNameTemplate).name(appName: appName, counter: settings.nextCounter())
             let url = try saveLocation.write(png, baseName: baseName, ext: "png", in: folder)
-            SoundPlayer.playShutter()
+            if settings.playSound {
+                SoundPlayer.playShutter()
+            }
             lastCaptureURL = url
-            notifier.notifySaved(fileURL: url)
+            if settings.showNotification {
+                notifier.notifySaved(fileURL: url)
+            }
         } catch {
             NSLog("Save failed: \(error.localizedDescription)")
             notifier.notifyError(error.localizedDescription)

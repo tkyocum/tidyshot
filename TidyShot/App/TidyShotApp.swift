@@ -8,5 +8,8 @@ struct TidyShotApp: App {
         MenuBarExtra("TidyShot", systemImage: "camera.viewfinder") {
             MenuContent()
         }
+        Settings {
+            SettingsView()
+        }
     }
 }
