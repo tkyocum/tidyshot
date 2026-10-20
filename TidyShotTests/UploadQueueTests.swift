@@ -16,6 +16,16 @@ nonisolated final class FakeDestination: Destination, Sendable {
         /// This many uploads (after any scripted failures) wait a minute instead of finishing,
         /// so a test can cancel them; the wait throws `CancellationError` when the task is cancelled.
         var blockingUploadsRemaining = 0
+        /// This many uploads (after any scripted failures and blocking uploads) wait for
+        /// `releaseUploads(throwing:)` even when their task is cancelled, like a PUT that the server
+        /// finishes just as it is cancelled.
+        var holdingUploadsRemaining = 0
+        /// Held uploads waiting for `releaseUploads(throwing:)`.
+        var heldUploads: [CheckedContinuation<Void, any Error>] = []
+        /// Set by `releaseUploads(throwing:)`; a later held upload finishes at once with this result.
+        var heldUploadsRelease: Result<Void, any Error>?
+        /// Times a held upload's task was cancelled while it waited.
+        var heldUploadCancellations = 0
     }
 
     let state: Mutex<State>
@@ -44,9 +54,39 @@ nonisolated final class FakeDestination: Destination, Sendable {
         if blocks {
             try await Task.sleep(for: .seconds(60))
         }
+        let holds = state.withLock {
+            guard $0.holdingUploadsRemaining > 0 else { return false }
+            $0.holdingUploadsRemaining -= 1
+            return true
+        }
+        if holds {
+            try await withTaskCancellationHandler {
+                try await withCheckedThrowingContinuation { continuation in
+                    let release: Result<Void, any Error>? = state.withLock {
+                        if let release = $0.heldUploadsRelease { return release }
+                        $0.heldUploads.append(continuation)
+                        return nil
+                    }
+                    if let release { continuation.resume(with: release) }
+                }
+            } onCancel: {
+                state.withLock { $0.heldUploadCancellations += 1 }
+            }
+        }
         progress(0.5)
         progress(1)
         state.withLock { $0.uploads.append((key, data, contentType)) }
+    }
+
+    /// Finishes every held upload, now and later: successfully, or by throwing `error`.
+    func releaseUploads(throwing error: (any Error)? = nil) {
+        let release: Result<Void, any Error> = error.map { .failure($0) } ?? .success(())
+        let held = state.withLock {
+            $0.heldUploadsRelease = release
+            defer { $0.heldUploads = [] }
+            return $0.heldUploads
+        }
+        for continuation in held { continuation.resume(with: release) }
     }
 
     func delete(key: String) async throws {}
@@ -307,6 +347,49 @@ struct UploadQueueTests {
         try await eventually { await queue.isIdle }
         #expect(log.events.contains(.cancelled(id: first, reservedKey: "s/KKKKKK.png")))
         #expect(destination.state.withLock { $0.uploads.count } == 1)
+    }
+
+    @Test func cancelAfterUploadCompletedReportsNotFound() async throws {
+        let destination = FakeDestination(.init(holdingUploadsRemaining: 1))
+        defer { destination.releaseUploads(throwing: CancellationError()) }
+        let log = EventLog()
+        let queue = makeQueue(destination: destination, log: log)
+        let id = UUID()
+
+        await queue.enqueue(UploadJob(id: id, data: data, contentType: "image/png", fileExtension: "png"))
+        try await eventually { destination.state.withLock { $0.heldUploads.count } == 1 }
+
+        let cancel = Task { await queue.cancel(recordID: id) }
+        try await eventually { destination.state.withLock { $0.heldUploadCancellations } == 1 }
+        destination.releaseUploads()
+
+        #expect(await cancel.value == .notFound)
+        try await eventually { await queue.isIdle }
+        let terminal = log.events.filter { if case .progress = $0 { return false } else { return true } }
+        #expect(terminal == [.started(id: id, attempt: 1),
+                             .uploaded(id: id, url: URL(string: "https://snap.tky.io/s/KKKKKK.png")!, key: "s/KKKKKK.png")])
+    }
+
+    @Test func concurrentCancelsAgreeOnTheReservedKey() async throws {
+        let destination = FakeDestination(.init(holdingUploadsRemaining: 1))
+        defer { destination.releaseUploads(throwing: CancellationError()) }
+        let log = EventLog()
+        let queue = makeQueue(destination: destination, log: log)
+        let id = UUID()
+
+        await queue.enqueue(UploadJob(id: id, data: data, contentType: "image/png", fileExtension: "png"))
+        try await eventually { destination.state.withLock { $0.heldUploads.count } == 1 }
+
+        // Both tasks start on the main actor in order, so both reach the queue before the job can end.
+        let first = Task { await queue.cancel(recordID: id) }
+        let second = Task { await queue.cancel(recordID: id) }
+        try await eventually { destination.state.withLock { $0.heldUploadCancellations } == 1 }
+        destination.releaseUploads(throwing: CancellationError())
+
+        #expect(await first.value == .stopped(reservedKey: "s/KKKKKK.png"))
+        #expect(await second.value == .stopped(reservedKey: "s/KKKKKK.png"))
+        try await eventually { await queue.isIdle }
+        #expect(log.events == [.started(id: id, attempt: 1), .cancelled(id: id, reservedKey: "s/KKKKKK.png")])
     }
 
     @Test func processesJobsInOrderOneAtATime() async throws {

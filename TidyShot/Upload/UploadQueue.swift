@@ -19,6 +19,13 @@ actor UploadQueue {
         case stopped(reservedKey: String?)
     }
 
+    /// How a job's task ended, after its terminal event was delivered.
+    private nonisolated enum JobOutcome: Sendable {
+        case uploaded
+        case failed
+        case cancelled(reservedKey: String?)
+    }
+
     static let maxKeyAttempts = 5
 
     private let destination: any Destination
@@ -29,9 +36,9 @@ actor UploadQueue {
     private var pending: [UploadJob] = []
     private var isDraining = false
     /// The job being processed and the task running it, so `cancel` can stop it and wait for it.
-    private var current: (id: UUID, task: Task<Void, Never>)?
+    private var current: (id: UUID, task: Task<JobOutcome, Never>)?
     private var cancelledIDs: Set<UUID> = []
-    /// Key reserved by the in-flight job, kept after a cancellation for `cancel` to report.
+    /// Key reserved by the in-flight job, reported in its `.cancelled` event if it is cancelled.
     private var reservedKeys: [UUID: String] = [:]
 
     init(destination: any Destination,
@@ -58,7 +65,9 @@ actor UploadQueue {
     /// Stops the job for `recordID`. A pending job is dropped and reports `.cancelled` at once. An
     /// in-flight job has its task cancelled, which makes the HEAD, the PUT, or the backoff sleep
     /// throw; the job then reports `.cancelled` instead of `.failed`, and this call returns once
-    /// that event has been delivered. Later jobs continue.
+    /// that event has been delivered. If the job ends some other way first (its PUT finished, or
+    /// it had already reported `.uploaded` or `.failed`), this returns `.notFound`. Later jobs
+    /// continue.
     func cancel(recordID: UUID) async -> CancelResult {
         if let index = pending.firstIndex(where: { $0.id == recordID }) {
             pending.remove(at: index)
@@ -68,9 +77,12 @@ actor UploadQueue {
         guard let current, current.id == recordID else { return .notFound }
         cancelledIDs.insert(recordID)
         current.task.cancel()
-        await current.task.value
+        let outcome = await current.task.value
         cancelledIDs.remove(recordID)
-        return .stopped(reservedKey: reservedKeys.removeValue(forKey: recordID))
+        reservedKeys[recordID] = nil
+        // The job's own outcome decides the result, so concurrent cancels agree on it.
+        if case .cancelled(let key) = outcome { return .stopped(reservedKey: key) }
+        return .notFound
     }
 
     private func drain() async {
@@ -78,13 +90,14 @@ actor UploadQueue {
             let job = pending.removeFirst()
             let task = Task { await process(job) }
             current = (job.id, task)
-            await task.value
+            _ = await task.value
             current = nil
         }
         isDraining = false
     }
 
-    private func process(_ job: UploadJob) async {
+    /// Runs `job` to its end, delivers the terminal event, and returns how it ended.
+    private func process(_ job: UploadJob) async -> JobOutcome {
         var attempt = 1
         while true {
             await events(.started(id: job.id, attempt: attempt))
@@ -99,12 +112,10 @@ actor UploadQueue {
                 let url = try destination.publicURL(for: key)
                 reservedKeys[job.id] = nil
                 await events(.uploaded(id: job.id, url: url, key: key))
-                return
+                return .uploaded
             } catch {
                 if cancelledIDs.contains(job.id) {
-                    // `reservedKeys` is left for `cancel` to report as well.
-                    await events(.cancelled(id: job.id, reservedKey: reservedKeys[job.id]))
-                    return
+                    return await deliverCancelled(job.id)
                 }
                 if UploadError.isRetryable(error), attempt < policy.maxAttempts {
                     attempt += 1
@@ -112,21 +123,27 @@ actor UploadQueue {
                         try await sleep(policy.delay(beforeAttempt: attempt))
                     } catch {
                         if cancelledIDs.contains(job.id) {
-                            await events(.cancelled(id: job.id, reservedKey: reservedKeys[job.id]))
-                            return
+                            return await deliverCancelled(job.id)
                         }
                         // A backoff sleep that fails on its own ends the job instead of retrying.
                         reservedKeys[job.id] = nil
                         await events(.failed(id: job.id, message: error.localizedDescription))
-                        return
+                        return .failed
                     }
                     continue
                 }
                 reservedKeys[job.id] = nil
                 await events(.failed(id: job.id, message: error.localizedDescription))
-                return
+                return .failed
             }
         }
+    }
+
+    /// Delivers `.cancelled` with the key the job reserved (`cancel` clears the entry).
+    private func deliverCancelled(_ id: UUID) async -> JobOutcome {
+        let key = reservedKeys[id]
+        await events(.cancelled(id: id, reservedKey: key))
+        return .cancelled(reservedKey: key)
     }
 
     /// Generates keys until HEAD reports one unused.
