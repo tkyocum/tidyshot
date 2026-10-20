@@ -106,6 +106,8 @@ struct GalleryCell: View {
         .help(record.uploadedURL != nil ? "Click to copy the URL" : record.hasLocalFile ? "Click to copy the file" : "")
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(GalleryStatusBadge.title(for: record.uploadState)), \(record.timestamp.formatted(date: .abbreviated, time: .shortened)), \(displayName)")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityHint("Copies the link")
         .task(id: ThumbnailKey(id: record.id, fileName: record.thumbnailFileName)) {
             thumbnail = await model.thumbnail(for: record)
         }

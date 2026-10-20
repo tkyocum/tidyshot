@@ -714,6 +714,11 @@ final class AppCoordinator {
     /// Best-effort `DELETE` of an object whose record vanished mid-upload, built from where the
     /// object went (as Delete does) and the credentials stored now. The outcome is only logged.
     private func deleteOrphanedObject(key: String, at location: ObjectLocation) {
+        // A collision-prone template can give a live record the same key; never delete that.
+        guard CaptureDeletion.sharedKeys([key], at: location, with: history.records).isEmpty else {
+            NSLog("Uploaded \(key) for a record that no longer exists, but another capture shares it; kept")
+            return
+        }
         guard let credentials = loadCredentials() else {
             NSLog("Uploaded \(key) for a record that no longer exists; no credentials to delete it")
             return
