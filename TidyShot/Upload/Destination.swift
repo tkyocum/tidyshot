@@ -40,6 +40,10 @@ nonisolated enum UploadEvent: Sendable, Equatable {
     case progress(id: UUID, fraction: Double)
     case uploaded(id: UUID, url: URL, key: String)
     case failed(id: UUID, message: String)
+    /// Terminal, like `.failed`, after `UploadQueue.cancel(recordID:)`. Never followed by `.failed`.
+    /// `reservedKey` is the key the job had claimed, nil when it was cancelled before HEAD
+    /// found one; its PUT may have completed on the server, so a delete removes it too.
+    case cancelled(id: UUID, reservedKey: String?)
 }
 
 nonisolated enum UploadError: LocalizedError, Equatable, Sendable {

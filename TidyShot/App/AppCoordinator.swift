@@ -365,6 +365,12 @@ final class AppCoordinator {
             refreshOverlay(for: id)
         case .failed(let id, let message):
             markFailed(id, message: message)
+        case .cancelled(let id, _):
+            // Requested by the delete flow (Task 6), which removes the record next; no
+            // notification. Task 6 also stores the reserved key on the record.
+            uploadingIDs.remove(id)
+            history.update(id: id) { $0.uploadState = .failed(message: "Upload cancelled.") }
+            refreshOverlay(for: id)
         }
     }
 
