@@ -14,11 +14,17 @@ final class SelectionView: NSView {
         didSet { if highlightedRect != oldValue { needsDisplay = true } }
     }
 
-    /// Screenshot of this view's display, in pixels, used by the loupe.
+    /// Screenshot of this view's display, in pixels, used by the loupe and to pick the crosshair
+    /// colour.
     var snapshot: CGImage? {
-        didSet { needsDisplay = true }
+        didSet {
+            crosshairStyle = style(at: cursor)
+            needsDisplay = true
+        }
     }
     var snapshotScale: CGFloat = 2
+    /// Recomputed when the cursor moves or the snapshot arrives, never while drawing.
+    private var crosshairStyle: CrosshairStyle = .outlined
 
     private var dragStart: CGPoint?
     private var dragRect: CGRect?
@@ -62,6 +68,7 @@ final class SelectionView: NSView {
     override func mouseMoved(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         cursor = point
+        crosshairStyle = style(at: point)
         needsDisplay = true
         if let window {
             let global = window.convertToScreen(CGRect(origin: event.locationInWindow, size: .zero)).origin
@@ -78,6 +85,7 @@ final class SelectionView: NSView {
         guard let start = dragStart else { return }
         let point = convert(event.locationInWindow, from: nil)
         cursor = point
+        crosshairStyle = style(at: point)
         dragRect = CGRect(x: min(start.x, point.x), y: min(start.y, point.y),
                           width: abs(point.x - start.x), height: abs(point.y - start.y)).integral
         needsDisplay = true
@@ -123,10 +131,7 @@ final class SelectionView: NSView {
 
         if let completedRect {
             punchHole(completedRect)
-            NSColor.white.setStroke()
-            let border = NSBezierPath(rect: completedRect.insetBy(dx: 0.5, dy: 0.5))
-            border.lineWidth = 1
-            border.stroke()
+            stroke(NSBezierPath(rect: completedRect.insetBy(dx: 0.5, dy: 0.5)))
             return
         }
 
@@ -134,10 +139,7 @@ final class SelectionView: NSView {
 
         if isDragging, let rect = dragRect {
             punchHole(rect)
-            NSColor.white.setStroke()
-            let border = NSBezierPath(rect: rect.insetBy(dx: 0.5, dy: 0.5))
-            border.lineWidth = 1
-            border.stroke()
+            stroke(NSBezierPath(rect: rect.insetBy(dx: 0.5, dy: 0.5)))
             drawSizeLabel(for: rect)
         } else if let highlight = highlightedRect {
             punchHole(highlight)
@@ -163,14 +165,42 @@ final class SelectionView: NSView {
     }
 
     private func drawCrosshair(at point: CGPoint) {
-        NSColor.white.withAlphaComponent(0.8).setStroke()
         let path = NSBezierPath()
-        path.lineWidth = 1
         path.move(to: CGPoint(x: bounds.minX, y: point.y + 0.5))
         path.line(to: CGPoint(x: bounds.maxX, y: point.y + 0.5))
         path.move(to: CGPoint(x: point.x + 0.5, y: bounds.minY))
         path.line(to: CGPoint(x: point.x + 0.5, y: bounds.maxY))
+        stroke(path)
+    }
+
+    /// Strokes a 1 pt line in the current `crosshairStyle`: black on light backgrounds, white on
+    /// dark ones, and before the snapshot arrives white over a line one pixel wider on each side
+    /// in black.
+    private func stroke(_ path: NSBezierPath) {
+        switch crosshairStyle {
+        case .dark:
+            NSColor.black.withAlphaComponent(0.8).setStroke()
+        case .light:
+            NSColor.white.withAlphaComponent(0.8).setStroke()
+        case .outlined:
+            NSColor.black.withAlphaComponent(0.8).setStroke()
+            path.lineWidth = 1 + 2 / (window?.backingScaleFactor ?? 2)
+            path.stroke()
+            NSColor.white.setStroke()
+        }
+        path.lineWidth = 1
         path.stroke()
+    }
+
+    /// The style for the snapshot under `point` (view coordinates): the mean luminance of a
+    /// `Luminance.sampleSide` point square around it. `.outlined` without a snapshot or a cursor.
+    private func style(at point: CGPoint?) -> CrosshairStyle {
+        guard let point, let snapshot else { return .outlined }
+        // Snapshot pixels run top to bottom; the view's y runs bottom to top.
+        let side = Luminance.sampleSide * snapshotScale
+        let centre = CGPoint(x: point.x * snapshotScale, y: (bounds.height - point.y) * snapshotScale)
+        let rect = CGRect(x: centre.x - side / 2, y: centre.y - side / 2, width: side, height: side)
+        return CrosshairStyle(luminance: Luminance.mean(of: snapshot, in: rect))
     }
 
     private func drawSizeLabel(for rect: CGRect) {
