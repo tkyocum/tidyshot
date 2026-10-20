@@ -74,5 +74,8 @@ struct CaptureDeletionTests {
         #expect(CaptureDeletion.storageFailureMessage(reason: "Server returned HTTP 403: AccessDenied: Access Denied")
                 == "Couldn't delete it from storage: Server returned HTTP 403: AccessDenied: Access Denied")
         #expect(CaptureDeletion.storageFailureText == "Remove it from history anyway? The object stays in the bucket.")
+        #expect(CaptureDeletion.fileFailureMessage(reason: "No save folder is set, so TidyShot cannot reach this file.")
+                == "Couldn't delete the file: No save folder is set, so TidyShot cannot reach this file.")
+        #expect(CaptureDeletion.fileFailureText == "Remove it from history anyway? The file stays where it is.")
     }
 }

@@ -461,10 +461,11 @@ final class AppCoordinator {
     /// The one delete path, shared by the overlay and Recent Captures. One confirmation, Delete or
     /// Cancel. Delete stops an in-flight upload, removes the object from the bucket the record says
     /// it went to, then the local file, the thumbnail and the record. When the storage `DELETE`
-    /// fails (or there are no credentials to sign it) a second alert offers to remove the record
-    /// from history anyway, so a capture whose object cannot be deleted is never stuck. A local
-    /// file that cannot be removed keeps the record, with a notification; one that is already gone
-    /// is not an error.
+    /// fails (or there are no credentials to sign it), or the file in the save folder cannot be
+    /// removed, a second alert offers to remove the record from history anyway, so a capture whose
+    /// object or file cannot be deleted is never stuck. A local file that is already gone is not an
+    /// error; a temporary file in `pending` that cannot be removed keeps the record, with a
+    /// notification.
     func deleteCapture(recordID: UUID) async {
         guard !deletingIDs.contains(recordID), let record = history.record(id: recordID) else { return }
         deletingIDs.insert(recordID)
@@ -485,7 +486,8 @@ final class AppCoordinator {
             let others = history.records.filter { $0.id != recordID }
             sharedKeys = CaptureDeletion.sharedKeys(keys, at: location, with: others)
             if let reason = await deleteObjects(keys.filter { !sharedKeys.contains($0) }, at: location) {
-                if confirmRemoveFromHistory(afterStorageFailure: reason) {
+                if await confirmRemoveFromHistory(message: CaptureDeletion.storageFailureMessage(reason: reason),
+                                                  informativeText: CaptureDeletion.storageFailureText) {
                     removeFromHistoryOnly(recordID)
                 }
                 return
@@ -499,7 +501,15 @@ final class AppCoordinator {
                 do {
                     try saveLocation.remove(at: fileURL)
                 } catch {
-                    notifier.notifyError("Could not delete \(fileURL.lastPathComponent): \(error.localizedDescription)", title: "Not deleted")
+                    // The file lies outside the current save folder (the sandbox denies it), or the
+                    // folder's bookmark no longer resolves. Any object is gone by now, so trying
+                    // Delete again would fail on this file every time: offer to drop the record and
+                    // leave the file where it is.
+                    let message = CaptureDeletion.fileFailureMessage(reason: error.localizedDescription)
+                    if await confirmRemoveFromHistory(message: message, informativeText: CaptureDeletion.fileFailureText) {
+                        removeFromHistoryOnly(recordID)
+                        notifyKept(sharedKeys)
+                    }
                     return
                 }
             }
@@ -508,6 +518,11 @@ final class AppCoordinator {
             }
         }
         removeRecord(id: recordID)
+        notifyKept(sharedKeys)
+    }
+
+    /// Says, per key, that the object stayed because another capture shares it.
+    private func notifyKept(_ sharedKeys: [String]) {
         for key in sharedKeys {
             notifier.notifyError("Another capture shares this key, \(key), so its object was kept. This capture was removed from Recent Captures.",
                                  title: "Not deleted from storage")
@@ -534,7 +549,8 @@ final class AppCoordinator {
     }
 
     /// The second alert's Remove: drops the record and its thumbnail without touching storage or a
-    /// file in the save folder (the delete already cancelled any upload). A temporary file in
+    /// file in the save folder (the delete already cancelled any upload). It re-reads the record,
+    /// which may have changed while the alert waited and was open. A temporary file in
     /// `pending` is TidyShot's own copy that nothing else would ever remove, so it goes too; if it
     /// cannot be removed the record is kept, so the file is not left with nothing pointing at it.
     private func removeFromHistoryOnly(_ recordID: UUID) {
@@ -603,11 +619,20 @@ final class AppCoordinator {
         return alert.runModal() == .alertFirstButtonReturn
     }
 
-    /// Only after the storage `DELETE` failed: Remove (from history; the object stays) or Cancel.
-    private func confirmRemoveFromHistory(afterStorageFailure reason: String) -> Bool {
+    /// The second alert, only after the storage `DELETE` failed or the file in the save folder could
+    /// not be removed: Remove (from history; what could not be deleted stays) or Cancel. It comes
+    /// after the delete's network awaits, and a main-actor continuation also runs while a menu is
+    /// tracking (the main queue is served in the common run-loop modes), so the user may have
+    /// opened the menu bar menu in the meantime. It therefore first waits until the run loop is
+    /// back in its default mode, which is not entered until tracking ends, so `runModal()` never
+    /// starts inside a menu's tracking loop.
+    private func confirmRemoveFromHistory(message: String, informativeText: String) async -> Bool {
+        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+            RunLoop.main.perform(inModes: [.default]) { done.resume() }
+        }
         let alert = NSAlert()
-        alert.messageText = CaptureDeletion.storageFailureMessage(reason: reason)
-        alert.informativeText = CaptureDeletion.storageFailureText
+        alert.messageText = message
+        alert.informativeText = informativeText
         alert.alertStyle = .warning
         alert.addButton(withTitle: "Remove").hasDestructiveAction = true
         alert.addButton(withTitle: "Cancel")

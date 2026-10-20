@@ -1,14 +1,17 @@
 import Foundation
 
 /// The pure parts of deleting a capture, shared by the overlay and Recent Captures: which objects
-/// to remove from the bucket, which of them another capture still needs, and what the two alerts
-/// say. `AppCoordinator.deleteCapture` does the I/O.
+/// to remove from the bucket, which of them another capture still needs, and what the alerts say.
+/// `AppCoordinator.deleteCapture` does the I/O.
 nonisolated enum CaptureDeletion {
     /// The first alert's message. Its buttons are Delete and Cancel.
     static let confirmationMessage = "Delete this capture?"
     /// The second alert's informative text, shown only after the storage DELETE failed. Its buttons
     /// are Remove and Cancel.
     static let storageFailureText = "Remove it from history anyway? The object stays in the bucket."
+    /// The second alert's informative text when the file in the save folder could not be removed
+    /// (any object is gone by then). Its buttons are Remove and Cancel.
+    static let fileFailureText = "Remove it from history anyway? The file stays where it is."
 
     /// Object keys that may hold the capture, in order and without duplicates: the key it was
     /// uploaded under, and the key a cancelled upload had reserved (its PUT may have completed
@@ -53,5 +56,11 @@ nonisolated enum CaptureDeletion {
     /// The second alert's message, after the storage DELETE failed with `reason`.
     static func storageFailureMessage(reason: String) -> String {
         "Couldn't delete it from storage: \(reason)"
+    }
+
+    /// The second alert's message, after the file in the save folder could not be removed with
+    /// `reason` (it lies outside the current save folder, or the folder's bookmark no longer resolves).
+    static func fileFailureMessage(reason: String) -> String {
+        "Couldn't delete the file: \(reason)"
     }
 }
