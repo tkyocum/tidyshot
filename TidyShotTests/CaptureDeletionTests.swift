@@ -47,26 +47,29 @@ struct CaptureDeletionTests {
         #expect(CaptureDeletion.sharedKeys(["same.png"], at: location, with: []) == [])
     }
 
-    @Test func confirmationTextNamesWhatIsRemoved() {
-        let note = " " + CaptureDeletion.historyOnlyNote
-        #expect(CaptureDeletion.confirmationText(for: record(state: .uploaded(url: url, key: "aB3dE9.png"), location: location))
-                == "Delete removes the uploaded object https://snap.tky.io/aB3dE9.png, the file Shot.png, and its entry in Recent Captures. It cannot be undone." + note)
-        #expect(CaptureDeletion.confirmationText(for: record(state: .uploaded(url: url, key: "aB3dE9.png"), fileURL: nil, location: location))
-                == "Delete removes the uploaded object https://snap.tky.io/aB3dE9.png and its entry in Recent Captures. It cannot be undone." + note)
-        #expect(CaptureDeletion.confirmationText(for: record(state: .none))
-                == "Delete removes the file Shot.png and its entry in Recent Captures. It cannot be undone." + note)
-        #expect(CaptureDeletion.confirmationText(for: record(state: .uploading(fraction: 0.2), fileURL: URL(fileURLWithPath: "/tmp/p.png"), temporary: true))
-                == "Delete removes the upload in progress, the temporary file, and its entry in Recent Captures. It cannot be undone." + note)
-        #expect(CaptureDeletion.confirmationText(for: record(state: .failed(message: "Upload cancelled."), fileURL: nil, location: location, pendingKey: "Qx12Zz.png"))
-                == "Delete removes any object the cancelled upload left in the bucket and its entry in Recent Captures. It cannot be undone." + note)
-        #expect(CaptureDeletion.confirmationText(for: record(state: .failed(message: "x"), fileURL: nil))
-                == "Delete removes its entry in Recent Captures. It cannot be undone." + note)
+    /// One line saying where the capture disappears from. Delete also removes the thumbnail.
+    @Test func confirmationTextIsOneLine() {
+        let storage = "Removes it from object storage and from history."
+        #expect(CaptureDeletion.confirmationText(for: record(state: .uploaded(url: url, key: "aB3dE9.png"), location: location)) == storage)
+        #expect(CaptureDeletion.confirmationText(for: record(state: .uploaded(url: url, key: "aB3dE9.png"), fileURL: nil, location: location)) == storage)
+        #expect(CaptureDeletion.confirmationText(for: record(state: .uploading(fraction: 0.2), fileURL: URL(fileURLWithPath: "/tmp/p.png"), temporary: true)) == storage)
+        #expect(CaptureDeletion.confirmationText(for: record(state: .failed(message: "Upload cancelled."), fileURL: nil, location: location, pendingKey: "Qx12Zz.png")) == storage)
+        #expect(CaptureDeletion.confirmationText(for: record(state: .none)) == "Removes it from your save folder and from history.")
+        #expect(CaptureDeletion.confirmationText(for: record(state: .failed(message: "offline"), fileURL: URL(fileURLWithPath: "/tmp/p.png"), temporary: true))
+                == "Removes it from history.")
+        #expect(CaptureDeletion.confirmationText(for: record(state: .failed(message: "x"), fileURL: nil)) == "Removes it from history.")
     }
 
     /// A Phase 2 record does not know which bucket its object went to, so Delete leaves it.
     @Test func confirmationTextSaysWhenTheObjectStays() {
         #expect(CaptureDeletion.confirmationText(for: record(state: .uploaded(url: url, key: "aB3dE9.png")))
-                == "Delete removes the file Shot.png and its entry in Recent Captures. It cannot be undone. The uploaded object https://snap.tky.io/aB3dE9.png stays in the bucket: it was uploaded before TidyShot recorded where objects go. "
-                + CaptureDeletion.historyOnlyNote)
+                == "Removes it from your save folder and from history. The uploaded object stays in the bucket.")
+    }
+
+    @Test func alertTexts() {
+        #expect(CaptureDeletion.confirmationMessage == "Delete this capture?")
+        #expect(CaptureDeletion.storageFailureMessage(reason: "Server returned HTTP 403: AccessDenied: Access Denied")
+                == "Couldn't delete it from storage: Server returned HTTP 403: AccessDenied: Access Denied")
+        #expect(CaptureDeletion.storageFailureText == "Remove it from history anyway? The object stays in the bucket.")
     }
 }

@@ -1,11 +1,14 @@
 import Foundation
 
-/// The pure parts of deleting a capture, shared by the overlay and the gallery: which objects to
-/// remove from the bucket, which of them another capture still needs, and what the confirmation
-/// says. `AppCoordinator.deleteCapture` does the I/O.
+/// The pure parts of deleting a capture, shared by the overlay and Recent Captures: which objects
+/// to remove from the bucket, which of them another capture still needs, and what the two alerts
+/// say. `AppCoordinator.deleteCapture` does the I/O.
 nonisolated enum CaptureDeletion {
-    /// The second paragraph of every confirmation, explaining the middle button.
-    static let historyOnlyNote = "Remove from History Only removes just the entry and keeps the uploaded object and any file in your save folder."
+    /// The first alert's message. Its buttons are Delete and Cancel.
+    static let confirmationMessage = "Delete this capture?"
+    /// The second alert's informative text, shown only after the storage DELETE failed. Its buttons
+    /// are Remove and Cancel.
+    static let storageFailureText = "Remove it from history anyway? The object stays in the bucket."
 
     /// Object keys that may hold the capture, in order and without duplicates: the key it was
     /// uploaded under, and the key a cancelled upload had reserved (its PUT may have completed
@@ -29,32 +32,23 @@ nonisolated enum CaptureDeletion {
         }
     }
 
-    /// The informative text of the one confirmation, naming exactly what Delete removes. A record
-    /// without an `objectLocation` (uploaded before Phase 3) keeps its object, and the text says so.
+    /// The first alert's one line: where the capture disappears from. Delete also removes the
+    /// thumbnail, and the local file when the object is in storage too. A record uploaded before
+    /// Phase 3 has no `objectLocation`, so its object cannot be deleted, and the line says it stays.
     static func confirmationText(for record: CaptureRecord) -> String {
-        let knowsLocation = record.objectLocation != nil
-        var parts: [String] = []
-        if let url = record.uploadedURL, knowsLocation {
-            parts.append("the uploaded object \(url.absoluteString)")
-        } else if record.isUploading {
-            parts.append("the upload in progress")
-        } else if record.pendingObjectKey != nil, knowsLocation {
-            parts.append("any object the cancelled upload left in the bucket")
+        if record.isUploading || (record.objectLocation != nil && !objectKeys(for: record).isEmpty) {
+            return "Removes it from object storage and from history."
         }
-        if let fileURL = record.fileURL {
-            parts.append(record.fileIsTemporary ? "the temporary file" : "the file \(fileURL.lastPathComponent)")
+        let inSaveFolder = record.fileURL != nil && !record.fileIsTemporary
+        var text = inSaveFolder ? "Removes it from your save folder and from history." : "Removes it from history."
+        if record.uploadedURL != nil {
+            text += " The uploaded object stays in the bucket."
         }
-        parts.append("its entry in Recent Captures")
-        let list: String
-        switch parts.count {
-        case 1: list = parts[0]
-        case 2: list = "\(parts[0]) and \(parts[1])"
-        default: list = parts.dropLast().joined(separator: ", ") + ", and " + parts[parts.count - 1]
-        }
-        var text = "Delete removes \(list). It cannot be undone."
-        if let url = record.uploadedURL, !knowsLocation {
-            text += " The uploaded object \(url.absoluteString) stays in the bucket: it was uploaded before TidyShot recorded where objects go."
-        }
-        return text + " " + historyOnlyNote
+        return text
+    }
+
+    /// The second alert's message, after the storage DELETE failed with `reason`.
+    static func storageFailureMessage(reason: String) -> String {
+        "Couldn't delete it from storage: \(reason)"
     }
 }
