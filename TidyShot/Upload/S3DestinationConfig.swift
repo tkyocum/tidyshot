@@ -10,8 +10,6 @@ nonisolated struct S3DestinationConfig: Codable, Equatable, Sendable {
     /// `us-west-2`, `auto` (R2), `us-west-004` (B2). MinIO accepts any value.
     var region: String
     var bucket: String
-    /// Optional folder inside the bucket; leading and trailing slashes are ignored.
-    var keyPrefix: String
     /// `https://host/bucket/key` instead of `https://bucket.host/key`. Needed for MinIO and for
     /// bucket names containing dots over HTTPS.
     var usePathStyle: Bool
@@ -19,26 +17,56 @@ nonisolated struct S3DestinationConfig: Codable, Equatable, Sendable {
     var sendPublicReadACL: Bool
     /// Where the object is readable from, with `{key}` standing for the full object key.
     var publicURLTemplate: String
-    /// Length of the random part of object keys, clamped to `ObjectKeyNamer.lengthRange`.
-    var keyLength: Int
+    /// Object key template, see `ObjectKeyNamer`. Replaces the Phase 2 prefix and random length,
+    /// which are migrated on decode.
+    var keyTemplate: String
 
     static let keyToken = "{key}"
 
-    static let empty = S3DestinationConfig(endpoint: "", region: "", bucket: "", keyPrefix: "",
+    static let empty = S3DestinationConfig(endpoint: "", region: "", bucket: "",
                                            usePathStyle: false, sendPublicReadACL: false,
-                                           publicURLTemplate: "", keyLength: ObjectKeyNamer.defaultLength)
+                                           publicURLTemplate: "", keyTemplate: ObjectKeyNamer.defaultTemplate)
 
-    init(endpoint: String, region: String, bucket: String, keyPrefix: String = "",
+    init(endpoint: String, region: String, bucket: String,
          usePathStyle: Bool = false, sendPublicReadACL: Bool = false,
-         publicURLTemplate: String, keyLength: Int = ObjectKeyNamer.defaultLength) {
+         publicURLTemplate: String, keyTemplate: String = ObjectKeyNamer.defaultTemplate) {
         self.endpoint = endpoint
         self.region = region
         self.bucket = bucket
-        self.keyPrefix = keyPrefix
         self.usePathStyle = usePathStyle
         self.sendPublicReadACL = sendPublicReadACL
         self.publicURLTemplate = publicURLTemplate
-        self.keyLength = keyLength
+        self.keyTemplate = keyTemplate
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case endpoint, region, bucket, usePathStyle, sendPublicReadACL, publicURLTemplate, keyTemplate
+    }
+
+    /// Phase 2 stored these instead of `keyTemplate`.
+    private enum LegacyCodingKeys: String, CodingKey {
+        case keyPrefix, keyLength
+    }
+
+    /// A Phase 2 config (prefix and length, no template) decodes to the equivalent template, so
+    /// existing uploads keep their folder and name length. Encoding is synthesised and writes
+    /// only the current keys.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        endpoint = try container.decode(String.self, forKey: .endpoint)
+        region = try container.decode(String.self, forKey: .region)
+        bucket = try container.decode(String.self, forKey: .bucket)
+        usePathStyle = try container.decode(Bool.self, forKey: .usePathStyle)
+        sendPublicReadACL = try container.decode(Bool.self, forKey: .sendPublicReadACL)
+        publicURLTemplate = try container.decode(String.self, forKey: .publicURLTemplate)
+        if let template = try container.decodeIfPresent(String.self, forKey: .keyTemplate) {
+            keyTemplate = template
+        } else {
+            let legacy = try decoder.container(keyedBy: LegacyCodingKeys.self)
+            keyTemplate = ObjectKeyNamer.migratedTemplate(
+                prefix: try legacy.decodeIfPresent(String.self, forKey: .keyPrefix) ?? "",
+                length: try legacy.decodeIfPresent(Int.self, forKey: .keyLength) ?? TemplateExpander.defaultRandomLength)
+        }
     }
 
     enum ConfigError: LocalizedError, Equatable {
@@ -46,6 +74,7 @@ nonisolated struct S3DestinationConfig: Codable, Equatable, Sendable {
         case missingBucket
         case missingRegion
         case invalidPublicURLTemplate
+        case invalidKeyTemplate(String)
 
         var errorDescription: String? {
             switch self {
@@ -53,20 +82,21 @@ nonisolated struct S3DestinationConfig: Codable, Equatable, Sendable {
             case .missingBucket: "Bucket name is required."
             case .missingRegion: "Region is required (use \"auto\" for Cloudflare R2)."
             case .invalidPublicURLTemplate: "Public URL must be an http or https URL containing {key}."
+            case .invalidKeyTemplate(let reason): "Key template: \(reason)"
             }
         }
     }
 
-    /// A copy with surrounding whitespace removed from every text field. Pasted values often
-    /// carry a trailing space or newline; trimming here means " my-bucket " is used as
-    /// "my-bucket" instead of producing a broken host name or signature.
+    /// A copy with surrounding whitespace removed from every text field and the key template
+    /// folded. Pasted values often carry a trailing space or newline; trimming here means
+    /// " my-bucket " is used as "my-bucket" instead of producing a broken host name or signature.
     var normalized: S3DestinationConfig {
         var copy = self
         copy.endpoint = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         copy.region = region.trimmingCharacters(in: .whitespacesAndNewlines)
         copy.bucket = bucket.trimmingCharacters(in: .whitespacesAndNewlines)
-        copy.keyPrefix = keyPrefix.trimmingCharacters(in: .whitespacesAndNewlines)
         copy.publicURLTemplate = publicURLTemplate.trimmingCharacters(in: .whitespacesAndNewlines)
+        copy.keyTemplate = ObjectKeyNamer.normalize(keyTemplate)
         return copy
     }
 
@@ -80,6 +110,7 @@ nonisolated struct S3DestinationConfig: Codable, Equatable, Sendable {
         if config.bucket.isEmpty { return .missingBucket }
         if config.region.isEmpty { return .missingRegion }
         if config.expandTemplate(encodedKey: "probe") == nil { return .invalidPublicURLTemplate }
+        if let problem = ObjectKeyNamer.validate(config.keyTemplate) { return .invalidKeyTemplate(problem.localizedDescription) }
         return nil
     }
 

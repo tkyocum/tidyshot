@@ -50,7 +50,7 @@ actor UploadQueue {
         while true {
             await events(.started(id: job.id, attempt: attempt))
             do {
-                let key = try await reserveKey(ext: job.fileExtension)
+                let key = try await reserveKey(ext: job.fileExtension, context: job.naming)
                 let id = job.id
                 let events = events
                 try await destination.upload(job.data, key: key, contentType: job.contentType) { fraction in
@@ -78,9 +78,9 @@ actor UploadQueue {
     }
 
     /// Generates keys until HEAD reports one unused.
-    private func reserveKey(ext: String) async throws -> String {
+    private func reserveKey(ext: String, context: TemplateContext) async throws -> String {
         for _ in 0..<Self.maxKeyAttempts {
-            let key = keyNamer.makeKey(ext: ext)
+            let key = keyNamer.makeKey(ext: ext, context: context)
             if try await destination.exists(key: key) == false {
                 return key
             }

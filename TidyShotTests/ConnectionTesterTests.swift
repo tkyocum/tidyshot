@@ -4,7 +4,7 @@ import Testing
 
 struct ConnectionTesterTests {
     let config = S3DestinationConfig(endpoint: "https://s3.us-east-1.amazonaws.com", region: "us-east-1", bucket: "snap",
-                                     keyPrefix: "p", publicURLTemplate: "https://snap.tky.io/{key}")
+                                     publicURLTemplate: "https://snap.tky.io/{key}", keyTemplate: "p/{random:6}")
 
     func destination(_ session: URLSession) -> S3Destination {
         S3Destination(config: config,

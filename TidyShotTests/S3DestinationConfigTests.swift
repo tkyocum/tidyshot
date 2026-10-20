@@ -70,6 +70,36 @@ struct S3DestinationConfigTests {
     @Test func roundTripsThroughJSON() throws {
         let data = try JSONEncoder().encode(aws)
         #expect(try JSONDecoder().decode(S3DestinationConfig.self, from: data) == aws)
+        let json = String(decoding: data, as: UTF8.self)
+        #expect(json.contains("\"keyTemplate\""))
+        #expect(!json.contains("keyPrefix") && !json.contains("keyLength"))
+    }
+
+    /// Phase 2 stored a prefix folder and a random length; both fold into the template.
+    @Test func phase2PrefixAndLengthMigrateToTemplate() throws {
+        func decode(_ json: String) throws -> S3DestinationConfig {
+            try JSONDecoder().decode(S3DestinationConfig.self, from: Data(json.utf8))
+        }
+        let common = """
+        "endpoint":"https://s3.us-west-2.amazonaws.com","region":"us-west-2","bucket":"snap",
+        "usePathStyle":false,"sendPublicReadACL":false,"publicURLTemplate":"https://snap.tky.io/{key}"
+        """
+        #expect(try decode("{\(common),\"keyPrefix\":\"shots\",\"keyLength\":8}").keyTemplate == "shots/{random:8}")
+        #expect(try decode("{\(common),\"keyPrefix\":\"\",\"keyLength\":6}").keyTemplate == "{random:6}")
+        #expect(try decode("{\(common),\"keyPrefix\":\"/a/b/\",\"keyLength\":99}").keyTemplate == "a/b/{random:32}")
+        #expect(try decode("{\(common),\"keyPrefix\":\"my shots+1\",\"keyLength\":8}").keyTemplate == "my-shots-1/{random:8}")
+        #expect(try decode("{\(common)}").keyTemplate == "{random:6}")
+        #expect(try decode("{\(common),\"keyTemplate\":\"{date}/{random}\",\"keyPrefix\":\"ignored\"}").keyTemplate == "{date}/{random}")
+    }
+
+    @Test func invalidKeyTemplateIsAValidationError() {
+        var spaced = aws
+        spaced.keyTemplate = "my shots/{random}"
+        #expect(spaced.validationError == .invalidKeyTemplate(ObjectKeyNamer.TemplateError.illegalCharacter(" ").localizedDescription))
+        var unknown = aws
+        unknown.keyTemplate = "{foo}"
+        #expect(unknown.validationError == .invalidKeyTemplate(ObjectKeyNamer.TemplateError.unknownToken("foo").localizedDescription))
+        #expect(!unknown.isComplete)
     }
 
     /// Pasted values often carry spaces; they are trimmed, not rejected.
@@ -78,14 +108,14 @@ struct S3DestinationConfigTests {
         padded.endpoint = " https://s3.us-west-2.amazonaws.com "
         padded.region = " us-west-2 "
         padded.bucket = " my-bucket "
-        padded.keyPrefix = " shots "
+        padded.keyTemplate = " /shots//{random}/ "
         #expect(padded.validationError == nil)
 
         let clean = padded.normalized
         #expect(clean.bucket == "my-bucket")
         #expect(clean.region == "us-west-2")
         #expect(clean.endpoint == "https://s3.us-west-2.amazonaws.com")
-        #expect(clean.keyPrefix == "shots")
+        #expect(clean.keyTemplate == "shots/{random}")
         #expect(try padded.objectURL(for: "a.png").absoluteString == "https://my-bucket.s3.us-west-2.amazonaws.com/a.png")
         #expect(padded.objectPath(for: "a.png") == "/a.png")
     }

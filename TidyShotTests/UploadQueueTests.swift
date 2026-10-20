@@ -70,7 +70,7 @@ struct UploadQueueTests {
 
     func makeQueue(destination: FakeDestination, log: EventLog) -> UploadQueue {
         UploadQueue(destination: destination,
-                    keyNamer: ObjectKeyNamer(prefix: "s", length: 6, randomString: { String(repeating: "K", count: $0) }),
+                    keyNamer: ObjectKeyNamer(template: "s/{random}", randomString: { String(repeating: "K", count: $0) }),
                     policy: .immediate,
                     sleep: { _ in },
                     events: { log.events.append($0) })
@@ -93,13 +93,29 @@ struct UploadQueueTests {
         #expect(uploads.first?.data == data)
     }
 
+    @Test func keyUsesTheJobsNamingContext() async throws {
+        let destination = FakeDestination()
+        let log = EventLog()
+        let queue = UploadQueue(destination: destination,
+                                keyNamer: ObjectKeyNamer(template: "{app}/{date}/{counter}-{random:2}",
+                                                         randomString: { String(repeating: "K", count: $0) }),
+                                policy: .immediate, sleep: { _ in }, events: { log.events.append($0) })
+        let id = UUID()
+        let captured = DateComponents(calendar: .current, year: 2026, month: 10, day: 19, hour: 11, minute: 56, second: 3).date!
+        let naming = TemplateContext(date: captured, appName: "Safari", counter: 3, hostname: "miffle")
+
+        await queue.enqueue(UploadJob(id: id, data: data, contentType: "image/png", fileExtension: "png", naming: naming))
+        try await eventually { log.events.contains(.uploaded(id: id, url: URL(string: "https://snap.tky.io/Safari/2026-10-19/3-KK.png")!,
+                                                              key: "Safari/2026-10-19/3-KK.png")) }
+    }
+
     @Test func regeneratesKeyWhenHeadReturns200() async throws {
         let counter = Mutex(0)
         let destination = FakeDestination(.init(existingKeys: ["AAAAAA.png"]))
         let log = EventLog()
         let queue = UploadQueue(
             destination: destination,
-            keyNamer: ObjectKeyNamer(length: 6, randomString: { length in
+            keyNamer: ObjectKeyNamer(template: "{random}", randomString: { length in
                 let n = counter.withLock { $0 += 1; return $0 }
                 return String(repeating: n == 1 ? "A" : "B", count: length)
             }),
@@ -116,7 +132,7 @@ struct UploadQueueTests {
         let destination = FakeDestination(.init(existingKeys: ["KKKKKK.png"]))
         let log = EventLog()
         let queue = UploadQueue(destination: destination,
-                                keyNamer: ObjectKeyNamer(length: 6, randomString: { String(repeating: "K", count: $0) }),
+                                keyNamer: ObjectKeyNamer(template: "{random}", randomString: { String(repeating: "K", count: $0) }),
                                 policy: .immediate, sleep: { _ in }, events: { log.events.append($0) })
         let id = UUID()
 
@@ -132,7 +148,7 @@ struct UploadQueueTests {
         let log = EventLog()
         let sleeps = Mutex<[Duration]>([])
         let queue = UploadQueue(destination: destination,
-                                keyNamer: ObjectKeyNamer(length: 6, randomString: { String(repeating: "K", count: $0) }),
+                                keyNamer: ObjectKeyNamer(template: "{random}", randomString: { String(repeating: "K", count: $0) }),
                                 policy: RetryPolicy(maxAttempts: 3, baseDelay: .seconds(1), maxDelay: .seconds(30)),
                                 sleep: { duration in sleeps.withLock { $0.append(duration) } },
                                 events: { log.events.append($0) })
@@ -175,7 +191,7 @@ struct UploadQueueTests {
         let destination = FakeDestination(.init(failuresRemaining: 1, failure: .httpStatus(503, body: "")))
         let log = EventLog()
         let queue = UploadQueue(destination: destination,
-                                keyNamer: ObjectKeyNamer(length: 6, randomString: { String(repeating: "K", count: $0) }),
+                                keyNamer: ObjectKeyNamer(template: "{random}", randomString: { String(repeating: "K", count: $0) }),
                                 policy: .immediate,
                                 sleep: { _ in throw CancellationError() },
                                 events: { log.events.append($0) })

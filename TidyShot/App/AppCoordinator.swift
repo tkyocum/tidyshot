@@ -247,18 +247,23 @@ final class AppCoordinator {
         if queue == nil {
             let config = destination.config
             queue = UploadQueue(destination: destination,
-                                keyNamer: ObjectKeyNamer(prefix: config.keyPrefix, length: config.keyLength),
+                                keyNamer: ObjectKeyNamer(template: config.keyTemplate),
                                 events: { [weak self] event in self?.handle(event) })
         }
-        guard let queue else { return }
+        guard let queue, let record = history.record(id: recordID) else { return }
         uploadingIDs.insert(recordID)
         // `save` adds new records already marked uploading and shows them in the overlay, so
         // only a retry (a record in another state) needs the write and the overlay refresh.
-        if history.record(id: recordID)?.isUploading != true {
+        if !record.isUploading {
             history.update(id: recordID) { $0.uploadState = .uploading(fraction: 0) }
             refreshOverlay(for: recordID)
         }
-        let job = UploadJob(id: recordID, data: data, contentType: "image/png", fileExtension: "png")
+        // The key is named now, not at capture time: a capture taken while no destination was set
+        // up, and every retry, get a counter drawn when their upload starts. The date and app stay
+        // the capture's own, so a retried upload lands in the capture's date folder.
+        let counter = destination.config.keyTemplate.contains("{counter}") ? settings.nextCounter() : 0
+        let job = UploadJob(id: recordID, data: data, contentType: "image/png", fileExtension: "png",
+                            naming: TemplateContext(date: record.timestamp, appName: record.appName, counter: counter))
         Task { await queue.enqueue(job) }
     }
 

@@ -24,8 +24,8 @@ struct AppSettingsTests {
     @Test func s3ConfigRoundTripsThroughDefaults() {
         let defaults = freshDefaults()
         let config = S3DestinationConfig(endpoint: "https://s3.us-east-1.amazonaws.com", region: "us-east-1", bucket: "snap",
-                                         keyPrefix: "p", usePathStyle: true, sendPublicReadACL: true,
-                                         publicURLTemplate: "https://snap.tky.io/{key}", keyLength: 8)
+                                         usePathStyle: true, sendPublicReadACL: true,
+                                         publicURLTemplate: "https://snap.tky.io/{key}", keyTemplate: "p/{random:8}")
         let first = AppSettings(defaults: defaults)
         first.s3Config = config
         first.afterCaptureAction = .save
