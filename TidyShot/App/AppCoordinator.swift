@@ -163,6 +163,8 @@ final class AppCoordinator {
             png = try ImageEncoder.pngData(from: result.image, scale: result.scale)
         } catch {
             NSLog("Encode failed: \(error.localizedDescription)")
+            // Never drop a capture: without PNG data the clipboard still gets the image as TIFF.
+            Pasteboard.copy(image: result.image, scale: result.scale)
             notifier.notifyError(error.localizedDescription)
             return
         }
@@ -221,7 +223,8 @@ final class AppCoordinator {
 
         if let destination {
             startUpload(recordID: record.id, data: png, destination: destination)
-        } else if action == .save, settings.showNotification {
+        } else if action != .uploadOnly, settings.showNotification {
+            // Save mode, or upload mode with no destination (as in Phase 2): the file was saved.
             notifier.notifySaved(fileURL: fileURL)
         }
     }
@@ -389,7 +392,7 @@ final class AppCoordinator {
     /// Re-reads the file and uploads it again.
     func retryUpload(recordID: UUID) {
         // Ignore a second click while the record is already in flight; otherwise it would upload twice.
-        guard history.record(id: recordID) != nil, !uploadingIDs.contains(recordID) else { return }
+        guard history.record(id: recordID) != nil, !uploadingIDs.contains(recordID), !deletingIDs.contains(recordID) else { return }
         guard let destination = makeDestination() else {
             markFailed(recordID, message: UploadError.notConfigured.localizedDescription)
             return
@@ -400,7 +403,7 @@ final class AppCoordinator {
     /// Retries every failed upload with one keychain read. Without a destination, posts one
     /// notification instead of one per record.
     func retryFailedUploads() {
-        let failed = history.failedRecords
+        let failed = history.failedRecords.filter { !deletingIDs.contains($0.id) }
         guard !failed.isEmpty else { return }
         guard let destination = makeDestination() else {
             notifier.notifyError("Set up a destination in Settings > Upload, then retry.", title: "Upload not configured")
@@ -411,9 +414,10 @@ final class AppCoordinator {
         }
     }
 
-    /// Reads the record's file and starts its upload with `destination`.
+    /// Reads the record's file and starts its upload with `destination`. A record whose delete
+    /// is in progress is never re-enqueued, so a retry cannot re-upload what Delete is removing.
     private func retry(recordID: UUID, destination: S3Destination) {
-        guard let record = history.record(id: recordID) else { return }
+        guard !deletingIDs.contains(recordID), let record = history.record(id: recordID) else { return }
         do {
             let data = try readLocalFile(of: record)
             startUpload(recordID: recordID, data: data, destination: destination)
@@ -477,14 +481,13 @@ final class AppCoordinator {
             // TidyShot's own copy that nothing else would ever remove, so it goes with the record.
             await cancelUpload(of: recordID)
             guard let current = history.record(id: recordID) else { return }
-            if current.fileIsTemporary, let fileURL = current.fileURL {
-                do {
-                    try pendingFiles.remove(fileURL)
-                } catch {
-                    NSLog("Could not remove \(fileURL.lastPathComponent): \(error.localizedDescription)")
-                }
+            // If the temporary file cannot be removed the record is kept, as Delete does, so the
+            // file is not left behind with nothing pointing at it.
+            if current.fileIsTemporary, let fileURL = current.fileURL,
+               !removePendingFile(at: fileURL, context: "on remove from history", failureTitle: "Not removed") {
+                return
             }
-            removeRecord(current)
+            removeRecord(id: recordID)
             return
         case .delete:
             break
@@ -519,21 +522,21 @@ final class AppCoordinator {
         }
 
         if let fileURL = current.fileURL {
-            do {
-                if current.fileIsTemporary {
-                    try pendingFiles.remove(fileURL)
-                } else {
+            if current.fileIsTemporary {
+                guard removePendingFile(at: fileURL, context: "on delete", failureTitle: "Not deleted") else { return }
+            } else {
+                do {
                     try saveLocation.remove(at: fileURL)
+                } catch {
+                    notifier.notifyError("Could not delete \(fileURL.lastPathComponent): \(error.localizedDescription)", title: "Not deleted")
+                    return
                 }
-            } catch {
-                notifier.notifyError("Could not delete \(fileURL.lastPathComponent): \(error.localizedDescription)", title: "Not deleted")
-                return
             }
             if lastCaptureURL == fileURL {
                 lastCaptureURL = nil
             }
         }
-        removeRecord(current)
+        removeRecord(id: recordID)
         for key in sharedKeys {
             notifier.notifyError("Another capture shares this key, \(key), so its object was kept. This capture was removed from Recent Captures.",
                                  title: "Not deleted from storage")
@@ -552,13 +555,35 @@ final class AppCoordinator {
         }
     }
 
-    /// Removes the record and its thumbnail, and closes the overlay if it shows the record.
-    private func removeRecord(_ record: CaptureRecord) {
-        if let name = record.thumbnailFileName {
+    /// Removes the record and its thumbnail, and closes the overlay if it shows the record. The
+    /// record is read again here, not taken from before the delete's awaits, and the thumbnail
+    /// named for the id is removed even when the record does not name it yet: one that finished
+    /// during those awaits is not left behind.
+    private func removeRecord(id: UUID) {
+        let defaultName = thumbnails.fileName(for: id)
+        if let name = history.record(id: id)?.thumbnailFileName, name != defaultName {
             thumbnails.remove(fileName: name)
         }
-        history.remove(id: record.id)
-        overlay.close(recordID: record.id)
+        thumbnails.remove(fileName: defaultName)
+        history.remove(id: id)
+        overlay.close(recordID: id)
+    }
+
+    /// Removes a temporary file from `pending`. A file that is already gone counts as removed.
+    /// Any other failure is logged (`context` says when it happened), posted with `failureTitle`
+    /// when one is given, and returns false.
+    @discardableResult
+    private func removePendingFile(at fileURL: URL, context: String, failureTitle: String? = nil) -> Bool {
+        do {
+            try pendingFiles.remove(fileURL)
+            return true
+        } catch {
+            NSLog("Could not remove \(fileURL.lastPathComponent) \(context): \(error.localizedDescription)")
+            if let failureTitle {
+                notifier.notifyError("Could not delete \(fileURL.lastPathComponent): \(error.localizedDescription)", title: failureTitle)
+            }
+            return false
+        }
     }
 
     /// The one confirmation. The app is activated first so the alert appears in front even when
@@ -587,11 +612,7 @@ final class AppCoordinator {
                 thumbnails.remove(fileName: name)
             }
             if record.fileIsTemporary, let fileURL = record.fileURL {
-                do {
-                    try pendingFiles.remove(fileURL)
-                } catch {
-                    NSLog("Could not remove \(fileURL.lastPathComponent): \(error.localizedDescription)")
-                }
+                removePendingFile(at: fileURL, context: "after pruning")
             }
         }
     }
@@ -633,19 +654,17 @@ final class AppCoordinator {
             // record keeps pointing at it, so Delete can still remove it later.
             var removedTemporaryFile = false
             if let record = history.record(id: id), record.fileIsTemporary, let fileURL = record.fileURL {
-                do {
-                    try pendingFiles.remove(fileURL)
-                    removedTemporaryFile = true
-                } catch {
-                    NSLog("Could not remove \(fileURL.lastPathComponent) after upload: \(error.localizedDescription)")
-                }
+                removedTemporaryFile = removePendingFile(at: fileURL, context: "after upload")
             }
             history.update(id: id) { record in
                 record.uploadState = .uploaded(url: url, key: key)
-                record.objectLocation = location
-                if record.pendingObjectKey == key {
+                if record.objectLocation != location {
+                    // A reserved key from another destination named an object there, not here.
+                    record.pendingObjectKey = nil
+                } else if record.pendingObjectKey == key {
                     record.pendingObjectKey = nil
                 }
+                record.objectLocation = location
                 if removedTemporaryFile {
                     record.fileURL = nil
                     record.fileIsTemporary = false
