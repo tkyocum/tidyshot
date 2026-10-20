@@ -61,12 +61,19 @@ struct CaptureDeletionTests {
         #expect(CaptureDeletion.confirmationText(for: record(state: .failed(message: "offline"), fileURL: URL(fileURLWithPath: "/tmp/p.png"), temporary: true))
                 == "Removes it from history.")
         #expect(CaptureDeletion.confirmationText(for: record(state: .failed(message: "x"), fileURL: nil)) == "Removes it from history.")
+        // A location but no key (a failed upload that never reserved one): nothing in storage.
+        #expect(CaptureDeletion.confirmationText(for: record(state: .failed(message: "offline"), location: location))
+                == "Removes it from your save folder and from history.")
+        #expect(CaptureDeletion.confirmationText(for: record(state: .failed(message: "offline"), fileURL: nil, location: location))
+                == "Removes it from history.")
     }
 
     /// A Phase 2 record does not know which bucket its object went to, so Delete leaves it.
     @Test func confirmationTextSaysWhenTheObjectStays() {
         #expect(CaptureDeletion.confirmationText(for: record(state: .uploaded(url: url, key: "aB3dE9.png")))
                 == "Removes it from your save folder and from history. The uploaded object stays in the bucket.")
+        #expect(CaptureDeletion.confirmationText(for: record(state: .uploaded(url: url, key: "aB3dE9.png"), fileURL: nil))
+                == "Removes it from history. The uploaded object stays in the bucket.")
     }
 
     @Test func alertTexts() {

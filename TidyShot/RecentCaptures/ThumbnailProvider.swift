@@ -94,10 +94,13 @@ final class ThumbnailProvider {
 
     /// Up to 1200 px from the local file, or the thumbnail when the record has no file left.
     /// Cancelling the calling task stops the load before a read or a decode it has not started
-    /// yet and returns nil, without the thumbnail fallback and without caching anything.
+    /// yet and returns nil, without the thumbnail fallback and without caching anything. That holds
+    /// with or without a local file: a call already cancelled when it starts returns a cached
+    /// preview or nil, and never reads the thumbnail.
     func preview(for record: CaptureRecord) async -> NSImage? {
         let id = record.id
         if let cached = previews[id] { return cached }
+        guard !Task.isCancelled else { return nil }
         let generation = generations[id, default: 0]
         guard let source = readSource(for: record) else { return await thumbnail(for: record) }
         let readFile = readFile

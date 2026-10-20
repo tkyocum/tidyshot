@@ -76,7 +76,8 @@ final class SaveLocation {
     }
 
     /// Deletes a file inside the save folder, holding security-scoped access. A file that is
-    /// already gone is not an error; any other failure throws, so Delete keeps the record.
+    /// already gone is not an error; any other failure throws, and Delete then offers to remove the
+    /// record from history and leave the file.
     func remove(at fileURL: URL) throws {
         guard let currentURL else {
             throw CocoaError(.fileWriteNoPermission,

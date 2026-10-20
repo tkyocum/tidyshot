@@ -52,6 +52,14 @@ final class RecentCaptureMenuItemView: NSView {
         super.updateTrackingAreas()
     }
 
+    /// A menu item's view gets no `mouseExited` when its submenu closes under the mouse, so the
+    /// highlight is cleared whenever the view joins or leaves a window; the row never comes back
+    /// highlighted when the submenu opens again.
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        super.viewWillMove(toWindow: newWindow)
+        state.isHighlighted = false
+    }
+
     override func mouseEntered(with event: NSEvent) {
         if event.trackingArea === thumbnailArea {
             onThumbnailHover(self, true)

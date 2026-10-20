@@ -10,7 +10,8 @@ nonisolated enum CaptureDeletion {
     /// are Remove and Cancel.
     static let storageFailureText = "Remove it from history anyway? The object stays in the bucket."
     /// The second alert's informative text when the file in the save folder could not be removed
-    /// (any object is gone by then). Its buttons are Remove and Cancel.
+    /// (any object this capture alone owned has been deleted by then; shared keys and pre-Phase 3
+    /// records keep theirs). Its buttons are Remove and Cancel.
     static let fileFailureText = "Remove it from history anyway? The file stays where it is."
 
     /// Object keys that may hold the capture, in order and without duplicates: the key it was

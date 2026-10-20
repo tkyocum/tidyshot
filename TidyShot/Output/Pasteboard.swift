@@ -15,6 +15,20 @@ enum Pasteboard {
         pasteboard.writeObjects([item])
     }
 
+    /// Puts already encoded PNG and TIFF data on the general pasteboard; the TIFF comes from
+    /// `tiffData(of:scale:)`, made off the main actor. A nil `tiffData` leaves the PNG alone.
+    static func copy(pngData: Data, tiffData: Data?) {
+        let item = NSPasteboardItem()
+        item.setData(pngData, forType: .png)
+        if let tiffData {
+            item.setData(tiffData, forType: .tiff)
+        }
+
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.writeObjects([item])
+    }
+
     /// Puts the image on the general pasteboard as TIFF only, for when PNG encoding failed.
     /// The rep's size is set in points, as above.
     static func copy(image: CGImage, scale: CGFloat) {
@@ -28,7 +42,9 @@ enum Pasteboard {
         pasteboard.writeObjects([item])
     }
 
-    private static func tiffData(of image: CGImage, scale: CGFloat) -> Data? {
+    /// The image as TIFF with its rep's size in points, so a Retina image pastes at its on-screen
+    /// size. Touches no shared state, so it can run in a detached task (Copy Image).
+    nonisolated static func tiffData(of image: CGImage, scale: CGFloat) -> Data? {
         let rep = NSBitmapImageRep(cgImage: image)
         rep.size = CGSize(width: CGFloat(image.width) / scale, height: CGFloat(image.height) / scale)
         return rep.tiffRepresentation

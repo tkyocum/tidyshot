@@ -2,9 +2,12 @@
 
 Phase 3.1 replaced the gallery window with the Recent Captures submenu and the three-button delete
 alert with a two-button one. Skip the Gallery section and the "Remove from History Only" items
-below; `docs/testing/phase-3-1-manual-checklist.md` covers them now.
+below; `docs/testing/phase-3-1-manual-checklist.md` covers them now. Where an item below says the
+gallery, use the Recent Captures submenu: retrying happens through Retry Failed Uploads in the menu
+(or the overlay's Retry), the submenu row has no "No local file" text, and the delete alert texts
+are the ones in the Phase 3.1 checklist.
 
-Run after any change to Gallery, Overlay, History, Upload naming, or AppCoordinator. Automated
+Run after any change to Recent Captures, Overlay, History, Upload naming, or AppCoordinator. Automated
 tests cover the template engine, key validation and migration, thumbnails and the two stores,
 record migration, queue cancellation, deletion bookkeeping and the thumbnail provider; everything
 here needs a real bucket and eyes.
@@ -32,17 +35,17 @@ history including at least one Phase 2 capture (made before this build).
 - [ ] With the window open, a new capture appears at the top with its thumbnail and its capsule goes Uploading, then Uploaded.
 
 ## Overlay delete
-- [ ] Trash button during an upload (fullscreen capture or Network Link Conditioner): the alert names "the upload in progress"; after Delete the overlay closes, the menu bar icon returns to the viewfinder, no object is in the bucket (list it, or GET the URL the overlay would have shown), no row, no file, no thumbnail.
+- [ ] Trash button during an upload (fullscreen capture or Network Link Conditioner): the alert reads "Removes it from object storage, your save folder and history." ("Removes it from object storage and from history." for an upload-only capture); after Delete the overlay closes, the menu bar icon returns to the viewfinder, no object is in the bucket (list it, or GET the URL the overlay would have shown), no row, no file, no thumbnail.
 - [ ] Trash button during an upload, right after saving the Upload tab (so the upload runs on the replaced queue): the upload is still cancelled, and the menu bar icon returns to the viewfinder.
 - [ ] Trash button after the upload finished: object, row, file and thumbnail gone.
 - [ ] Cancel in the alert keeps everything and the overlay stays.
 - [ ] Clicking the thumbnail of an upload-only capture does nothing (no Finder reveal).
 
 ## Upload only
-- [ ] Settings > General, "Upload only, keep no local file": the caption appears; with no save folder chosen, a capture shows no folder prompt, the overlay goes to "URL copied", pasting gives the URL, `pending/` is empty afterwards, the gallery row shows "No local file" and no Reveal item, "Reveal Last Capture" is disabled.
-- [ ] Wi-Fi off, capture: overlay "Upload failed" with Retry, `pending/<UUID>.png` exists; Wi-Fi on, Retry from the gallery: Uploaded, and the pending file is gone.
+- [ ] Settings > General, "Upload only, keep no local file": the caption appears; with no save folder chosen, a capture shows no folder prompt, the overlay goes to "URL copied", pasting gives the URL, `pending/` is empty afterwards, the Recent Captures row shows the object name (`aSIS7x.png`) and its photo button still copies the image, "Reveal Last Capture" is disabled.
+- [ ] Wi-Fi off, capture: overlay "Upload failed" with Retry, `pending/<UUID>.png` exists; Wi-Fi on, Retry Failed Uploads in the menu (or the overlay's Retry): Uploaded, and the pending file is gone.
 - [ ] Wi-Fi off, capture in upload-only, then set retention to 1 day and wait past it (or change the record's `timestamp` in `history.json` to two days ago before relaunching) and take another capture: the failed upload-only row and its `pending/` file are still there.
-- [ ] Forget Credentials, then capture in upload-only: one "Upload not configured" notification, the image is on the clipboard, the row is Failed and the pending file stays; re-enter credentials, Retry Upload: Uploaded.
+- [ ] Forget Credentials, then capture in upload-only: one "Upload not configured" notification, the image is on the clipboard, the row is Failed and the pending file stays; re-enter credentials, Retry Failed Uploads: Uploaded.
 - [ ] "Also copy image" on: paste gives the image until the upload finishes, then the URL.
 
 ## Key templates
@@ -51,7 +54,7 @@ history including at least one Phase 2 capture (made before this build).
 - [ ] Template `{date}/{hostname}`: the orange warning appears and says the template has no {random} or {counter}, so captures can produce the same key and only the HEAD check keeps a capture from overwriting an earlier object; Save works; two captures on the same day: the second fails with "Could not find an unused object key after 5 tries." and keeps its file for retry.
 - [ ] Settings > Upload with the warning showing: the tab is taller than the 800-point window and scrolls, and scrolling reaches everything down to the Save buttons.
 - [ ] Template `my shots/{random}`: red message `" " is not allowed…`; Save shows "Key template: …" and does not save. Template `{foo}`: red `{foo} is not a token.`
-- [ ] Save and Test Connection with a folder template: the status line's probe URL is inside that folder and the probe is gone afterwards.
+- [ ] Save and Test Connection with a folder template: the result is exactly "Upload and public read both work."; afterwards the bucket has no `tidyshot-probe-*.txt` under that folder. With a key or bucket policy that allows writes only under that folder, the test still succeeds. (`ConnectionTesterTests` checks which folder the probe key goes into; do not watch the bucket listing during the test.)
 - [ ] File name template `{year}-{month}-{day} {hostname}` names local files as expected; the default template still gives `Screenshot 2026-10-19 at 11.56.03.png`.
 - [ ] A retried failed upload lands under the capture's own date folder, not today's; with `{counter}` in the key template, the retry's key has a newly drawn counter value, and an upload-only capture taken before a destination existed gets a real counter (not 0) when it is retried.
 
@@ -61,4 +64,4 @@ history including at least one Phase 2 capture (made before this build).
 
 ## History hygiene
 - [ ] Retention 1 day with older captures present, then capture: older rows disappear, their files in `thumbnails/` are gone, and their files in the save folder remain; a failed upload-only capture is kept with its `pending/` file however old it is.
-- [ ] Quit, replace `history.json` with `not json`, relaunch: the gallery is empty, `thumbnails/` and `pending/` are untouched, and `history.json.corrupt-<number>` exists.
+- [ ] Quit, replace `history.json` with `not json`, relaunch: Recent Captures shows "No captures yet", `thumbnails/` and `pending/` are untouched, and `history.json.corrupt-<number>` exists.

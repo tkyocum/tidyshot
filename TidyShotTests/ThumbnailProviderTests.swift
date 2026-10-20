@@ -100,6 +100,19 @@ struct ThumbnailProviderTests {
         #expect(await provider.preview(for: withFile) !== preview)
     }
 
+    /// A preview call that is already cancelled gets no thumbnail fallback, also for a record
+    /// with no local file (an upload-only capture), which would otherwise read the thumbnail.
+    @Test func cancelledPreviewSkipsTheThumbnailFallback() async throws {
+        let uploadOnly = record(thumbnail: try store.write(try png(width: 300, height: 150), id: UUID()), file: nil)
+        let provider = makeProvider { _, _ in throw CocoaError(.fileNoSuchFile) }
+        let load = Task { () -> Bool in
+            withUnsafeCurrentTask { $0?.cancel() }
+            return await provider.preview(for: uploadOnly) == nil
+        }
+        #expect(await load.value)
+        #expect(await provider.preview(for: uploadOnly)?.size == CGSize(width: 300, height: 150))
+    }
+
     /// `forget` runs while the load's read is in progress in its detached task: the reader
     /// blocks until the test has called it.
     @Test func forgetDuringALoadDiscardsIt() async throws {

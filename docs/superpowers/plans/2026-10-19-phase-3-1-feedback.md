@@ -22,7 +22,7 @@ Expected: `Already on 'phase-3-1-feedback'` (or `Switched to branch 'phase-3-1-f
 
 - Every Phase 0, 1, 2 and 3 constraint still applies: minimum macOS `26.0`, Xcode 27.1 with the macOS 27.0 SDK, App Sandbox on with no new entitlements, Swift 6 language mode with `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` and `SWIFT_APPROACHABLE_CONCURRENCY = YES`, `KeyboardShortcuts` as the only package, credentials only in the Keychain, files in the save folder only through the security-scoped bookmark, thumbnails and upload-only files in the container next to `history.json`, one token engine for file names and object keys, keys named when the upload starts, HEAD before PUT, and no GPL-licensed code read or copied.
 - No `{app}` anywhere. The token, `TemplateContext.appName`, `FileNamer.name(appName:counter:)` (now `name(counter:)`) and the `appName` parameter of `AppCoordinator.save` are gone, and the captions list `{date} {year} {month} {day} {time} {datetime} {hostname} {counter} {random} {random:8}`. Stored templates (the file name template in `AppSettings`, the key template in `S3DestinationConfig`) go through `TemplateMigration.removingAppToken(from:fallback:)`: the token is deleted, a pair of `-`, `_`, space or `/` that the deletion brought together collapses to one, and a `-`, `_` or space it left dangling (at the start or end of the template or of a path segment, or next to a `.`) is dropped, as is a `/` left at either end of the template; a `.` is never touched (`{random}-{app}.png` becomes `{random}.png`, `shots/{app}.png` becomes `shots/.png`, which validation then handles as it does any template). A blank result becomes the default template and the original is logged, and `AppSettings` writes the rewritten values back once, so each stored template is migrated (and logged) once. The only mentions left in source are `TemplateMigration` and the migration comments in `AppSettings` and `S3DestinationConfig`; the tests contain the literal, as does the migration item in the Phase 3.1 checklist. `CaptureRecord.appName` stays so history written before Phase 3.1 decodes unchanged; new records store nil.
-- The delete path stays single: `AppCoordinator.deleteCapture(recordID:)`, guarded by `deletingIDs`, for the overlay and for Recent Captures. First alert: message `Delete this capture?`, informative text the one line from `CaptureDeletion.confirmationText(for:)` (`Removes it from object storage, your save folder and history.` when the object can be deleted and a save-folder file exists, `Removes it from object storage and from history.` when the object can be deleted and there is no save-folder file), buttons Delete (destructive) and Cancel. Only when the storage `DELETE` fails or no credentials are stored: message `Couldn't delete it from storage: <reason>`, informative text `Remove it from history anyway? The object stays in the bucket.`, buttons Remove (destructive) and Cancel; Remove drops the record, its thumbnail and a temporary file in `pending`, never the object or a file in the save folder. Only when a file in the save folder cannot be removed (any object is gone by then; amended after the Task 3 review): message `Couldn't delete the file: <reason>`, informative text `Remove it from history anyway? The file stays where it is.`, the same buttons and the same Remove. Either second alert comes after the delete's network awaits, so it first waits until the main run loop is back in its default mode (`RunLoop.main.perform(inModes: [.default])`) and never opens inside menu tracking. Nothing offers "Remove from History Only" any more.
+- The delete path stays single: `AppCoordinator.deleteCapture(recordID:)`, guarded by `deletingIDs`, for the overlay and for Recent Captures. First alert: message `Delete this capture?`, informative text the one line from `CaptureDeletion.confirmationText(for:)` (`Removes it from object storage, your save folder and history.` when the object can be deleted and a save-folder file exists, `Removes it from object storage and from history.` when the object can be deleted and there is no save-folder file), buttons Delete (destructive) and Cancel. Only when the storage `DELETE` fails or no credentials are stored: message `Couldn't delete it from storage: <reason>`, informative text `Remove it from history anyway? The object stays in the bucket.`, buttons Remove (destructive) and Cancel; Remove drops the record, its thumbnail and a temporary file in `pending`, never the object or a file in the save folder. Only when a file in the save folder cannot be removed (any object this capture alone owned has been deleted by then, while shared keys and pre-Phase 3 records keep theirs; amended after the Task 3 review and the whole-branch review): message `Couldn't delete the file: <reason>`, informative text `Remove it from history anyway? The file stays where it is.`, the same buttons and the same Remove. Either second alert comes after the delete's network awaits, so it first waits until the main run loop is back in its default mode (`RunLoop.main.perform(inModes: [.default])`) and never opens inside menu tracking. Nothing offers "Remove from History Only" any more.
 - The menu must not activate the app except for alerts and Settings (and the Phase 0 permission window). Menu item actions, row clicks, the copy buttons and the preview panel never call `activate`; `NSAlert` paths and `SettingsOpener.open()` do.
 - No work in SwiftUI `body`. `RecentCaptureRow` gets its strings and flags precomputed by `RecentCaptureFormatting`, loads its thumbnail in `.task`, and the preview loads in a `Task` through `ThumbnailProvider`, whose file reads run detached. `SelectionView` samples luminance in its mouse handlers and when the snapshot arrives, never while drawing.
 - Menu bar: `NSStatusItem` (with `autosaveName` `TidyShot`, so a position the user drags it to is kept) plus `NSMenu`, rebuilt each time it opens; the icon is `camera.viewfinder`, `arrow.up.circle` while `AppCoordinator.isUploading`. Shortcuts appear in the capture items' titles (`Capture Area  ⌃⇧4`), never as key equivalents. The SwiftUI app declares only `Settings { SettingsView() }`.
@@ -3902,10 +3902,10 @@ signed GET, the alert texts, the row text and the preview placement; everything 
 real menu bar, a real bucket and eyes.
 
 Setup: fresh build, Screen Recording granted, save folder set to Desktop, a working destination
-saved in Settings > Upload, after-capture action "Upload and copy URL", at least three captures in
+saved in Settings > Upload, after-capture action "Upload and copy URL", at least four captures in
 history: one uploaded, one saved without upload ("Save and copy image"), one upload-only, and one
-made before this build. Where the Phase 2 and Phase 3 checklists say Recent Captures shows
-`Saved` or `Failed`, the submenu row shows no suffix or "· Upload failed".
+uploaded with the Phase 2 build (before Phase 3). Where the Phase 2 and Phase 3 checklists say
+Recent Captures shows `Saved` or `Failed`, the submenu row shows no suffix or "· Upload failed".
 
 ## Menu bar
 - [ ] One TidyShot icon (the viewfinder), no Dock icon. Opening the menu leaves the frontmost app active: its name stays in the menu bar.
@@ -3943,14 +3943,15 @@ made before this build. Where the Phase 2 and Phase 3 checklists say Recent Capt
 - [ ] Uploaded upload-only capture (no file in the save folder): the line reads "Removes it from object storage and from history."; Delete removes the row, the object (`curl -I <url>` gives 403 or 404) and the thumbnail.
 - [ ] Saved capture never uploaded: the line reads "Removes it from your save folder and from history."; a capture uploaded before Phase 3: "Removes it from your save folder and from history. The uploaded object stays in the bucket."
 - [ ] Wi-Fi off, Delete on an uploaded capture: a second alert, "Couldn't delete it from storage: …" with "Remove it from history anyway? The object stays in the bucket." and Remove (red) and Cancel. Cancel keeps the capture. Delete again, Remove: the row and thumbnail go, the file in the save folder stays, and with Wi-Fi back on `curl -I <url>` still gives 200.
-- [ ] The same with an upload-only capture that has failed and is still in `pending/`: after Remove, its `pending/<UUID>.png` is gone.
+- [ ] Wi-Fi off, capture in upload-only mode: the row shows "· Upload failed" and `pending/<UUID>.png` exists. Delete: the line reads "Removes it from history."; there is no second alert; the row, the thumbnail and `pending/<UUID>.png` go.
+- [ ] Upload-only mode, Network Link Conditioner on a low-bandwidth profile (a custom profile with a few hundred Kbps uplink), take a large fullscreen capture. Once the overlay's progress bar has started moving (HEAD has passed and the key is reserved), switch the profile to 100% loss. Within about two minutes, press Delete (trash button or overlay). The line reads "Removes it from object storage and from history.". After about a minute, the second alert "Couldn't delete it from storage: …" appears. Press Cancel: the row now shows "· Upload failed" and `pending/<UUID>.png` is still there. Press Delete again and confirm; the second alert appears after the timeout. Press Remove: the row and the thumbnail go, and `pending/<UUID>.png` is gone. (Do not start at 100% loss: HEAD then never answers, no key is reserved, and Delete removes the pending file with no second alert. Do not use Wi-Fi off here either: the three attempts give up in about 3 s and clear the reserved key.)
 - [ ] Forget Credentials, then Delete on an uploaded capture: the second alert says "Couldn't delete it from storage: No credentials are saved in Settings > Upload." Re-enter the credentials.
 - [ ] Choose another save folder in Settings > General, quit and relaunch, then Delete an uploaded capture saved before the change: a second alert, "Couldn't delete the file: …" with "Remove it from history anyway? The file stays where it is." and Remove (red) and Cancel; the object is already gone (`curl -I <url>` gives 403 or 404). Cancel keeps the capture. Delete again, Remove: the row and thumbnail go and the file stays in the old folder. Choose the old folder again.
 - [ ] Network Link Conditioner at 100% loss, Delete on an uploaded capture, then open the TidyShot menu and keep it open until the request times out (about a minute): no alert opens over the menu; the second alert appears once the menu closes.
-- [ ] Network Link Conditioner at 100% loss, Delete on an uploaded capture, then the trash button in the overlay and in the submenu for the same capture while the request hangs: no second alert appears.
+- [ ] Network Link Conditioner at 100% loss, Delete on an uploaded capture, then the trash button in the overlay and in the submenu for the same capture while the request hangs: no second "Delete this capture?" alert appears; the storage-failure alert after the request times out is expected.
 
 ## Templates and Upload tab
-- [ ] Before installing this build, with the Phase 3 build, set the file name template to `{app} {datetime}` and the key template to `shots/{app}/{random:8}` and save. After launching this build: Settings > General shows `{datetime}`, Settings > Upload shows `shots/{random:8}`, and `defaults read ~/Library/Containers/io.tky.tidyshot/Data/Library/Preferences/io.tky.tidyshot.plist` shows neither template with the old token. A capture uploads to `shots/XXXXXXXX.png`.
+- [ ] Before installing this build, with the Phase 3 build, set the file name template to `{app} {datetime}` and the key template to `shots/{app}/{random:8}` and save. After launching this build: Settings > General shows `{datetime}`, Settings > Upload shows `shots/{random:8}`, and, after quitting TidyShot, `defaults read ~/Library/Containers/io.tky.tidyshot/Data/Library/Preferences/io.tky.tidyshot.plist fileNameTemplate` prints `{datetime}`, and `plutil -extract s3DestinationConfig raw -o - ~/Library/Containers/io.tky.tidyshot/Data/Library/Preferences/io.tky.tidyshot.plist | base64 -D` prints JSON whose `keyTemplate` is `shots\/{random:8}` with no `{app}` (the key template is stored as encoded data, which `defaults read` cannot show). Relaunch; a capture uploads to `shots/XXXXXXXX.png`.
 - [ ] Again with the Phase 3 build, set the file name template to `{app}` alone. After launching this build Settings > General shows the default template, and `log show --last 5m --predicate 'process == "TidyShot"' | grep "Naming template"` shows one line with the old template; quitting and relaunching adds no second line. No notification is posted.
 - [ ] The token captions in Settings > General and Settings > Upload list `{date} {year} {month} {day} {time} {datetime} {hostname} {counter} {random} {random:8}`.
 - [ ] An empty Endpoint and Public URL each show a grey "Required"; the example sits on its own caption line under each field.
@@ -3979,9 +3980,18 @@ with:
 
 Phase 3.1 replaced the gallery window with the Recent Captures submenu and the three-button delete
 alert with a two-button one. Skip the Gallery section and the "Remove from History Only" items
-below; `docs/testing/phase-3-1-manual-checklist.md` covers them now.
+below; `docs/testing/phase-3-1-manual-checklist.md` covers them now. Where an item below says the
+gallery, use the Recent Captures submenu: retrying happens through Retry Failed Uploads in the menu
+(or the overlay's Retry), the submenu row has no "No local file" text, and the delete alert texts
+are the ones in the Phase 3.1 checklist.
 
 ```
+
+After the whole-branch review the stale Phase 3 items were also edited in place: the "Run after"
+line names Recent Captures instead of Gallery; the overlay-delete item expects the Phase 3.1 alert
+line; the upload-only items name the Recent Captures row and Retry Failed Uploads; the
+folder-template Test Connection item expects exactly "Upload and public read both work." and no
+probe left under the folder; the corrupt-history item expects "No captures yet".
 
 - [ ] **Step 3: Update the README**
 
@@ -4006,14 +4016,15 @@ with:
 Hover Recent Captures in the menu bar menu for the newest 15 captures, each with a thumbnail, its
 name and how long ago it was taken. Click a row to copy its URL (or the file when it was never
 uploaded). The row's buttons copy the URL, copy the image (downloaded from the bucket with a
-signed request when no local file is left), or delete the capture. Hover a thumbnail to see the
-capture full size beside the menu.
+signed request when no local file is left), or delete the capture. Hover a thumbnail to see a
+larger preview of the capture beside the menu.
 
 Delete asks once, "Delete this capture?", then removes the object from the bucket it was uploaded
-to, the local file, the thumbnail and the history entry. If the bucket refuses the delete, a
-second alert offers to remove the capture from history anyway and leave the object where it is.
-The same alert follows when the file cannot be removed from the save folder (for example after
-another save folder was chosen); the file then stays where it is.
+to, the local file, the thumbnail and the history entry. If the delete fails (no network, no
+credentials, or the bucket refuses it), a second alert offers to remove the capture from history
+anyway and leave the object where it is. If the local file cannot be removed from the save folder
+(for example after another save folder was chosen), a similar alert offers to remove the capture
+from history and keep the file where it is.
 The Quick Access overlay has the same Delete; while an upload is still running it cancels it
 first. Retry Failed Uploads appears in the menu whenever an upload has failed.
 ```

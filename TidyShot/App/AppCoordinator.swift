@@ -322,18 +322,27 @@ final class AppCoordinator {
     /// The stored credentials, or nil when there are none or the keychain could not be read
     /// (logged and reported once per launch).
     private func loadCredentials() -> AWSCredentials? {
-        let stored: AWSCredentials?
         do {
-            stored = try credentialStore.load(account: KeychainCredentialStore.defaultAccount)
+            return try storedCredentials()
         } catch {
             NSLog("Keychain read failed: \(error.localizedDescription)")
-            warnUploadNotConfiguredOnce("Could not read S3 credentials from the keychain: \(error.localizedDescription)")
+            warnUploadNotConfiguredOnce(Self.keychainReadFailure(error))
             return nil
         }
-        guard let credentials = stored, !credentials.accessKeyID.isEmpty, !credentials.secretAccessKey.isEmpty else {
+    }
+
+    /// The credentials in the Keychain, or nil when none (or only blank ones) are stored. Throws
+    /// when the Keychain read itself fails, so a caller can tell that apart from "none saved".
+    private func storedCredentials() throws -> AWSCredentials? {
+        guard let credentials = try credentialStore.load(account: KeychainCredentialStore.defaultAccount),
+              !credentials.accessKeyID.isEmpty, !credentials.secretAccessKey.isEmpty else {
             return nil
         }
         return credentials
+    }
+
+    private static func keychainReadFailure(_ error: any Error) -> String {
+        "Could not read S3 credentials from the keychain: \(error.localizedDescription)"
     }
 
     /// Called by the Upload settings tab after saving or forgetting credentials, so the next
@@ -450,17 +459,23 @@ final class AppCoordinator {
     /// Copy Image: the PNG and TIFF on the clipboard, from the local file when it can be read;
     /// otherwise (an upload-only capture, or a file that cannot be read) downloaded with a signed
     /// GET from the bucket the record says it went to, with "Copying image…" posted while that
-    /// runs. The read and the decode run in detached tasks, because a capture can be tens of
-    /// megabytes; the clipboard is written here, on the main actor.
+    /// runs. The read, the pixel decode and the TIFF encode run in detached tasks, because a
+    /// capture can be tens of megabytes; only the finished PNG and TIFF data are written to the
+    /// clipboard here, on the main actor.
     func copyImage(recordID: UUID) async {
         guard let record = history.record(id: recordID) else { return }
         do {
             let png = try await imageData(of: record)
-            let decoded = await Task.detached(priority: .userInitiated) { ImageEncoder.decode(png) }.value
-            guard let decoded else { throw CopyImageError.notAnImage }
-            Pasteboard.copy(image: decoded.image, pngData: png, scale: decoded.scale)
+            let converted = await Task.detached(priority: .userInitiated) { () -> (decoded: Bool, tiff: Data?) in
+                guard let decoded = ImageEncoder.decode(png) else { return (false, nil) }
+                return (true, Pasteboard.tiffData(of: decoded.image, scale: decoded.scale))
+            }.value
+            guard converted.decoded else { throw CopyImageError.notAnImage }
+            Pasteboard.copy(pngData: png, tiffData: converted.tiff)
             if settings.showNotification {
-                notifier.notify(title: "Image copied", body: record.uploadedKey ?? record.fileURL?.lastPathComponent ?? "")
+                // Read again: an upload that finished during the copy has given the record its key.
+                let current = history.record(id: recordID) ?? record
+                notifier.notify(title: "Image copied", body: current.uploadedKey ?? current.fileURL?.lastPathComponent ?? "")
             }
         } catch {
             notifier.notifyError(error.localizedDescription, title: "Could not copy image")
@@ -481,8 +496,12 @@ final class AppCoordinator {
                 return try? SaveLocation.readScoped(fileURL, folder: folder)
             }.value
             if let local { return local }
-            // The file is recorded but cannot be read; the uploaded object is the other copy.
-            guard record.uploadedKey != nil, record.objectLocation != nil else { throw CopyImageError.unreadableFile }
+            // The file is recorded but cannot be read; the uploaded object is the other copy. The
+            // record is read again: an upload-only capture whose upload finished during the read
+            // has lost its `pending` file and gained the key that the snapshot above lacks.
+            let current = history.record(id: record.id) ?? record
+            guard current.uploadedKey != nil, current.objectLocation != nil else { throw CopyImageError.unreadableFile }
+            return try await downloadImage(of: current)
         }
         return try await downloadImage(of: record)
     }
@@ -550,9 +569,10 @@ final class AppCoordinator {
                     try saveLocation.remove(at: fileURL)
                 } catch {
                     // The file lies outside the current save folder (the sandbox denies it), or the
-                    // folder's bookmark no longer resolves. Any object is gone by now, so trying
-                    // Delete again would fail on this file every time: offer to drop the record and
-                    // leave the file where it is.
+                    // folder's bookmark no longer resolves. Any object this capture alone owned has
+                    // been deleted by now (shared keys and pre-Phase 3 records keep theirs), so
+                    // trying Delete again would fail on this file every time: offer to drop the
+                    // record and leave the file where it is.
                     let message = CaptureDeletion.fileFailureMessage(reason: error.localizedDescription)
                     if await confirmRemoveFromHistory(message: message, informativeText: CaptureDeletion.fileFailureText) {
                         removeFromHistoryOnly(recordID)
@@ -579,10 +599,18 @@ final class AppCoordinator {
 
     /// `DELETE`s `keys` at `location`, signed with the credentials stored now; the destination is
     /// built from where the object went, never from the current Upload settings. Returns nil when
-    /// every key is gone (a 404 counts as gone), otherwise the reason for the first failure.
+    /// every key is gone (a 404 counts as gone), otherwise the reason for the first failure. A
+    /// Keychain read that fails is reported as such, not as missing credentials.
     private func deleteObjects(_ keys: [String], at location: ObjectLocation) async -> String? {
         guard !keys.isEmpty else { return nil }
-        guard let credentials = loadCredentials() else {
+        let stored: AWSCredentials?
+        do {
+            stored = try storedCredentials()
+        } catch {
+            NSLog("Keychain read failed: \(error.localizedDescription)")
+            return Self.keychainReadFailure(error)
+        }
+        guard let credentials = stored else {
             return "No credentials are saved in Settings > Upload."
         }
         let destination = S3Destination(config: location.config, credentials: credentials)
@@ -671,21 +699,25 @@ final class AppCoordinator {
     /// not be removed: Remove (from history; what could not be deleted stays) or Cancel. It comes
     /// after the delete's network awaits, and a main-actor continuation also runs while a menu is
     /// tracking (the main queue is served in the common run-loop modes), so the user may have
-    /// opened the menu bar menu in the meantime. It therefore first waits until the run loop is
-    /// back in its default mode, which is not entered until tracking ends, so `runModal()` never
-    /// starts inside a menu's tracking loop.
+    /// opened the menu bar menu in the meantime. The alert therefore runs inside a block that the
+    /// run loop performs only in its default mode, which is not entered while a menu tracks, so
+    /// `runModal()` never starts inside a menu's tracking loop (resuming first and running the
+    /// alert afterwards would leave one main-queue turn in which tracking could begin).
     private func confirmRemoveFromHistory(message: String, informativeText: String) async -> Bool {
-        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
-            RunLoop.main.perform(inModes: [.default]) { done.resume() }
+        await withCheckedContinuation { (done: CheckedContinuation<Bool, Never>) in
+            RunLoop.main.perform(inModes: [.default]) {
+                MainActor.assumeIsolated {
+                    let alert = NSAlert()
+                    alert.messageText = message
+                    alert.informativeText = informativeText
+                    alert.alertStyle = .warning
+                    alert.addButton(withTitle: "Remove").hasDestructiveAction = true
+                    alert.addButton(withTitle: "Cancel")
+                    NSApplication.shared.activate(ignoringOtherApps: true)
+                    done.resume(returning: alert.runModal() == .alertFirstButtonReturn)
+                }
+            }
         }
-        let alert = NSAlert()
-        alert.messageText = message
-        alert.informativeText = informativeText
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "Remove").hasDestructiveAction = true
-        alert.addButton(withTitle: "Cancel")
-        NSApplication.shared.activate(ignoringOtherApps: true)
-        return alert.runModal() == .alertFirstButtonReturn
     }
 
     /// Thumbnails and temporary files of records dropped by retention. Files in the save folder

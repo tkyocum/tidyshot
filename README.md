@@ -75,14 +75,15 @@ file; a failed upload keeps it until a retry succeeds or the capture is deleted.
 Hover Recent Captures in the menu bar menu for the newest 15 captures, each with a thumbnail, its
 name and how long ago it was taken. Click a row to copy its URL (or the file when it was never
 uploaded). The row's buttons copy the URL, copy the image (downloaded from the bucket with a
-signed request when no local file is left), or delete the capture. Hover a thumbnail to see the
-capture full size beside the menu.
+signed request when no local file is left), or delete the capture. Hover a thumbnail to see a
+larger preview of the capture beside the menu.
 
 Delete asks once, "Delete this capture?", then removes the object from the bucket it was uploaded
-to, the local file, the thumbnail and the history entry. If the bucket refuses the delete, a
-second alert offers to remove the capture from history anyway and leave the object where it is.
-The same alert follows when the file cannot be removed from the save folder (for example after
-another save folder was chosen); the file then stays where it is.
+to, the local file, the thumbnail and the history entry. If the delete fails (no network, no
+credentials, or the bucket refuses it), a second alert offers to remove the capture from history
+anyway and leave the object where it is. If the local file cannot be removed from the save folder
+(for example after another save folder was chosen), a similar alert offers to remove the capture
+from history and keep the file where it is.
 The Quick Access overlay has the same Delete; while an upload is still running it cancels it
 first. Retry Failed Uploads appears in the menu whenever an upload has failed.
 Thumbnails live in `~/Library/Containers/io.tky.tidyshot/Data/Library/Application Support/TidyShot/thumbnails`.
