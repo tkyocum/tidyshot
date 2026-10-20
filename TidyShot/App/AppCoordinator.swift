@@ -290,11 +290,15 @@ final class AppCoordinator {
     /// Reads the record's file and starts its upload with `destination`.
     private func retry(recordID: UUID, destination: S3Destination) {
         guard let record = history.record(id: recordID) else { return }
+        guard let fileURL = record.fileURL else {
+            markFailed(recordID, message: UploadError.fileUnreadable("no local file").localizedDescription)
+            return
+        }
         do {
-            let data = try saveLocation.read(contentsOf: record.fileURL)
+            let data = try saveLocation.read(contentsOf: fileURL)
             startUpload(recordID: recordID, data: data, destination: destination)
         } catch {
-            markFailed(recordID, message: UploadError.fileUnreadable(record.fileURL.lastPathComponent).localizedDescription)
+            markFailed(recordID, message: UploadError.fileUnreadable(fileURL.lastPathComponent).localizedDescription)
         }
     }
 
@@ -304,8 +308,8 @@ final class AppCoordinator {
     }
 
     func reveal(recordID: UUID) {
-        guard let record = history.record(id: recordID) else { return }
-        NSWorkspace.shared.activateFileViewerSelecting([record.fileURL])
+        guard let fileURL = history.record(id: recordID)?.fileURL else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([fileURL])
     }
 
     /// Menu action for a history row: copy the URL, retry a failed upload, or reveal the file.

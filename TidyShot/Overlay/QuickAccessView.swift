@@ -59,7 +59,7 @@ struct QuickAccessView: View {
                     .controlSize(.small)
                 Text("Uploading…")
             }
-            Text(model.record.fileURL.lastPathComponent)
+            Text(model.record.fileURL?.lastPathComponent ?? "Upload only")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
@@ -86,7 +86,7 @@ struct QuickAccessView: View {
         case .none:
             Label("Saved", systemImage: "checkmark.circle.fill")
                 .foregroundStyle(.green)
-            Text(model.record.fileURL.lastPathComponent)
+            Text(model.record.fileURL?.lastPathComponent ?? "Upload only")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)

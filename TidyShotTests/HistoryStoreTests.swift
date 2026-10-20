@@ -89,6 +89,44 @@ struct HistoryStoreTests {
         #expect(second.records.isEmpty)
     }
 
+    @Test func didPruneReportsDroppedRecordsOnAddAndLoad() {
+        let first = store(retentionDays: 30)
+        var pruned: [[UUID]] = []
+        first.didPrune = { pruned.append($0.map(\.id)) }
+        let old = record(age: 31 * 86_400)
+        first.add(old)
+        #expect(pruned == [[old.id]])
+        first.add(record(age: 29 * 86_400))
+        #expect(pruned == [[old.id]])
+
+        let second = store(retentionDays: 7)
+        var prunedOnLoad: [UUID] = []
+        second.didPrune = { prunedOnLoad = $0.map(\.id) }
+        second.load()
+        #expect(prunedOnLoad.count == 1)
+        #expect(second.records.isEmpty)
+    }
+
+    /// An upload-only capture that was never uploaded has its only copy in `pending/`; retention
+    /// must not drop the record (and with it the file) however old it is.
+    @Test func pruningKeepsUploadOnlyCapturesThatWereNeverUploaded() {
+        let history = store(retentionDays: 7)
+        var pruned: [UUID] = []
+        history.didPrune = { pruned += $0.map(\.id) }
+        let pendingOnly = CaptureRecord(timestamp: now.addingTimeInterval(-30 * 86_400), fileURL: dir.appending(path: "pending/a.png"),
+                                        fileIsTemporary: true, pixelWidth: 1, pixelHeight: 1, appName: nil,
+                                        uploadState: .failed(message: "offline"))
+        let old = record(age: 30 * 86_400)
+        history.add(pendingOnly)
+        history.add(old)
+
+        #expect(history.records.map(\.id) == [pendingOnly.id])
+        #expect(pruned == [old.id])
+        let reloaded = store(retentionDays: 7)
+        reloaded.load()
+        #expect(reloaded.records.map(\.id) == [pendingOnly.id])
+    }
+
     @Test func missingFileLoadsEmpty() {
         let fresh = store()
         fresh.load()

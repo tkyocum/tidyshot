@@ -75,7 +75,7 @@ struct MenuContent: View {
         case .uploaded: status = "Uploaded"
         case .failed: status = "Failed"
         }
-        let name = record.uploadedURL?.lastPathComponent ?? record.fileURL.lastPathComponent
+        let name = record.uploadedURL?.lastPathComponent ?? record.fileURL?.lastPathComponent ?? "Upload only"
         return "\(status)  \(time)  \(name)"
     }
 
