@@ -31,7 +31,7 @@ made before this build. Where the Phase 2 and Phase 3 checklists say Recent Capt
 - [ ] The link button is greyed out on a never-uploaded row; on an uploaded row it closes the menu and copies the URL.
 - [ ] The photo button on a saved capture closes the menu, posts "Image copied", and Notes pastes the image at point size, not double.
 - [ ] The photo button on an upload-only capture (no local file) posts "Copying image…", then "Image copied", and the paste works; with Wi-Fi off it posts "Could not copy image" with the reason.
-- [ ] The photo button is greyed out on a capture made before Phase 3 whose file was deleted from the save folder.
+- [ ] On a capture made before Phase 3 whose file was deleted from the save folder (or move its file out of the folder for this item and put it back afterwards), the photo button stays enabled; pressing it posts "Could not copy image" with "The local file could not be read." (a capture from before Phase 3 has no stored bucket location to download from).
 - [ ] Rename the file of a capture that was saved but never uploaded (in Finder, in the save folder), then press its photo button: "Could not copy image" with "The local file could not be read." Rename it back.
 - [ ] The trash button closes the menu and shows the delete alert (see Delete); after Delete the row is gone the next time the menu opens.
 - [ ] With an empty history the submenu shows a greyed "No captures yet".
@@ -43,11 +43,14 @@ made before this build. Where the Phase 2 and Phase 3 checklists say Recent Capt
 - [ ] Command-drag the icon to the right end of the menu bar: the submenu opens to the left of the menu and the panel is on the submenu's left. When the preferred side has no room (a submenu at a display's edge, or a narrow display) the panel opens on the other side and stays on screen.
 
 ## Delete
-- [ ] Uploaded capture, from the trash button or the overlay: "Delete this capture?", "Removes it from object storage and from history.", Delete (red) and Cancel. Escape cancels. Delete removes the row, the object (`curl -I <url>` gives 403 or 404), the file in the save folder and the thumbnail.
+- [ ] Uploaded capture, from the trash button or the overlay: "Delete this capture?", "Removes it from object storage, your save folder and history.", Delete (red) and Cancel. Escape cancels. Delete removes the row, the object (`curl -I <url>` gives 403 or 404), the file in the save folder and the thumbnail.
+- [ ] Uploaded upload-only capture (no file in the save folder): the line reads "Removes it from object storage and from history."; Delete removes the row, the object (`curl -I <url>` gives 403 or 404) and the thumbnail.
 - [ ] Saved capture never uploaded: the line reads "Removes it from your save folder and from history."; a capture uploaded before Phase 3: "Removes it from your save folder and from history. The uploaded object stays in the bucket."
 - [ ] Wi-Fi off, Delete on an uploaded capture: a second alert, "Couldn't delete it from storage: …" with "Remove it from history anyway? The object stays in the bucket." and Remove (red) and Cancel. Cancel keeps the capture. Delete again, Remove: the row and thumbnail go, the file in the save folder stays, and with Wi-Fi back on `curl -I <url>` still gives 200.
 - [ ] The same with an upload-only capture that has failed and is still in `pending/`: after Remove, its `pending/<UUID>.png` is gone.
 - [ ] Forget Credentials, then Delete on an uploaded capture: the second alert says "Couldn't delete it from storage: No credentials are saved in Settings > Upload." Re-enter the credentials.
+- [ ] Choose another save folder in Settings > General, quit and relaunch, then Delete an uploaded capture saved before the change: a second alert, "Couldn't delete the file: …" with "Remove it from history anyway? The file stays where it is." and Remove (red) and Cancel; the object is already gone (`curl -I <url>` gives 403 or 404). Cancel keeps the capture. Delete again, Remove: the row and thumbnail go and the file stays in the old folder. Choose the old folder again.
+- [ ] Network Link Conditioner at 100% loss, Delete on an uploaded capture, then open the TidyShot menu and keep it open until the request times out (about a minute): no alert opens over the menu; the second alert appears once the menu closes.
 - [ ] Network Link Conditioner at 100% loss, Delete on an uploaded capture, then the trash button in the overlay and in the submenu for the same capture while the request hangs: no second alert appears.
 
 ## Templates and Upload tab

@@ -81,6 +81,8 @@ capture full size beside the menu.
 Delete asks once, "Delete this capture?", then removes the object from the bucket it was uploaded
 to, the local file, the thumbnail and the history entry. If the bucket refuses the delete, a
 second alert offers to remove the capture from history anyway and leave the object where it is.
+The same alert follows when the file cannot be removed from the save folder (for example after
+another save folder was chosen); the file then stays where it is.
 The Quick Access overlay has the same Delete; while an upload is still running it cancels it
 first. Retry Failed Uploads appears in the menu whenever an upload has failed.
 Thumbnails live in `~/Library/Containers/io.tky.tidyshot/Data/Library/Application Support/TidyShot/thumbnails`.

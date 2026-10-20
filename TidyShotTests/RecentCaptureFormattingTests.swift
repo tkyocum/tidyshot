@@ -42,9 +42,17 @@ struct RecentCaptureFormattingTests {
         #expect(!RecentCaptureFormatting.canCopyLink(saved))
         #expect(RecentCaptureFormatting.canCopyImage(saved))
 
-        // Uploaded before Phase 3 (no location) and its file deleted: nothing to download from.
-        let phase2WithoutFile = record(.uploaded(url: url, key: "aB3dE9.png"), file: nil)
-        #expect(RecentCaptureFormatting.canCopyLink(phase2WithoutFile))
-        #expect(!RecentCaptureFormatting.canCopyImage(phase2WithoutFile))
+        // Uploaded before Phase 3 (no location): such a record always keeps its file URL, also after
+        // the file is deleted in Finder, so the button stays enabled; Copy Image then reports
+        // CopyImageError.unreadableFile ("The local file could not be read.").
+        let phase2 = record(.uploaded(url: url, key: "aB3dE9.png"))
+        #expect(RecentCaptureFormatting.canCopyLink(phase2))
+        #expect(RecentCaptureFormatting.canCopyImage(phase2))
+
+        // Uploaded with neither a file URL nor a location: nothing to download from. No real history
+        // holds such a record (see CopyImageError.unknownLocation); the button would be disabled.
+        let noFileNoLocation = record(.uploaded(url: url, key: "aB3dE9.png"), file: nil)
+        #expect(RecentCaptureFormatting.canCopyLink(noFileNoLocation))
+        #expect(!RecentCaptureFormatting.canCopyImage(noFileNoLocation))
     }
 }

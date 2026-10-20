@@ -1656,7 +1656,7 @@ git commit -m "feat: two-button delete alert; remove from history only after a f
   - `ImageEncoder.decode(_ data: Data) -> (image: CGImage, scale: CGFloat)?`: the scale is read back from the DPI that `pngData(from:scale:)` writes (144 DPI gives 2), 1 when there is none.
   - `Notifier.notify(title: String, body: String)`: a plain notification with no click action.
   - `AppCoordinator.copyImage(recordID: UUID) async`: local file when it can be read, otherwise a download (with "Copying image…" while it runs); the read and the decode run in detached tasks and the clipboard is written on the main actor; "Image copied" on success (both only when Show notification is on), "Could not copy image" with the reason on failure.
-  - `nonisolated enum CopyImageError: LocalizedError { case nothingToCopy, unknownLocation, unreadableFile, notAnImage }` at the end of `AppCoordinator.swift`: "This capture was never uploaded and has no local file.", the Phase 2 case (uploaded, location unknown, no file; its button is disabled), "The local file could not be read.", and a file that does not decode.
+  - `nonisolated enum CopyImageError: LocalizedError { case nothingToCopy, unknownLocation, unreadableFile, notAnImage }` at the end of `AppCoordinator.swift`: "This capture was never uploaded and has no local file.", an uploaded record with neither a file URL nor a location (no real history holds one: a record from before Phase 3 keeps its `fileURL`, so one whose file was deleted gets `unreadableFile`; its button is disabled; amended after the Task 9 review), "The local file could not be read.", and a file that does not decode.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -2620,10 +2620,18 @@ struct RecentCaptureFormattingTests {
         #expect(!RecentCaptureFormatting.canCopyLink(saved))
         #expect(RecentCaptureFormatting.canCopyImage(saved))
 
-        // Uploaded before Phase 3 (no location) and its file deleted: nothing to download from.
-        let phase2WithoutFile = record(.uploaded(url: url, key: "aB3dE9.png"), file: nil)
-        #expect(RecentCaptureFormatting.canCopyLink(phase2WithoutFile))
-        #expect(!RecentCaptureFormatting.canCopyImage(phase2WithoutFile))
+        // Uploaded before Phase 3 (no location): such a record always keeps its file URL, also after
+        // the file is deleted in Finder, so the button stays enabled; Copy Image then reports
+        // CopyImageError.unreadableFile ("The local file could not be read.").
+        let phase2 = record(.uploaded(url: url, key: "aB3dE9.png"))
+        #expect(RecentCaptureFormatting.canCopyLink(phase2))
+        #expect(RecentCaptureFormatting.canCopyImage(phase2))
+
+        // Uploaded with neither a file URL nor a location: nothing to download from. No real history
+        // holds such a record (see CopyImageError.unknownLocation); the button would be disabled.
+        let noFileNoLocation = record(.uploaded(url: url, key: "aB3dE9.png"), file: nil)
+        #expect(RecentCaptureFormatting.canCopyLink(noFileNoLocation))
+        #expect(!RecentCaptureFormatting.canCopyImage(noFileNoLocation))
     }
 }
 ```
@@ -3919,7 +3927,7 @@ made before this build. Where the Phase 2 and Phase 3 checklists say Recent Capt
 - [ ] The link button is greyed out on a never-uploaded row; on an uploaded row it closes the menu and copies the URL.
 - [ ] The photo button on a saved capture closes the menu, posts "Image copied", and Notes pastes the image at point size, not double.
 - [ ] The photo button on an upload-only capture (no local file) posts "Copying image…", then "Image copied", and the paste works; with Wi-Fi off it posts "Could not copy image" with the reason.
-- [ ] The photo button is greyed out on a capture made before Phase 3 whose file was deleted from the save folder.
+- [ ] On a capture made before Phase 3 whose file was deleted from the save folder (or move its file out of the folder for this item and put it back afterwards), the photo button stays enabled; pressing it posts "Could not copy image" with "The local file could not be read." (a capture from before Phase 3 has no stored bucket location to download from).
 - [ ] Rename the file of a capture that was saved but never uploaded (in Finder, in the save folder), then press its photo button: "Could not copy image" with "The local file could not be read." Rename it back.
 - [ ] The trash button closes the menu and shows the delete alert (see Delete); after Delete the row is gone the next time the menu opens.
 - [ ] With an empty history the submenu shows a greyed "No captures yet".
@@ -3931,7 +3939,8 @@ made before this build. Where the Phase 2 and Phase 3 checklists say Recent Capt
 - [ ] Command-drag the icon to the right end of the menu bar: the submenu opens to the left of the menu and the panel is on the submenu's left. When the preferred side has no room (a submenu at a display's edge, or a narrow display) the panel opens on the other side and stays on screen.
 
 ## Delete
-- [ ] Uploaded capture, from the trash button or the overlay: "Delete this capture?", "Removes it from object storage and from history.", Delete (red) and Cancel. Escape cancels. Delete removes the row, the object (`curl -I <url>` gives 403 or 404), the file in the save folder and the thumbnail.
+- [ ] Uploaded capture, from the trash button or the overlay: "Delete this capture?", "Removes it from object storage, your save folder and history.", Delete (red) and Cancel. Escape cancels. Delete removes the row, the object (`curl -I <url>` gives 403 or 404), the file in the save folder and the thumbnail.
+- [ ] Uploaded upload-only capture (no file in the save folder): the line reads "Removes it from object storage and from history."; Delete removes the row, the object (`curl -I <url>` gives 403 or 404) and the thumbnail.
 - [ ] Saved capture never uploaded: the line reads "Removes it from your save folder and from history."; a capture uploaded before Phase 3: "Removes it from your save folder and from history. The uploaded object stays in the bucket."
 - [ ] Wi-Fi off, Delete on an uploaded capture: a second alert, "Couldn't delete it from storage: …" with "Remove it from history anyway? The object stays in the bucket." and Remove (red) and Cancel. Cancel keeps the capture. Delete again, Remove: the row and thumbnail go, the file in the save folder stays, and with Wi-Fi back on `curl -I <url>` still gives 200.
 - [ ] The same with an upload-only capture that has failed and is still in `pending/`: after Remove, its `pending/<UUID>.png` is gone.

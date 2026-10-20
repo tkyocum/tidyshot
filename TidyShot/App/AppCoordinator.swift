@@ -843,7 +843,10 @@ final class AppCoordinator {
 nonisolated enum CopyImageError: LocalizedError, Equatable, Sendable {
     /// No local file and no upload: nothing to fetch.
     case nothingToCopy
-    /// Uploaded before Phase 3 (no stored location) and its file is gone; its button is disabled.
+    /// Uploaded, with no file URL and no stored location. No real history holds such a record: one
+    /// uploaded before Phase 3 always keeps its `fileURL`, so when that file is gone the read fails
+    /// with `unreadableFile`, and an upload-only capture stores its location before its temporary
+    /// file is dropped. `RecentCaptureFormatting.canCopyImage` disables the button for it.
     case unknownLocation
     /// A file is recorded but cannot be read, and there is no upload to fall back on.
     case unreadableFile
