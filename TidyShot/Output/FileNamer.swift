@@ -1,51 +1,30 @@
 import Foundation
 
-/// Expands a file name template. Tokens: {date} {time} {datetime} {app} {counter} {random} {random:N}.
-/// The extension is not part of the template.
+/// Expands the local file name template with `TemplateExpander` in the file-name style and
+/// sanitises the result for the file system. The extension is not part of the template.
 struct FileNamer {
     static let defaultTemplate = "Screenshot {date} at {time}"
 
     var template: String
     var now: () -> Date
-    var randomString: (Int) -> String
+    var randomString: @Sendable (Int) -> String
+    var hostname: String
 
     init(template: String = FileNamer.defaultTemplate,
          now: @escaping () -> Date = { Date() },
-         randomString: @escaping (Int) -> String = FileNamer.randomString) {
+         randomString: @escaping @Sendable (Int) -> String = FileNamer.randomString,
+         hostname: String = HostName.local()) {
         self.template = template
         self.now = now
         self.randomString = randomString
+        self.hostname = hostname
     }
 
     func name(appName: String?, counter: Int) -> String {
-        let date = now()
-        var result = template
-        result = result.replacingOccurrences(of: "{datetime}", with: Self.format(date, "yyyy-MM-dd HH.mm.ss"))
-        result = result.replacingOccurrences(of: "{date}", with: Self.format(date, "yyyy-MM-dd"))
-        result = result.replacingOccurrences(of: "{time}", with: Self.format(date, "HH.mm.ss"))
-        result = result.replacingOccurrences(of: "{app}", with: appName ?? "Screen")
-        result = result.replacingOccurrences(of: "{counter}", with: String(counter))
-        result = expandRandom(in: result)
-        let sanitized = Self.sanitize(result)
+        let context = TemplateContext(date: now(), appName: appName, counter: counter, hostname: hostname)
+        let expanded = TemplateExpander(randomString: randomString).expand(template, context: context, style: .fileName)
+        let sanitized = Self.sanitize(expanded)
         return sanitized.isEmpty ? "Screenshot" : sanitized
-    }
-
-    private func expandRandom(in input: String) -> String {
-        let pattern = /\{random(?::(\d+))?\}/
-        var result = input
-        while let match = result.firstMatch(of: pattern) {
-            let requested = match.output.1.flatMap { Int($0) } ?? 6
-            let length = min(max(requested, 1), 64)
-            result.replaceSubrange(match.range, with: randomString(length))
-        }
-        return result
-    }
-
-    static func format(_ date: Date, _ pattern: String) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = pattern
-        return formatter.string(from: date)
     }
 
     /// Removes characters that are illegal or awkward in file names.

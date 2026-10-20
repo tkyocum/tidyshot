@@ -7,7 +7,7 @@ struct FileNamerTests {
     let fixedDate = DateComponents(calendar: .current, year: 2026, month: 10, day: 19, hour: 11, minute: 56, second: 3).date!
 
     func namer(_ template: String) -> FileNamer {
-        FileNamer(template: template, now: { fixedDate }, randomString: { String(repeating: "X", count: $0) })
+        FileNamer(template: template, now: { fixedDate }, randomString: { String(repeating: "X", count: $0) }, hostname: "miffle")
     }
 
     @Test func defaultTemplateMatchesSystemStyle() {
@@ -33,6 +33,10 @@ struct FileNamerTests {
 
     @Test func randomTokenWithLength() {
         #expect(namer("{random:8}-{random:2}").name(appName: nil, counter: 1) == "XXXXXXXX-XX")
+    }
+
+    @Test func yearMonthDayAndHostnameTokens() {
+        #expect(namer("{year}/{month}/{day} {hostname}").name(appName: nil, counter: 1) == "2026-10-19 miffle")
     }
 
     @Test func sanitizeReplacesPathSeparatorsAndColons() {
