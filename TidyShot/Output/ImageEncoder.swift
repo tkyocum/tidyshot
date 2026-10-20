@@ -3,7 +3,7 @@ import Foundation
 import ImageIO
 import UniformTypeIdentifiers
 
-enum ImageEncoder {
+nonisolated enum ImageEncoder {
     enum EncodeError: LocalizedError {
         case destinationUnavailable
         case finalizeFailed
