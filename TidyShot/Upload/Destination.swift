@@ -24,7 +24,7 @@ nonisolated struct UploadJob: Sendable, Identifiable {
     let contentType: String
     /// Without a dot, for example `png`.
     let fileExtension: String
-    /// What the object key template is expanded against (capture time, app, counter, hostname).
+    /// What the object key template is expanded against (capture time, counter, hostname).
     /// The queue expands it afresh for every key attempt, so only `{random}` changes on a collision.
     let naming: TemplateContext
 

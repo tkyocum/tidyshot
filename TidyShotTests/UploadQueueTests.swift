@@ -148,16 +148,16 @@ struct UploadQueueTests {
         let destination = FakeDestination()
         let log = EventLog()
         let queue = UploadQueue(destination: destination,
-                                keyNamer: ObjectKeyNamer(template: "{app}/{date}/{counter}-{random:2}",
+                                keyNamer: ObjectKeyNamer(template: "{hostname}/{date}/{counter}-{random:2}",
                                                          randomString: { String(repeating: "K", count: $0) }),
                                 policy: .immediate, sleep: { _ in }, events: { log.events.append($0) })
         let id = UUID()
         let captured = DateComponents(calendar: .current, year: 2026, month: 10, day: 19, hour: 11, minute: 56, second: 3).date!
-        let naming = TemplateContext(date: captured, appName: "Safari", counter: 3, hostname: "miffle")
+        let naming = TemplateContext(date: captured, counter: 3, hostname: "miffle")
 
         await queue.enqueue(UploadJob(id: id, data: data, contentType: "image/png", fileExtension: "png", naming: naming))
-        try await eventually { log.events.contains(.uploaded(id: id, url: URL(string: "https://snap.tky.io/Safari/2026-10-19/3-KK.png")!,
-                                                              key: "Safari/2026-10-19/3-KK.png")) }
+        try await eventually { log.events.contains(.uploaded(id: id, url: URL(string: "https://snap.tky.io/miffle/2026-10-19/3-KK.png")!,
+                                                              key: "miffle/2026-10-19/3-KK.png")) }
     }
 
     @Test func regeneratesKeyWhenHeadReturns200() async throws {

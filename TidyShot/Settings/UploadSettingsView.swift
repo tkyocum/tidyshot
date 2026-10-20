@@ -91,10 +91,9 @@ struct UploadSettingsView: View {
         .onAppear(perform: load)
     }
 
-    /// The template expanded for a capture of this Mac's frontmost app right now, with `x` for
-    /// every random character.
+    /// The template expanded for a capture taken right now, with `x` for every random character.
     private var exampleKey: String {
-        let context = TemplateContext(appName: NSWorkspace.shared.frontmostApplication?.localizedName ?? "Safari", counter: 42)
+        let context = TemplateContext(counter: 42)
         return ObjectKeyNamer(template: draft.keyTemplate, randomString: { String(repeating: "x", count: $0) })
             .makeKey(ext: "png", context: context)
     }

@@ -60,7 +60,8 @@ nonisolated struct S3DestinationConfig: Codable, Equatable, Sendable {
         sendPublicReadACL = try container.decode(Bool.self, forKey: .sendPublicReadACL)
         publicURLTemplate = try container.decode(String.self, forKey: .publicURLTemplate)
         if let template = try container.decodeIfPresent(String.self, forKey: .keyTemplate) {
-            keyTemplate = template
+            // `{app}` was a token until Phase 3.1; a template saved with it loses it here.
+            keyTemplate = TemplateMigration.removingAppToken(from: template, fallback: ObjectKeyNamer.defaultTemplate)
         } else {
             let legacy = try decoder.container(keyedBy: LegacyCodingKeys.self)
             keyTemplate = ObjectKeyNamer.migratedTemplate(

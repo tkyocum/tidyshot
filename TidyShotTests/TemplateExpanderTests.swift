@@ -7,8 +7,8 @@ struct TemplateExpanderTests {
     let fixedDate = DateComponents(calendar: .current, year: 2026, month: 10, day: 19, hour: 11, minute: 56, second: 3).date!
     let expander = TemplateExpander(randomString: { String(repeating: "X", count: $0) })
 
-    func context(app: String? = "Safari", counter: Int = 7) -> TemplateContext {
-        TemplateContext(date: fixedDate, appName: app, counter: counter, hostname: "miffle")
+    func context(counter: Int = 7, hostname: String = "miffle") -> TemplateContext {
+        TemplateContext(date: fixedDate, counter: counter, hostname: hostname)
     }
 
     @Test func parsesLiteralsAndTokens() {
@@ -20,6 +20,13 @@ struct TemplateExpanderTests {
         #expect(TemplateExpander.parse("{foo}-{date") == [.literal("{foo}-{date")])
         #expect(TemplateExpander.parse("{{date}") == [.literal("{"), .token(.date)])
         #expect(TemplateExpander.parse("") == [])
+    }
+
+    /// Removed in Phase 3.1: `{app}` is literal text now, and the captions no longer list it.
+    @Test func appIsNotAToken() {
+        #expect(TemplateExpander.Token(name: "app") == nil)
+        #expect(TemplateExpander.parse("{app}-{date}") == [.literal("{app}-"), .token(.date)])
+        #expect(!TemplateExpander.tokenList.contains("{app}"))
     }
 
     @Test func randomLengthDefaultsAndClamps() {
@@ -43,18 +50,17 @@ struct TemplateExpanderTests {
         #expect(expander.expand("{datetime}", context: context(), style: .objectKey) == "2026-10-19_11-56-03")
     }
 
-    @Test func appHostnameCounterAndRandom() {
-        #expect(expander.expand("{app}/{hostname}-{counter}-{random:3}", context: context(), style: .objectKey)
-                == "Safari/miffle-7-XXX")
-        #expect(expander.expand("{app}", context: context(app: nil), style: .fileName) == "Screen")
+    @Test func hostnameCounterAndRandom() {
+        #expect(expander.expand("{hostname}/{counter}-{random:3}", context: context(), style: .objectKey)
+                == "miffle/7-XXX")
     }
 
     @Test func objectKeyStyleSanitisesTokenValuesOnly() {
-        let chrome = context(app: "Google Chrome (Beta)")
-        #expect(expander.expand("{app}", context: chrome, style: .fileName) == "Google Chrome (Beta)")
-        #expect(expander.expand("{app}", context: chrome, style: .objectKey) == "Google-Chrome-Beta")
+        let odd = context(hostname: "Tim's Mac (2)")
+        #expect(expander.expand("{hostname}", context: odd, style: .fileName) == "Tim's Mac (2)")
+        #expect(expander.expand("{hostname}", context: odd, style: .objectKey) == "Tim-s-Mac-2")
         // Literal text is the template author's business; the key namer validates it.
-        #expect(expander.expand("a b/{counter}", context: chrome, style: .objectKey) == "a b/7")
+        #expect(expander.expand("a b/{counter}", context: odd, style: .objectKey) == "a b/7")
     }
 
     @Test func hasCollisionGuard() {

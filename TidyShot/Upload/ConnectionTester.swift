@@ -41,7 +41,7 @@ nonisolated enum ConnectionTester {
         // The probe goes into the folder real uploads would use right now, so a bucket policy
         // scoped to that folder is tested too.
         let namer = ObjectKeyNamer(template: destination.config.keyTemplate, randomString: randomString)
-        let folder = ObjectKeyNamer.folder(of: namer.makeKey(ext: "txt", context: TemplateContext(appName: "TidyShot")))
+        let folder = ObjectKeyNamer.folder(of: namer.makeKey(ext: "txt", context: TemplateContext()))
         let key = (folder.isEmpty ? "" : folder + "/") + "tidyshot-probe-\(randomString(8)).txt"
         do {
             try await destination.upload(probeBody, key: key, contentType: "text/plain") { _ in }

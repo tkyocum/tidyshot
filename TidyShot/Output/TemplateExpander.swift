@@ -1,18 +1,16 @@
 import Foundation
 
-/// The values a naming template is expanded against: a timestamp, the app name, a counter and
-/// this Mac's host name. `FileNamer` builds one when it writes the file; object keys get one
-/// when their upload starts (from the record's timestamp and app, with a freshly drawn counter).
+/// The values a naming template is expanded against: a timestamp, a counter and this Mac's host
+/// name. `FileNamer` builds one when it writes the file; object keys get one when their upload
+/// starts (from the record's timestamp, with a freshly drawn counter).
 nonisolated struct TemplateContext: Sendable, Equatable {
     var date: Date
-    var appName: String?
     var counter: Int
     /// Already normalised (see `TemplateExpander.normalizeHostname`).
     var hostname: String
 
-    init(date: Date = Date(), appName: String? = nil, counter: Int = 0, hostname: String = HostName.local()) {
+    init(date: Date = Date(), counter: Int = 0, hostname: String = HostName.local()) {
         self.date = date
-        self.appName = appName
         self.counter = counter
         self.hostname = hostname
     }
@@ -21,7 +19,7 @@ nonisolated struct TemplateContext: Sendable, Equatable {
 /// The one token engine behind local file names (`FileNamer`) and object keys (`ObjectKeyNamer`).
 ///
 /// Tokens: `{date}` yyyy-MM-dd, `{year}`, `{month}`, `{day}`, `{time}`, `{datetime}`, `{hostname}`,
-/// `{app}`, `{counter}`, `{random}` (6 characters) and `{random:N}` (1 to 64). `{time}` and
+/// `{counter}`, `{random}` (6 characters) and `{random:N}` (1 to 64). `{time}` and
 /// `{datetime}` differ by style: file names use `HH.mm.ss` and a space, object keys use
 /// `HH-mm-ss` and an underscore, so a key never contains a space or a dot-separated time.
 /// In the object-key style every token value is passed through `keySafe`, so tokens never emit
@@ -33,7 +31,7 @@ nonisolated struct TemplateExpander: Sendable {
     }
 
     enum Token: Equatable, Sendable {
-        case date, year, month, day, time, datetime, hostname, app, counter
+        case date, year, month, day, time, datetime, hostname, counter
         case random(length: Int)
 
         /// `nil` for a name that is not a token.
@@ -46,7 +44,6 @@ nonisolated struct TemplateExpander: Sendable {
             case "time": self = .time
             case "datetime": self = .datetime
             case "hostname": self = .hostname
-            case "app": self = .app
             case "counter": self = .counter
             case "random": self = .random(length: TemplateExpander.defaultRandomLength)
             default:
@@ -66,7 +63,7 @@ nonisolated struct TemplateExpander: Sendable {
     }
 
     /// For settings captions.
-    static let tokenList = "{date} {year} {month} {day} {time} {datetime} {hostname} {app} {counter} {random} {random:8}"
+    static let tokenList = "{date} {year} {month} {day} {time} {datetime} {hostname} {counter} {random} {random:8}"
     static let defaultRandomLength = 6
     static let randomLengthRange = 1...64
 
@@ -115,8 +112,8 @@ nonisolated struct TemplateExpander: Sendable {
     }
 
     /// True when `template` contains `{random}`, `{random:N}` or `{counter}`, the tokens that make
-    /// two captures produce different names. Without one, any two captures with the same date,
-    /// app and host can produce the same name.
+    /// two captures produce different names. Without one, any two captures with the same date and
+    /// host can produce the same name.
     static func hasCollisionGuard(_ template: String) -> Bool {
         parse(template).contains { segment in
             switch segment {
@@ -145,7 +142,6 @@ nonisolated struct TemplateExpander: Sendable {
         case .time: raw = Self.format(context.date, style == .fileName ? "HH.mm.ss" : "HH-mm-ss")
         case .datetime: raw = Self.format(context.date, style == .fileName ? "yyyy-MM-dd HH.mm.ss" : "yyyy-MM-dd_HH-mm-ss")
         case .hostname: raw = context.hostname
-        case .app: raw = context.appName ?? "Screen"
         case .counter: raw = String(context.counter)
         case .random(let length): raw = randomString(length)
         }

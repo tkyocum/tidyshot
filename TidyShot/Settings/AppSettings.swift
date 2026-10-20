@@ -59,7 +59,7 @@ final class AppSettings {
     var historyRetentionDays: Int { didSet { defaults.set(historyRetentionDays, forKey: Keys.historyRetentionDays) } }
     /// Nil until the Upload tab has been saved once. Stored as JSON.
     var s3Config: S3DestinationConfig? {
-        didSet { defaults.set(s3Config.flatMap { try? JSONEncoder().encode($0) }, forKey: Keys.s3Config) }
+        didSet { storeS3Config() }
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -81,14 +81,42 @@ final class AppSettings {
         copyImageToClipboard = defaults.bool(forKey: Keys.copyImageToClipboard)
         showNotification = defaults.bool(forKey: Keys.showNotification)
         playSound = defaults.bool(forKey: Keys.playSound)
-        fileNameTemplate = defaults.string(forKey: Keys.fileNameTemplate) ?? FileNamer.defaultTemplate
+        let storedFileNameTemplate = defaults.string(forKey: Keys.fileNameTemplate) ?? FileNamer.defaultTemplate
+        fileNameTemplate = TemplateMigration.removingAppToken(from: storedFileNameTemplate, fallback: FileNamer.defaultTemplate)
         afterCaptureAction = AfterCaptureAction(rawValue: defaults.string(forKey: Keys.afterCaptureAction) ?? "") ?? .upload
         alsoCopyImageWhenUploading = defaults.bool(forKey: Keys.alsoCopyImageWhenUploading)
         showOverlay = defaults.bool(forKey: Keys.showOverlay)
         overlayCorner = OverlayCorner(rawValue: defaults.string(forKey: Keys.overlayCorner) ?? "") ?? .bottomRight
         overlayAutoCloseSeconds = defaults.double(forKey: Keys.overlayAutoCloseSeconds)
         historyRetentionDays = defaults.integer(forKey: Keys.historyRetentionDays)
-        s3Config = defaults.data(forKey: Keys.s3Config).flatMap { try? JSONDecoder().decode(S3DestinationConfig.self, from: $0) }
+        // Decoding drops `{app}` from the key template (see `S3DestinationConfig.init(from:)`).
+        let storedConfig = defaults.data(forKey: Keys.s3Config)
+        s3Config = storedConfig.flatMap { try? JSONDecoder().decode(S3DestinationConfig.self, from: $0) }
+
+        // Property observers do not run during init, so templates rewritten by
+        // `TemplateMigration` are stored here, once.
+        if fileNameTemplate != storedFileNameTemplate {
+            defaults.set(fileNameTemplate, forKey: Keys.fileNameTemplate)
+        }
+        if let storedConfig, s3Config != nil,
+           String(decoding: storedConfig, as: UTF8.self).contains(TemplateMigration.removedAppToken) {
+            storeS3Config()
+        }
+    }
+
+    /// Writes `s3Config` as JSON, or removes it when nil. An encoding failure is logged and leaves
+    /// the stored value as it was: `try?` would have stored nil, which deletes the key and with it
+    /// the destination.
+    private func storeS3Config() {
+        guard let s3Config else {
+            defaults.removeObject(forKey: Keys.s3Config)
+            return
+        }
+        do {
+            defaults.set(try JSONEncoder().encode(s3Config), forKey: Keys.s3Config)
+        } catch {
+            NSLog("Upload settings could not be encoded, so the stored ones are kept: \(error.localizedDescription)")
+        }
     }
 
     /// Increments and returns the persistent capture counter used by the {counter} token.

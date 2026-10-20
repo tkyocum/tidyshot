@@ -9,8 +9,8 @@ struct ObjectKeyNamerTests {
         ObjectKeyNamer(template: template, randomString: { String(repeating: "X", count: $0) })
     }
 
-    func context(app: String? = "Safari", counter: Int = 7) -> TemplateContext {
-        TemplateContext(date: fixedDate, appName: app, counter: counter, hostname: "miffle")
+    func context(counter: Int = 7, hostname: String = "miffle") -> TemplateContext {
+        TemplateContext(date: fixedDate, counter: counter, hostname: hostname)
     }
 
     @Test func defaultTemplateIsSixRandomCharactersPlusExtension() {
@@ -21,8 +21,8 @@ struct ObjectKeyNamerTests {
     @Test func literalFoldersAndTokens() {
         #expect(namer("shots/{year}/{month}/{hostname}-{random:8}").makeKey(ext: "png", context: context())
                 == "shots/2026/10/miffle-XXXXXXXX.png")
-        #expect(namer("{app}/{date}_{time}-{counter}").makeKey(ext: "png", context: context())
-                == "Safari/2026-10-19_11-56-03-7.png")
+        #expect(namer("{hostname}/{date}_{time}-{counter}").makeKey(ext: "png", context: context())
+                == "miffle/2026-10-19_11-56-03-7.png")
         #expect(namer("{datetime}").makeKey(ext: "txt", context: context()) == "2026-10-19_11-56-03.txt")
     }
 
@@ -42,8 +42,8 @@ struct ObjectKeyNamerTests {
     }
 
     @Test func tokenValuesAreKeySafe() {
-        #expect(namer("{app}/{random:2}").makeKey(ext: "png", context: context(app: "Google Chrome (Beta)")) == "Google-Chrome-Beta/XX.png")
-        #expect(namer("{app}").makeKey(ext: "png", context: context(app: nil)) == "Screen.png")
+        #expect(namer("{hostname}/{random:2}").makeKey(ext: "png", context: context(hostname: "Tim's Mac (2)")) == "Tim-s-Mac-2/XX.png")
+        #expect(namer("{hostname}").makeKey(ext: "png", context: context(hostname: "")) == "x.png")
     }
 
     @Test func validateAcceptsGoodTemplates() {
@@ -60,6 +60,7 @@ struct ObjectKeyNamerTests {
         #expect(ObjectKeyNamer.validate("{random}?x") == .illegalCharacter("?"))
         #expect(ObjectKeyNamer.validate("ünïcode") == .illegalCharacter("ü"))
         #expect(ObjectKeyNamer.validate("{foo}") == .unknownToken("foo"))
+        #expect(ObjectKeyNamer.validate("{app}/{random}") == .unknownToken("app"))
         #expect(ObjectKeyNamer.validate("{random:x}") == .unknownToken("random:x"))
         #expect(ObjectKeyNamer.validate("{date") == .unbalancedBraces)
         #expect(ObjectKeyNamer.validate("date}") == .unbalancedBraces)

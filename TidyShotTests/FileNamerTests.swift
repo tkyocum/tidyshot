@@ -11,32 +11,34 @@ struct FileNamerTests {
     }
 
     @Test func defaultTemplateMatchesSystemStyle() {
-        let name = FileNamer(now: { fixedDate }).name(appName: nil, counter: 1)
+        let name = FileNamer(now: { fixedDate }).name(counter: 1)
         #expect(name == "Screenshot 2026-10-19 at 11.56.03")
     }
 
-    @Test func appAndDatetimeTokens() {
-        #expect(namer("{app} {datetime}").name(appName: "Safari", counter: 1) == "Safari 2026-10-19 11.56.03")
+    @Test func datetimeToken() {
+        #expect(namer("Shot {datetime}").name(counter: 1) == "Shot 2026-10-19 11.56.03")
     }
 
-    @Test func missingAppFallsBackToScreen() {
-        #expect(namer("{app}").name(appName: nil, counter: 1) == "Screen")
+    /// `{app}` was removed in Phase 3.1; stored templates are migrated, so this only shows that the
+    /// engine treats it like any other unknown text.
+    @Test func removedAppTokenIsLiteralText() {
+        #expect(namer("{app}").name(counter: 1) == "{app}")
     }
 
     @Test func counterToken() {
-        #expect(namer("shot-{counter}").name(appName: nil, counter: 42) == "shot-42")
+        #expect(namer("shot-{counter}").name(counter: 42) == "shot-42")
     }
 
     @Test func randomTokenDefaultsToSixCharacters() {
-        #expect(namer("{random}").name(appName: nil, counter: 1) == "XXXXXX")
+        #expect(namer("{random}").name(counter: 1) == "XXXXXX")
     }
 
     @Test func randomTokenWithLength() {
-        #expect(namer("{random:8}-{random:2}").name(appName: nil, counter: 1) == "XXXXXXXX-XX")
+        #expect(namer("{random:8}-{random:2}").name(counter: 1) == "XXXXXXXX-XX")
     }
 
     @Test func yearMonthDayAndHostnameTokens() {
-        #expect(namer("{year}/{month}/{day} {hostname}").name(appName: nil, counter: 1) == "2026-10-19 miffle")
+        #expect(namer("{year}/{month}/{day} {hostname}").name(counter: 1) == "2026-10-19 miffle")
     }
 
     @Test func sanitizeReplacesPathSeparatorsAndColons() {
@@ -48,7 +50,7 @@ struct FileNamerTests {
     }
 
     @Test func emptyResultFallsBackToScreenshot() {
-        #expect(namer("   ").name(appName: nil, counter: 1) == "Screenshot")
+        #expect(namer("   ").name(counter: 1) == "Screenshot")
     }
 
     @Test func realRandomStringUsesAlphanumerics() {

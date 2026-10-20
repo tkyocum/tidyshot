@@ -44,11 +44,11 @@ history including at least one Phase 2 capture (made before this build).
 ## Key templates
 - [ ] After updating from Phase 2 with prefix `shots` and length 8 saved, Settings > Upload shows `shots/{random:8}`; after Save, `defaults read ~/Library/Containers/io.tky.tidyshot/Data/Library/Preferences/io.tky.tidyshot.plist s3DestinationConfig` contains `keyTemplate` and no `keyPrefix` or `keyLength`.
 - [ ] Template `shots/{year}/{month}/{hostname}-{random:8}`: the example updates as you type; Save; capture: the URL is `https://snap.tky.io/shots/2026/10/<hostname>-XXXXXXXX.png` with the hostname lowercased, without `.local`, and only `a-z`, `0-9`, `.` and `-` in it (an `_` in the Mac's host name shows as `-`).
-- [ ] Template `{date}/{app}`: the orange warning appears and says the template has no {random} or {counter}, so captures can produce the same key and only the HEAD check keeps a capture from overwriting an earlier object; Save works; two captures of the same app on the same day: the second fails with "Could not find an unused object key after 5 tries." and keeps its file for retry.
+- [ ] Template `{date}/{hostname}`: the orange warning appears and says the template has no {random} or {counter}, so captures can produce the same key and only the HEAD check keeps a capture from overwriting an earlier object; Save works; two captures on the same day: the second fails with "Could not find an unused object key after 5 tries." and keeps its file for retry.
 - [ ] Settings > Upload with the warning showing does not scroll: everything down to the Save buttons is visible.
 - [ ] Template `my shots/{random}`: red message `" " is not allowed…`; Save shows "Key template: …" and does not save. Template `{foo}`: red `{foo} is not a token.`
 - [ ] Save and Test Connection with a folder template: the status line's probe URL is inside that folder and the probe is gone afterwards.
-- [ ] File name template `{year}-{month}-{day} {hostname} {app}` names local files as expected; the default template still gives `Screenshot 2026-10-19 at 11.56.03.png`.
+- [ ] File name template `{year}-{month}-{day} {hostname}` names local files as expected; the default template still gives `Screenshot 2026-10-19 at 11.56.03.png`.
 - [ ] A retried failed upload lands under the capture's own date folder, not today's; with `{counter}` in the key template, the retry's key has a newly drawn counter value, and an upload-only capture taken before a destination existed gets a real counter (not 0) when it is retried.
 
 ## Forget credentials

@@ -112,11 +112,10 @@ final class AppCoordinator {
 
     func captureFullscreen() async {
         await withCaptureLock {
-            let frontApp = NSWorkspace.shared.frontmostApplication?.localizedName
             guard let content = await loadContent() else { return }
             guard let display = Self.display(under: NSEvent.mouseLocation, in: content.displays) else { return }
             guard let result = await capture(.display(display)) else { return }
-            await save(result, appName: frontApp)
+            await save(result)
         }
     }
 
@@ -131,25 +130,21 @@ final class AppCoordinator {
     /// Show the overlay, capture with the overlay excluded, dismiss, then save.
     private func runSelection(mode: SelectionMode) async {
         await withCaptureLock {
-            let frontApp = NSWorkspace.shared.frontmostApplication?.localizedName
             guard let content = await loadContent() else { return }
             guard let selection = await selector.select(mode: mode, content: content) else { return }
 
             let result: CaptureResult?
-            let appName: String?
             switch selection {
             case .area(let rect, let display):
                 let overlays = await selector.overlayWindows()
                 result = await capture(.area(rect: rect, display: display), excludingWindows: overlays)
-                appName = frontApp
             case .window(let window):
                 result = await capture(.window(window))
-                appName = window.owningApplication?.applicationName
             }
             selector.dismiss()
 
             if let result {
-                await save(result, appName: appName)
+                await save(result)
             }
         }
     }
@@ -176,7 +171,7 @@ final class AppCoordinator {
     /// container's `pending` folder in upload-only mode), record in history, start the thumbnail,
     /// show the overlay, and start the upload. A file is always written before the upload starts;
     /// if it cannot be written the image stays on the clipboard, so a capture is never dropped.
-    func save(_ result: CaptureResult, appName: String?) async {
+    func save(_ result: CaptureResult) async {
         let png: Data
         do {
             png = try ImageEncoder.pngData(from: result.image, scale: result.scale)
@@ -211,7 +206,7 @@ final class AppCoordinator {
             guard let url = writePendingFile(png, id: id, result: result, alreadyOnClipboard: copyImageNow) else { return }
             fileURL = url
         } else {
-            guard let url = await writeFile(png, result: result, appName: appName, alreadyOnClipboard: copyImageNow) else { return }
+            guard let url = await writeFile(png, result: result, alreadyOnClipboard: copyImageNow) else { return }
             fileURL = url
             lastCaptureURL = url
         }
@@ -233,9 +228,10 @@ final class AppCoordinator {
         } else {
             state = .none
         }
+        // The source app is no longer recorded (Phase 3.1 removed its token); older records keep theirs.
         let record = CaptureRecord(id: id, fileURL: fileURL, fileIsTemporary: action == .uploadOnly,
                                    pixelWidth: result.image.width, pixelHeight: result.image.height,
-                                   appName: appName, uploadState: state)
+                                   appName: nil, uploadState: state)
         history.add(record)
         makeThumbnail(from: result.image, for: id)
         showOverlay(for: record, image: result.image, scale: result.scale)
@@ -260,7 +256,7 @@ final class AppCoordinator {
     /// Writes the PNG into the save folder, drawing the file name's `{counter}` as Phase 1 did.
     /// Returns nil after notifying, with the image left on the clipboard, when there is no folder
     /// or the write fails.
-    private func writeFile(_ png: Data, result: CaptureResult, appName: String?, alreadyOnClipboard: Bool) async -> URL? {
+    private func writeFile(_ png: Data, result: CaptureResult, alreadyOnClipboard: Bool) async -> URL? {
         guard let folder = await saveLocation.ensureFolder() else {
             keepOnClipboard(result, png: png, alreadyOnClipboard: alreadyOnClipboard)
             notifier.notifyError("No folder was chosen. The image is on the clipboard.", title: "Not saved")
@@ -268,7 +264,7 @@ final class AppCoordinator {
         }
         do {
             let counter = settings.fileNameTemplate.contains("{counter}") ? settings.nextCounter() : 0
-            let baseName = FileNamer(template: settings.fileNameTemplate).name(appName: appName, counter: counter)
+            let baseName = FileNamer(template: settings.fileNameTemplate).name(counter: counter)
             return try saveLocation.write(png, baseName: baseName, ext: "png", in: folder)
         } catch {
             NSLog("Save failed: \(error.localizedDescription)")
@@ -400,11 +396,11 @@ final class AppCoordinator {
             refreshOverlay(for: recordID)
         }
         // The key is named now, not at capture time: a capture taken while no destination was set
-        // up, and every retry, get a counter drawn when their upload starts. The date and app stay
-        // the capture's own, so a retried upload lands in the capture's date folder.
+        // up, and every retry, get a counter drawn when their upload starts. The date stays the
+        // capture's own, so a retried upload lands in the capture's date folder.
         let counter = lane.keyTemplate.contains("{counter}") ? settings.nextCounter() : 0
         let job = UploadJob(id: recordID, data: data, contentType: "image/png", fileExtension: "png",
-                            naming: TemplateContext(date: record.timestamp, appName: record.appName, counter: counter))
+                            naming: TemplateContext(date: record.timestamp, counter: counter))
         Task { await lane.queue.enqueue(job) }
     }
 

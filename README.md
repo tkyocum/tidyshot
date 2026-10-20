@@ -56,7 +56,7 @@ Save and Test Connection saves the form, then uploads a small probe object into 
 key template would use, fetches it through the public URL without credentials, and deletes it.
 
 The key template defaults to `{random:6}` (`aSIS7x.png`). Tokens: `{date}` `{year}` `{month}`
-`{day}` `{time}` `{datetime}` `{hostname}` `{app}` `{counter}` `{random}` `{random:N}`; letters,
+`{day}` `{time}` `{datetime}` `{hostname}` `{counter}` `{random}` `{random:N}`; letters,
 digits, `.`, `_`, `-` and `/` are allowed between tokens, and `/` makes folders, so
 `shots/{year}/{month}/{hostname}-{random:8}` is valid. The same tokens work in the file name
 template. The app checks that a key is unused before uploading; a template without `{random}` or

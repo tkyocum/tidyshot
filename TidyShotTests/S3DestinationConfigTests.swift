@@ -92,6 +92,18 @@ struct S3DestinationConfigTests {
         #expect(try decode("{\(common),\"keyTemplate\":\"{date}/{random}\",\"keyPrefix\":\"ignored\"}").keyTemplate == "{date}/{random}")
     }
 
+    /// `{app}` was removed in Phase 3.1; a stored key template loses it when it is decoded.
+    @Test func storedKeyTemplateLosesTheRemovedAppToken() throws {
+        func roundTrip(_ template: String) throws -> S3DestinationConfig {
+            var config = aws
+            config.keyTemplate = template
+            return try JSONDecoder().decode(S3DestinationConfig.self, from: JSONEncoder().encode(config))
+        }
+        #expect(try roundTrip("{app}/{date}/{random}").keyTemplate == "{date}/{random}")
+        #expect(try roundTrip("{app}").keyTemplate == ObjectKeyNamer.defaultTemplate)
+        #expect(try roundTrip("shots/{random}").keyTemplate == "shots/{random}")
+    }
+
     @Test func invalidKeyTemplateIsAValidationError() {
         var spaced = aws
         spaced.keyTemplate = "my shots/{random}"

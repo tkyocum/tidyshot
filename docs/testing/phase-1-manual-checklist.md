@@ -30,7 +30,6 @@ Setup: fresh build, Screen Recording granted, save folder set to Desktop, defaul
 - [ ] Two overlapping windows: the one in front is highlighted and captured.
 - [ ] Click saves the window alone, no shadow, correct pixel size.
 - [ ] Dragging draws nothing; release over a window captures it.
-- [ ] `{app}` resolves to the window's app.
 - [ ] Escape cancels.
 
 ## Output

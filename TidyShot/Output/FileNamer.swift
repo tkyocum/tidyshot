@@ -20,8 +20,8 @@ struct FileNamer {
         self.hostname = hostname
     }
 
-    func name(appName: String?, counter: Int) -> String {
-        let context = TemplateContext(date: now(), appName: appName, counter: counter, hostname: hostname)
+    func name(counter: Int) -> String {
+        let context = TemplateContext(date: now(), counter: counter, hostname: hostname)
         let expanded = TemplateExpander(randomString: randomString).expand(template, context: context, style: .fileName)
         let sanitized = Self.sanitize(expanded)
         return sanitized.isEmpty ? "Screenshot" : sanitized
