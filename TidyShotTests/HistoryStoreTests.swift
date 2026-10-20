@@ -127,6 +127,21 @@ struct HistoryStoreTests {
         #expect(reloaded.records.map(\.id) == [pendingOnly.id])
     }
 
+    /// A record whose upload is still running must survive retention, or its `.uploaded` event
+    /// would find no record and the object would be left in the bucket with nothing pointing at it.
+    @Test func pruningKeepsUploadingRecords() {
+        let history = store(retentionDays: 7)
+        var pruned: [UUID] = []
+        history.didPrune = { pruned += $0.map(\.id) }
+        let uploading = record(age: 30 * 86_400, state: .uploading(fraction: 0.5))
+        let old = record(age: 30 * 86_400)
+        history.add(uploading)
+        history.add(old)
+
+        #expect(history.records.map(\.id) == [uploading.id])
+        #expect(pruned == [old.id])
+    }
+
     @Test func missingFileLoadsEmpty() {
         let fresh = store()
         fresh.load()

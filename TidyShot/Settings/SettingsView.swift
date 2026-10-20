@@ -14,8 +14,9 @@ struct SettingsView: View {
             OverlaySettingsView()
                 .tabItem { Label("Overlay", systemImage: "macwindow.on.rectangle") }
         }
-        // Tall enough for the Upload tab's five sections so no tab needs to scroll.
-        .frame(width: 600, height: 720)
+        // Tall enough for the Upload tab (its sections plus the key template's field, caption,
+        // example, collision warning and button) so no tab needs to scroll.
+        .frame(width: 600, height: 800)
         .onAppear {
             NSApplication.shared.activate()
         }

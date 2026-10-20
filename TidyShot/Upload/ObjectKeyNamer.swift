@@ -39,15 +39,21 @@ nonisolated struct ObjectKeyNamer: Sendable {
     }
 
     /// `shots/2026/10/miffle-aB3dE9fG.png`: the template expanded for `context`, folded, plus
-    /// `.ext` (`ext` without a dot). A template that expands to nothing falls back to six random
-    /// characters so a key is never just `.png`.
+    /// `.ext` (`ext` without a dot), unless the expansion already ends in `.ext` (any case), so
+    /// `shots/{random}.png` does not become `….png.png`. A template that expands to nothing falls
+    /// back to six random characters so a key is never just `.png`.
     func makeKey(ext: String, context: TemplateContext) -> String {
         let expander = TemplateExpander(randomString: randomString)
         var name = Self.normalize(expander.expand(template, context: context, style: .objectKey))
         if name.isEmpty {
             name = randomString(TemplateExpander.defaultRandomLength)
         }
-        return name + "." + ext
+        let suffix = "." + ext
+        let lastSegment = name.split(separator: "/").last.map(String.init) ?? name
+        if lastSegment.count > suffix.count, lastSegment.lowercased().hasSuffix(suffix.lowercased()) {
+            return name
+        }
+        return name + suffix
     }
 
     /// Trims whitespace and folds slashes. Saved templates, validation and expanded keys all go

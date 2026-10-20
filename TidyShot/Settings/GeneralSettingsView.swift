@@ -18,7 +18,7 @@ struct GeneralSettingsView: View {
                 }
             }
             TextField("File name", text: $settings.fileNameTemplate)
-            Text("Tokens: {date} {time} {datetime} {app} {counter} {random} {random:8}")
+            Text("Tokens: \(TemplateExpander.tokenList)")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Picker("After capture", selection: $settings.afterCaptureAction) {

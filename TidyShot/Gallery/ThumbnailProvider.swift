@@ -4,15 +4,31 @@ import AppKit
 /// from `.task` modifiers, never from a view body. Thumbnails come from the `thumbnails` folder;
 /// a record from before thumbnails existed gets one made from its local file the first time it
 /// is shown (the record is updated once that finishes), or a placeholder (nil) when it has no
-/// readable file, and such a record is not tried again. Previews are decoded from the local file
-/// off the main thread and fall back to the thumbnail.
+/// readable file, and such a record is not tried again. Previews are read and decoded from the
+/// local file off the main thread and fall back to the thumbnail. Every file read happens in a
+/// detached task: a capture can be tens of megabytes.
 final class ThumbnailProvider {
     static let previewCacheLimit = 8
+    static let thumbnailCacheLimit = 64
+
+    /// Reads a capture's PNG off the main actor: the file, and the save folder whose security
+    /// scope covers it (nil for a temporary file in `pending`, which needs none).
+    typealias FileReader = @Sendable (_ fileURL: URL, _ folder: URL?) throws -> Data
+
+    /// What a thumbnail load found, handed back from its detached task.
+    private nonisolated enum Made: Sendable {
+        case unreadable
+        case failed
+        case made(image: CGImage, name: String)
+    }
 
     private let store: ThumbnailStore
     private let history: HistoryStore
-    private let readFile: (CaptureRecord) throws -> Data
+    private let saveFolder: () -> URL?
+    private let readFile: FileReader
     private var thumbnails: [UUID: NSImage] = [:]
+    /// Ids in `thumbnails`, oldest first, each at most once.
+    private var thumbnailOrder: [UUID] = []
     /// Records whose thumbnail could not be made from their file; tried once per launch.
     private var unavailable: Set<UUID> = []
     private var previews: [UUID: NSImage] = [:]
@@ -22,11 +38,12 @@ final class ThumbnailProvider {
     /// a load still running for a deleted record is discarded.
     private var generations: [UUID: Int] = [:]
 
-    /// `readFile` returns the record's PNG, or throws when there is none (see
-    /// `AppCoordinator.readLocalFile(of:)`).
-    init(store: ThumbnailStore, history: HistoryStore, readFile: @escaping (CaptureRecord) throws -> Data) {
+    /// `saveFolder` is read on the main actor before each load (`SaveLocation.currentURL`);
+    /// `readFile` runs in the load's detached task (see `SaveLocation.readScoped`).
+    init(store: ThumbnailStore, history: HistoryStore, saveFolder: @escaping () -> URL?, readFile: @escaping FileReader) {
         self.store = store
         self.history = history
+        self.saveFolder = saveFolder
         self.readFile = readFile
     }
 
@@ -40,36 +57,38 @@ final class ThumbnailProvider {
             let data = await Task.detached(priority: .userInitiated) { try? Data(contentsOf: url) }.value
             guard generations[id, default: 0] == generation else { return nil }
             if let data, let image = NSImage(data: data) {
-                thumbnails[id] = image
+                remember(image, for: id)
                 return image
             }
         }
         // No stored thumbnail (a record from before Phase 3, or one whose capture-time thumbnail
         // is still being written): make one from the local file, once.
         guard !unavailable.contains(id) else { return nil }
-        guard let data = try? readFile(record) else {
+        guard let source = readSource(for: record) else {
             unavailable.insert(id)
             return nil
         }
         let store = store
-        let made = await Task.detached(priority: .utility) { () -> (image: CGImage, name: String)? in
+        let readFile = readFile
+        let made = await Task.detached(priority: .utility) { () -> Made in
+            guard let data = try? readFile(source.file, source.folder) else { return .unreadable }
             guard let small = ThumbnailMaker.thumbnail(fromPNGData: data),
                   let png = try? ThumbnailMaker.pngData(small),
-                  let name = try? store.write(png, id: id) else { return nil }
-            return (small, name)
+                  let name = try? store.write(png, id: id) else { return .failed }
+            return .made(image: small, name: name)
         }.value
         guard generations[id, default: 0] == generation, history.record(id: id) != nil else {
             // Deleted while the thumbnail was being made: do not leave its file behind.
-            if let made { store.remove(fileName: made.name) }
+            if case .made(_, let name) = made { store.remove(fileName: name) }
             return nil
         }
-        guard let made else {
+        guard case .made(let small, let name) = made else {
             unavailable.insert(id)
             return nil
         }
-        history.update(id: id) { $0.thumbnailFileName = made.name }
-        let image = NSImage(cgImage: made.image, size: .zero)
-        thumbnails[id] = image
+        history.update(id: id) { $0.thumbnailFileName = name }
+        let image = NSImage(cgImage: small, size: .zero)
+        remember(image, for: id)
         return image
     }
 
@@ -78,9 +97,11 @@ final class ThumbnailProvider {
         let id = record.id
         if let cached = previews[id] { return cached }
         let generation = generations[id, default: 0]
-        guard let data = try? readFile(record) else { return await thumbnail(for: record) }
-        let decoded = await Task.detached(priority: .userInitiated) {
-            ThumbnailMaker.thumbnail(fromPNGData: data, maxSide: ThumbnailMaker.previewMaxSide)
+        guard let source = readSource(for: record) else { return await thumbnail(for: record) }
+        let readFile = readFile
+        let decoded = await Task.detached(priority: .userInitiated) { () -> CGImage? in
+            guard let data = try? readFile(source.file, source.folder) else { return nil }
+            return ThumbnailMaker.thumbnail(fromPNGData: data, maxSide: ThumbnailMaker.previewMaxSide)
         }.value
         guard generations[id, default: 0] == generation else { return nil }
         guard let decoded else { return await thumbnail(for: record) }
@@ -95,12 +116,34 @@ final class ThumbnailProvider {
         return image
     }
 
-    /// Drops everything cached for a deleted record and discards any load still running for it.
+    /// Drops everything cached for a deleted or pruned record and discards any load still
+    /// running for it.
     func forget(_ id: UUID) {
         thumbnails[id] = nil
+        thumbnailOrder.removeAll { $0 == id }
         unavailable.remove(id)
         previews[id] = nil
         previewOrder.removeAll { $0 == id }
         generations[id, default: 0] += 1
+    }
+
+    /// Caches a decoded thumbnail, dropping the oldest beyond `thumbnailCacheLimit`.
+    private func remember(_ image: NSImage, for id: UUID) {
+        thumbnails[id] = image
+        thumbnailOrder.removeAll { $0 == id }
+        thumbnailOrder.append(id)
+        if thumbnailOrder.count > Self.thumbnailCacheLimit {
+            thumbnails[thumbnailOrder.removeFirst()] = nil
+        }
+    }
+
+    /// What `readFile` needs for the record, resolved on the main actor: the file and, for a
+    /// file in the save folder, that folder. Nil when there is nothing to read (no local file,
+    /// or no save folder to reach it through).
+    private func readSource(for record: CaptureRecord) -> (file: URL, folder: URL?)? {
+        guard let fileURL = record.fileURL else { return nil }
+        if record.fileIsTemporary { return (fileURL, nil) }
+        guard let folder = saveFolder() else { return nil }
+        return (fileURL, folder)
     }
 }

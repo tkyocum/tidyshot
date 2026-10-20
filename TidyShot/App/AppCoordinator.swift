@@ -35,9 +35,13 @@ final class AppCoordinator {
     private let permissionWindow = PermissionWindowController()
     private let overlay = QuickAccessController()
     @ObservationIgnored private lazy var selector = SelectionController(engine: engine)
-    @ObservationIgnored private lazy var thumbnailProvider = ThumbnailProvider(store: thumbnails, history: history) { [unowned self] record in
-        try self.readLocalFile(of: record)
-    }
+    @ObservationIgnored private lazy var thumbnailProvider = ThumbnailProvider(
+        store: thumbnails, history: history, saveFolder: { [unowned self] in self.saveLocation.currentURL },
+        readFile: { fileURL, folder in
+            // Runs in a detached task. A temporary file in `pending` needs no scope.
+            guard let folder else { return try Data(contentsOf: fileURL) }
+            return try SaveLocation.readScoped(fileURL, folder: folder)
+        })
     @ObservationIgnored private lazy var gallery = GalleryWindowController(
         model: GalleryModel(history: history, provider: thumbnailProvider),
         actions: GalleryActions(
@@ -53,7 +57,7 @@ final class AppCoordinator {
     /// and Delete can still cancel them.
     @ObservationIgnored private var drainingQueues: [UploadLane] = []
     /// Records whose delete is in progress (alert showing or requests running): a second click
-    /// shows no second alert, and the shared-key check ignores them.
+    /// shows no second alert, and a retry does not re-enqueue them.
     @ObservationIgnored private var deletingIDs: Set<UUID> = []
     /// Set after the first "Upload not configured" notification so later captures stay quiet.
     @ObservationIgnored private var warnedUploadNotConfigured = false
@@ -511,7 +515,9 @@ final class AppCoordinator {
                 return
             }
             // Never delete an object another capture still points at.
-            let others = history.records.filter { $0.id != recordID && !deletingIDs.contains($0.id) }
+            // A record whose own delete is still pending (its alert open) counts as a sharer: if
+            // that delete is cancelled, its URL must keep working.
+            let others = history.records.filter { $0.id != recordID }
             sharedKeys = CaptureDeletion.sharedKeys(keys, at: location, with: others)
             // Built from where the object went, not from the current Upload settings.
             let destination = S3Destination(config: location.config, credentials: credentials)
@@ -613,6 +619,7 @@ final class AppCoordinator {
     /// are left alone. (A record whose temporary file is its only copy is never pruned.)
     private func removeFiles(ofPruned records: [CaptureRecord]) {
         for record in records {
+            thumbnailProvider.forget(record.id)
             if let name = record.thumbnailFileName {
                 thumbnails.remove(fileName: name)
             }
@@ -655,6 +662,12 @@ final class AppCoordinator {
             }
         case .uploaded(let id, let url, let key):
             uploadingIDs.remove(id)
+            guard history.record(id: id) != nil else {
+                // The record disappeared while its upload was running. Nothing would point at the
+                // new object, so remove it again instead of copying or announcing its URL.
+                deleteOrphanedObject(key: key, at: location)
+                return
+            }
             // Upload-only mode: the temporary file has done its job. If it cannot be removed the
             // record keeps pointing at it, so Delete can still remove it later.
             var removedTemporaryFile = false
@@ -695,6 +708,24 @@ final class AppCoordinator {
                 }
             }
             refreshOverlay(for: id)
+        }
+    }
+
+    /// Best-effort `DELETE` of an object whose record vanished mid-upload, built from where the
+    /// object went (as Delete does) and the credentials stored now. The outcome is only logged.
+    private func deleteOrphanedObject(key: String, at location: ObjectLocation) {
+        guard let credentials = loadCredentials() else {
+            NSLog("Uploaded \(key) for a record that no longer exists; no credentials to delete it")
+            return
+        }
+        let destination = S3Destination(config: location.config, credentials: credentials)
+        Task {
+            do {
+                try await destination.delete(key: key)
+                NSLog("Deleted \(key), uploaded for a record that no longer exists")
+            } catch {
+                NSLog("Could not delete \(key), uploaded for a record that no longer exists: \(error.localizedDescription)")
+            }
         }
     }
 

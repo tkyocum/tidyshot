@@ -67,6 +67,14 @@ final class SaveLocation {
         }
     }
 
+    /// Reads `fileURL` inside `folder`, holding that folder's security-scoped access for the read.
+    /// Touches no instance state, so it can run off the main actor (the gallery's loads).
+    nonisolated static func readScoped(_ fileURL: URL, folder: URL) throws -> Data {
+        let accessing = folder.startAccessingSecurityScopedResource()
+        defer { if accessing { folder.stopAccessingSecurityScopedResource() } }
+        return try Data(contentsOf: fileURL)
+    }
+
     /// Deletes a file inside the save folder, holding security-scoped access. A file that is
     /// already gone is not an error; any other failure throws, so Delete keeps the record.
     func remove(at fileURL: URL) throws {

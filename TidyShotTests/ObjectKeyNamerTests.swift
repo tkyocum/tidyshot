@@ -33,6 +33,14 @@ struct ObjectKeyNamerTests {
         #expect(ObjectKeyNamer.normalize("  shots/{random}  ") == "shots/{random}")
     }
 
+    @Test func templateEndingInExtensionIsNotDoubled() {
+        #expect(namer("shots/{random:4}.png").makeKey(ext: "png", context: context()) == "shots/XXXX.png")
+        #expect(namer("{random:4}.PNG").makeKey(ext: "png", context: context()) == "XXXX.PNG")
+        #expect(namer("{random:4}.png.bak").makeKey(ext: "png", context: context()) == "XXXX.png.bak.png")
+        // A folder named only `.png` is not a file name ending in the extension.
+        #expect(namer("a/.png").makeKey(ext: "png", context: context()) == "a/.png.png")
+    }
+
     @Test func tokenValuesAreKeySafe() {
         #expect(namer("{app}/{random:2}").makeKey(ext: "png", context: context(app: "Google Chrome (Beta)")) == "Google-Chrome-Beta/XX.png")
         #expect(namer("{app}").makeKey(ext: "png", context: context(app: nil)) == "Screen.png")

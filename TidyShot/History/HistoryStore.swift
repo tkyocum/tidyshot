@@ -110,10 +110,11 @@ final class HistoryStore {
     }
 
     /// Records newer than the retention cutoff, plus every upload-only capture that has not been
-    /// uploaded: its PNG in `pending` is the only copy, so it stays until it is uploaded or deleted.
+    /// uploaded (its PNG in `pending` is the only copy, so it stays until it is uploaded or
+    /// deleted) and every record with an upload in flight (its `.uploaded` event needs the record).
     static func pruned(_ records: [CaptureRecord], retentionDays: Int, now: Date) -> [CaptureRecord] {
         let cutoff = now.addingTimeInterval(-Double(retentionDays) * 86_400)
-        return records.filter { $0.timestamp >= cutoff || $0.isPendingOnly }
+        return records.filter { $0.timestamp >= cutoff || $0.isPendingOnly || $0.isUploading }
     }
 
     /// Newest first; equal timestamps keep their current relative order.

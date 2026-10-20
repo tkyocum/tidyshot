@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import Synchronization
 import Testing
 @testable import TidyShot
 
@@ -24,6 +25,11 @@ struct ThumbnailProviderTests {
         return try ImageEncoder.pngData(from: context.makeImage()!, scale: 1)
     }
 
+    /// A provider whose save folder is `dir`, reading through `read`.
+    func makeProvider(_ read: @escaping ThumbnailProvider.FileReader) -> ThumbnailProvider {
+        ThumbnailProvider(store: store, history: history, saveFolder: { [dir] in dir }, readFile: read)
+    }
+
     func record(thumbnail: String? = nil, file: URL? = URL(fileURLWithPath: "/Users/tim/Desktop/Shot.png")) -> CaptureRecord {
         CaptureRecord(fileURL: file, thumbnailFileName: thumbnail, pixelWidth: 640, pixelHeight: 400, appName: "Safari")
     }
@@ -34,12 +40,12 @@ struct ThumbnailProviderTests {
         var stored = item
         stored.thumbnailFileName = name
         history.add(stored)
-        var reads = 0
-        let provider = ThumbnailProvider(store: store, history: history) { _ in reads += 1; throw CocoaError(.fileNoSuchFile) }
+        let reads = Mutex(0)
+        let provider = makeProvider { _, _ in reads.withLock { $0 += 1 }; throw CocoaError(.fileNoSuchFile) }
 
         let image = await provider.thumbnail(for: stored)
         #expect(image?.size == CGSize(width: 320, height: 200))
-        #expect(reads == 0)
+        #expect(reads.withLock { $0 } == 0)
         #expect(await provider.thumbnail(for: stored) === image)
     }
 
@@ -47,8 +53,8 @@ struct ThumbnailProviderTests {
         let item = record()
         history.add(item)
         let data = try png(width: 640, height: 400)
-        var reads = 0
-        let provider = ThumbnailProvider(store: store, history: history) { _ in reads += 1; return data }
+        let reads = Mutex<[URL?]>([])
+        let provider = makeProvider { _, folder in reads.withLock { $0.append(folder) }; return data }
 
         let image = await provider.thumbnail(for: item)
         #expect(image?.size == CGSize(width: 320, height: 200))
@@ -56,29 +62,32 @@ struct ThumbnailProviderTests {
         #expect(name == "\(item.id.uuidString).png")
         #expect(FileManager.default.fileExists(atPath: store.url(forFileName: name ?? "").path(percentEncoded: false)))
         #expect(await provider.thumbnail(for: item) === image)
-        #expect(reads == 1)
+        // Read once, through the save folder's scope.
+        #expect(reads.withLock { $0 } == [dir])
     }
 
     /// The negative cache: a record whose thumbnail cannot be made is tried once, not on every
-    /// appearance of its cell.
+    /// appearance of its cell. A record with no local file is never read at all.
     @Test func recordWithoutAReadableFileGetsAPlaceholderAndIsTriedOnce() async {
-        let item = record(file: nil)
+        let item = record()
+        let noFile = record(file: nil)
         history.add(item)
-        var reads = 0
-        let provider = ThumbnailProvider(store: store, history: history) { _ in reads += 1; throw CocoaError(.fileNoSuchFile) }
+        history.add(noFile)
+        let reads = Mutex(0)
+        let provider = makeProvider { _, _ in reads.withLock { $0 += 1 }; throw CocoaError(.fileNoSuchFile) }
         #expect(await provider.thumbnail(for: item) == nil)
         #expect(await provider.thumbnail(for: item) == nil)
-        #expect(reads == 1)
+        #expect(reads.withLock { $0 } == 1)
         #expect(history.record(id: item.id)?.thumbnailFileName == nil)
+
+        #expect(await provider.thumbnail(for: noFile) == nil)
+        #expect(reads.withLock { $0 } == 1)
     }
 
     @Test func previewComesFromTheFileOrFallsBackToTheThumbnail() async throws {
         let withFile = record()
         let data = try png(width: 2000, height: 1000)
-        let provider = ThumbnailProvider(store: store, history: history) { record in
-            guard record.fileURL != nil else { throw CocoaError(.fileNoSuchFile) }
-            return data
-        }
+        let provider = makeProvider { _, _ in data }
         let preview = await provider.preview(for: withFile)
         #expect(preview?.size == CGSize(width: 1200, height: 600))
         #expect(await provider.preview(for: withFile) === preview)
@@ -91,24 +100,28 @@ struct ThumbnailProviderTests {
         #expect(await provider.preview(for: withFile) !== preview)
     }
 
-    /// Runs code in the middle of a load: `readFile` is called after the load has started and
-    /// before its decode finishes.
-    final class ReadHook {
-        var onRead: (() -> Void)?
-    }
-
+    /// `forget` runs while the load's read is in progress in its detached task: the reader
+    /// blocks until the test has called it.
     @Test func forgetDuringALoadDiscardsIt() async throws {
         let item = record()
         let data = try png(width: 2000, height: 1000)
-        let hook = ReadHook()
-        let provider = ThumbnailProvider(store: store, history: history) { _ in
-            hook.onRead?()
+        let blocking = Mutex(true)
+        let reading = Mutex(false)
+        let release = DispatchSemaphore(value: 0)
+        let provider = makeProvider { _, _ in
+            if blocking.withLock({ $0 }) {
+                reading.withLock { $0 = true }
+                release.wait()
+            }
             return data
         }
-        hook.onRead = { provider.forget(item.id) }
-        #expect(await provider.preview(for: item) == nil)
+        let load = Task { await provider.preview(for: item)?.size }
+        try await eventually { reading.withLock { $0 } }
+        provider.forget(item.id)
+        release.signal()
+        #expect(await load.value == nil)
 
-        hook.onRead = nil
+        blocking.withLock { $0 = false }
         #expect(await provider.preview(for: item)?.size == CGSize(width: 1200, height: 600))
     }
 }

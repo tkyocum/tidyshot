@@ -43,8 +43,9 @@ final class GalleryWindow: NSWindow {
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        if event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
-           event.charactersIgnoringModifiers == "w" {
+        // Caps Lock is ignored: it is in the device-independent flags and makes the character "W".
+        if event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting(.capsLock) == .command,
+           event.charactersIgnoringModifiers?.lowercased() == "w" {
             performClose(nil)
             return true
         }

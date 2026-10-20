@@ -64,6 +64,11 @@ struct GalleryCell: View {
     /// Loaded by the `.task` below, never in `body`.
     @State private var thumbnail: NSImage?
 
+    /// The object's or file's name, shown under the date and read by VoiceOver.
+    private var displayName: String {
+        record.uploadedURL?.lastPathComponent ?? record.fileURL?.lastPathComponent ?? record.appName ?? "Capture"
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             ZStack(alignment: .bottomTrailing) {
@@ -87,7 +92,7 @@ struct GalleryCell: View {
             }
             Text(record.timestamp.formatted(date: .abbreviated, time: .shortened))
                 .font(.caption)
-            Text(record.uploadedURL?.lastPathComponent ?? record.fileURL?.lastPathComponent ?? record.appName ?? "Capture")
+            Text(displayName)
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
@@ -99,7 +104,8 @@ struct GalleryCell: View {
         .onTapGesture { actions.copy(record.id) }
         .contextMenu { GalleryMenuItems(record: record, actions: actions) }
         .help(record.uploadedURL != nil ? "Click to copy the URL" : record.hasLocalFile ? "Click to copy the file" : "")
-        .accessibilityLabel(GalleryStatusBadge.title(for: record.uploadState))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(GalleryStatusBadge.title(for: record.uploadState)), \(record.timestamp.formatted(date: .abbreviated, time: .shortened)), \(displayName)")
         .task(id: ThumbnailKey(id: record.id, fileName: record.thumbnailFileName)) {
             thumbnail = await model.thumbnail(for: record)
         }

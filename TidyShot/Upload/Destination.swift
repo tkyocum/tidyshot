@@ -9,7 +9,9 @@ nonisolated protocol Destination: Sendable {
     /// Uploads `data` to `key`. `progress` receives fractions in 0...1 from the transport thread.
     func upload(_ data: Data, key: String, contentType: String,
                 progress: @escaping @Sendable (Double) -> Void) async throws
-    /// Best-effort removal, used by the connection test to clean up its probe object.
+    /// Removes the object at `key`. Used by Delete (the capture's object, and any key its
+    /// cancelled upload had reserved), by the cleanup of an object uploaded for a record that no
+    /// longer exists, and by the connection test to remove its probe object.
     func delete(key: String) async throws
     /// Where `key` can be read from after upload.
     func publicURL(for key: String) throws -> URL
