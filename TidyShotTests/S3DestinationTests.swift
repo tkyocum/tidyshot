@@ -220,6 +220,15 @@ struct S3DestinationTests {
         #expect(stub.requests.map(\.httpMethod) == ["GET"])
     }
 
+    /// A downloaded capture must not stay in the container's on-disk URL cache after Delete. The
+    /// request's cache policy only governs loading, not storing, so the session the app uses (the
+    /// default) has no URL cache at all, and it is one shared session, not one per destination.
+    @Test func defaultSessionHasNoURLCache() {
+        let destination = S3Destination(config: config, credentials: credentials)
+        #expect(destination.session === S3Destination.uncachedSession)
+        #expect(destination.session.configuration.urlCache == nil)
+    }
+
     @Test func errorBodyIsSummarisedFromS3XML() async throws {
         let xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Error><Code>AccessDenied</Code><Message>Access Denied</Message><RequestId>x</RequestId></Error>"
         let (session, _) = StubSession.make { _ in (403, Data(xml.utf8)) }

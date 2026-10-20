@@ -8,8 +8,21 @@ nonisolated struct S3Destination: Destination {
     let session: URLSession
     let now: @Sendable () -> Date
 
+    /// The session every request uses unless a test passes its own. It has no URL cache: a GET's
+    /// response (a capture downloaded for Copy Image, often sensitive) would otherwise be stored in
+    /// the container's on-disk cache and stay there after Delete. The request's
+    /// `reloadIgnoringLocalAndRemoteCacheData` only governs loading, not storing, and a per-task
+    /// `willCacheResponse` is never called for `data(for:delegate:)`, so only a session without a
+    /// cache prevents it. Ephemeral, so cookies and credentials are not persisted either. One
+    /// session for all destinations, because a URLSession lives until it is invalidated.
+    static let uncachedSession: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.urlCache = nil
+        return URLSession(configuration: configuration)
+    }()
+
     init(config: S3DestinationConfig, credentials: AWSCredentials,
-         session: URLSession = .shared, now: @escaping @Sendable () -> Date = { Date() }) {
+         session: URLSession = S3Destination.uncachedSession, now: @escaping @Sendable () -> Date = { Date() }) {
         self.config = config.normalized
         self.credentials = credentials
         self.session = session
