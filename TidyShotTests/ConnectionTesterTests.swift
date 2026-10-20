@@ -35,6 +35,14 @@ struct ConnectionTesterTests {
         #expect(requests[1].value(forHTTPHeaderField: "authorization") == nil)
     }
 
+    /// The probe is deleted by the time the result shows, so its URL is not echoed.
+    @Test func readableSummaryDoesNotEchoTheProbeURL() {
+        let result = ConnectionTestResult(probeKey: "p/tidyshot-probe-ZZZZZZZZ.txt",
+                                          publicURL: URL(string: "https://snap.tky.io/p/tidyshot-probe-ZZZZZZZZ.txt"),
+                                          outcome: .readable)
+        #expect(result.summary == "Upload and public read both work.")
+    }
+
     @Test func notPublicWhenGetIsForbidden() async {
         let (session, stub) = StubSession.make { request in request.httpMethod == "GET" ? (403, Data()) : (200, Data()) }
         let result = await ConnectionTester.run(destination: destination(session), session: session)

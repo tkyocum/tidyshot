@@ -20,7 +20,7 @@ nonisolated struct ConnectionTestResult: Sendable, Equatable {
     var summary: String {
         switch outcome {
         case .readable:
-            "Upload and public read both work. \(publicURL?.absoluteString ?? "")"
+            "Upload and public read both work."
         case .notPublic(let status):
             "Upload worked, but the public URL returned HTTP \(status). Check the bucket policy, CDN, or the public URL template."
         case .publicCheckFailed(let message):

@@ -18,7 +18,11 @@ struct UploadSettingsView: View {
     var body: some View {
         Form {
             Section("Destination") {
-                TextField("Endpoint", text: $draft.endpoint, prompt: Text("https://s3.us-west-2.amazonaws.com"))
+                // A prompt that looks like a value reads as filled in; the example goes underneath.
+                TextField("Endpoint", text: $draft.endpoint, prompt: Text("Required"))
+                Text("Example: https://s3.us-west-2.amazonaws.com")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 TextField("Region", text: $draft.region, prompt: Text("us-west-2, or auto for R2"))
                 TextField("Bucket", text: $draft.bucket)
                 Toggle("Use path-style URLs (MinIO)", isOn: $draft.usePathStyle)
@@ -26,7 +30,10 @@ struct UploadSettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Toggle("Send public-read ACL with each upload", isOn: $draft.sendPublicReadACL)
-                TextField("Public URL", text: $draft.publicURLTemplate, prompt: Text("https://snap.tky.io/{key}"))
+                TextField("Public URL", text: $draft.publicURLTemplate, prompt: Text("Required"))
+                Text("Example: https://snap.tky.io/{key}")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 Text("{key} is replaced with the full object key, including any folders from the key template.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
