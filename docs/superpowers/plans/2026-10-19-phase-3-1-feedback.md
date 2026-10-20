@@ -109,7 +109,7 @@ TidyShot/
   Settings/
     AppSettings.swift                        modified (Task 1): migrates the file name template and the stored config, keeps the stored config on an encode failure; comment only (Task 7)
     UploadSettingsView.swift                 modified (Tasks 1, 2): example key context, Required prompts and captions
-    SettingsView.swift                       modified (Task 2): 600 by 840
+    SettingsView.swift                       modified (Task 2): comment only; stays 600 by 800, the Upload tab scrolls
   Upload/
     S3Destination.swift                      modified (Task 4): download(key:)
     S3DestinationConfig.swift                modified (Task 1): migrates the key template on decode
@@ -143,6 +143,7 @@ README.md                                    modified (Tasks 1, 9)
 - **Delete texts:** the first alert's line is exactly `Removes it from object storage and from history.` whenever there is an object to delete (uploaded with a known location, a reserved key from a cancelled upload, or an upload in flight). Without one it says what does disappear: `Removes it from your save folder and from history.` for a saved file, `Removes it from history.` otherwise, and a record uploaded before Phase 3 (no `objectLocation`) adds `The uploaded object stays in the bucket.` Delete still removes the local file and the thumbnail, as in Phase 3. Missing credentials count as a storage failure (reason `No credentials are saved in Settings > Upload.`), so that record is not stuck either.
 - **Copy Image source:** the local file when it can be read (save folder through the bookmark, `pending` directly), otherwise the object by signed GET from where the record says it went, with the credentials stored now. A record uploaded before Phase 3 has no location, so without its local file the button is disabled. The PNG's DPI gives the paste scale (`ImageEncoder.decode`), so Retina captures paste at point size. The read and the decode run detached (a capture can be tens of megabytes, and the menu has just closed), and the failure says which case it was: a recorded file that cannot be read with no upload to fall back on, a capture with nothing to fetch, or the download's error.
 - **App name on records:** removing the token leaves nothing that needs the capturing app, so `save(_:)` no longer reads it and new records store `appName: nil`. The field stays because Phase 1 to 3 history files carry it, and a Recent Captures row with neither URL nor file falls back to it for its name.
+- **Upload tab height (amended after the Task 2 review):** measured with a copy of the Upload form in an off-screen `NSHostingView` (macOS 27.0 SDK, grouped style, 600 wide, key template `{date}/{hostname}` so the collision warning shows; a replica, not the real Settings scene). Each standalone caption row is 37 points tall. The Phase 3 form was already 897 points against the 800-point window (934 with a status line under the Save buttons); with the two example rows it is 971 (1008). A window that showed all of it, plus the Settings toolbar, would be taller than a 13-inch laptop's visible frame, so the window stays 600 by 800 and the grouped Form scrolls, as it already did in Phase 3; the 840 first planned here bought nothing and put the window, with its toolbar, at about 890 to 920 points, more than the visible frame of a 1440 by 900 display. Putting each example in its field's label as a subtitle (`TextField(text:prompt:) { Text("Endpoint"); Text(verbatim: "Example: …") }`) costs 16 points per field instead of 37, but narrows the Endpoint field from 482 to 288 points, less than a Cloudflare R2 endpoint needs (about 438), and the Public URL field from 470 to 362, so the examples stay on their own caption rows. They use `Text(verbatim:)`: a string literal is a `LocalizedStringKey`, parsed as Markdown, which turns a bare URL into a blue, clickable link that `.foregroundStyle(.secondary)` does not recolour (the Public URL one would open `https://snap.tky.io/%7Bkey%7D`).
 - **Luminance API:** `Luminance.mean(of:in:)` returns `Double?`, nil when the rect lies wholly outside the image (cursor off the snapshot), which `CrosshairStyle(luminance:)` turns into the outlined style. The crop is drawn into an 8-bit RGBA buffer of at most 32 by 32 pixels, so a 2x display's 48 by 48 pixel sample is averaged by the downscale and the cost does not grow with the scale.
 
 ---
@@ -1113,12 +1114,12 @@ git commit -m "feat: remove the {app} token and migrate stored templates"
 **Files:**
 - Modify: `TidyShot/Upload/ConnectionTester.swift` (one edit)
 - Modify: `TidyShot/Settings/UploadSettingsView.swift` (two edits)
-- Modify: `TidyShot/Settings/SettingsView.swift` (one edit: 600 by 840, for the two caption lines)
+- Modify: `TidyShot/Settings/SettingsView.swift` (one edit: the comment; the window stays 600 by 800 and the Upload tab scrolls)
 - Test: `TidyShotTests/ConnectionTesterTests.swift` (one new test)
 
 **Interfaces:**
 - Consumes: `ConnectionTestResult` (Phase 2).
-- Produces: `ConnectionTestResult.summary` for `.readable` is exactly `Upload and public read both work.`; the other outcomes are unchanged. The Endpoint and Public URL fields show the prompt `Required`, each with a caption line `Example: https://s3.us-west-2.amazonaws.com` and `Example: https://snap.tky.io/{key}`; `SettingsView` is 600 by 840 so the Upload tab still does not scroll.
+- Produces: `ConnectionTestResult.summary` for `.readable` is exactly `Upload and public read both work.`; the other outcomes are unchanged. The Endpoint and Public URL fields show the prompt `Required`, each with a caption line `Example: https://s3.us-west-2.amazonaws.com` and `Example: https://snap.tky.io/{key}`, written with `Text(verbatim:)` so the URL is grey caption text and not a link; `SettingsView` stays 600 by 800, and the Upload tab, which is taller than that, scrolls (see "Upload tab height" under Design decisions).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1175,8 +1176,10 @@ Replace:
 with:
 ```swift
                 // A prompt that looks like a value reads as filled in; the example goes underneath.
+                // Verbatim, because a string literal is parsed as Markdown and the URL would become
+                // a blue, clickable link instead of grey caption text.
                 TextField("Endpoint", text: $draft.endpoint, prompt: Text("Required"))
-                Text("Example: https://s3.us-west-2.amazonaws.com")
+                Text(verbatim: "Example: https://s3.us-west-2.amazonaws.com")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 ```
@@ -1189,13 +1192,15 @@ Replace:
 with:
 ```swift
                 TextField("Public URL", text: $draft.publicURLTemplate, prompt: Text("Required"))
-                Text("Example: https://snap.tky.io/{key}")
+                Text(verbatim: "Example: https://snap.tky.io/{key}")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Text("{key} is replaced with the full object key, including any folders from the key template.")
 ```
 
-The two caption lines make the Upload tab taller, so the Settings window grows by 40 points.
+The two caption rows make the Upload tab about 74 points taller (37 per row). The tab already
+scrolled at 800 points, and a window tall enough to show all of it would not fit a laptop screen,
+so the window keeps its Phase 3 size and only the comment changes.
 
 In `TidyShot/Settings/SettingsView.swift`:
 
@@ -1207,10 +1212,11 @@ Replace:
 ```
 with:
 ```swift
-        // Tall enough for the Upload tab (its sections, the example captions under Endpoint and
-        // Public URL, and the key template's field, caption, example, collision warning and
-        // button) so no tab needs to scroll.
-        .frame(width: 600, height: 840)
+        // The Phase 3 height. The Upload tab's grouped Form is taller than this (about 970 points
+        // with the key template's collision warning, about 1010 with a status line under the Save
+        // buttons) and scrolls; a window tall enough to show all of it would not fit a laptop
+        // screen.
+        .frame(width: 600, height: 800)
 ```
 
 - [ ] **Step 5: Run the tests to verify they pass**
@@ -1227,7 +1233,7 @@ Run:
 ```bash
 xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -configuration Debug -derivedDataPath .build build -quiet && open .build/Build/Products/Debug/TidyShot.app
 ```
-Open Settings > Upload (the SwiftUI menu bar item still works in this task). Expected: the window is 600 by 840; an empty Endpoint and Public URL field shows the grey word "Required", the example sits on its own caption line under each field, and the tab shows everything down to the Save buttons without scrolling when you type `{date}/{hostname}` into the key template (the orange warning showing). Put the key template back and quit without saving.
+Open Settings > Upload (the SwiftUI menu bar item still works in this task). Expected: the window is 600 by 800; an empty Endpoint and Public URL field shows the grey word "Required", and the example sits on its own caption line under each field, grey like the other captions (not a blue link; clicking it opens nothing). Type `{date}/{hostname}` into the key template (the orange warning showing): the tab scrolls, and scrolling reaches everything down to the Save buttons. Put the key template back and quit without saving.
 
 - [ ] **Step 7: Commit**
 
@@ -3937,8 +3943,9 @@ made before this build. Where the Phase 2 and Phase 3 checklists say Recent Capt
 - [ ] Again with the Phase 3 build, set the file name template to `{app}` alone. After launching this build Settings > General shows the default template, and `log show --last 5m --predicate 'process == "TidyShot"' | grep "Naming template"` shows one line with the old template; quitting and relaunching adds no second line. No notification is posted.
 - [ ] The token captions in Settings > General and Settings > Upload list `{date} {year} {month} {day} {time} {datetime} {hostname} {counter} {random} {random:8}`.
 - [ ] An empty Endpoint and Public URL each show a grey "Required"; the example sits on its own caption line under each field.
+- [ ] Both example captions are grey like the other captions, URL included (not a blue link), and clicking one opens nothing.
 - [ ] Save and Test Connection with correct settings reports exactly "Upload and public read both work." with no URL after it; a wrong secret still reports "Upload failed: …".
-- [ ] The Upload tab shows everything down to the Save buttons without scrolling, with the key template's orange warning showing.
+- [ ] The Settings window is 600 by 800 points and fits on the screen with its toolbar. With the key template's orange warning showing, the Upload tab scrolls, and scrolling reaches everything down to the Save buttons and the status line under them.
 
 ## Crosshair
 - [ ] `⌃⇧4` over a white window: after the first moment (white crosshair with a thin dark edge) the crosshair is black; over a dark window it is white; moving between them switches it.

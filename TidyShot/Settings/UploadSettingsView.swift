@@ -19,8 +19,10 @@ struct UploadSettingsView: View {
         Form {
             Section("Destination") {
                 // A prompt that looks like a value reads as filled in; the example goes underneath.
+                // Verbatim, because a string literal is parsed as Markdown and the URL would become
+                // a blue, clickable link instead of grey caption text.
                 TextField("Endpoint", text: $draft.endpoint, prompt: Text("Required"))
-                Text("Example: https://s3.us-west-2.amazonaws.com")
+                Text(verbatim: "Example: https://s3.us-west-2.amazonaws.com")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 TextField("Region", text: $draft.region, prompt: Text("us-west-2, or auto for R2"))
@@ -31,7 +33,7 @@ struct UploadSettingsView: View {
                     .foregroundStyle(.secondary)
                 Toggle("Send public-read ACL with each upload", isOn: $draft.sendPublicReadACL)
                 TextField("Public URL", text: $draft.publicURLTemplate, prompt: Text("Required"))
-                Text("Example: https://snap.tky.io/{key}")
+                Text(verbatim: "Example: https://snap.tky.io/{key}")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Text("{key} is replaced with the full object key, including any folders from the key template.")
