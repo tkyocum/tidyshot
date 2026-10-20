@@ -72,13 +72,17 @@ file; a failed upload keeps it until a retry succeeds or the capture is deleted.
 
 ## Recent Captures
 
-The menu's Recent Captures… item opens a gallery of thumbnails, newest first. Hover for a larger
-preview, click to copy the URL (or the file when it was never uploaded), and use the context menu
-to retry a failed upload, reveal the file, or delete the capture, which removes the object from
-the bucket it was uploaded to, the local file, the thumbnail and the history entry after one
-confirmation. The confirmation also offers Remove from History Only, which drops just the entry
-and keeps the object and the file. The Quick Access overlay has the same Delete; while an upload
-is still running it cancels it first.
+Hover Recent Captures in the menu bar menu for the newest 15 captures, each with a thumbnail, its
+name and how long ago it was taken. Click a row to copy its URL (or the file when it was never
+uploaded). The row's buttons copy the URL, copy the image (downloaded from the bucket with a
+signed request when no local file is left), or delete the capture. Hover a thumbnail to see the
+capture full size beside the menu.
+
+Delete asks once, "Delete this capture?", then removes the object from the bucket it was uploaded
+to, the local file, the thumbnail and the history entry. If the bucket refuses the delete, a
+second alert offers to remove the capture from history anyway and leave the object where it is.
+The Quick Access overlay has the same Delete; while an upload is still running it cancels it
+first. Retry Failed Uploads appears in the menu whenever an upload has failed.
 Thumbnails live in `~/Library/Containers/io.tky.tidyshot/Data/Library/Application Support/TidyShot/thumbnails`.
 
 ## Documents
@@ -88,3 +92,4 @@ Thumbnails live in `~/Library/Containers/io.tky.tidyshot/Data/Library/Applicatio
 - Phase 1 manual test checklist: `docs/testing/phase-1-manual-checklist.md`
 - Phase 2 manual test checklist: `docs/testing/phase-2-manual-checklist.md`
 - Phase 3 manual test checklist: `docs/testing/phase-3-manual-checklist.md`
+- Phase 3.1 manual test checklist: `docs/testing/phase-3-1-manual-checklist.md`

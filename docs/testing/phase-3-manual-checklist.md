@@ -1,5 +1,9 @@
 # Phase 3 manual test checklist
 
+Phase 3.1 replaced the gallery window with the Recent Captures submenu and the three-button delete
+alert with a two-button one. Skip the Gallery section and the "Remove from History Only" items
+below; `docs/testing/phase-3-1-manual-checklist.md` covers them now.
+
 Run after any change to Gallery, Overlay, History, Upload naming, or AppCoordinator. Automated
 tests cover the template engine, key validation and migration, thumbnails and the two stores,
 record migration, queue cancellation, deletion bookkeeping and the thumbnail provider; everything
