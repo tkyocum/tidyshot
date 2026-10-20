@@ -43,4 +43,14 @@ struct ImageEncoderTests {
         let props = properties(of: data)
         #expect(abs(dpi(props, kCGImagePropertyDPIWidth) - 72) < 0.5)
     }
+
+    /// Copy Image pastes at point size, so the scale comes back from the DPI.
+    @Test func decodeReadsBackTheScale() throws {
+        let retina = try #require(ImageEncoder.decode(try ImageEncoder.pngData(from: makeImage(width: 200, height: 100), scale: 2)))
+        #expect(retina.image.width == 200)
+        #expect(retina.image.height == 100)
+        #expect(retina.scale == 2)
+        #expect(ImageEncoder.decode(try ImageEncoder.pngData(from: makeImage(width: 10, height: 10), scale: 1))?.scale == 1)
+        #expect(ImageEncoder.decode(Data("not a png".utf8)) == nil)
+    }
 }

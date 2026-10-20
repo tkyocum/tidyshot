@@ -451,6 +451,58 @@ final class AppCoordinator {
         }
     }
 
+    /// Copy Image: the PNG and TIFF on the clipboard, from the local file when it can be read;
+    /// otherwise (an upload-only capture, or a file that cannot be read) downloaded with a signed
+    /// GET from the bucket the record says it went to, with "Copying image…" posted while that
+    /// runs. The read and the decode run in detached tasks, because a capture can be tens of
+    /// megabytes; the clipboard is written here, on the main actor.
+    func copyImage(recordID: UUID) async {
+        guard let record = history.record(id: recordID) else { return }
+        do {
+            let png = try await imageData(of: record)
+            let decoded = await Task.detached(priority: .userInitiated) { ImageEncoder.decode(png) }.value
+            guard let decoded else { throw CopyImageError.notAnImage }
+            Pasteboard.copy(image: decoded.image, pngData: png, scale: decoded.scale)
+            if settings.showNotification {
+                notifier.notify(title: "Image copied", body: record.uploadedKey ?? record.fileURL?.lastPathComponent ?? "")
+            }
+        } catch {
+            notifier.notifyError(error.localizedDescription, title: "Could not copy image")
+        }
+    }
+
+    /// The capture's PNG: the local file when it can be read, otherwise the uploaded object. The
+    /// save folder is resolved here, on the main actor, and the file is read in a detached task,
+    /// as `ThumbnailProvider` does: a temporary file in `pending` directly, a saved one through
+    /// the folder's security scope.
+    private func imageData(of record: CaptureRecord) async throws -> Data {
+        if let fileURL = record.fileURL {
+            let temporary = record.fileIsTemporary
+            let folder = temporary ? nil : saveLocation.currentURL
+            let local = await Task.detached(priority: .userInitiated) { () -> Data? in
+                if temporary { return try? Data(contentsOf: fileURL) }
+                guard let folder else { return nil }
+                return try? SaveLocation.readScoped(fileURL, folder: folder)
+            }.value
+            if let local { return local }
+            // The file is recorded but cannot be read; the uploaded object is the other copy.
+            guard record.uploadedKey != nil, record.objectLocation != nil else { throw CopyImageError.unreadableFile }
+        }
+        return try await downloadImage(of: record)
+    }
+
+    /// The uploaded object's bytes, from where the record says it went, signed with the
+    /// credentials stored now.
+    private func downloadImage(of record: CaptureRecord) async throws -> Data {
+        guard let key = record.uploadedKey else { throw CopyImageError.nothingToCopy }
+        guard let location = record.objectLocation else { throw CopyImageError.unknownLocation }
+        guard let credentials = loadCredentials() else { throw UploadError.notConfigured }
+        if settings.showNotification {
+            notifier.notify(title: "Copying image…", body: "Downloading \(key)")
+        }
+        return try await S3Destination(config: location.config, credentials: credentials).download(key: key)
+    }
+
     func reveal(recordID: UUID) {
         guard let fileURL = history.record(id: recordID)?.fileURL else { return }
         NSWorkspace.shared.activateFileViewerSelecting([fileURL])
@@ -788,5 +840,25 @@ final class AppCoordinator {
         let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
         let cgPoint = Geometry.cgPoint(fromAppKit: appKitPoint, primaryHeight: primaryHeight)
         return displays.first { $0.frame.contains(cgPoint) } ?? displays.first
+    }
+}
+
+/// Why Copy Image had nothing to put on the clipboard.
+nonisolated enum CopyImageError: LocalizedError, Equatable, Sendable {
+    /// No local file and no upload: nothing to fetch.
+    case nothingToCopy
+    /// Uploaded before Phase 3 (no stored location) and its file is gone; its button is disabled.
+    case unknownLocation
+    /// A file is recorded but cannot be read, and there is no upload to fall back on.
+    case unreadableFile
+    case notAnImage
+
+    var errorDescription: String? {
+        switch self {
+        case .nothingToCopy: "This capture was never uploaded and has no local file."
+        case .unknownLocation: "The capture has no local file, and TidyShot does not know where its upload went."
+        case .unreadableFile: "The local file could not be read."
+        case .notAnImage: "The file is not an image TidyShot can read."
+        }
     }
 }
