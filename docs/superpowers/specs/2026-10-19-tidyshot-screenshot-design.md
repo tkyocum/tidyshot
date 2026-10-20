@@ -79,6 +79,8 @@ Prior art: macshot (GPL-3.0) is an open-source Swift app with S3-compatible uplo
 
 **Blur, pixelate, redact in the editor.** Promoted into the first annotation release (see the Annotate row).
 
+**Object key templates.** The object key becomes a template, defaulting to `{random:6}` so current behaviour is unchanged. Tokens: `{random}` (6 characters) and `{random:N}`, `{date}` (yyyy-MM-dd), `{year}`, `{month}`, `{day}`, `{time}` (HH-mm-ss), `{datetime}`, `{hostname}` (the Mac's local hostname, lowercased, without `.local`), `{app}`, and `{counter}`; literal text and `/` separators are allowed, so `shots/{year}/{month}/{hostname}-{random:8}` is valid. The `.png` extension is appended. The engine is shared with the local file-name template (`FileNamer`), so both use one token set; the key prefix field folds into the template. Keys are URL-safe: literal text is restricted to `[A-Za-z0-9._-/]` and tokens never emit anything else. The HEAD-before-PUT collision check stays, and a template without `{random}` or `{counter}` gets a warning in Settings because collisions then only resolve by the HEAD check.
+
 **Scrolling capture.** Promoted from "extras" to its own phase (see the Scrolling capture row). Design sketch: the user picks a window or area; the app captures a frame, posts a scroll-wheel event to the target (`CGEvent`, which needs the Accessibility permission, so a second first-run flow), captures again, and stitches frames by locating the overlap with a row-signature match; stops when two consecutive frames are identical or the user clicks. Horizontal scrolling and a manual "scroll yourself" mode come after vertical works.
 
 ## 3. Core workflow in detail
@@ -166,6 +168,7 @@ Each phase ends with something usable. Phases 1 and 2 deliver the headline workf
 - Thumbnail generation at capture time, stored under Application Support; history records gain a thumbnail path and allow a nil local file.
 - Gallery window from the menu bar: grid, hover preview, click copies URL, delete from object storage plus history plus local file with confirmation, retry for failures.
 - "Upload only" after-capture action: temp file in the container, upload, copy URL, delete on success, keep on failure.
+- Object key templates (`{random:N}`, `{date}`, `{year}`, `{month}`, `{day}`, `{time}`, `{hostname}`, `{app}`, `{counter}`, literal folders) sharing the token engine with `FileNamer`; the key prefix field folds into the template.
 - "Forget credentials" button in the Upload tab.
 
 ### Phase 4: annotation (1 to 2 weeks)
@@ -197,7 +200,7 @@ Separate design document. Will reuse Uploader, Naming, History, and Overlay.
 
 1. **Minimum macOS**: decided, 26.0. Capture uses `SCScreenshotManager.captureScreenshot(rect:configuration:)` and `captureScreenshot(contentFilter:configuration:)` with `SCScreenshotConfiguration`.
 2. **Clipboard in upload mode**: decided, URL only, with an "Also copy image" setting off by default.
-3. **Object key default**: decided, random 6 characters from `[A-Za-z0-9]` plus extension, configurable length (4 to 32) and an optional prefix folder. Collision handling: issue a `HEAD` on the key before `PUT` and regenerate on 200.
+3. **Object key default**: decided, random 6 characters from `[A-Za-z0-9]` plus extension, configurable length (4 to 32) and an optional prefix folder. Amended 2026-10-19: the key is a template defaulting to `{random:6}` (see 2.4), which keeps this default while allowing dates, hostname, and literal folders. Collision handling: issue a `HEAD` on the key before `PUT` and regenerate on 200.
 4. **Public read**: decided, rely on a bucket policy or CDN. No ACL header by default; a per-destination "Send public-read ACL" toggle adds `x-amz-acl: public-read`. Test Connection performs a PUT, then an unauthenticated GET on the public URL, and reports if the object is not readable.
 5. **Image format default**: decided, PNG always. A per-destination format override (JPEG, HEIC, quality) is a Phase 3 item.
 6. **Sandbox**: decided, on. Save folder access via security-scoped bookmarks. Consequences: on the first capture the app asks for a save folder with `NSOpenPanel` and keeps it as a security-scoped bookmark; drag-out from the overlay uses `NSFilePromiseProvider`; the "hide desktop icons" feature must be implemented as a wallpaper-coloured cover window at desktop icon level rather than a Finder `defaults` write; the URL scheme and Carbon hotkeys work unchanged.
