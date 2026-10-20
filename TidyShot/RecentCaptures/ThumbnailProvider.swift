@@ -93,17 +93,22 @@ final class ThumbnailProvider {
     }
 
     /// Up to 1200 px from the local file, or the thumbnail when the record has no file left.
+    /// Cancelling the calling task stops the load before a read or a decode it has not started
+    /// yet and returns nil, without the thumbnail fallback and without caching anything.
     func preview(for record: CaptureRecord) async -> NSImage? {
         let id = record.id
         if let cached = previews[id] { return cached }
         let generation = generations[id, default: 0]
         guard let source = readSource(for: record) else { return await thumbnail(for: record) }
         let readFile = readFile
-        let decoded = await Task.detached(priority: .userInitiated) { () -> CGImage? in
-            guard let data = try? readFile(source.file, source.folder) else { return nil }
+        let load = Task.detached(priority: .userInitiated) { () -> CGImage? in
+            guard !Task.isCancelled, let data = try? readFile(source.file, source.folder),
+                  !Task.isCancelled else { return nil }
             return ThumbnailMaker.thumbnail(fromPNGData: data, maxSide: ThumbnailMaker.previewMaxSide)
-        }.value
-        guard generations[id, default: 0] == generation else { return nil }
+        }
+        // A detached task does not inherit cancellation, so the caller's is passed on.
+        let decoded = await withTaskCancellationHandler { await load.value } onCancel: { load.cancel() }
+        guard !Task.isCancelled, generations[id, default: 0] == generation else { return nil }
         guard let decoded else { return await thumbnail(for: record) }
         let image = NSImage(cgImage: decoded, size: .zero)
         previews[id] = image

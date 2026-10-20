@@ -18,6 +18,9 @@ final class RecentCapturesMenu: NSObject, NSMenuDelegate {
     /// The record whose thumbnail is under the mouse. A preview that finishes loading after the
     /// mouse moved on is dropped.
     private var hoveredID: UUID?
+    /// The preview load for `hoveredID`. Cancelled when another thumbnail is hovered and whenever
+    /// the preview hides, so moving the mouse down the rows does not leave full-file reads running.
+    private var previewTask: Task<Void, Never>?
     /// Where the status item is on screen, read each time a preview is placed, so the preview
     /// goes on the side of the submenu away from the status menu.
     private let statusItemFrame: () -> CGRect?
@@ -59,6 +62,8 @@ final class RecentCapturesMenu: NSObject, NSMenuDelegate {
     /// Hides the preview; also called by `StatusMenuController` when the status menu closes.
     func hidePreview() {
         hoveredID = nil
+        previewTask?.cancel()
+        previewTask = nil
         previewPanel.hide()
     }
 
@@ -73,7 +78,7 @@ final class RecentCapturesMenu: NSObject, NSMenuDelegate {
     /// Loads the preview (up to 1200 px, off the main thread, cached by `ThumbnailProvider`) and
     /// shows it beside the submenu, level with the hovered row, on the side away from the status
     /// menu. The row view's window is the submenu's window, so its frame says where the submenu is
-    /// on screen.
+    /// on screen. Hovering another thumbnail cancels the load still running for the last one.
     private func thumbnailHover(_ view: RecentCaptureMenuItemView, inside: Bool) {
         guard inside else {
             if hoveredID == view.recordID { hidePreview() }
@@ -82,9 +87,10 @@ final class RecentCapturesMenu: NSObject, NSMenuDelegate {
         guard let record = coordinator.history.record(id: view.recordID) else { return }
         hoveredID = record.id
         let provider = coordinator.thumbnailProvider
-        Task { [weak self, weak view] in
+        previewTask?.cancel()
+        previewTask = Task { [weak self, weak view] in
             let image = await provider.preview(for: record)
-            guard let self, let view, let image, self.hoveredID == record.id,
+            guard !Task.isCancelled, let self, let view, let image, self.hoveredID == record.id,
                   let menuWindow = view.window, let screen = menuWindow.screen ?? NSScreen.main else { return }
             let rowFrame = menuWindow.convertToScreen(view.convert(view.bounds, to: nil))
             let frame = PreviewPlacement.frame(imageSize: image.size, menuFrame: menuWindow.frame, rowFrame: rowFrame,
