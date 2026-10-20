@@ -21,15 +21,15 @@ Expected: `Already on 'phase-3-1-feedback'` (or `Switched to branch 'phase-3-1-f
 ## Global Constraints
 
 - Every Phase 0, 1, 2 and 3 constraint still applies: minimum macOS `26.0`, Xcode 27.1 with the macOS 27.0 SDK, App Sandbox on with no new entitlements, Swift 6 language mode with `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` and `SWIFT_APPROACHABLE_CONCURRENCY = YES`, `KeyboardShortcuts` as the only package, credentials only in the Keychain, files in the save folder only through the security-scoped bookmark, thumbnails and upload-only files in the container next to `history.json`, one token engine for file names and object keys, keys named when the upload starts, HEAD before PUT, and no GPL-licensed code read or copied.
-- No `{app}` anywhere. The token, `TemplateContext.appName`, `FileNamer.name(appName:counter:)` (now `name(counter:)`) and the `appName` parameter of `AppCoordinator.save` are gone, and the captions list `{date} {year} {month} {day} {time} {datetime} {hostname} {counter} {random} {random:8}`. Stored templates (the file name template in `AppSettings`, the key template in `S3DestinationConfig`) go through `TemplateMigration.removingAppToken(from:fallback:)`: the token is deleted with the one separator (`-`, `_`, `.`, `/` or space) it would leave doubled or dangling, a blank result becomes the default template, and `AppSettings` writes the rewritten values back once. The only mentions left are `TemplateMigration`, its tests, the migration comments in `AppSettings` and `S3DestinationConfig`, and the migration item in the Phase 3.1 checklist. `CaptureRecord.appName` stays so history written before Phase 3.1 decodes unchanged; new records store nil.
+- No `{app}` anywhere. The token, `TemplateContext.appName`, `FileNamer.name(appName:counter:)` (now `name(counter:)`) and the `appName` parameter of `AppCoordinator.save` are gone, and the captions list `{date} {year} {month} {day} {time} {datetime} {hostname} {counter} {random} {random:8}`. Stored templates (the file name template in `AppSettings`, the key template in `S3DestinationConfig`) go through `TemplateMigration.removingAppToken(from:fallback:)`: the token is deleted, a pair of `-`, `_`, space or `/` that the deletion brought together collapses to one, and a `-`, `_` or space it left dangling (at the start or end of the template or of a path segment, or next to a `.`) is dropped, as is a `/` left at either end of the template; a `.` is never touched (`{random}-{app}.png` becomes `{random}.png`, `shots/{app}.png` becomes `shots/.png`, which validation then handles as it does any template). A blank result becomes the default template and the original is logged, and `AppSettings` writes the rewritten values back once, so each stored template is migrated (and logged) once. The only mentions left in source are `TemplateMigration` and the migration comments in `AppSettings` and `S3DestinationConfig`; the tests contain the literal, as does the migration item in the Phase 3.1 checklist. `CaptureRecord.appName` stays so history written before Phase 3.1 decodes unchanged; new records store nil.
 - The delete path stays single: `AppCoordinator.deleteCapture(recordID:)`, guarded by `deletingIDs`, for the overlay and for Recent Captures. First alert: message `Delete this capture?`, informative text the one line from `CaptureDeletion.confirmationText(for:)` (`Removes it from object storage and from history.` whenever the object can be deleted), buttons Delete (destructive) and Cancel. Only when the storage `DELETE` fails or no credentials are stored: message `Couldn't delete it from storage: <reason>`, informative text `Remove it from history anyway? The object stays in the bucket.`, buttons Remove (destructive) and Cancel; Remove drops the record, its thumbnail and a temporary file in `pending`, never the object or a file in the save folder. Nothing offers "Remove from History Only" any more.
 - The menu must not activate the app except for alerts and Settings (and the Phase 0 permission window). Menu item actions, row clicks, the copy buttons and the preview panel never call `activate`; `NSAlert` paths and `SettingsOpener.open()` do.
 - No work in SwiftUI `body`. `RecentCaptureRow` gets its strings and flags precomputed by `RecentCaptureFormatting`, loads its thumbnail in `.task`, and the preview loads in a `Task` through `ThumbnailProvider`, whose file reads run detached. `SelectionView` samples luminance in its mouse handlers and when the snapshot arrives, never while drawing.
-- Menu bar: `NSStatusItem` plus `NSMenu`, rebuilt each time it opens; the icon is `camera.viewfinder`, `arrow.up.circle` while `AppCoordinator.isUploading`. Shortcuts appear in the capture items' titles (`Capture Area  ⌃⇧4`), never as key equivalents. The SwiftUI app declares only `Settings { SettingsView() }`.
-- Recent Captures: the newest 15 records; row actions close the whole menu with `cancelTracking()` and run after tracking ends (`RunLoop.main.perform(inModes: [.default])`), so no alert opens inside menu tracking. The preview panel is non-activating, at `.popUpMenu` level, not an `isFloatingPanel`, ignores the mouse, and hides on hover exit, on any row action and in `menuDidClose(_:)`.
-- Copy Image reads the local file first and otherwise downloads with `S3Destination.download(key:)` (signed GET at the record's `objectLocation`, never the public URL). "Copying image…" (only when downloading) and "Image copied" follow the Show notification setting; "Could not copy image" is always posted.
+- Menu bar: `NSStatusItem` (with `autosaveName` `TidyShot`, so a position the user drags it to is kept) plus `NSMenu`, rebuilt each time it opens; the icon is `camera.viewfinder`, `arrow.up.circle` while `AppCoordinator.isUploading`. Shortcuts appear in the capture items' titles (`Capture Area  ⌃⇧4`), never as key equivalents. The SwiftUI app declares only `Settings { SettingsView() }`.
+- Recent Captures: the newest 15 records; row actions close the whole menu with `cancelTracking()` and run after tracking ends (`RunLoop.main.perform(inModes: [.default])`), so no alert opens inside menu tracking. The preview panel is non-activating, at `.popUpMenu` level, not an `isFloatingPanel`, ignores the mouse, and hides on hover exit, on any row action and in `menuDidClose(_:)`. It goes on the side of the submenu away from the status menu (right of a submenu whose `minX` is at or right of the status item's, left otherwise), falls back to the other side when there is no room, and stays inside the visible frame. Rows are custom views without a title, so each row's hosting view carries an accessibility label (name and status).
+- Copy Image reads the local file first and otherwise downloads with `S3Destination.download(key:)` (signed GET at the record's `objectLocation`, never the public URL). The file read and `ImageEncoder.decode` run in detached tasks (the save folder is resolved on the main actor, then `SaveLocation.readScoped` or the `pending` path is read, as in `ThumbnailProvider`); the clipboard is written back on the main actor. "Copying image…" (only when downloading) and "Image copied" follow the Show notification setting; "Could not copy image" is always posted, with "The local file could not be read." (a file is recorded but cannot be read, and there is no upload to fall back on), "This capture was never uploaded and has no local file." (nothing to fetch), or the download's error.
 - Crosshair: the mean luminance of a 24 by 24 point square around the cursor; above 0.5 black at 0.8 alpha, otherwise white at 0.8 alpha; before the snapshot arrives white with a one-pixel black edge beneath. The drag rectangle border and the completed rectangle border use the same colour.
-- Tests use Swift Testing, run with `xcodebuild test`. Baseline `Test run with 161 tests in 24 suites passed`; the totals after each task are in the table below, and the plan ends at `186 tests in 28 suites`.
+- Tests use Swift Testing, run with `xcodebuild test`. Baseline `Test run with 161 tests in 24 suites passed`; the totals after each task are in the table below, and the plan ends at `189 tests in 28 suites`.
 - Commit after every task with a conventional commit message. Never include a Claude Code session URL in a commit or PR. This plan never pushes or opens a PR: Task 9 stops after its commit, and the controller pushes and opens the PR after the whole-branch review.
 
 ## Test totals
@@ -37,15 +37,15 @@ Expected: `Already on 'phase-3-1-feedback'` (or `Switched to branch 'phase-3-1-f
 | After | Added | Removed or replaced | Total |
 |---|---|---|---|
 | Baseline | | | 161 tests in 24 suites |
-| Task 1 | `TemplateMigrationTests` (new suite, 4), `TemplateExpanderTests.appIsNotAToken`, `AppSettingsTests.storedTemplatesLoseTheRemovedAppToken`, `S3DestinationConfigTests.storedKeyTemplateLosesTheRemovedAppToken`; replacements `hostnameCounterAndRandom`, `datetimeToken`, `removedAppTokenIsLiteralText` | `TemplateExpanderTests.appHostnameCounterAndRandom`, `FileNamerTests.appAndDatetimeTokens`, `FileNamerTests.missingAppFallsBackToScreen` | 168 tests in 25 suites |
-| Task 2 | `ConnectionTesterTests.readableSummaryDoesNotEchoTheProbeURL` | | 169 in 25 |
-| Task 3 | `CaptureDeletionTests.confirmationTextIsOneLine`, `alertTexts`, and `confirmationTextSaysWhenTheObjectStays` rewritten | `CaptureDeletionTests.confirmationTextNamesWhatIsRemoved`, the Phase 3 `confirmationTextSaysWhenTheObjectStays` | 170 in 25 |
-| Task 4 | `S3DestinationTests.downloadIsASignedGetThatReturnsTheBody`, `downloadThrowsTheSummarisedErrorOnFailure`, `ImageEncoderTests.decodeReadsBackTheScale` | | 173 in 25 |
-| Task 5 | `LuminanceTests` (new suite, 6) | | 179 in 26 |
-| Task 6 | | | 179 in 26 |
-| Task 7 | `RecentCaptureFormattingTests` (new suite, 3) | (`ThumbnailProviderTests` keeps its 5 tests) | 182 in 27 |
-| Task 8 | `PreviewPlacementTests` (new suite, 4) | (the conditional fallback in Step 8 removes this suite: 182 in 27) | 186 in 28 |
-| Task 9 | | | 186 in 28 |
+| Task 1 | `TemplateMigrationTests` (new suite, 6), `TemplateExpanderTests.appIsNotAToken`, `AppSettingsTests.storedTemplatesLoseTheRemovedAppToken`, `S3DestinationConfigTests.storedKeyTemplateLosesTheRemovedAppToken`; replacements `hostnameCounterAndRandom`, `datetimeToken`, `removedAppTokenIsLiteralText` | `TemplateExpanderTests.appHostnameCounterAndRandom`, `FileNamerTests.appAndDatetimeTokens`, `FileNamerTests.missingAppFallsBackToScreen` | 170 tests in 25 suites |
+| Task 2 | `ConnectionTesterTests.readableSummaryDoesNotEchoTheProbeURL` | | 171 in 25 |
+| Task 3 | `CaptureDeletionTests.confirmationTextIsOneLine`, `alertTexts`, and `confirmationTextSaysWhenTheObjectStays` rewritten | `CaptureDeletionTests.confirmationTextNamesWhatIsRemoved`, the Phase 3 `confirmationTextSaysWhenTheObjectStays` | 172 in 25 |
+| Task 4 | `S3DestinationTests.downloadIsASignedGetThatReturnsTheBody`, `downloadThrowsTheSummarisedErrorOnFailure`, `ImageEncoderTests.decodeReadsBackTheScale` | | 175 in 25 |
+| Task 5 | `LuminanceTests` (new suite, 6) | | 181 in 26 |
+| Task 6 | | | 181 in 26 |
+| Task 7 | `RecentCaptureFormattingTests` (new suite, 3) | (`ThumbnailProviderTests` keeps its 5 tests) | 184 in 27 |
+| Task 8 | `PreviewPlacementTests` (new suite, 5) | (the conditional fallback in Step 8 removes this suite: 184 in 27) | 189 in 28 |
+| Task 9 | | | 189 in 28 |
 
 ## Build and test commands used throughout
 
@@ -81,7 +81,7 @@ TidyShot/
     TidyShotApp.swift                        replaced (Task 6): only the Settings scene
     AppDelegate.swift                        modified (Task 6): creates the StatusMenuController
     StatusMenuController.swift               new (Task 6), modified (Tasks 7, 8): NSStatusItem, NSMenu, icon, Settings…
-    SettingsOpener.swift                     new (Task 6): opens the SwiftUI Settings scene from AppKit
+    SettingsOpener.swift                     new (Task 6): opens the SwiftUI Settings scene from AppKit, with a logged fallback
     MenuContent.swift                        deleted (Task 6)
     AppCoordinator.swift                     modified (Tasks 1, 3, 4, 7): no app name, two delete alerts, copyImage, copyLink, no gallery
   RecentCaptures/                            new folder (Task 7); replaces Gallery/
@@ -107,9 +107,9 @@ TidyShot/
     Luminance.swift                          new (Task 5): Luminance, CrosshairStyle
     SelectionView.swift                      modified (Task 5): crosshair and borders in the sampled colour
   Settings/
-    AppSettings.swift                        modified (Task 1): migrates the file name template and the stored config
+    AppSettings.swift                        modified (Task 1): migrates the file name template and the stored config, keeps the stored config on an encode failure; comment only (Task 7)
     UploadSettingsView.swift                 modified (Tasks 1, 2): example key context, Required prompts and captions
-    SettingsView.swift                       modified only if the Upload tab scrolls (Task 2 Step 6): 600 by 840
+    SettingsView.swift                       modified (Task 2): 600 by 840
   Upload/
     S3Destination.swift                      modified (Task 4): download(key:)
     S3DestinationConfig.swift                modified (Task 1): migrates the key template on decode
@@ -133,14 +133,15 @@ README.md                                    modified (Tasks 1, 9)
 
 ## Design decisions made while planning
 
-- **Opening Settings from AppKit:** a scratch app on this machine (macOS 27, SDK 27.0, only a `Settings` scene, `LSUIElement`) showed that `NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)` returns `true` and opens nothing. SwiftUI's `OpenSettingsAction` (`@Environment(\.openSettings)`, macOS 14+) does open it, also a second time after the window was closed, when read by a view in a zero-size `NSHostingView` added to the status item's button (always on screen, so `onAppear` runs at launch) and called later from AppKit. `SettingsOpener` packages that; a hidden `MenuBarExtra` is not needed. The app is activated first so the window comes to the front.
-- **Rows in a tracking menu:** checked with the same scratch app and again in the test host with the plan's own `RecentCaptureMenuItemView`, `PreviewPanel` and `PreviewPlacement`. A tracking area on the view set as `NSMenuItem.view` gets `mouseEntered` and `mouseExited` while the menu tracks (AppKit follows the real cursor position, so this is checked by moving the mouse); clicks in the item's `NSHostingView` reach a plain-style SwiftUI `Button` covering the left of the row and the borderless icon buttons beside it, each firing only its own action; a `.popUpMenu`-level non-activating panel ordered front during tracking is the frontmost on-screen window, above the menu; `menuDidClose(_:)` fires on `cancelTracking()`; and a block given to `RunLoop.main.perform(inModes: [.default])` from inside the menu runs only after tracking has ended. Setting `isFloatingPanel = true` on the panel moved its level back to `.floating`, under the menu, so `PreviewPanel` does not. Task 8 Step 8 keeps the in-row fallback (an enlarged thumbnail inside the hovered row) as a conditional step for a macOS that stops showing the panel; it was compiled and its test total (182 in 27) checked, but it is not part of the verified final state.
+- **Opening Settings from AppKit:** a scratch app on this machine (macOS 27, SDK 27.0, only a `Settings` scene, `LSUIElement`) showed that `NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)` returns `true` and opens nothing. SwiftUI's `OpenSettingsAction` (`@Environment(\.openSettings)`, macOS 14+) does open it, also a second time after the window was closed, when read by a view in a zero-size `NSHostingView` added to the status item's button (always on screen, so `onAppear` runs at launch) and called later from AppKit. `SettingsOpener` packages that; a hidden `MenuBarExtra` is not needed. The app is activated first so the window comes to the front. If the action has not been read when Settings… is chosen, `open()` still sends `showSettingsWindow:` and logs it, so a later macOS where that works again is covered and a dead Settings item leaves a trace in the log instead of failing silently.
+- **Rows in a tracking menu:** checked with the same scratch app and again in the test host with the plan's own `RecentCaptureMenuItemView`, `PreviewPanel` and `PreviewPlacement`. A tracking area on the view set as `NSMenuItem.view` gets `mouseEntered` and `mouseExited` while the menu tracks (AppKit follows the real cursor position, so this is checked by moving the mouse); clicks in the item's `NSHostingView` reach a plain-style SwiftUI `Button` covering the left of the row and the borderless icon buttons beside it, each firing only its own action; a `.popUpMenu`-level non-activating panel ordered front during tracking is the frontmost on-screen window, above the menu; `menuDidClose(_:)` fires on `cancelTracking()`; and a block given to `RunLoop.main.perform(inModes: [.default])` from inside the menu runs only after tracking has ended. Setting `isFloatingPanel = true` on the panel moved its level back to `.floating`, under the menu, so `PreviewPanel` does not. Task 8 Step 8 keeps the in-row fallback (an enlarged thumbnail inside the hovered row) as a conditional step for a macOS that stops showing the panel; it was compiled and its test total (184 in 27) checked, but it is not part of the verified final state.
+- **Preview side:** the status menu hangs from the status item, so a submenu whose left edge is at or right of the status item's (the usual case) opened to the right of the status menu, and a preview on its left would cover the status menu; the preview goes to its right. A submenu left of the status item (the item near the right end of the menu bar) gets the preview on its left. Either way the other side is used when the preferred one cannot hold the whole preview and is narrower than the other. `RecentCapturesMenu` reads the status item's frame (`statusItem.button?.window?.frame`) through a closure the controller passes in, when each preview is placed.
 - **Row layout:** 360 by 52 points; the thumbnail is 56 points wide (56 by 42, the 4:3 box fits most captures without making 15 rows taller than a laptop screen); the plain button covering thumbnail, name and time copies the URL or the file, and three 24-point borderless buttons follow. The highlight is drawn by the row from an `@Observable` state that the AppKit tracking area sets, because a menu does not highlight custom item views.
 - **Rebuilt on open, not live:** `menuNeedsUpdate(_:)` rebuilds the status menu and the 15 rows each time the menu opens. Rows show their records as they were then; an upload finishing while the menu is open shows on the next open. The "Recent Captures" item and its submenu are created once and re-added, because an `NSMenu` can be the submenu of only one item.
 - **Actions after tracking:** row buttons call `cancelTracking()` on the status menu and run their work with `RunLoop.main.perform(inModes: [.default])`. The default mode is not entered until tracking ends, so the delete confirmation's `runModal()` never nests inside the menu's tracking loop, and Copy Image's notification is posted after the menu has gone.
 - **Shortcut display:** the capture items keep the shortcut in their title (as the SwiftUI menu did). `NSMenuItem.setShortcut(for:)` from `KeyboardShortcuts` would show it right-aligned, but as a key equivalent it fires the capture while the menu is open and the buffered global hotkey fires it again when the menu closes.
 - **Delete texts:** the first alert's line is exactly `Removes it from object storage and from history.` whenever there is an object to delete (uploaded with a known location, a reserved key from a cancelled upload, or an upload in flight). Without one it says what does disappear: `Removes it from your save folder and from history.` for a saved file, `Removes it from history.` otherwise, and a record uploaded before Phase 3 (no `objectLocation`) adds `The uploaded object stays in the bucket.` Delete still removes the local file and the thumbnail, as in Phase 3. Missing credentials count as a storage failure (reason `No credentials are saved in Settings > Upload.`), so that record is not stuck either.
-- **Copy Image source:** the local file when it can be read (save folder through the bookmark, `pending` directly), otherwise the object by signed GET from where the record says it went, with the credentials stored now. A record uploaded before Phase 3 has no location, so without its local file the button is disabled. The PNG's DPI gives the paste scale (`ImageEncoder.decode`), so Retina captures paste at point size.
+- **Copy Image source:** the local file when it can be read (save folder through the bookmark, `pending` directly), otherwise the object by signed GET from where the record says it went, with the credentials stored now. A record uploaded before Phase 3 has no location, so without its local file the button is disabled. The PNG's DPI gives the paste scale (`ImageEncoder.decode`), so Retina captures paste at point size. The read and the decode run detached (a capture can be tens of megabytes, and the menu has just closed), and the failure says which case it was: a recorded file that cannot be read with no upload to fall back on, a capture with nothing to fetch, or the download's error.
 - **App name on records:** removing the token leaves nothing that needs the capturing app, so `save(_:)` no longer reads it and new records store `appName: nil`. The field stays because Phase 1 to 3 history files carry it, and a Recent Captures row with neither URL nor file falls back to it for its name.
 - **Luminance API:** `Luminance.mean(of:in:)` returns `Double?`, nil when the rect lies wholly outside the image (cursor off the snapshot), which `CrosshairStyle(luminance:)` turns into the outlined style. The crop is drawn into an 8-bit RGBA buffer of at most 32 by 32 pixels, so a 2x display's 48 by 48 pixel sample is averaged by the downscale and the cost does not grow with the scale.
 
@@ -153,7 +154,7 @@ README.md                                    modified (Tasks 1, 9)
 - Create: `TidyShotTests/TemplateMigrationTests.swift`
 - Modify: `TidyShot/Output/TemplateExpander.swift` (edits below)
 - Modify: `TidyShot/Output/FileNamer.swift` (one edit)
-- Modify: `TidyShot/Settings/AppSettings.swift` (two edits)
+- Modify: `TidyShot/Settings/AppSettings.swift` (three edits)
 - Modify: `TidyShot/Upload/S3DestinationConfig.swift` (one edit)
 - Modify: `TidyShot/Upload/Destination.swift` (one comment)
 - Modify: `TidyShot/Upload/ConnectionTester.swift` (one edit)
@@ -165,12 +166,13 @@ README.md                                    modified (Tasks 1, 9)
 **Interfaces:**
 - Consumes: `TemplateExpander`, `TemplateContext`, `FileNamer`, `ObjectKeyNamer.defaultTemplate`, `FileNamer.defaultTemplate` (Phase 3).
 - Produces:
-  - `nonisolated enum TemplateMigration { static let removedAppToken: String; static let separators: Set<Character>; static func removingAppToken(from template: String, fallback: String) -> String }`.
+  - `nonisolated enum TemplateMigration { static let removedAppToken: String; static let separators: Set<Character>; static let danglingSeparators: Set<Character>; static func removingAppToken(from template: String, fallback: String) -> String }`: `separators` is `-`, `_`, space and `/` (collapsed when doubled), `danglingSeparators` is `-`, `_` and space (dropped when left dangling); `.` is in neither. A blank result is `fallback`, and the original template is logged with `NSLog`.
   - `TemplateContext` loses `appName`: `init(date: Date = Date(), counter: Int = 0, hostname: String = HostName.local())`.
   - `TemplateExpander.Token` loses `.app`; `TemplateExpander.tokenList` is `{date} {year} {month} {day} {time} {datetime} {hostname} {counter} {random} {random:8}`.
   - `FileNamer.name(counter: Int) -> String` replaces `name(appName:counter:)`.
   - `AppCoordinator.save(_ result: CaptureResult) async` replaces `save(_:appName:)`. New records store `appName: nil`; `CaptureRecord.appName` stays so older history files keep theirs.
   - `AppSettings.init(defaults:)` and `S3DestinationConfig.init(from:)` run stored templates through `TemplateMigration`; `AppSettings` writes the rewritten values back once.
+  - Setting `AppSettings.s3Config` no longer swallows an encoding error: a failure is logged and the stored value is left as it was (the key is not deleted); nil still removes it.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -195,7 +197,15 @@ struct TemplateMigrationTests {
         #expect(migrate("shots/{app}/{random:8}") == "shots/{random:8}")
         #expect(migrate("shots/{app}-{random}") == "shots/{random}")
         #expect(migrate("Screenshot {app} {datetime}") == "Screenshot {datetime}")
-        #expect(migrate("{date}_{app}.{counter}") == "{date}_{counter}")
+        #expect(migrate("{date}_{app}_{random}") == "{date}_{random}")
+        #expect(migrate("{date}-{app}/{random}") == "{date}/{random}")
+    }
+
+    /// `.` is not a separator: it is never removed, and a `-`, `_` or space left next to it dangles.
+    @Test func dotIsNeverTouched() {
+        #expect(migrate("{random}-{app}.png") == "{random}.png")
+        #expect(migrate("shots/{app}.png") == "shots/.png")
+        #expect(migrate("{date}_{app}.{counter}") == "{date}.{counter}")
     }
 
     @Test func tokenAtEitherEndTakesItsSeparatorWithIt() {
@@ -210,6 +220,12 @@ struct TemplateMigrationTests {
         #expect(migrate("{app}{app}-{random}") == "{random}")
         #expect(migrate("{app}") == "FALLBACK")
         #expect(migrate(" {app} ") == "FALLBACK")
+    }
+
+    /// `{app}` alone leaves nothing, so each stored template gets its own default.
+    @Test func tokenAloneBecomesTheDefaultTemplate() {
+        #expect(TemplateMigration.removingAppToken(from: "{app}", fallback: FileNamer.defaultTemplate) == FileNamer.defaultTemplate)
+        #expect(TemplateMigration.removingAppToken(from: "{app}", fallback: ObjectKeyNamer.defaultTemplate) == ObjectKeyNamer.defaultTemplate)
     }
 }
 ```
@@ -561,32 +577,66 @@ import Foundation
 /// now be literal text in a file name, and an invalid key template).
 nonisolated enum TemplateMigration {
     static let removedAppToken = "{app}"
-    static let separators: Set<Character> = ["-", "_", ".", "/", " "]
+    /// Separators that deleting the token can bring together; the pair collapses to one.
+    static let separators: Set<Character> = ["-", "_", " ", "/"]
+    /// Separators that deleting the token can leave dangling; a dangling one is dropped. A `.` is
+    /// in neither set: it is never touched.
+    static let danglingSeparators: Set<Character> = ["-", "_", " "]
 
-    /// `template` without `{app}`, and without the separator the token would leave doubled or
-    /// dangling: between two separators the one after the token goes (`shots/{app}-{random}`
-    /// becomes `shots/{random}`), at the start the one after it (`{app} {datetime}` becomes
-    /// `{datetime}`), at the end the one before it (`Screenshot {date} {app}` becomes
-    /// `Screenshot {date}`). Text away from the token is never touched. A template left blank
-    /// becomes `fallback`.
+    /// `template` without `{app}`, tidied only where the token was:
+    /// - two separators it brought together become one, a `/` winning over the others
+    ///   (`shots/{app}/{random:8}` and `shots/{app}-{random}` become `shots/{random:8}` and
+    ///   `shots/{random}`, `{date}_{app}_{random}` becomes `{date}_{random}`);
+    /// - a `-`, `_` or space it left at the start or end of the template or of a path segment, or
+    ///   next to a `.`, goes (`{app} {datetime}` becomes `{datetime}`, `Screenshot {date} {app}`
+    ///   becomes `Screenshot {date}`, `{random}-{app}.png` becomes `{random}.png`), and so does a
+    ///   `/` left at either end of the template (`{app}/{date}` becomes `{date}`);
+    /// - a `.` stays (`shots/{app}.png` becomes `shots/.png`, which validation then handles as it
+    ///   does any template).
+    /// Text away from the token is never touched. A template left blank becomes `fallback`, and
+    /// the original is logged so the change can be traced; callers store the result, so that
+    /// happens once per stored template.
     static func removingAppToken(from template: String, fallback: String) -> String {
         guard template.contains(removedAppToken) else { return template }
         let token = Array(removedAppToken)
         var characters = Array(template)
         while let start = firstIndex(of: token, in: characters) {
-            let end = start + token.count
-            let before: Character? = start > 0 ? characters[start - 1] : nil
-            let after: Character? = end < characters.count ? characters[end] : nil
-            var range = start..<end
-            if let after, separators.contains(after), before.map(separators.contains) ?? true {
-                range = start..<(end + 1)
-            } else if after == nil, let before, separators.contains(before) {
-                range = (start - 1)..<end
-            }
-            characters.removeSubrange(range)
+            characters.removeSubrange(start..<(start + token.count))
+            tidySeparators(&characters, around: start)
         }
         let result = String(characters)
-        return result.trimmingCharacters(in: .whitespaces).isEmpty ? fallback : result
+        guard result.trimmingCharacters(in: .whitespaces).isEmpty else { return result }
+        NSLog("Naming template \"\(template)\" held only the removed \(removedAppToken) token; using \"\(fallback)\" instead")
+        return fallback
+    }
+
+    /// Tidies the separators beside `gap`, where the token was: `characters[gap - 1]` is the
+    /// character before it and `characters[gap]` the one after.
+    private static func tidySeparators(_ characters: inout [Character], around gap: Int) {
+        var gap = gap
+        // Brought together: keep one, the `/` when there is one.
+        if gap > 0, gap < characters.count,
+           separators.contains(characters[gap - 1]), separators.contains(characters[gap]) {
+            if characters[gap] == "/", characters[gap - 1] != "/" {
+                characters.remove(at: gap - 1)
+                gap -= 1
+            } else {
+                characters.remove(at: gap)
+            }
+        }
+        // Dangling: the other side of the gap is an end of the template, a `/` or a `.`.
+        func isEdge(_ index: Int) -> Bool {
+            index < 0 || index >= characters.count || characters[index] == "/" || characters[index] == "."
+        }
+        if gap < characters.count, danglingSeparators.contains(characters[gap]), isEdge(gap - 1) {
+            characters.remove(at: gap)
+        } else if gap > 0, danglingSeparators.contains(characters[gap - 1]), isEdge(gap) {
+            characters.remove(at: gap - 1)
+        } else if gap == 0, characters.first == "/" {
+            characters.removeFirst()
+        } else if gap > 0, gap == characters.count, characters.last == "/" {
+            characters.removeLast()
+        }
     }
 
     private static func firstIndex(of needle: [Character], in haystack: [Character]) -> Int? {
@@ -716,9 +766,48 @@ with:
         let context = TemplateContext(date: now(), counter: counter, hostname: hostname)
 ```
 
-- [ ] **Step 5: Migrate stored templates**
+- [ ] **Step 5: Migrate stored templates, and keep the stored config when it cannot be encoded**
 
 In `TidyShot/Settings/AppSettings.swift`:
+
+Replace:
+```swift
+    /// Nil until the Upload tab has been saved once. Stored as JSON.
+    var s3Config: S3DestinationConfig? {
+        didSet { defaults.set(s3Config.flatMap { try? JSONEncoder().encode($0) }, forKey: Keys.s3Config) }
+    }
+```
+with:
+```swift
+    /// Nil until the Upload tab has been saved once. Stored as JSON.
+    var s3Config: S3DestinationConfig? {
+        didSet { storeS3Config() }
+    }
+```
+
+Replace:
+```swift
+    /// Increments and returns the persistent capture counter used by the {counter} token.
+```
+with:
+```swift
+    /// Writes `s3Config` as JSON, or removes it when nil. An encoding failure is logged and leaves
+    /// the stored value as it was: `try?` would have stored nil, which deletes the key and with it
+    /// the destination.
+    private func storeS3Config() {
+        guard let s3Config else {
+            defaults.removeObject(forKey: Keys.s3Config)
+            return
+        }
+        do {
+            defaults.set(try JSONEncoder().encode(s3Config), forKey: Keys.s3Config)
+        } catch {
+            NSLog("Upload settings could not be encoded, so the stored ones are kept: \(error.localizedDescription)")
+        }
+    }
+
+    /// Increments and returns the persistent capture counter used by the {counter} token.
+```
 
 Replace:
 ```swift
@@ -746,9 +835,9 @@ with:
         if fileNameTemplate != storedFileNameTemplate {
             defaults.set(fileNameTemplate, forKey: Keys.fileNameTemplate)
         }
-        if let storedConfig, let s3Config,
+        if let storedConfig, s3Config != nil,
            String(decoding: storedConfig, as: UTF8.self).contains(TemplateMigration.removedAppToken) {
-            defaults.set(try? JSONEncoder().encode(s3Config), forKey: Keys.s3Config)
+            storeS3Config()
         }
     }
 ```
@@ -951,7 +1040,7 @@ Run:
 ```bash
 xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build test 2>&1 | grep -E "error:|warning: .*TidyShot/|Test run|✘"
 ```
-Expected: no `error:` or `warning:` lines, and `Test run with 168 tests in 25 suites passed` (161 + 4 TemplateMigrationTests + 1 TemplateExpanderTests + 1 AppSettingsTests + 1 S3DestinationConfigTests; FileNamerTests keeps 12, ObjectKeyNamerTests 13).
+Expected: no `error:` or `warning:` lines, and `Test run with 170 tests in 25 suites passed` (161 + 6 TemplateMigrationTests + 1 TemplateExpanderTests + 1 AppSettingsTests + 1 S3DestinationConfigTests; FileNamerTests keeps 12, ObjectKeyNamerTests 13).
 
 Then confirm the token is gone from the app and its captions:
 ```bash
@@ -1024,12 +1113,12 @@ git commit -m "feat: remove the {app} token and migrate stored templates"
 **Files:**
 - Modify: `TidyShot/Upload/ConnectionTester.swift` (one edit)
 - Modify: `TidyShot/Settings/UploadSettingsView.swift` (two edits)
-- Modify, only if the Upload tab now scrolls: `TidyShot/Settings/SettingsView.swift` (Step 6)
+- Modify: `TidyShot/Settings/SettingsView.swift` (one edit: 600 by 840, for the two caption lines)
 - Test: `TidyShotTests/ConnectionTesterTests.swift` (one new test)
 
 **Interfaces:**
 - Consumes: `ConnectionTestResult` (Phase 2).
-- Produces: `ConnectionTestResult.summary` for `.readable` is exactly `Upload and public read both work.`; the other outcomes are unchanged. The Endpoint and Public URL fields show the prompt `Required`, each with a caption line `Example: https://s3.us-west-2.amazonaws.com` and `Example: https://snap.tky.io/{key}`.
+- Produces: `ConnectionTestResult.summary` for `.readable` is exactly `Upload and public read both work.`; the other outcomes are unchanged. The Endpoint and Public URL fields show the prompt `Required`, each with a caption line `Example: https://s3.us-west-2.amazonaws.com` and `Example: https://snap.tky.io/{key}`; `SettingsView` is 600 by 840 so the Upload tab still does not scroll.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1060,7 +1149,7 @@ Run:
 ```bash
 xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build test 2>&1 | grep -E "✘|Test run"
 ```
-Expected: `✘ Test readableSummaryDoesNotEchoTheProbeURL() recorded an issue at ConnectionTesterTests.swift:…: Expectation failed: result.summary == "Upload and public read both work."` (the summary still ends with the URL), and `✘ Test run with 169 tests in 25 suites failed … with 1 issue.`
+Expected: `✘ Test readableSummaryDoesNotEchoTheProbeURL() recorded an issue at ConnectionTesterTests.swift:…: Expectation failed: result.summary == "Upload and public read both work."` (the summary still ends with the URL), and `✘ Test run with 171 tests in 25 suites failed … with 1 issue.`
 
 - [ ] **Step 3: Drop the URL from the summary**
 
@@ -1106,26 +1195,44 @@ with:
                 Text("{key} is replaced with the full object key, including any folders from the key template.")
 ```
 
+The two caption lines make the Upload tab taller, so the Settings window grows by 40 points.
+
+In `TidyShot/Settings/SettingsView.swift`:
+
+Replace:
+```swift
+        // Tall enough for the Upload tab (its sections plus the key template's field, caption,
+        // example, collision warning and button) so no tab needs to scroll.
+        .frame(width: 600, height: 800)
+```
+with:
+```swift
+        // Tall enough for the Upload tab (its sections, the example captions under Endpoint and
+        // Public URL, and the key template's field, caption, example, collision warning and
+        // button) so no tab needs to scroll.
+        .frame(width: 600, height: 840)
+```
+
 - [ ] **Step 5: Run the tests to verify they pass**
 
 Run:
 ```bash
 xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build test 2>&1 | grep -E "error:|warning: .*TidyShot/|Test run|✘"
 ```
-Expected: no `error:` or `warning:` lines, and `Test run with 169 tests in 25 suites passed`.
+Expected: no `error:` or `warning:` lines, and `Test run with 171 tests in 25 suites passed`.
 
-- [ ] **Step 6: Check the Upload tab (conditional)**
+- [ ] **Step 6: Check the Upload tab**
 
 Run:
 ```bash
 xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -configuration Debug -derivedDataPath .build build -quiet && open .build/Build/Products/Debug/TidyShot.app
 ```
-Open Settings > Upload (the SwiftUI menu bar item still works in this task). Expected: an empty Endpoint and Public URL field shows the grey word "Required", the example sits on its own caption line under each field, and the tab still shows everything down to the Save buttons without scrolling when you type `{date}/{hostname}` into the key template (the orange warning showing). Only if the tab now scrolls: in `TidyShot/Settings/SettingsView.swift` change `.frame(width: 600, height: 800)` to `.frame(width: 600, height: 840)`, rebuild, check again, and add `TidyShot/Settings/SettingsView.swift` to the `git add` in Step 7. Put the key template back and quit without saving.
+Open Settings > Upload (the SwiftUI menu bar item still works in this task). Expected: the window is 600 by 840; an empty Endpoint and Public URL field shows the grey word "Required", the example sits on its own caption line under each field, and the tab shows everything down to the Save buttons without scrolling when you type `{date}/{hostname}` into the key template (the orange warning showing). Put the key template back and quit without saving.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add TidyShot/Upload/ConnectionTester.swift TidyShot/Settings/UploadSettingsView.swift TidyShotTests/ConnectionTesterTests.swift
+git add TidyShot/Upload/ConnectionTester.swift TidyShot/Settings/UploadSettingsView.swift TidyShot/Settings/SettingsView.swift TidyShotTests/ConnectionTesterTests.swift
 git commit -m "feat: Required prompts with example captions; test result without the probe URL"
 ```
 
@@ -1508,7 +1615,7 @@ Run:
 ```bash
 xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build test 2>&1 | grep -E "error:|warning: .*TidyShot/|Test run|✘"
 ```
-Expected: no `error:` or `warning:` lines, and `Test run with 170 tests in 25 suites passed` (CaptureDeletionTests goes from 5 to 6: the two Phase 3 text tests are replaced by `confirmationTextIsOneLine` and `confirmationTextSaysWhenTheObjectStays`, plus `alertTexts`).
+Expected: no `error:` or `warning:` lines, and `Test run with 172 tests in 25 suites passed` (CaptureDeletionTests goes from 5 to 6: the two Phase 3 text tests are replaced by `confirmationTextIsOneLine` and `confirmationTextSaysWhenTheObjectStays`, plus `alertTexts`).
 
 - [ ] **Step 6: Check both alerts by hand**
 
@@ -1537,13 +1644,13 @@ git commit -m "feat: two-button delete alert; remove from history only after a f
 - Test: `TidyShotTests/S3DestinationTests.swift` (two new tests), `TidyShotTests/ImageEncoderTests.swift` (one new test)
 
 **Interfaces:**
-- Consumes: `S3Destination.signedRequest(method:key:body:extraHeaders:)`, `UploadProgressDelegate` (refuses redirects), `AppCoordinator.readLocalFile(of:)`, `loadCredentials()`, `ObjectLocation.config`, `Pasteboard.copy(image:pngData:scale:)` (Phase 2 and 3).
+- Consumes: `S3Destination.signedRequest(method:key:body:extraHeaders:)`, `UploadProgressDelegate` (refuses redirects), `SaveLocation.readScoped(_:folder:)` and `SaveLocation.currentURL`, `AppCoordinator.loadCredentials()`, `ObjectLocation.config`, `Pasteboard.copy(image:pngData:scale:)` (Phase 2 and 3).
 - Produces:
   - `S3Destination.download(key: String) async throws -> Data`: signed GET; 2xx returns the body, anything else throws `UploadError.httpStatus` with the same summarised body as PUT (a 404 is an error here, unlike `delete`).
   - `ImageEncoder.decode(_ data: Data) -> (image: CGImage, scale: CGFloat)?`: the scale is read back from the DPI that `pngData(from:scale:)` writes (144 DPI gives 2), 1 when there is none.
   - `Notifier.notify(title: String, body: String)`: a plain notification with no click action.
-  - `AppCoordinator.copyImage(recordID: UUID) async`: local file when it can be read, otherwise a download (with "Copying image…" while it runs); "Image copied" on success (both only when Show notification is on), "Could not copy image" with the reason on failure.
-  - `nonisolated enum CopyImageError: LocalizedError { case nothingToCopy, notAnImage }` at the end of `AppCoordinator.swift`.
+  - `AppCoordinator.copyImage(recordID: UUID) async`: local file when it can be read, otherwise a download (with "Copying image…" while it runs); the read and the decode run in detached tasks and the clipboard is written on the main actor; "Image copied" on success (both only when Show notification is on), "Could not copy image" with the reason on failure.
+  - `nonisolated enum CopyImageError: LocalizedError { case nothingToCopy, unknownLocation, unreadableFile, notAnImage }` at the end of `AppCoordinator.swift`: "This capture was never uploaded and has no local file.", the Phase 2 case (uploaded, location unknown, no file; its button is disabled), "The local file could not be read.", and a file that does not decode.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1697,7 +1804,7 @@ Run:
 ```bash
 xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build test 2>&1 | grep -E "error:|warning: .*TidyShot/|Test run|✘"
 ```
-Expected: no `error:` or `warning:` lines, and `Test run with 173 tests in 25 suites passed`.
+Expected: no `error:` or `warning:` lines, and `Test run with 175 tests in 25 suites passed`.
 
 - [ ] **Step 5: Add Copy Image to the coordinator**
 
@@ -1739,18 +1846,16 @@ Replace:
 with:
 ```swift
     /// Copy Image: the PNG and TIFF on the clipboard, from the local file when it can be read;
-    /// otherwise (an upload-only capture) downloaded with a signed GET from the bucket the record
-    /// says it went to, with "Copying image…" posted while that runs.
+    /// otherwise (an upload-only capture, or a file that cannot be read) downloaded with a signed
+    /// GET from the bucket the record says it went to, with "Copying image…" posted while that
+    /// runs. The read and the decode run in detached tasks, because a capture can be tens of
+    /// megabytes; the clipboard is written here, on the main actor.
     func copyImage(recordID: UUID) async {
         guard let record = history.record(id: recordID) else { return }
         do {
-            let png: Data
-            if let local = try? readLocalFile(of: record) {
-                png = local
-            } else {
-                png = try await downloadImage(of: record)
-            }
-            guard let decoded = ImageEncoder.decode(png) else { throw CopyImageError.notAnImage }
+            let png = try await imageData(of: record)
+            let decoded = await Task.detached(priority: .userInitiated) { ImageEncoder.decode(png) }.value
+            guard let decoded else { throw CopyImageError.notAnImage }
             Pasteboard.copy(image: decoded.image, pngData: png, scale: decoded.scale)
             if settings.showNotification {
                 notifier.notify(title: "Image copied", body: record.uploadedKey ?? record.fileURL?.lastPathComponent ?? "")
@@ -1760,10 +1865,31 @@ with:
         }
     }
 
+    /// The capture's PNG: the local file when it can be read, otherwise the uploaded object. The
+    /// save folder is resolved here, on the main actor, and the file is read in a detached task,
+    /// as `ThumbnailProvider` does: a temporary file in `pending` directly, a saved one through
+    /// the folder's security scope.
+    private func imageData(of record: CaptureRecord) async throws -> Data {
+        if let fileURL = record.fileURL {
+            let temporary = record.fileIsTemporary
+            let folder = temporary ? nil : saveLocation.currentURL
+            let local = await Task.detached(priority: .userInitiated) { () -> Data? in
+                if temporary { return try? Data(contentsOf: fileURL) }
+                guard let folder else { return nil }
+                return try? SaveLocation.readScoped(fileURL, folder: folder)
+            }.value
+            if let local { return local }
+            // The file is recorded but cannot be read; the uploaded object is the other copy.
+            guard record.uploadedKey != nil, record.objectLocation != nil else { throw CopyImageError.unreadableFile }
+        }
+        return try await downloadImage(of: record)
+    }
+
     /// The uploaded object's bytes, from where the record says it went, signed with the
     /// credentials stored now.
     private func downloadImage(of record: CaptureRecord) async throws -> Data {
-        guard let key = record.uploadedKey, let location = record.objectLocation else { throw CopyImageError.nothingToCopy }
+        guard let key = record.uploadedKey else { throw CopyImageError.nothingToCopy }
+        guard let location = record.objectLocation else { throw CopyImageError.unknownLocation }
         guard let credentials = loadCredentials() else { throw UploadError.notConfigured }
         if settings.showNotification {
             notifier.notify(title: "Copying image…", body: "Downloading \(key)")
@@ -1788,12 +1914,19 @@ with:
 
 /// Why Copy Image had nothing to put on the clipboard.
 nonisolated enum CopyImageError: LocalizedError, Equatable, Sendable {
+    /// No local file and no upload: nothing to fetch.
     case nothingToCopy
+    /// Uploaded before Phase 3 (no stored location) and its file is gone; its button is disabled.
+    case unknownLocation
+    /// A file is recorded but cannot be read, and there is no upload to fall back on.
+    case unreadableFile
     case notAnImage
 
     var errorDescription: String? {
         switch self {
-        case .nothingToCopy: "The capture has no local file, and TidyShot does not know where its upload went."
+        case .nothingToCopy: "This capture was never uploaded and has no local file."
+        case .unknownLocation: "The capture has no local file, and TidyShot does not know where its upload went."
+        case .unreadableFile: "The local file could not be read."
         case .notAnImage: "The file is not an image TidyShot can read."
         }
     }
@@ -1806,7 +1939,7 @@ Run:
 ```bash
 xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build test 2>&1 | grep -E "error:|warning: .*TidyShot/|Test run|✘"
 ```
-Expected: no `error:` or `warning:` lines, and `Test run with 173 tests in 25 suites passed`. Copy Image has no menu item until Task 7; its manual checks are in the Phase 3.1 checklist (Task 9).
+Expected: no `error:` or `warning:` lines, and `Test run with 175 tests in 25 suites passed`. Copy Image has no menu item until Task 7; its manual checks are in the Phase 3.1 checklist (Task 9).
 
 - [ ] **Step 7: Commit**
 
@@ -1985,7 +2118,7 @@ Run:
 ```bash
 xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build test 2>&1 | grep -E "error:|warning: .*TidyShot/|Test run|✘"
 ```
-Expected: no `error:` or `warning:` lines, and `Test run with 179 tests in 26 suites passed`.
+Expected: no `error:` or `warning:` lines, and `Test run with 181 tests in 26 suites passed`.
 
 - [ ] **Step 5: Draw with the sampled colour**
 
@@ -2143,7 +2276,7 @@ Run:
 ```bash
 xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build test 2>&1 | grep -E "error:|warning: .*TidyShot/|Test run|✘"
 ```
-Expected: no `error:` or `warning:` lines, and `Test run with 179 tests in 26 suites passed`.
+Expected: no `error:` or `warning:` lines, and `Test run with 181 tests in 26 suites passed`.
 
 Then:
 ```bash
@@ -2172,14 +2305,14 @@ git commit -m "feat: crosshair and selection border adapt to the background"
 **Interfaces:**
 - Consumes: `AppCoordinator.permissionGranted`, `isCapturing`, `isUploading`, `lastCaptureURL`, `history.failedRecords`, `captureArea()`, `captureWindow()`, `captureFullscreen()`, `showPermissionWindow()`, `showGallery()`, `retryFailedUploads()`, `revealLastCapture()` (Phases 1 to 3); `KeyboardShortcuts.getShortcut(for:)` and the three `KeyboardShortcuts.Name`s in `Shortcuts.swift`.
 - Produces:
-  - `final class StatusMenuController: NSObject, NSMenuDelegate` with `init(coordinator: AppCoordinator)`. It owns the `NSStatusItem` and its `NSMenu` (rebuilt in `menuNeedsUpdate(_:)`), switches the icon between `camera.viewfinder` and `arrow.up.circle` by observing `coordinator.isUploading`, and keeps a private `menu: NSMenu` that Task 7 uses to close the menu.
-  - `final class SettingsOpener` with `install(in view: NSView?)` and `open()`.
+  - `final class StatusMenuController: NSObject, NSMenuDelegate` with `init(coordinator: AppCoordinator)`. It owns the `NSStatusItem` (`autosaveName` `TidyShot`) and its `NSMenu` (rebuilt in `menuNeedsUpdate(_:)`), switches the icon between `camera.viewfinder` and `arrow.up.circle` by observing `coordinator.isUploading`, and keeps a private `menu: NSMenu` that Task 7 uses to close the menu.
+  - `final class SettingsOpener` with `install(in view: NSView?)` and `open()`; `open()` falls back to `showSettingsWindow:`, with a log line, when the SwiftUI action has not been read.
   - `TidyShotApp` declares only `Settings { SettingsView() }`; `AppDelegate` creates the `StatusMenuController` after `AppCoordinator.shared.start()`, never in the test host.
   - The menu reads exactly as before: optional permission item, the three captures with their shortcuts in the title, Recent Captures… (still the gallery in this task), Retry Failed Uploads when there are failures, Reveal Last Capture, Settings… (⌘,), Quit TidyShot (⌘Q).
 
 - [ ] **Step 1: Write the Settings opener**
 
-How to open the SwiftUI `Settings` scene from AppKit was checked on this machine (macOS 27, SDK 27.0) with a scratch app that has only a `Settings` scene and `LSUIElement`: `NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)` returned `true` and opened no window, while SwiftUI's `openSettings` environment action, read by a view in a zero-size `NSHostingView` inside the status item's button and called later from AppKit, opened the window, and opened it again after it was closed. A hidden `MenuBarExtra` is not needed.
+How to open the SwiftUI `Settings` scene from AppKit was checked on this machine (macOS 27, SDK 27.0) with a scratch app that has only a `Settings` scene and `LSUIElement`: `NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)` returned `true` and opened no window, while SwiftUI's `openSettings` environment action, read by a view in a zero-size `NSHostingView` inside the status item's button and called later from AppKit, opened the window, and opened it again after it was closed. A hidden `MenuBarExtra` is not needed. `open()` keeps `showSettingsWindow:` only as a logged fallback for when the action was never read.
 
 `TidyShot/App/SettingsOpener.swift`:
 ```swift
@@ -2205,14 +2338,18 @@ final class SettingsOpener {
     }
 
     /// Activates the app first: a menu bar agent is not active when its menu is used, and the
-    /// window would open behind the frontmost app.
+    /// window would open behind the frontmost app. If the action has not been read (the reader
+    /// never appeared), falls back to `showSettingsWindow:` and logs it, so Settings… is never
+    /// silently dead: a macOS where that action works again opens the window, and one where it
+    /// does not leaves a line in the log.
     func open() {
         NSApplication.shared.activate(ignoringOtherApps: true)
-        guard let action else {
-            NSLog("Settings cannot be opened yet: the openSettings action has not been read")
+        if let action {
+            action()
             return
         }
-        action()
+        let sent = NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+        NSLog("Settings: the openSettings action has not been read; sent showSettingsWindow: instead (handled: \(sent))")
     }
 }
 
@@ -2253,6 +2390,8 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         menu = NSMenu(title: "TidyShot")
         super.init()
+        // Keeps the item where the user Command-drags it in the menu bar, across launches.
+        statusItem.autosaveName = "TidyShot"
         menu.delegate = self
         menu.autoenablesItems = false
         statusItem.menu = menu
@@ -2386,7 +2525,7 @@ Run:
 ```bash
 xcodegen generate && xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build test 2>&1 | grep -E "error:|warning: .*TidyShot/|Test run|✘"
 ```
-Expected: no `error:` or `warning:` lines, and `Test run with 179 tests in 26 suites passed`.
+Expected: no `error:` or `warning:` lines, and `Test run with 181 tests in 26 suites passed`.
 
 - [ ] **Step 5: Check the menu by hand**
 
@@ -2394,7 +2533,7 @@ Run:
 ```bash
 xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -configuration Debug -derivedDataPath .build build -quiet && open .build/Build/Products/Debug/TidyShot.app
 ```
-Expected: exactly one TidyShot icon in the menu bar (the viewfinder); its menu lists Capture Area `⌃⇧4`, Capture Window `⌃⇧2`, Capture Fullscreen `⌃⇧3`, Recent Captures…, Retry Failed Uploads (only with a failed upload in history), Reveal Last Capture (disabled before the first save), Settings…, Quit TidyShot. Opening the menu leaves the frontmost app active (its name stays in the menu bar). Settings… opens the Settings window in front, also a second time after closing it; ⌘, while the menu is open does the same. During an upload of a fullscreen capture the icon is `arrow.up.circle` and turns back afterwards. Revoke Screen Recording in System Settings and relaunch: the first item is "Screen Recording permission needed…" and opens the permission window. Each capture item starts its capture; Recent Captures… opens the gallery; Quit quits.
+Expected: exactly one TidyShot icon in the menu bar (the viewfinder); its menu lists Capture Area `⌃⇧4`, Capture Window `⌃⇧2`, Capture Fullscreen `⌃⇧3`, Recent Captures…, Retry Failed Uploads (only with a failed upload in history), Reveal Last Capture (disabled before the first save), Settings…, Quit TidyShot. Opening the menu leaves the frontmost app active (its name stays in the menu bar). Settings… opens the Settings window in front, also a second time after closing it; ⌘, while the menu is open does the same. During an upload of a fullscreen capture the icon is `arrow.up.circle` and turns back afterwards. Command-drag the icon to another place in the menu bar, quit and relaunch: it comes back where you put it. Revoke Screen Recording in System Settings and relaunch: the first item is "Screen Recording permission needed…" and opens the permission window. Each capture item starts its capture; Recent Captures… opens the gallery; Quit quits.
 
 - [ ] **Step 6: Commit**
 
@@ -2423,7 +2562,7 @@ git commit -m "feat: menu bar item on NSStatusItem with an AppKit menu"
 - Produces:
   - `nonisolated enum RecentCaptureFormatting { static func name(for: CaptureRecord) -> String; static func detail(for: CaptureRecord, now: Date, locale: Locale = .current) -> String; static func canCopyLink(_: CaptureRecord) -> Bool; static func canCopyImage(_: CaptureRecord) -> Bool }`.
   - `struct RecentCaptureActions { var copyLinkOrFile, copyLink, copyImage, delete: (UUID) -> Void }`, `@Observable final class RecentCaptureRowState { var isHighlighted: Bool }`, `struct RecentCaptureRow: View` with `static let size` (360 by 52), `thumbnailSize` (56 by 42), `horizontalPadding` (14) and `thumbnailFrame`.
-  - `final class RecentCaptureMenuItemView: NSView` with `init(record:now:provider:actions:)` and `let recordID: UUID` (Task 8 replaces this file to add the thumbnail hover).
+  - `final class RecentCaptureMenuItemView: NSView` with `init(record:now:provider:actions:)` and `let recordID: UUID` (Task 8 replaces this file to add the thumbnail hover). Its menu item has no title, so the hosting view's accessibility label is the row's name and status (`aSIS7x.png, 2 minutes ago · Uploading`).
   - `final class RecentCapturesMenu: NSObject` with `static let limit = 15`, `let item: NSMenuItem` (titled "Recent Captures", its submenu is `menu`), `let menu: NSMenu`, `init(coordinator: AppCoordinator, closeMenus: @escaping () -> Void)`, `rebuild()` (Task 8 replaces this file to add the preview).
   - `AppCoordinator.copyLink(recordID: UUID)`; `AppCoordinator.thumbnailProvider` becomes readable outside the class (`private(set)`); `showGallery()` and the `gallery` property are gone.
 
@@ -2539,7 +2678,7 @@ Run:
 ```bash
 xcodegen generate && xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build test 2>&1 | grep -E "error:|warning: .*TidyShot/|Test run|✘"
 ```
-Expected: no `error:` or `warning:` lines, and `Test run with 182 tests in 27 suites passed`.
+Expected: no `error:` or `warning:` lines, and `Test run with 184 tests in 27 suites passed`.
 
 - [ ] **Step 5: Write the row and its menu item view**
 
@@ -2673,15 +2812,17 @@ final class RecentCaptureMenuItemView: NSView {
     init(record: CaptureRecord, now: Date, provider: ThumbnailProvider, actions: RecentCaptureActions) {
         recordID = record.id
         super.init(frame: CGRect(origin: .zero, size: RecentCaptureRow.size))
-        let row = RecentCaptureRow(record: record,
-                                   name: RecentCaptureFormatting.name(for: record),
-                                   detail: RecentCaptureFormatting.detail(for: record, now: now),
+        let name = RecentCaptureFormatting.name(for: record)
+        let detail = RecentCaptureFormatting.detail(for: record, now: now)
+        let row = RecentCaptureRow(record: record, name: name, detail: detail,
                                    canCopyLink: RecentCaptureFormatting.canCopyLink(record),
                                    canCopyImage: RecentCaptureFormatting.canCopyImage(record),
                                    state: state, provider: provider, actions: actions)
         let host = NSHostingView(rootView: row)
         host.frame = bounds
         host.autoresizingMask = [.width, .height]
+        // The menu item has no title, so without this VoiceOver reads a blank item.
+        host.setAccessibilityLabel("\(name), \(detail)")
         addSubview(host)
     }
 
@@ -2978,7 +3119,7 @@ Run:
 ```bash
 xcodegen generate && xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build test 2>&1 | grep -E "error:|warning: .*TidyShot/|Test run|✘"
 ```
-Expected: no `error:` or `warning:` lines, and `Test run with 182 tests in 27 suites passed` (ThumbnailProviderTests keeps its 5 tests).
+Expected: no `error:` or `warning:` lines, and `Test run with 184 tests in 27 suites passed` (ThumbnailProviderTests keeps its 5 tests).
 
 Then:
 ```bash
@@ -2992,7 +3133,7 @@ Run:
 ```bash
 xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -configuration Debug -derivedDataPath .build build -quiet && open .build/Build/Products/Debug/TidyShot.app
 ```
-Expected: hovering "Recent Captures" opens the submenu without a click; it lists at most 15 captures, newest first, each with a thumbnail, its name (`aSIS7x.png` or the file name) and "2 minutes ago"; the row under the mouse is highlighted. Clicking a row of an uploaded capture closes the menu and puts the URL on the clipboard; a never-uploaded one puts the file there (paste in Finder makes a copy). The link button is greyed out for a never-uploaded capture and copies the URL otherwise; the photo button copies the image (paste in Notes shows it at point size); the trash button closes the menu and shows the "Delete this capture?" alert. With an empty history the submenu shows a greyed "No captures yet". The frontmost app stays active throughout, except while the alert is up.
+Expected: hovering "Recent Captures" opens the submenu without a click; it lists at most 15 captures, newest first, each with a thumbnail, its name (`aSIS7x.png` or the file name) and "2 minutes ago"; the row under the mouse is highlighted. Clicking a row of an uploaded capture closes the menu and puts the URL on the clipboard; a never-uploaded one puts the file there (paste in Finder makes a copy). The link button is greyed out for a never-uploaded capture and copies the URL otherwise; the photo button copies the image (paste in Notes shows it at point size); the trash button closes the menu and shows the "Delete this capture?" alert. With an empty history the submenu shows a greyed "No captures yet". With VoiceOver on, each row reads its name and time rather than a blank item. The frontmost app stays active throughout, except while the alert is up.
 
 - [ ] **Step 10: Commit**
 
@@ -3011,15 +3152,15 @@ git commit -m "feat: Recent Captures hover submenu with custom rows; remove the 
 - Create: `TidyShotTests/PreviewPlacementTests.swift`
 - Modify: `TidyShot/RecentCaptures/RecentCaptureMenuItemView.swift` (full replacement)
 - Modify: `TidyShot/RecentCaptures/RecentCapturesMenu.swift` (full replacement)
-- Modify: `TidyShot/App/StatusMenuController.swift` (one edit)
+- Modify: `TidyShot/App/StatusMenuController.swift` (two edits)
 
 **Interfaces:**
 - Consumes: `ThumbnailProvider.preview(for:) async -> NSImage?` (up to 1200 px from the local file, falling back to the thumbnail), `RecentCaptureRow.thumbnailFrame`, `RecentCaptureMenuItemView.recordID` (Task 7).
 - Produces:
-  - `nonisolated enum PreviewPlacement { static let maxSize: CGSize; static let gap: CGFloat; static func fitted(_ imageSize: CGSize, in bounds: CGSize) -> CGSize; static func frame(imageSize: CGSize, menuFrame: CGRect, rowFrame: CGRect, visibleFrame: CGRect) -> CGRect }`.
+  - `nonisolated enum PreviewPlacement { static let maxSize: CGSize; static let gap: CGFloat; static func fitted(_ imageSize: CGSize, in bounds: CGSize) -> CGSize; static func frame(imageSize: CGSize, menuFrame: CGRect, rowFrame: CGRect, statusItemFrame: CGRect?, visibleFrame: CGRect) -> CGRect }`: right of the submenu when its `minX` is at or right of `statusItemFrame.minX` (the status menu then hangs to its left), left of it otherwise or without a status item frame; the other side when the preferred one cannot hold the whole preview and is narrower; clamped to `visibleFrame`.
   - `final class PreviewPanel: NSPanel` with `init()`, `show(_ image: NSImage, frame: CGRect)` and `hide()`: non-activating, `.popUpMenu` level, ignores the mouse.
   - `RecentCaptureMenuItemView.init(record:now:provider:actions:onThumbnailHover:)` with `onThumbnailHover: @escaping (RecentCaptureMenuItemView, Bool) -> Void`.
-  - `RecentCapturesMenu` becomes the submenu's `NSMenuDelegate` and gains `hidePreview()`; `StatusMenuController.menuDidClose(_:)` calls it as well.
+  - `RecentCapturesMenu.init(coordinator:closeMenus:statusItemFrame:)`, where `statusItemFrame: @escaping () -> CGRect?` is read when a preview is placed (`StatusMenuController` passes `statusItem.button?.window?.frame`). `RecentCapturesMenu` becomes the submenu's `NSMenuDelegate` and gains `hidePreview()`; `StatusMenuController.menuDidClose(_:)` calls it as well.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -3040,33 +3181,70 @@ struct PreviewPlacementTests {
         #expect(PreviewPlacement.fitted(.zero, in: PreviewPlacement.maxSize) == .zero)
     }
 
-    @Test func sitsLeftOfTheSubmenuCentredOnTheRow() {
-        let menu = CGRect(x: 1400, y: 300, width: 360, height: 600)
-        let row = CGRect(x: 1400, y: 700, width: 360, height: 52)
-        #expect(PreviewPlacement.frame(imageSize: image, menuFrame: menu, rowFrame: row, visibleFrame: screen)
-                == CGRect(x: 832, y: 539.5, width: 560, height: 373))
+    /// The status item's button window, in the menu bar above `screen`.
+    func statusItem(x: CGFloat) -> CGRect {
+        CGRect(x: x, y: 1050, width: 32, height: 30)
+    }
+
+    /// The usual case: the submenu opened to the right of the status menu, which hangs from the
+    /// status item on the submenu's left, so the preview goes on the submenu's right.
+    @Test func sitsRightOfASubmenuThatOpenedRightward() {
+        let menu = CGRect(x: 560, y: 300, width: 360, height: 600)
+        let row = CGRect(x: 560, y: 700, width: 360, height: 52)
+        #expect(PreviewPlacement.frame(imageSize: image, menuFrame: menu, rowFrame: row, statusItemFrame: statusItem(x: 300),
+                                       visibleFrame: screen)
+                == CGRect(x: 928, y: 539.5, width: 560, height: 373))
+    }
+
+    /// Status item near the right end of the menu bar: the submenu opened leftward, so the preview
+    /// goes on its left. Without a status item frame the left is the default.
+    @Test func sitsLeftOfASubmenuThatOpenedLeftward() {
+        let menu = CGRect(x: 1100, y: 300, width: 360, height: 600)
+        let row = CGRect(x: 1100, y: 700, width: 360, height: 52)
+        let expected = CGRect(x: 532, y: 539.5, width: 560, height: 373)
+        #expect(PreviewPlacement.frame(imageSize: image, menuFrame: menu, rowFrame: row, statusItemFrame: statusItem(x: 1700),
+                                       visibleFrame: screen) == expected)
+        #expect(PreviewPlacement.frame(imageSize: image, menuFrame: menu, rowFrame: row, statusItemFrame: nil,
+                                       visibleFrame: screen) == expected)
+    }
+
+    /// No room on the preferred side: the other side, in both directions; with little room on
+    /// both sides, the larger one, and the preview shrinks to fit it.
+    @Test func fallsBackToTheOtherSideWithoutRoom() {
+        // Prefers right, but the submenu touches the right edge of the screen.
+        let rightEdge = CGRect(x: 1540, y: 300, width: 360, height: 600)
+        let rightEdgeRow = CGRect(x: 1540, y: 500, width: 360, height: 52)
+        #expect(PreviewPlacement.frame(imageSize: image, menuFrame: rightEdge, rowFrame: rightEdgeRow,
+                                       statusItemFrame: statusItem(x: 1500), visibleFrame: screen)
+                == CGRect(x: 972, y: 339.5, width: 560, height: 373))
+
+        // Prefers left, but the submenu touches the left edge of the screen.
+        let leftEdge = CGRect(x: 40, y: 300, width: 360, height: 600)
+        let leftEdgeRow = CGRect(x: 40, y: 500, width: 360, height: 52)
+        #expect(PreviewPlacement.frame(imageSize: image, menuFrame: leftEdge, rowFrame: leftEdgeRow,
+                                       statusItemFrame: statusItem(x: 400), visibleFrame: screen)
+                == CGRect(x: 408, y: 339.5, width: 560, height: 373))
+
+        // Prefers left (284 points), the right is larger (324 points): right, shrunk.
+        let narrow = CGRect(x: 0, y: 0, width: 1000, height: 1050)
+        let middle = CGRect(x: 300, y: 0, width: 360, height: 600)
+        let middleRow = CGRect(x: 300, y: 300, width: 360, height: 52)
+        #expect(PreviewPlacement.frame(imageSize: image, menuFrame: middle, rowFrame: middleRow,
+                                       statusItemFrame: statusItem(x: 800), visibleFrame: narrow)
+                == CGRect(x: 668, y: 218, width: 324, height: 216))
     }
 
     @Test func staysInsideTheScreen() {
         let menu = CGRect(x: 1400, y: 400, width: 360, height: 640)
         let topRow = CGRect(x: 1400, y: 1000, width: 360, height: 40)
-        #expect(PreviewPlacement.frame(imageSize: image, menuFrame: menu, rowFrame: topRow, visibleFrame: screen)
+        #expect(PreviewPlacement.frame(imageSize: image, menuFrame: menu, rowFrame: topRow, statusItemFrame: statusItem(x: 1760),
+                                       visibleFrame: screen)
                 == CGRect(x: 832, y: 669, width: 560, height: 373))
-    }
-
-    /// A submenu at the left edge of the screen has no room on its left, so the preview goes right;
-    /// with little room on both sides it shrinks to the larger one.
-    @Test func goesRightWhenTheLeftHasNoRoom() {
-        let menu = CGRect(x: 20, y: 300, width: 360, height: 600)
-        let row = CGRect(x: 20, y: 500, width: 360, height: 52)
-        #expect(PreviewPlacement.frame(imageSize: image, menuFrame: menu, rowFrame: row, visibleFrame: screen)
-                == CGRect(x: 388, y: 339.5, width: 560, height: 373))
-
-        let narrow = CGRect(x: 0, y: 0, width: 1000, height: 1050)
-        let middle = CGRect(x: 300, y: 0, width: 360, height: 600)
-        let middleRow = CGRect(x: 300, y: 300, width: 360, height: 52)
-        #expect(PreviewPlacement.frame(imageSize: image, menuFrame: middle, rowFrame: middleRow, visibleFrame: narrow)
-                == CGRect(x: 668, y: 218, width: 324, height: 216))
+        let low = CGRect(x: 1400, y: 0, width: 360, height: 640)
+        let bottomRow = CGRect(x: 1400, y: 0, width: 360, height: 40)
+        #expect(PreviewPlacement.frame(imageSize: image, menuFrame: low, rowFrame: bottomRow, statusItemFrame: statusItem(x: 1760),
+                                       visibleFrame: screen)
+                == CGRect(x: 832, y: 8, width: 560, height: 373))
     }
 }
 ```
@@ -3100,20 +3278,28 @@ nonisolated enum PreviewPlacement {
         return CGSize(width: (imageSize.width * scale).rounded(), height: (imageSize.height * scale).rounded())
     }
 
-    /// The preview's frame: to the left of `menuFrame` (the submenu's window), unless the left side
-    /// is too narrow for the whole preview and the right side is wider; vertically centred on
-    /// `rowFrame` (the hovered row) and kept inside `visibleFrame`.
-    static func frame(imageSize: CGSize, menuFrame: CGRect, rowFrame: CGRect, visibleFrame: CGRect) -> CGRect {
+    /// The preview's frame, beside `menuFrame` (the submenu's window) on the side away from the
+    /// status menu, vertically centred on `rowFrame` (the hovered row) and kept inside
+    /// `visibleFrame`. The status menu hangs from the status item, so a submenu whose left edge is
+    /// at or right of `statusItemFrame`'s opened to the right of it, and the preview goes on the
+    /// submenu's right; otherwise, or with no status item frame, on its left. When that side is
+    /// too narrow for the whole preview and the other side is wider, the other side is used.
+    static func frame(imageSize: CGSize, menuFrame: CGRect, rowFrame: CGRect, statusItemFrame: CGRect?,
+                      visibleFrame: CGRect) -> CGRect {
         let leftRoom = menuFrame.minX - gap - (visibleFrame.minX + gap)
         let rightRoom = visibleFrame.maxX - gap - (menuFrame.maxX + gap)
         let heightBound = min(maxSize.height, visibleFrame.height - 2 * gap)
         let wanted = fitted(imageSize, in: CGSize(width: maxSize.width, height: heightBound))
-        let onLeft = leftRoom >= wanted.width || leftRoom >= rightRoom
-        let room = max(0, onLeft ? leftRoom : rightRoom)
+        let prefersRight = statusItemFrame.map { menuFrame.minX >= $0.minX } ?? false
+        let preferredRoom = prefersRight ? rightRoom : leftRoom
+        let otherRoom = prefersRight ? leftRoom : rightRoom
+        let onRight = preferredRoom >= wanted.width || preferredRoom >= otherRoom ? prefersRight : !prefersRight
+        let room = max(0, onRight ? rightRoom : leftRoom)
         let size = fitted(imageSize, in: CGSize(width: min(maxSize.width, room), height: heightBound))
-        let x = onLeft ? menuFrame.minX - gap - size.width : menuFrame.maxX + gap
+        let x = onRight ? menuFrame.maxX + gap : menuFrame.minX - gap - size.width
+        let clampedX = min(max(x, visibleFrame.minX + gap), visibleFrame.maxX - gap - size.width)
         let y = min(max(rowFrame.midY - size.height / 2, visibleFrame.minY + gap), visibleFrame.maxY - gap - size.height)
-        return CGRect(x: x, y: y, width: size.width, height: size.height)
+        return CGRect(x: clampedX, y: y, width: size.width, height: size.height)
     }
 }
 ```
@@ -3124,7 +3310,7 @@ Run:
 ```bash
 xcodegen generate && xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build test 2>&1 | grep -E "error:|warning: .*TidyShot/|Test run|✘"
 ```
-Expected: no `error:` or `warning:` lines, and `Test run with 186 tests in 28 suites passed`.
+Expected: no `error:` or `warning:` lines, and `Test run with 189 tests in 28 suites passed`.
 
 - [ ] **Step 5: Write the panel and the hover**
 
@@ -3215,15 +3401,17 @@ final class RecentCaptureMenuItemView: NSView {
         recordID = record.id
         self.onThumbnailHover = onThumbnailHover
         super.init(frame: CGRect(origin: .zero, size: RecentCaptureRow.size))
-        let row = RecentCaptureRow(record: record,
-                                   name: RecentCaptureFormatting.name(for: record),
-                                   detail: RecentCaptureFormatting.detail(for: record, now: now),
+        let name = RecentCaptureFormatting.name(for: record)
+        let detail = RecentCaptureFormatting.detail(for: record, now: now)
+        let row = RecentCaptureRow(record: record, name: name, detail: detail,
                                    canCopyLink: RecentCaptureFormatting.canCopyLink(record),
                                    canCopyImage: RecentCaptureFormatting.canCopyImage(record),
                                    state: state, provider: provider, actions: actions)
         let host = NSHostingView(rootView: row)
         host.frame = bounds
         host.autoresizingMask = [.width, .height]
+        // The menu item has no title, so without this VoiceOver reads a blank item.
+        host.setAccessibilityLabel("\(name), \(detail)")
         addSubview(host)
     }
 
@@ -3288,10 +3476,14 @@ final class RecentCapturesMenu: NSObject, NSMenuDelegate {
     /// The record whose thumbnail is under the mouse. A preview that finishes loading after the
     /// mouse moved on is dropped.
     private var hoveredID: UUID?
+    /// Where the status item is on screen, read each time a preview is placed, so the preview
+    /// goes on the side of the submenu away from the status menu.
+    private let statusItemFrame: () -> CGRect?
 
-    init(coordinator: AppCoordinator, closeMenus: @escaping () -> Void) {
+    init(coordinator: AppCoordinator, closeMenus: @escaping () -> Void, statusItemFrame: @escaping () -> CGRect?) {
         self.coordinator = coordinator
         self.closeMenus = closeMenus
+        self.statusItemFrame = statusItemFrame
         super.init()
         menu.delegate = self
         menu.autoenablesItems = false
@@ -3337,8 +3529,9 @@ final class RecentCapturesMenu: NSObject, NSMenuDelegate {
     // MARK: Preview
 
     /// Loads the preview (up to 1200 px, off the main thread, cached by `ThumbnailProvider`) and
-    /// shows it beside the submenu, level with the hovered row. The row view's window is the
-    /// submenu's window, so its frame says where the submenu is on screen.
+    /// shows it beside the submenu, level with the hovered row, on the side away from the status
+    /// menu. The row view's window is the submenu's window, so its frame says where the submenu is
+    /// on screen.
     private func thumbnailHover(_ view: RecentCaptureMenuItemView, inside: Bool) {
         guard inside else {
             if hoveredID == view.recordID { hidePreview() }
@@ -3352,8 +3545,8 @@ final class RecentCapturesMenu: NSObject, NSMenuDelegate {
             guard let self, let view, let image, self.hoveredID == record.id,
                   let menuWindow = view.window, let screen = menuWindow.screen ?? NSScreen.main else { return }
             let rowFrame = menuWindow.convertToScreen(view.convert(view.bounds, to: nil))
-            let frame = PreviewPlacement.frame(imageSize: image.size, menuFrame: menuWindow.frame,
-                                               rowFrame: rowFrame, visibleFrame: screen.visibleFrame)
+            let frame = PreviewPlacement.frame(imageSize: image.size, menuFrame: menuWindow.frame, rowFrame: rowFrame,
+                                               statusItemFrame: self.statusItemFrame(), visibleFrame: screen.visibleFrame)
             self.previewPanel.show(image, frame: frame)
         }
     }
@@ -3386,6 +3579,26 @@ In `TidyShot/App/StatusMenuController.swift`:
 
 Replace:
 ```swift
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        let menu = NSMenu(title: "TidyShot")
+        self.menu = menu
+        // Row buttons close the status menu, which closes the submenu with it.
+        recentCaptures = RecentCapturesMenu(coordinator: coordinator, closeMenus: { [weak menu] in menu?.cancelTracking() })
+```
+with:
+```swift
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        statusItem = item
+        let menu = NSMenu(title: "TidyShot")
+        self.menu = menu
+        // Row buttons close the status menu, which closes the submenu with it. The status item's
+        // frame on screen tells the preview which side of the submenu the status menu hangs on.
+        recentCaptures = RecentCapturesMenu(coordinator: coordinator, closeMenus: { [weak menu] in menu?.cancelTracking() },
+                                            statusItemFrame: { [weak item] in item?.button?.window?.frame })
+```
+
+Replace:
+```swift
     func menuNeedsUpdate(_ menu: NSMenu) {
         guard menu === self.menu else { return }
         rebuild()
@@ -3411,7 +3624,7 @@ Run:
 ```bash
 xcodegen generate && xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build test 2>&1 | grep -E "error:|warning: .*TidyShot/|Test run|✘"
 ```
-Expected: no `error:` or `warning:` lines, and `Test run with 186 tests in 28 suites passed`.
+Expected: no `error:` or `warning:` lines, and `Test run with 189 tests in 28 suites passed`.
 
 - [ ] **Step 7: Check the preview by hand**
 
@@ -3419,11 +3632,11 @@ Run:
 ```bash
 xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -configuration Debug -derivedDataPath .build build -quiet && open .build/Build/Products/Debug/TidyShot.app
 ```
-Open Recent Captures and move the mouse onto a thumbnail. Expected: the capture appears, up to 560 by 420 points, in a rounded panel to the left of the submenu, level with the row and above the menu; moving down to the next thumbnail moves it to that row and shows that capture; moving onto a row's name or buttons hides it; closing the menu (Escape, a click elsewhere, or any row action) hides it; an upload-only capture shows its thumbnail-sized preview (it has no local file); with the menu bar item on a display's far left edge the panel opens to the right of the submenu. The menu stays open and keeps tracking while the panel shows, and the frontmost app stays active.
+Open Recent Captures and move the mouse onto a thumbnail. Expected: the capture appears, up to 560 by 420 points, in a rounded panel level with the row and above the menu, on the side of the submenu away from the status menu (to the right of a submenu that opened to the right of the menu, the usual case; Command-drag the TidyShot icon to the right end of the menu bar so the submenu opens leftward, and the panel is on its left); moving down to the next thumbnail moves it to that row and shows that capture; moving onto a row's name or buttons hides it; closing the menu (Escape, a click elsewhere, or any row action) hides it; an upload-only capture shows its thumbnail-sized preview (it has no local file); when the preferred side has no room (a submenu at a display's edge) the panel opens on the other side and stays on screen. The menu stays open and keeps tracking while the panel shows, and the frontmost app stays active.
 
 - [ ] **Step 8: Fallback when the panel does not appear above the menu (conditional)**
 
-Apply this step only if, in Step 7, the panel never appears while the menu is open (verification on macOS 27 says it does; this is for a later macOS that changes it). It shows the larger image inside the hovered row instead: the row grows to 168 points and the thumbnail to 208 by 156 while the mouse is over it, and the panel and its placement are removed.
+Apply this step only if, in Step 7, the panel never appears while the menu is open (verification on macOS 27 says it does; this is for a later macOS that changes it). It shows the larger image inside the hovered row instead: the row grows to 168 points and the thumbnail to 208 by 156 while the mouse is over it, and the panel, its placement and the status item frame it read are removed.
 
 In `TidyShot/RecentCaptures/RecentCaptureRow.swift`:
 
@@ -3537,12 +3750,24 @@ Replace:
     /// The record whose thumbnail is under the mouse. A preview that finishes loading after the
     /// mouse moved on is dropped.
     private var hoveredID: UUID?
+    /// Where the status item is on screen, read each time a preview is placed, so the preview
+    /// goes on the side of the submenu away from the status menu.
+    private let statusItemFrame: () -> CGRect?
+
+    init(coordinator: AppCoordinator, closeMenus: @escaping () -> Void, statusItemFrame: @escaping () -> CGRect?) {
+        self.coordinator = coordinator
+        self.closeMenus = closeMenus
+        self.statusItemFrame = statusItemFrame
 ```
 with:
 ```swift
     /// The row whose thumbnail is under the mouse. A preview that finishes loading after the mouse
     /// moved on is dropped.
     private weak var hoveredView: RecentCaptureMenuItemView?
+
+    init(coordinator: AppCoordinator, closeMenus: @escaping () -> Void) {
+        self.coordinator = coordinator
+        self.closeMenus = closeMenus
 ```
 
 Replace:
@@ -3565,8 +3790,9 @@ with:
 Replace:
 ```swift
     /// Loads the preview (up to 1200 px, off the main thread, cached by `ThumbnailProvider`) and
-    /// shows it beside the submenu, level with the hovered row. The row view's window is the
-    /// submenu's window, so its frame says where the submenu is on screen.
+    /// shows it beside the submenu, level with the hovered row, on the side away from the status
+    /// menu. The row view's window is the submenu's window, so its frame says where the submenu is
+    /// on screen.
     private func thumbnailHover(_ view: RecentCaptureMenuItemView, inside: Bool) {
         guard inside else {
             if hoveredID == view.recordID { hidePreview() }
@@ -3580,8 +3806,8 @@ Replace:
             guard let self, let view, let image, self.hoveredID == record.id,
                   let menuWindow = view.window, let screen = menuWindow.screen ?? NSScreen.main else { return }
             let rowFrame = menuWindow.convertToScreen(view.convert(view.bounds, to: nil))
-            let frame = PreviewPlacement.frame(imageSize: image.size, menuFrame: menuWindow.frame,
-                                               rowFrame: rowFrame, visibleFrame: screen.visibleFrame)
+            let frame = PreviewPlacement.frame(imageSize: image.size, menuFrame: menuWindow.frame, rowFrame: rowFrame,
+                                               statusItemFrame: self.statusItemFrame(), visibleFrame: screen.visibleFrame)
             self.previewPanel.show(image, frame: frame)
         }
     }
@@ -3607,12 +3833,27 @@ with:
     }
 ```
 
-Then remove the panel, its placement and their tests:
+In `TidyShot/App/StatusMenuController.swift`:
+
+Replace:
+```swift
+        // Row buttons close the status menu, which closes the submenu with it. The status item's
+        // frame on screen tells the preview which side of the submenu the status menu hangs on.
+        recentCaptures = RecentCapturesMenu(coordinator: coordinator, closeMenus: { [weak menu] in menu?.cancelTracking() },
+                                            statusItemFrame: { [weak item] in item?.button?.window?.frame })
+```
+with:
+```swift
+        // Row buttons close the status menu, which closes the submenu with it.
+        recentCaptures = RecentCapturesMenu(coordinator: coordinator, closeMenus: { [weak menu] in menu?.cancelTracking() })
+```
+
+Then remove the panel, its placement and their tests (not yet committed, so a plain `rm`; `git rm` would fail on them):
 ```bash
-git rm TidyShot/RecentCaptures/PreviewPanel.swift TidyShot/RecentCaptures/PreviewPlacement.swift TidyShotTests/PreviewPlacementTests.swift
+rm TidyShot/RecentCaptures/PreviewPanel.swift TidyShot/RecentCaptures/PreviewPlacement.swift TidyShotTests/PreviewPlacementTests.swift
 xcodegen generate && xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build test 2>&1 | grep -E "error:|warning: .*TidyShot/|Test run|✘"
 ```
-Expected: no `error:` or `warning:` lines, and `Test run with 182 tests in 27 suites passed`. Check by hand: hovering a thumbnail grows its row and shows the larger image; leaving it shrinks the row. Use 182 in 27 instead of 186 in 28 wherever later steps state a total, and say in the Task 9 report that the fallback was applied.
+Expected: no `error:` or `warning:` lines, and `Test run with 184 tests in 27 suites passed`. Check by hand: hovering a thumbnail grows its row and shows the larger image; leaving it shrinks the row. Use 184 in 27 instead of 189 in 28 wherever later steps state a total, and say in the Task 9 report that the fallback was applied.
 
 - [ ] **Step 9: Commit**
 
@@ -3620,7 +3861,7 @@ Expected: no `error:` or `warning:` lines, and `Test run with 182 tests in 27 su
 git add TidyShot/RecentCaptures TidyShotTests/PreviewPlacementTests.swift TidyShot/App/StatusMenuController.swift
 git commit -m "feat: full-size preview beside the Recent Captures submenu"
 ```
-If Step 8 was applied, the commit message is `feat: enlarged preview inside the hovered Recent Captures row` and `git add -A TidyShot/RecentCaptures TidyShotTests` stages the removals.
+If Step 8 was applied, the commit message is `feat: enlarged preview inside the hovered Recent Captures row`, and `git add TidyShot/RecentCaptures TidyShot/App/StatusMenuController.swift` takes the place of the `git add` above (the removed files were never committed, so there is nothing to stage for them).
 
 ---
 
@@ -3658,6 +3899,7 @@ made before this build. Where the Phase 2 and Phase 3 checklists say Recent Capt
 - [ ] Change the area shortcut in Settings > Shortcuts, reopen the menu: the title shows the new shortcut. Put it back.
 - [ ] Each capture item starts its capture. Reveal Last Capture is disabled before the first save in this launch, then reveals the file.
 - [ ] Settings… opens the Settings window in front of the frontmost app, again after closing it, and from `⌘,` while the menu is open.
+- [ ] Command-drag the icon to another place in the menu bar, quit and relaunch: it comes back where you put it.
 - [ ] Network Link Conditioner (or a large fullscreen capture): during the upload the icon is `arrow.up.circle`, also while the menu is open, and returns to the viewfinder afterwards.
 - [ ] With a failed upload in history, Retry Failed Uploads retries it and disappears from the menu once nothing has failed.
 - [ ] Revoke Screen Recording and relaunch: the first item is "Screen Recording permission needed…" and opens the permission window.
@@ -3666,19 +3908,21 @@ made before this build. Where the Phase 2 and Phase 3 checklists say Recent Capt
 - [ ] Hovering Recent Captures opens the submenu without a click; it lists the newest captures first, never more than 15 (take a 16th: the oldest row drops off).
 - [ ] Each row shows a thumbnail, the object name (`aSIS7x.png`) or the file name, and the time: "now", "2 minutes ago", "yesterday"; an upload in flight adds "· Uploading", a failed one "· Upload failed". A capture made before Phase 3 gets its thumbnail on first display.
 - [ ] The row under the mouse is highlighted; the menu highlight never sticks to a row the mouse has left.
+- [ ] With VoiceOver on (`⌘F5`), moving through the submenu reads each row's name and time, with "Uploading" or "Upload failed" when shown, never a blank item. Keyboard navigation inside a row (reaching its buttons with the arrow keys or Tab) is out of scope for Phase 3.1; do not fail the checklist on it.
 - [ ] Clicking an uploaded row closes the menu and puts the URL on the clipboard; clicking a never-uploaded row puts the file there (paste in Finder makes a copy).
 - [ ] The link button is greyed out on a never-uploaded row; on an uploaded row it closes the menu and copies the URL.
 - [ ] The photo button on a saved capture closes the menu, posts "Image copied", and Notes pastes the image at point size, not double.
 - [ ] The photo button on an upload-only capture (no local file) posts "Copying image…", then "Image copied", and the paste works; with Wi-Fi off it posts "Could not copy image" with the reason.
 - [ ] The photo button is greyed out on a capture made before Phase 3 whose file was deleted from the save folder.
+- [ ] Rename the file of a capture that was saved but never uploaded (in Finder, in the save folder), then press its photo button: "Could not copy image" with "The local file could not be read." Rename it back.
 - [ ] The trash button closes the menu and shows the delete alert (see Delete); after Delete the row is gone the next time the menu opens.
 - [ ] With an empty history the submenu shows a greyed "No captures yet".
 
 ## Preview
-- [ ] Moving onto a thumbnail shows the capture in a rounded panel to the left of the submenu, above the menu, level with the row, at most 560 by 420 points; the menu stays open and the frontmost app stays active.
+- [ ] Moving onto a thumbnail shows the capture in a rounded panel above the menu, level with the row, at most 560 by 420 points, on the side of the submenu away from the status menu (on its right when it opened to the right of the menu); the menu stays open and the frontmost app stays active.
 - [ ] Moving to the next thumbnail moves the panel to that row with that capture; moving onto a name or a button hides it; Escape, a click outside, or any row action hides it with the menu.
 - [ ] An upload-only capture previews at thumbnail size (it has no local file to decode).
-- [ ] With the submenu at the left edge of a display (menu bar item far left, or a narrow display) the panel opens on the right of the submenu instead and stays on screen.
+- [ ] Command-drag the icon to the right end of the menu bar: the submenu opens to the left of the menu and the panel is on the submenu's left. When the preferred side has no room (a submenu at a display's edge, or a narrow display) the panel opens on the other side and stays on screen.
 
 ## Delete
 - [ ] Uploaded capture, from the trash button or the overlay: "Delete this capture?", "Removes it from object storage and from history.", Delete (red) and Cancel. Escape cancels. Delete removes the row, the object (`curl -I <url>` gives 403 or 404), the file in the save folder and the thumbnail.
@@ -3690,6 +3934,7 @@ made before this build. Where the Phase 2 and Phase 3 checklists say Recent Capt
 
 ## Templates and Upload tab
 - [ ] Before installing this build, with the Phase 3 build, set the file name template to `{app} {datetime}` and the key template to `shots/{app}/{random:8}` and save. After launching this build: Settings > General shows `{datetime}`, Settings > Upload shows `shots/{random:8}`, and `defaults read ~/Library/Containers/io.tky.tidyshot/Data/Library/Preferences/io.tky.tidyshot.plist` shows neither template with the old token. A capture uploads to `shots/XXXXXXXX.png`.
+- [ ] Again with the Phase 3 build, set the file name template to `{app}` alone. After launching this build Settings > General shows the default template, and `log show --last 5m --predicate 'process == "TidyShot"' | grep "Naming template"` shows one line with the old template; quitting and relaunching adds no second line. No notification is posted.
 - [ ] The token captions in Settings > General and Settings > Upload list `{date} {year} {month} {day} {time} {datetime} {hostname} {counter} {random} {random:8}`.
 - [ ] An empty Endpoint and Public URL each show a grey "Required"; the example sits on its own caption line under each field.
 - [ ] Save and Test Connection with correct settings reports exactly "Upload and public read both work." with no URL after it; a wrong secret still reports "Upload failed: …".
@@ -3769,7 +4014,7 @@ Run:
 ```bash
 xcodegen generate && xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build test 2>&1 | grep -E "error:|warning: .*TidyShot/|Test run|✘"
 ```
-Expected: no `error:` or `warning:` lines, and `Test run with 186 tests in 28 suites passed`.
+Expected: no `error:` or `warning:` lines, and `Test run with 189 tests in 28 suites passed`.
 
 Then:
 ```bash
@@ -3783,7 +4028,7 @@ Run:
 ```bash
 xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -configuration Debug -derivedDataPath .build build -quiet && open .build/Build/Products/Debug/TidyShot.app
 ```
-Press `⌃⇧4` over a light window (the crosshair is black), drag a rectangle, paste into Slack: a working `https://snap.tky.io/…` link. Open the menu, hover Recent Captures, hover the new row's thumbnail (the preview appears to the left), click the photo button and paste into Notes (the image), then the trash button, Delete: the link returns 403 or 404 and the row is gone. Then work through `docs/testing/phase-3-1-manual-checklist.md`, and, because the menu bar and the delete flow changed, the "Overlay delete", "Upload only" and "Forget credentials" sections of `docs/testing/phase-3-manual-checklist.md` (where an item says Recent Captures or the gallery, use the submenu).
+Press `⌃⇧4` over a light window (the crosshair is black), drag a rectangle, paste into Slack: a working `https://snap.tky.io/…` link. Open the menu, hover Recent Captures, hover the new row's thumbnail (the preview appears beside the submenu, on the side away from the menu), click the photo button and paste into Notes (the image), then the trash button, Delete: the link returns 403 or 404 and the row is gone. Then work through `docs/testing/phase-3-1-manual-checklist.md`, and, because the menu bar and the delete flow changed, the "Overlay delete", "Upload only" and "Forget credentials" sections of `docs/testing/phase-3-manual-checklist.md` (where an item says Recent Captures or the gallery, use the submenu).
 
 - [ ] **Step 6: Commit**
 
@@ -3794,7 +4039,7 @@ git commit -m "docs: Phase 3.1 checklist and README"
 
 - [ ] **Step 7: Stop here**
 
-Phase 3.1 is done when the checklists pass and the last test run reads `Test run with 186 tests in 28 suites passed` (182 in 27 if Task 8 Step 8 was applied). Do not push and do not open a PR: stop here; the controller pushes and opens the PR after the whole-branch review. Report the final test line, the checklist results, and whether the Task 8 fallback was needed.
+Phase 3.1 is done when the checklists pass and the last test run reads `Test run with 189 tests in 28 suites passed` (184 in 27 if Task 8 Step 8 was applied). Do not push and do not open a PR: stop here; the controller pushes and opens the PR after the whole-branch review. Report the final test line, the checklist results, and whether the Task 8 fallback was needed.
 
 ---
 
