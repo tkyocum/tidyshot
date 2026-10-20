@@ -5,7 +5,7 @@ enum AfterCaptureAction: String, CaseIterable, Identifiable {
     /// Save the file, upload it, and put the URL on the clipboard when the upload finishes.
     case upload
     /// Upload from a temporary file inside the app container, copy the URL, and delete the file
-    /// once the upload succeeds. No save folder is needed; the gallery keeps a thumbnail.
+    /// once the upload succeeds. No save folder is needed; Recent Captures keeps a thumbnail.
     case uploadOnly
     /// Save the file and copy the image (Phase 1 behaviour).
     case save

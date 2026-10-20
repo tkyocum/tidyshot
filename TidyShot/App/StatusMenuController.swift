@@ -13,11 +13,15 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     private let statusItem: NSStatusItem
     private let menu: NSMenu
     private let settingsOpener = SettingsOpener()
+    private let recentCaptures: RecentCapturesMenu
 
     init(coordinator: AppCoordinator) {
         self.coordinator = coordinator
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        menu = NSMenu(title: "TidyShot")
+        let menu = NSMenu(title: "TidyShot")
+        self.menu = menu
+        // Row buttons close the status menu, which closes the submenu with it.
+        recentCaptures = RecentCapturesMenu(coordinator: coordinator, closeMenus: { [weak menu] in menu?.cancelTracking() })
         super.init()
         // Keeps the item where the user Command-drags it in the menu bar, across launches.
         statusItem.autosaveName = "TidyShot"
@@ -60,7 +64,8 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         menu.addItem(captureItem("Capture Window", .captureWindow, #selector(captureWindow)))
         menu.addItem(captureItem("Capture Fullscreen", .captureFullscreen, #selector(captureFullscreen)))
         menu.addItem(.separator())
-        menu.addItem(item("Recent Captures…", #selector(showRecentCaptures)))
+        recentCaptures.rebuild()
+        menu.addItem(recentCaptures.item)
         if !coordinator.history.failedRecords.isEmpty {
             menu.addItem(item("Retry Failed Uploads", #selector(retryFailedUploads)))
         }
@@ -94,7 +99,6 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     @objc private func captureArea() { Task { await coordinator.captureArea() } }
     @objc private func captureWindow() { Task { await coordinator.captureWindow() } }
     @objc private func captureFullscreen() { Task { await coordinator.captureFullscreen() } }
-    @objc private func showRecentCaptures() { coordinator.showGallery() }
     @objc private func retryFailedUploads() { coordinator.retryFailedUploads() }
     @objc private func revealLastCapture() { coordinator.revealLastCapture() }
     @objc private func openSettings() { settingsOpener.open() }

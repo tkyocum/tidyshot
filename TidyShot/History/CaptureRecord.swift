@@ -19,7 +19,7 @@ nonisolated struct CaptureRecord: Codable, Identifiable, Equatable, Sendable {
     /// Such a file is deleted after a successful upload; a file in the user's save folder is kept.
     var fileIsTemporary: Bool
     /// File name inside the `thumbnails` folder next to `history.json`. Nil for records written
-    /// before thumbnails existed; the gallery generates one from the local file when it can.
+    /// before thumbnails existed; `ThumbnailProvider` generates one from the local file when it can.
     var thumbnailFileName: String?
     var pixelWidth: Int
     var pixelHeight: Int

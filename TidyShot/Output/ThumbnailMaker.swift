@@ -6,7 +6,7 @@ import ImageIO
 /// never upscaled, alpha kept (window captures have transparent rounded corners, so PNG, not JPEG).
 nonisolated enum ThumbnailMaker {
     static let maxSide = 320
-    /// For the gallery's hover preview, built from the local file when there is one.
+    /// For the Recent Captures hover preview, built from the local file when there is one.
     static let previewMaxSide = 1200
 
     /// The size that fits `pixelSize` inside a `maxSide` square without upscaling. Sides are
@@ -31,7 +31,7 @@ nonisolated enum ThumbnailMaker {
     }
 
     /// Decodes PNG bytes into a thumbnail through ImageIO. Used for records from before
-    /// thumbnails existed and for the gallery's larger preview; the bytes come from
+    /// thumbnails existed and for the larger hover preview; the bytes come from
     /// `AppCoordinator.readLocalFile(of:)`, which holds the save folder's security scope, so there
     /// is no variant that opens a URL itself.
     static func thumbnail(fromPNGData data: Data, maxSide: Int = maxSide) -> CGImage? {

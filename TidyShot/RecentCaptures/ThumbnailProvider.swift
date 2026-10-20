@@ -1,7 +1,7 @@
 import AppKit
 
-/// Thumbnails and larger previews for the gallery, through async methods that the gallery calls
-/// from `.task` modifiers, never from a view body. Thumbnails come from the `thumbnails` folder;
+/// Thumbnails and larger previews for Recent Captures, through async methods that its rows and
+/// hover preview call from tasks, never from a view body. Thumbnails come from the `thumbnails` folder;
 /// a record from before thumbnails existed gets one made from its local file the first time it
 /// is shown (the record is updated once that finishes), or a placeholder (nil) when it has no
 /// readable file, and such a record is not tried again. Previews are read and decoded from the

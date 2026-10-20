@@ -28,20 +28,14 @@ final class AppCoordinator {
     private let permissionWindow = PermissionWindowController()
     private let overlay = QuickAccessController()
     @ObservationIgnored private lazy var selector = SelectionController(engine: engine)
-    @ObservationIgnored private lazy var thumbnailProvider = ThumbnailProvider(
+    /// Thumbnails and previews for Recent Captures.
+    @ObservationIgnored private(set) lazy var thumbnailProvider = ThumbnailProvider(
         store: thumbnails, history: history, saveFolder: { [unowned self] in self.saveLocation.currentURL },
         readFile: { fileURL, folder in
             // Runs in a detached task. A temporary file in `pending` needs no scope.
             guard let folder else { return try Data(contentsOf: fileURL) }
             return try SaveLocation.readScoped(fileURL, folder: folder)
         })
-    @ObservationIgnored private lazy var gallery = GalleryWindowController(
-        model: GalleryModel(history: history, provider: thumbnailProvider),
-        actions: GalleryActions(
-            copy: { [weak self] id in self?.copyLinkOrFile(recordID: id) },
-            retry: { [weak self] id in self?.retryUpload(recordID: id) },
-            reveal: { [weak self] id in self?.reveal(recordID: id) },
-            delete: { [weak self] id in Task { await self?.deleteCapture(recordID: id) } }))
     /// The queue new uploads go to, built from the destination of the first upload after launch
     /// or after the Upload tab was saved.
     @ObservationIgnored private var queue: UploadLane?
@@ -84,11 +78,6 @@ final class AppCoordinator {
 
     func showPermissionWindow() {
         permissionWindow.show()
-    }
-
-    /// Opens (or brings forward) the Recent Captures gallery.
-    func showGallery() {
-        gallery.show()
     }
 
     private func registerShortcuts() {
@@ -286,8 +275,8 @@ final class AppCoordinator {
     }
 
     /// Makes and writes the 320 px thumbnail on a detached task, off the main actor, and stores
-    /// its file name on the record when that finishes. Until then the gallery makes one from the
-    /// file itself; a failure is logged and the gallery falls back the same way. If the record was
+    /// its file name on the record when that finishes. Until then `ThumbnailProvider` makes one
+    /// from the file itself; a failure is logged and it falls back the same way. If the record was
     /// deleted in the meantime the new file is removed again.
     private func makeThumbnail(from image: CGImage, for id: UUID) {
         let store = thumbnails
@@ -449,6 +438,13 @@ final class AppCoordinator {
         } else if let fileURL = record.fileURL {
             Pasteboard.copy(fileURL: fileURL)
         }
+    }
+
+    /// Copy URL: the public URL of an uploaded capture. A capture that was never uploaded has none,
+    /// and its row's button is disabled.
+    func copyLink(recordID: UUID) {
+        guard let url = history.record(id: recordID)?.uploadedURL else { return }
+        Pasteboard.copy(url: url)
     }
 
     /// Copy Image: the PNG and TIFF on the clipboard, from the local file when it can be read;

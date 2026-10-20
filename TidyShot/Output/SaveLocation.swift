@@ -68,7 +68,7 @@ final class SaveLocation {
     }
 
     /// Reads `fileURL` inside `folder`, holding that folder's security-scoped access for the read.
-    /// Touches no instance state, so it can run off the main actor (the gallery's loads).
+    /// Touches no instance state, so it can run off the main actor (thumbnail and preview loads).
     nonisolated static func readScoped(_ fileURL: URL, folder: URL) throws -> Data {
         let accessing = folder.startAccessingSecurityScopedResource()
         defer { if accessing { folder.stopAccessingSecurityScopedResource() } }
