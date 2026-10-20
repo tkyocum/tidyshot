@@ -48,9 +48,12 @@ struct CaptureDeletionTests {
     }
 
     /// One line saying where the capture disappears from. Delete also removes the thumbnail.
+    /// A file in the save folder is deleted for good, so the line names it next to the object.
     @Test func confirmationTextIsOneLine() {
         let storage = "Removes it from object storage and from history."
-        #expect(CaptureDeletion.confirmationText(for: record(state: .uploaded(url: url, key: "aB3dE9.png"), location: location)) == storage)
+        let storageAndSaveFolder = "Removes it from object storage, your save folder and history."
+        #expect(CaptureDeletion.confirmationText(for: record(state: .uploaded(url: url, key: "aB3dE9.png"), location: location)) == storageAndSaveFolder)
+        #expect(CaptureDeletion.confirmationText(for: record(state: .uploading(fraction: 0.2))) == storageAndSaveFolder)
         #expect(CaptureDeletion.confirmationText(for: record(state: .uploaded(url: url, key: "aB3dE9.png"), fileURL: nil, location: location)) == storage)
         #expect(CaptureDeletion.confirmationText(for: record(state: .uploading(fraction: 0.2), fileURL: URL(fileURLWithPath: "/tmp/p.png"), temporary: true)) == storage)
         #expect(CaptureDeletion.confirmationText(for: record(state: .failed(message: "Upload cancelled."), fileURL: nil, location: location, pendingKey: "Qx12Zz.png")) == storage)

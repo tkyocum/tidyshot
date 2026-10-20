@@ -33,13 +33,16 @@ nonisolated enum CaptureDeletion {
     }
 
     /// The first alert's one line: where the capture disappears from. Delete also removes the
-    /// thumbnail, and the local file when the object is in storage too. A record uploaded before
-    /// Phase 3 has no `objectLocation`, so its object cannot be deleted, and the line says it stays.
+    /// thumbnail. A file in the save folder is deleted for good (not moved to the Trash), so the
+    /// line names the save folder whenever the record has a file there, also next to object
+    /// storage (the default Upload mode keeps both). A record uploaded before Phase 3 has no
+    /// `objectLocation`, so its object cannot be deleted, and the line says it stays.
     static func confirmationText(for record: CaptureRecord) -> String {
-        if record.isUploading || (record.objectLocation != nil && !objectKeys(for: record).isEmpty) {
-            return "Removes it from object storage and from history."
-        }
         let inSaveFolder = record.fileURL != nil && !record.fileIsTemporary
+        if record.isUploading || (record.objectLocation != nil && !objectKeys(for: record).isEmpty) {
+            return inSaveFolder ? "Removes it from object storage, your save folder and history."
+                                : "Removes it from object storage and from history."
+        }
         var text = inSaveFolder ? "Removes it from your save folder and from history." : "Removes it from history."
         if record.uploadedURL != nil {
             text += " The uploaded object stays in the bucket."
