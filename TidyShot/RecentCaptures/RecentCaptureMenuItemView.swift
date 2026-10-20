@@ -1,17 +1,23 @@
 import AppKit
 import SwiftUI
 
-/// One Recent Captures menu item: the SwiftUI `RecentCaptureRow` in an `NSHostingView`, plus an
-/// AppKit tracking area over the row for its highlight (a menu does not highlight custom views).
-/// Tracking areas in a menu item's view receive `mouseEntered` and `mouseExited` while the menu
-/// tracks; they never take clicks, which go to the row's buttons.
+/// One Recent Captures menu item: the SwiftUI `RecentCaptureRow` in an `NSHostingView`, plus two
+/// AppKit tracking areas, one over the row for its highlight (a menu does not highlight custom
+/// views) and one over the thumbnail for the preview. Tracking areas in a menu item's view
+/// receive `mouseEntered` and `mouseExited` while the menu tracks; they never take clicks, which
+/// go to the row's buttons.
 final class RecentCaptureMenuItemView: NSView {
     let recordID: UUID
     private let state = RecentCaptureRowState()
+    /// Called with true when the mouse enters the thumbnail and false when it leaves.
+    private let onThumbnailHover: (RecentCaptureMenuItemView, Bool) -> Void
     private var rowArea: NSTrackingArea?
+    private var thumbnailArea: NSTrackingArea?
 
-    init(record: CaptureRecord, now: Date, provider: ThumbnailProvider, actions: RecentCaptureActions) {
+    init(record: CaptureRecord, now: Date, provider: ThumbnailProvider, actions: RecentCaptureActions,
+         onThumbnailHover: @escaping (RecentCaptureMenuItemView, Bool) -> Void) {
         recordID = record.id
+        self.onThumbnailHover = onThumbnailHover
         super.init(frame: CGRect(origin: .zero, size: RecentCaptureRow.size))
         let name = RecentCaptureFormatting.name(for: record)
         let detail = RecentCaptureFormatting.detail(for: record, now: now)
@@ -33,18 +39,32 @@ final class RecentCaptureMenuItemView: NSView {
     }
 
     override func updateTrackingAreas() {
-        if let rowArea { removeTrackingArea(rowArea) }
-        let area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways], owner: self, userInfo: nil)
-        addTrackingArea(area)
-        rowArea = area
+        for area in [rowArea, thumbnailArea].compactMap({ $0 }) {
+            removeTrackingArea(area)
+        }
+        let options: NSTrackingArea.Options = [.mouseEnteredAndExited, .activeAlways]
+        let row = NSTrackingArea(rect: bounds, options: options, owner: self, userInfo: nil)
+        let thumbnail = NSTrackingArea(rect: RecentCaptureRow.thumbnailFrame, options: options, owner: self, userInfo: nil)
+        addTrackingArea(row)
+        addTrackingArea(thumbnail)
+        rowArea = row
+        thumbnailArea = thumbnail
         super.updateTrackingAreas()
     }
 
     override func mouseEntered(with event: NSEvent) {
-        state.isHighlighted = true
+        if event.trackingArea === thumbnailArea {
+            onThumbnailHover(self, true)
+        } else if event.trackingArea === rowArea {
+            state.isHighlighted = true
+        }
     }
 
     override func mouseExited(with event: NSEvent) {
-        state.isHighlighted = false
+        if event.trackingArea === thumbnailArea {
+            onThumbnailHover(self, false)
+        } else if event.trackingArea === rowArea {
+            state.isHighlighted = false
+        }
     }
 }

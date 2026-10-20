@@ -17,11 +17,14 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
     init(coordinator: AppCoordinator) {
         self.coordinator = coordinator
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        statusItem = item
         let menu = NSMenu(title: "TidyShot")
         self.menu = menu
-        // Row buttons close the status menu, which closes the submenu with it.
-        recentCaptures = RecentCapturesMenu(coordinator: coordinator, closeMenus: { [weak menu] in menu?.cancelTracking() })
+        // Row buttons close the status menu, which closes the submenu with it. The status item's
+        // frame on screen tells the preview which side of the submenu the status menu hangs on.
+        recentCaptures = RecentCapturesMenu(coordinator: coordinator, closeMenus: { [weak menu] in menu?.cancelTracking() },
+                                            statusItemFrame: { [weak item] in item?.button?.window?.frame })
         super.init()
         // Keeps the item where the user Command-drags it in the menu bar, across launches.
         statusItem.autosaveName = "TidyShot"
@@ -52,6 +55,12 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         guard menu === self.menu else { return }
         rebuild()
+    }
+
+    /// The submenu reports its own close as well; this covers the status menu closing first.
+    func menuDidClose(_ menu: NSMenu) {
+        guard menu === self.menu else { return }
+        recentCaptures.hidePreview()
     }
 
     private func rebuild() {

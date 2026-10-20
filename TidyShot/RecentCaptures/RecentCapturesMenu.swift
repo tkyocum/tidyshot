@@ -1,9 +1,10 @@
 import AppKit
 
-/// The Recent Captures submenu: the newest captures, up to 15, as custom rows. A row's buttons
-/// close the whole menu and act once menu tracking has ended, so the delete alert never runs
-/// inside the menu's tracking loop.
-final class RecentCapturesMenu: NSObject {
+/// The Recent Captures submenu: the newest captures, up to 15, as custom rows, and the full-size
+/// preview beside the submenu while a thumbnail is hovered. A row's buttons close the whole menu
+/// and act once menu tracking has ended, so the delete alert never runs inside the menu's
+/// tracking loop.
+final class RecentCapturesMenu: NSObject, NSMenuDelegate {
     static let limit = 15
 
     /// The status menu's "Recent Captures" item; its submenu is `menu`. Created once and added
@@ -13,11 +14,20 @@ final class RecentCapturesMenu: NSObject {
     private let coordinator: AppCoordinator
     /// Cancels tracking of the status menu, which closes this submenu too.
     private let closeMenus: () -> Void
+    private let previewPanel = PreviewPanel()
+    /// The record whose thumbnail is under the mouse. A preview that finishes loading after the
+    /// mouse moved on is dropped.
+    private var hoveredID: UUID?
+    /// Where the status item is on screen, read each time a preview is placed, so the preview
+    /// goes on the side of the submenu away from the status menu.
+    private let statusItemFrame: () -> CGRect?
 
-    init(coordinator: AppCoordinator, closeMenus: @escaping () -> Void) {
+    init(coordinator: AppCoordinator, closeMenus: @escaping () -> Void, statusItemFrame: @escaping () -> CGRect?) {
         self.coordinator = coordinator
         self.closeMenus = closeMenus
+        self.statusItemFrame = statusItemFrame
         super.init()
+        menu.delegate = self
         menu.autoenablesItems = false
         item.submenu = menu
     }
@@ -25,6 +35,7 @@ final class RecentCapturesMenu: NSObject {
     /// Fills the submenu from the history; called by `StatusMenuController` each time the status
     /// menu opens. Rows show their records as they were at that moment.
     func rebuild() {
+        hidePreview()
         menu.removeAllItems()
         let records = coordinator.history.records.prefix(Self.limit)
         guard !records.isEmpty else {
@@ -38,10 +49,51 @@ final class RecentCapturesMenu: NSObject {
         for record in records {
             let row = NSMenuItem()
             row.view = RecentCaptureMenuItemView(record: record, now: now, provider: coordinator.thumbnailProvider,
-                                                 actions: actions)
+                                                 actions: actions, onThumbnailHover: { [weak self] view, inside in
+                                                     self?.thumbnailHover(view, inside: inside)
+                                                 })
             menu.addItem(row)
         }
     }
+
+    /// Hides the preview; also called by `StatusMenuController` when the status menu closes.
+    func hidePreview() {
+        hoveredID = nil
+        previewPanel.hide()
+    }
+
+    // MARK: NSMenuDelegate
+
+    func menuDidClose(_ menu: NSMenu) {
+        hidePreview()
+    }
+
+    // MARK: Preview
+
+    /// Loads the preview (up to 1200 px, off the main thread, cached by `ThumbnailProvider`) and
+    /// shows it beside the submenu, level with the hovered row, on the side away from the status
+    /// menu. The row view's window is the submenu's window, so its frame says where the submenu is
+    /// on screen.
+    private func thumbnailHover(_ view: RecentCaptureMenuItemView, inside: Bool) {
+        guard inside else {
+            if hoveredID == view.recordID { hidePreview() }
+            return
+        }
+        guard let record = coordinator.history.record(id: view.recordID) else { return }
+        hoveredID = record.id
+        let provider = coordinator.thumbnailProvider
+        Task { [weak self, weak view] in
+            let image = await provider.preview(for: record)
+            guard let self, let view, let image, self.hoveredID == record.id,
+                  let menuWindow = view.window, let screen = menuWindow.screen ?? NSScreen.main else { return }
+            let rowFrame = menuWindow.convertToScreen(view.convert(view.bounds, to: nil))
+            let frame = PreviewPlacement.frame(imageSize: image.size, menuFrame: menuWindow.frame, rowFrame: rowFrame,
+                                               statusItemFrame: self.statusItemFrame(), visibleFrame: screen.visibleFrame)
+            self.previewPanel.show(image, frame: frame)
+        }
+    }
+
+    // MARK: Actions
 
     private func makeActions() -> RecentCaptureActions {
         RecentCaptureActions(
@@ -55,6 +107,7 @@ final class RecentCapturesMenu: NSObject {
     /// after menu tracking has ended (`perform(inModes:)` does not run in the menu's
     /// event-tracking mode).
     private func afterMenusClose(_ work: @escaping @MainActor (AppCoordinator) -> Void) {
+        hidePreview()
         closeMenus()
         let coordinator = coordinator
         RunLoop.main.perform(inModes: [.default]) {
