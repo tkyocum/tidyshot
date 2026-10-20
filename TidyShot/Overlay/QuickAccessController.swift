@@ -7,6 +7,8 @@ final class QuickAccessController {
         var copy: (UUID) -> Void
         var retry: (UUID) -> Void
         var reveal: (UUID) -> Void
+        /// Deletes the capture everywhere after one confirmation; see `AppCoordinator.deleteCapture`.
+        var delete: (UUID) -> Void
     }
 
     private var panel: QuickAccessPanel?
@@ -20,6 +22,7 @@ final class QuickAccessController {
         model.onCopy = { actions.copy(record.id) }
         model.onRetry = { actions.retry(record.id) }
         model.onReveal = { actions.reveal(record.id) }
+        model.onDelete = { actions.delete(record.id) }
         model.onClose = { [weak self] in self?.close() }
         self.model = model
         self.autoCloseSeconds = autoCloseSeconds
@@ -45,6 +48,12 @@ final class QuickAccessController {
             closeTask?.cancel()
             closeTask = nil
         }
+    }
+
+    /// Closes the panel if it shows `recordID` (the capture was deleted).
+    func close(recordID: UUID) {
+        guard model?.record.id == recordID else { return }
+        close()
     }
 
     func close() {

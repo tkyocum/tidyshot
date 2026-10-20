@@ -4,6 +4,9 @@ import Observation
 enum AfterCaptureAction: String, CaseIterable, Identifiable {
     /// Save the file, upload it, and put the URL on the clipboard when the upload finishes.
     case upload
+    /// Upload from a temporary file inside the app container, copy the URL, and delete the file
+    /// once the upload succeeds. No save folder is needed; the gallery keeps a thumbnail.
+    case uploadOnly
     /// Save the file and copy the image (Phase 1 behaviour).
     case save
 
@@ -12,9 +15,12 @@ enum AfterCaptureAction: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .upload: "Upload and copy URL"
+        case .uploadOnly: "Upload only, keep no local file"
         case .save: "Save and copy image"
         }
     }
+
+    var uploads: Bool { self != .save }
 }
 
 /// User preferences, persisted in UserDefaults. Credentials are never stored here.

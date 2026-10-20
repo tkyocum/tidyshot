@@ -11,6 +11,7 @@ final class QuickAccessModel {
     @ObservationIgnored var onCopy: () -> Void = {}
     @ObservationIgnored var onRetry: () -> Void = {}
     @ObservationIgnored var onReveal: () -> Void = {}
+    @ObservationIgnored var onDelete: () -> Void = {}
     @ObservationIgnored var onClose: () -> Void = {}
 
     init(record: CaptureRecord, thumbnail: NSImage?) {

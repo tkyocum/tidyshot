@@ -67,6 +67,22 @@ final class SaveLocation {
         }
     }
 
+    /// Deletes a file inside the save folder, holding security-scoped access. A file that is
+    /// already gone is not an error; any other failure throws, so Delete keeps the record.
+    func remove(at fileURL: URL) throws {
+        guard let currentURL else {
+            throw CocoaError(.fileWriteNoPermission,
+                             userInfo: [NSLocalizedDescriptionKey: "No save folder is set, so TidyShot cannot reach this file."])
+        }
+        try withAccess(to: currentURL) {
+            do {
+                try FileManager.default.removeItem(at: fileURL)
+            } catch let error as CocoaError where error.code == .fileNoSuchFile {
+                return
+            }
+        }
+    }
+
     private func withAccess<T>(to folder: URL, _ body: () throws -> T) rethrows -> T {
         let accessing = folder.startAccessingSecurityScopedResource()
         defer { if accessing { folder.stopAccessingSecurityScopedResource() } }

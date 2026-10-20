@@ -18,6 +18,14 @@ enum Pasteboard {
         pasteboard.writeObjects([item])
     }
 
+    /// Replaces the pasteboard contents with a file reference, so a paste in Finder copies the
+    /// file and a paste in Slack or Mail attaches it.
+    static func copy(fileURL: URL) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.writeObjects([fileURL as NSURL])
+    }
+
     /// Replaces the pasteboard contents with `url`, as plain text and as a URL.
     static func copy(url: URL) {
         let item = NSPasteboardItem()

@@ -180,6 +180,22 @@ struct S3DestinationTests {
         #expect(stub.requests.map(\.httpMethod) == ["DELETE"])
     }
 
+    /// Delete builds its destination from the record's stored location. A dotted bucket is always
+    /// addressed path-style, because a TLS wildcard cannot cover `snap.tky.io.s3.amazonaws.com`.
+    @Test func deleteForDottedBucketUsesPathStyle() async throws {
+        var dotted = config
+        dotted.bucket = "snap.tky.io"
+        let location = ObjectLocation(config: dotted)
+        #expect(location.usePathStyle)
+        let (session, stub) = StubSession.make { _ in (204, Data()) }
+        try await destination(location.config, session: session).delete(key: "aB3dE9.png")
+
+        let request = try #require(stub.requests.first)
+        #expect(request.httpMethod == "DELETE")
+        #expect(request.url?.absoluteString == "https://s3.us-east-1.amazonaws.com/snap.tky.io/aB3dE9.png")
+        #expect(request.url?.path() == "/snap.tky.io/aB3dE9.png")
+    }
+
     @Test func errorBodyIsSummarisedFromS3XML() async throws {
         let xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Error><Code>AccessDenied</Code><Message>Access Denied</Message><RequestId>x</RequestId></Error>"
         let (session, _) = StubSession.make { _ in (403, Data(xml.utf8)) }

@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Thumbnail, upload status, and a copy or retry button. Hosted in `QuickAccessPanel`.
+/// Thumbnail, upload status, and copy, retry, delete and close buttons. Hosted in `QuickAccessPanel`.
 struct QuickAccessView: View {
     static let size = CGSize(width: 340, height: 104)
 
@@ -13,14 +13,24 @@ struct QuickAccessView: View {
                 status
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            Button {
-                model.onClose()
-            } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .foregroundStyle(.secondary)
+            VStack(spacing: 10) {
+                Button {
+                    model.onClose()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Close")
+                Button {
+                    model.onDelete()
+                } label: {
+                    Image(systemName: "trash")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help(model.record.isUploading ? "Cancel the upload and delete this capture" : "Delete this capture")
             }
-            .buttonStyle(.plain)
-            .help("Close")
         }
         .padding(12)
         .frame(width: Self.size.width, height: Self.size.height)
@@ -31,7 +41,7 @@ struct QuickAccessView: View {
 
     @ViewBuilder
     private var thumbnail: some View {
-        Group {
+        let image = Group {
             if let image = model.thumbnail {
                 Image(nsImage: image)
                     .resizable()
@@ -45,8 +55,18 @@ struct QuickAccessView: View {
         .frame(width: 96, height: 72)
         .background(Color.black.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
         .clipShape(RoundedRectangle(cornerRadius: 8))
-        .onTapGesture { model.onReveal() }
-        .help("Reveal in Finder")
+        if model.record.hasLocalFile {
+            image
+                .onTapGesture { model.onReveal() }
+                .help("Reveal in Finder")
+        } else {
+            image
+        }
+    }
+
+    /// The file name, or what stands in for it for an upload-only capture.
+    private var fileLabel: String {
+        model.record.fileURL?.lastPathComponent ?? "Upload only, no local file"
     }
 
     @ViewBuilder
@@ -59,7 +79,7 @@ struct QuickAccessView: View {
                     .controlSize(.small)
                 Text("Uploading…")
             }
-            Text(model.record.fileURL?.lastPathComponent ?? "Upload only")
+            Text(fileLabel)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
@@ -86,7 +106,7 @@ struct QuickAccessView: View {
         case .none:
             Label("Saved", systemImage: "checkmark.circle.fill")
                 .foregroundStyle(.green)
-            Text(model.record.fileURL?.lastPathComponent ?? "Upload only")
+            Text(fileLabel)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
