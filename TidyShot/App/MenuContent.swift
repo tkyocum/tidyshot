@@ -24,7 +24,14 @@ struct MenuContent: View {
         }
         .disabled(coordinator.isCapturing)
         Divider()
-        historyMenu
+        Button("Recent Captures…") {
+            coordinator.showGallery()
+        }
+        if !coordinator.history.failedRecords.isEmpty {
+            Button("Retry Failed Uploads") {
+                coordinator.retryFailedUploads()
+            }
+        }
         Button("Reveal Last Capture") {
             coordinator.revealLastCapture()
         }
@@ -38,45 +45,6 @@ struct MenuContent: View {
             NSApplication.shared.terminate(nil)
         }
         .keyboardShortcut("q")
-    }
-
-    /// The ten newest captures. Uploaded: copies the URL. Failed: retries. Otherwise: reveals the file.
-    /// Always enabled; when empty it shows a disabled "No captures yet" row.
-    @ViewBuilder
-    private var historyMenu: some View {
-        let recent = Array(coordinator.history.records.prefix(10))
-        Menu("Recent Captures") {
-            if recent.isEmpty {
-                Button("No captures yet") {}
-                    .disabled(true)
-            }
-            ForEach(recent) { record in
-                Button(Self.title(for: record)) {
-                    coordinator.historyItemSelected(record.id)
-                }
-            }
-            if !coordinator.history.failedRecords.isEmpty {
-                Divider()
-                Button("Retry Failed Uploads") {
-                    coordinator.retryFailedUploads()
-                }
-            }
-        }
-    }
-
-    /// For example `Uploaded  14:03:22  aSIS7x.png`. Plain words, no emoji, so VoiceOver reads
-    /// the status and the menu looks the same in every font.
-    static func title(for record: CaptureRecord) -> String {
-        let time = record.timestamp.formatted(date: .omitted, time: .standard)
-        let status: String
-        switch record.uploadState {
-        case .none: status = "Saved"
-        case .uploading: status = "Uploading"
-        case .uploaded: status = "Uploaded"
-        case .failed: status = "Failed"
-        }
-        let name = record.uploadedURL?.lastPathComponent ?? record.fileURL?.lastPathComponent ?? "Upload only"
-        return "\(status)  \(time)  \(name)"
     }
 
     private func menuTitle(_ title: String, _ name: KeyboardShortcuts.Name) -> String {

@@ -35,6 +35,16 @@ final class AppCoordinator {
     private let permissionWindow = PermissionWindowController()
     private let overlay = QuickAccessController()
     @ObservationIgnored private lazy var selector = SelectionController(engine: engine)
+    @ObservationIgnored private lazy var thumbnailProvider = ThumbnailProvider(store: thumbnails, history: history) { [unowned self] record in
+        try self.readLocalFile(of: record)
+    }
+    @ObservationIgnored private lazy var gallery = GalleryWindowController(
+        model: GalleryModel(history: history, provider: thumbnailProvider),
+        actions: GalleryActions(
+            copy: { [weak self] id in self?.copyLinkOrFile(recordID: id) },
+            retry: { [weak self] id in self?.retryUpload(recordID: id) },
+            reveal: { [weak self] id in self?.reveal(recordID: id) },
+            delete: { [weak self] id in Task { await self?.deleteCapture(recordID: id) } }))
     /// The queue new uploads go to, built from the destination of the first upload after launch
     /// or after the Upload tab was saved.
     @ObservationIgnored private var queue: UploadLane?
@@ -77,6 +87,11 @@ final class AppCoordinator {
 
     func showPermissionWindow() {
         permissionWindow.show()
+    }
+
+    /// Opens (or brings forward) the Recent Captures gallery.
+    func showGallery() {
+        gallery.show()
     }
 
     private func registerShortcuts() {
@@ -448,17 +463,6 @@ final class AppCoordinator {
         NSWorkspace.shared.activateFileViewerSelecting([fileURL])
     }
 
-    /// Menu action for a history row: copy the URL, retry a failed upload, or reveal the file.
-    /// Replaced by the gallery in the next task.
-    func historyItemSelected(_ recordID: UUID) {
-        guard let record = history.record(id: recordID) else { return }
-        switch record.uploadState {
-        case .uploaded: copyLinkOrFile(recordID: recordID)
-        case .failed: retryUpload(recordID: recordID)
-        case .none, .uploading: reveal(recordID: recordID)
-        }
-    }
-
     // MARK: Delete
 
     /// Shared by the overlay and the gallery. One confirmation with three answers. Delete stops
@@ -566,6 +570,7 @@ final class AppCoordinator {
         }
         thumbnails.remove(fileName: defaultName)
         history.remove(id: id)
+        thumbnailProvider.forget(id)
         overlay.close(recordID: id)
     }
 
