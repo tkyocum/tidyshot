@@ -4,7 +4,7 @@
 
 **Goal:** Replace the text "Recent Captures" submenu with a thumbnail gallery that copies, retries and deletes captures (object in the bucket included), add a Delete action to the Quick Access overlay that cancels an in-flight upload first, add an "Upload only, keep no local file" after-capture action, turn the object key into a template that shares one token engine with the file-name template, and add a Forget Credentials button.
 
-**Architecture:** A pure `TemplateExpander` parses `{token}` templates and expands them in a file-name or an object-key style; `FileNamer` and a rewritten `ObjectKeyNamer` both use it, and `S3DestinationConfig` migrates its Phase 2 prefix and random length into a `keyTemplate` when it decodes. `CaptureRecord` gains an optional thumbnail file name, an optional local file, a temporary-file flag and the capture counter, and decodes Phase 2 history files with defaults. `ThumbnailMaker` (CoreGraphics at capture time, ImageIO for files on disk) writes 320 px PNGs into a `ThumbnailStore` next to `history.json`; a `PendingFileStore` next to it holds upload-only PNGs until they are uploaded. `UploadQueue` gains `cancel(recordID:)` and a `.cancelled` terminal event. `AppCoordinator.deleteCapture` is the one delete path (cancel, DELETE Object, local file, thumbnail, record) used by the overlay and by a new `GalleryWindowController`, which hosts a SwiftUI `GalleryView` (a `LazyVGrid` plus a preview pane) over an `@Observable GalleryModel` and a `ThumbnailProvider` that generates thumbnails lazily for records from before this phase.
+**Architecture:** A pure `TemplateExpander` parses `{token}` templates and expands them in a file-name or an object-key style; `FileNamer` and a rewritten `ObjectKeyNamer` both use it, and `S3DestinationConfig` migrates its Phase 2 prefix and random length into a `keyTemplate` when it decodes. `CaptureRecord` gains an optional thumbnail file name, an optional local file, a temporary-file flag, the `ObjectLocation` (endpoint, region, bucket, path style) its object was written to, and a pending object key left by a cancelled upload, and decodes Phase 2 history files with defaults. Object keys are named when an upload starts, not at capture time. `ThumbnailMaker` (CoreGraphics at capture time on a detached task, ImageIO for PNG bytes) writes 320 px PNGs into a `ThumbnailStore` next to `history.json`; a `PendingFileStore` next to it holds upload-only PNGs until they are uploaded. `UploadQueue` gains `cancel(recordID:)` and a `.cancelled(id:reservedKey:)` terminal event. `AppCoordinator.deleteCapture` is the one delete path (cancel on the current or a draining queue, DELETE Object at the record's stored location, local file, thumbnail, record; or "Remove from History Only") used by the overlay and by a new `GalleryWindowController`, which hosts a SwiftUI `GalleryView` (a `LazyVGrid` plus a preview pane) over an `@Observable GalleryModel` and a `ThumbnailProvider` whose async methods, called from `.task` modifiers, generate thumbnails lazily for records from before this phase.
 
 **Tech Stack:** Swift 6 language mode with default `MainActor` isolation, SwiftUI (`LazyVGrid`, `ContentUnavailableView`, `.contextMenu`, `.onHover`), AppKit (`NSWindow` subclass with `NSHostingController`, `NSAlert`, file URLs on `NSPasteboard`), CoreGraphics and ImageIO (`CGImageSourceCreateThumbnailAtIndex`), `gethostname(2)`, Swift Testing, XcodeGen 2.46.
 
@@ -22,17 +22,20 @@ Expected: `Switched to a new branch 'phase-3-gallery'` then `PHASE2_PRESENT`.
 
 - Minimum macOS `26.0`. Xcode 27.1, macOS 27.0 SDK. Everything from the Phase 0, 1 and 2 constraints still applies.
 - App Sandbox on, no new entitlements. Thumbnails and upload-only files live inside the container next to `history.json`: `~/Library/Application Support/TidyShot/thumbnails/<record id>.png` and `~/Library/Application Support/TidyShot/pending/<record id>.png`. Files in the user's save folder are still reached only through the security-scoped bookmark (`SaveLocation.read(contentsOf:)` and the new `SaveLocation.remove(at:)`).
-- Swift 6 language mode, `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`, `SWIFT_APPROACHABLE_CONCURRENCY = YES`. Everything the upload actor or a detached task touches is `nonisolated` and `Sendable`: `TemplateContext`, `TemplateExpander`, `HostName`, `ObjectKeyNamer`, `ThumbnailMaker`, `ThumbnailStore`, `PendingFileStore`, `CaptureDeletion`, and `ImageEncoder` (which becomes `nonisolated`).
-- One token set for file names and object keys: `{date}` (yyyy-MM-dd), `{year}`, `{month}`, `{day}`, `{time}`, `{datetime}`, `{hostname}`, `{app}`, `{counter}`, `{random}` (6 characters) and `{random:N}` (N clamped to 1...64). File-name style keeps Phase 1 output: `{time}` is `HH.mm.ss`, `{datetime}` is `yyyy-MM-dd HH.mm.ss`. Object-key style: `{time}` is `HH-mm-ss`, `{datetime}` is `yyyy-MM-dd_HH-mm-ss`, and every token value is reduced to `[A-Za-z0-9._-]` (`Google Chrome` becomes `Google-Chrome`). Unknown or unterminated `{...}` text stays literal.
-- Object key template: default `{random:6}`, so a fresh install produces `aSIS7x.png` exactly as Phase 2 did. Literal text between tokens is limited to `[A-Za-z0-9._-/]`; `/` makes folders; leading, trailing and doubled slashes are folded; a folder that is only dots is rejected; an unknown token is rejected; `.png` is appended by the namer. HEAD-before-PUT stays, 5 attempts. The Upload tab shows a warning when the template has neither `{random}` nor `{counter}`. A stored Phase 2 `S3DestinationConfig` (keys `keyPrefix` and `keyLength`) decodes to `<prefix>/{random:<length>}`; the Phase 2 keys are never written again.
-- `{hostname}` comes from `gethostname(2)`: lowercased, a trailing `.local` removed, normalised to `[a-z0-9.-]`, `mac` when empty (`Tims-MacBook-Pro.local` becomes `tims-macbook-pro`). Never `Host`/`NSHost` (marked `API_TO_BE_DEPRECATED` in the macOS 27 SDK) and never `ProcessInfo.processInfo.hostName` (can block on DNS).
-- Thumbnails are PNG, longest side 320 px, never upscaled, alpha kept (window captures have transparent rounded corners). Generated at capture time from the `CGImage`; for a record without one, the gallery generates it from the local file the first time the record is shown and updates the record; a record with neither shows a placeholder. The gallery's hover preview is decoded from the local file at up to 1200 px on a detached task and falls back to the thumbnail.
+- Swift 6 language mode, `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`, `SWIFT_APPROACHABLE_CONCURRENCY = YES`. Everything the upload actor or a detached task touches is `nonisolated` and `Sendable`: `TemplateContext`, `TemplateExpander`, `HostName`, `ObjectKeyNamer`, `ObjectLocation`, `ThumbnailMaker`, `ThumbnailStore`, `PendingFileStore`, `CaptureDeletion`, and `ImageEncoder` (which becomes `nonisolated`). No file I/O or image decoding runs in a SwiftUI `body`: the gallery loads thumbnails and previews from `.task` modifiers, and capture-time thumbnails are made on a detached task.
+- One token set for file names and object keys: `{date}` (yyyy-MM-dd), `{year}`, `{month}`, `{day}`, `{time}`, `{datetime}`, `{hostname}`, `{app}`, `{counter}`, `{random}` (6 characters) and `{random:N}` (any number of digits, N clamped to 1...64 as in Phase 1). File-name style keeps Phase 1 output: `{time}` is `HH.mm.ss`, `{datetime}` is `yyyy-MM-dd HH.mm.ss`. Object-key style: `{time}` is `HH-mm-ss`, `{datetime}` is `yyyy-MM-dd_HH-mm-ss`, and every token value is reduced to `[A-Za-z0-9._-]` (`Google Chrome` becomes `Google-Chrome`). Unknown or unterminated `{...}` text stays literal.
+- Object key template: default `{random:6}`, so a fresh install produces `aSIS7x.png` exactly as Phase 2 did. Literal text between tokens is limited to `[A-Za-z0-9._-/]`; `/` makes folders; leading, trailing and doubled slashes are folded; a folder that is only dots is rejected; an unknown token is rejected; `.png` is appended by the namer. HEAD-before-PUT stays, 5 attempts. The Upload tab shows a warning when the template has no `{random}` or `{counter}`: captures can then produce the same key, and only the HEAD check keeps an upload from overwriting an earlier object. A stored Phase 2 `S3DestinationConfig` (keys `keyPrefix` and `keyLength`) decodes to `<prefix>/{random:<length>}` with the prefix sanitised into the template's literal set (other characters become `-`, slashes folded, dot-only folders dropped), so the migrated template always validates; the Phase 2 keys are never written again.
+- Object keys are named when an upload starts, never at capture time: `AppCoordinator.startUpload` builds the `TemplateContext` from the record's timestamp and app plus a `{counter}` drawn with `settings.nextCounter()` only when the key template contains `{counter}`. A capture made with no destination therefore never bakes in counter 0, and every retry gets a fresh key (its date folder stays the capture's own). The file name keeps its own counter, drawn when the file is written, exactly as in Phase 1.
+- `{hostname}` comes from `gethostname(2)`: lowercased, a trailing `.local` dropped, then reduced to `[a-z0-9.-]` only: `_` and every other character become `-`, runs of `.` and `-` collapse to one character, `.` and `-` are trimmed from both ends, and an empty result becomes `mac` (`Tims-MacBook-Pro.local` becomes `tims-macbook-pro`, `build_host` becomes `build-host`). Never `Host`/`NSHost` (marked `API_TO_BE_DEPRECATED` in the macOS 27 SDK) and never `ProcessInfo.processInfo.hostName` (can block on DNS).
+- Thumbnails are PNG, longest side 320 px, never upscaled, alpha kept (window captures have transparent rounded corners). Generated from the `CGImage` at capture time on a detached task over the `nonisolated` `ThumbnailMaker`; the record gets its `thumbnailFileName` when that finishes. For a record without one, the gallery cell asks the `ThumbnailProvider` from `.task`; it generates the thumbnail from the local file off the main thread and updates the record after that completes; a record whose thumbnail cannot be made is tried once per launch and shows a placeholder. The gallery's hover preview is decoded from the local file at up to 1200 px on a detached task and falls back to the thumbnail.
 - Upload-only mode writes `pending/<record id>.png`, never prompts for a save folder, does not set `lastCaptureURL`, deletes the file on `.uploaded` (the record then has `fileURL == nil` and `fileIsTemporary == false`), and keeps it on failure for retry. Without a configured destination the capture is still written there, recorded as failed with "No upload destination is configured.", and the image goes on the clipboard.
-- Delete is one path, `AppCoordinator.deleteCapture(recordID:)`, for the overlay and the gallery: one `NSAlert` confirmation whose text names what will be removed; then cancel an in-flight upload, `DELETE` every object key that may hold the capture, remove the local file (save folder through the bookmark, or the pending folder), remove the thumbnail, remove the record, close the overlay if it shows the record. A failed `DELETE` keeps the record and posts a "Not deleted" notification so it can be tried again. A local file that is already gone is not an error.
-- `UploadQueue.cancel(recordID:) async -> CancelResult` returns `.notFound` or `.stopped(reservedKey:)` and returns only after the job's single terminal event, `.cancelled(id:)`, has been delivered; `.failed` never follows `.cancelled`; later jobs continue.
-- Retention pruning now also deletes the thumbnails and pending files of pruned records through `HistoryStore.didPrune`; files in the save folder are never touched.
-- Tests use Swift Testing, run with `xcodebuild test`. Baseline is `Test run with 105 tests in 17 suites passed`; the plan ends at `153 tests in 24 suites`. Phase 1 and 2 tests stay green throughout (FileNamerTests gains a `hostname:` argument in its helper and one test; ObjectKeyNamerTests is rewritten for templates).
-- No GPL-licensed code may be read or copied. Commit after every task with a conventional commit message. Never include a Claude Code session URL in a commit or PR. Do not push or open a PR until the last step of Task 8.
+- Records remember where their object lives: `CaptureRecord.objectLocation` (endpoint, region, bucket, path style actually used) is set from the queue that uploaded the object or reserved a key for it, and `pendingObjectKey` holds the key a cancelled upload had reserved. A Phase 2 record has no location.
+- Delete is one path, `AppCoordinator.deleteCapture(recordID:)`, for the overlay and the gallery, guarded by `deletingIDs` so a second click shows no second alert. One `NSAlert` whose text names what will be removed, with three buttons: "Delete", "Remove from History Only" and "Cancel". Delete cancels an in-flight upload (on the current queue or any draining queue), then `DELETE`s the record's `uploadedKey` and `pendingObjectKey` with an `S3Destination` built from the record's `objectLocation` plus the current credentials (never from the current Upload settings; no location means nothing is deleted from storage), skipping a key that another record not being deleted shares at the same location ("Not deleted from storage" notification, the record is still removed), then removes the local file (save folder through the bookmark, or the pending folder), the thumbnail and the record, and closes the overlay if it shows the record. A failed `DELETE` or a local file that cannot be removed keeps the record and posts a "Not deleted" notification with the reason; a local file that is already gone is not an error. "Remove from History Only" drops the record and its thumbnail (and a temporary file in `pending`, which is TidyShot's own copy) without touching storage or a file in the save folder, so a record whose object can no longer be deleted is never stuck.
+- `UploadQueue.cancel(recordID:) async -> CancelResult` returns `.notFound` or `.stopped(reservedKey:)` and returns only after the job's single terminal event, `.cancelled(id:reservedKey:)`, has been delivered; `.failed` never follows `.cancelled`; later jobs continue. The coordinator stores that reserved key in the record as `pendingObjectKey`.
+- `AppCoordinator.destinationDidChange()` never strands an in-flight job: the replaced queue moves to `drainingQueues` until it reports idle, its jobs finish against their original destination (their records store that location), and Delete can still cancel them there.
+- Retention pruning now also deletes the thumbnails and pending files of pruned records through `HistoryStore.didPrune`; files in the save folder are never touched. A record whose only copy is in `pending/` (an upload-only capture that has not been uploaded) is never pruned.
+- Tests use Swift Testing, run with `xcodebuild test`. Baseline is `Test run with 105 tests in 17 suites passed`; the plan ends at `157 tests in 24 suites`. Phase 1 and 2 tests stay green throughout (FileNamerTests gains a `hostname:` argument in its helper and one test; ObjectKeyNamerTests is rewritten for templates).
+- No GPL-licensed code may be read or copied. Commit after every task with a conventional commit message. Never include a Claude Code session URL in a commit or PR. This plan never pushes or opens a PR: Task 8 stops after its commit, and the controller pushes and opens the PR after the whole-branch review.
 
 ## Build and test commands used throughout
 
@@ -69,14 +72,14 @@ TidyShot/
     MenuContent.swift                        modified (Task 2), replaced (Task 7): "Recent Captures…" opens the gallery
   Gallery/                                   new
     ThumbnailProvider.swift                  thumbnails and previews for the gallery, lazy generation for old records
-    GalleryModel.swift                       @Observable: records, hovered id, preview image
+    GalleryModel.swift                       @Observable: records, hovered id, preview image for the previewed record
     GalleryView.swift                        GalleryActions, GalleryView, GalleryCell, GalleryStatusBadge, GalleryMenuItems, GalleryPreviewPane
     GalleryWindowController.swift            GalleryWindowController, GalleryWindow (Escape and ⌘W close)
   History/
-    CaptureRecord.swift                      replaced: optional fileURL, fileIsTemporary, thumbnailFileName, counter, migration decode
-    HistoryStore.swift                       modified: didPrune hook
+    CaptureRecord.swift                      replaced: optional fileURL, fileIsTemporary, thumbnailFileName, objectLocation, pendingObjectKey, migration decode
+    HistoryStore.swift                       modified: didPrune hook, pending-only records never pruned
     ThumbnailStore.swift                     new: thumbnails/ folder next to history.json
-    CaptureDeletion.swift                    new: which keys to DELETE, confirmation text (pure)
+    CaptureDeletion.swift                    new: which keys to DELETE, keys shared with other records, confirmation text (pure)
   Output/
     TemplateExpander.swift                   new: TemplateContext, TemplateExpander (pure)
     HostName.swift                           new: gethostname wrapper
@@ -94,10 +97,12 @@ TidyShot/
     AppSettings.swift                        modified: AfterCaptureAction.uploadOnly
     GeneralSettingsView.swift                modified: upload-only caption
     UploadSettingsView.swift                 replaced (Task 4): key template field, warning; modified (Task 8): Forget Credentials
+    SettingsView.swift                       modified only if the Upload tab scrolls (Task 4 or 8): 600 by 800
   Upload/
     ObjectKeyNamer.swift                     replaced: template based
+    ObjectLocation.swift                     new (Task 2): endpoint, region, bucket and path style an object was written to
     S3DestinationConfig.swift                replaced: keyTemplate with migration of keyPrefix and keyLength
-    Destination.swift                        modified: UploadJob.naming, UploadEvent.cancelled
+    Destination.swift                        modified: UploadJob.naming, UploadEvent.cancelled(id:reservedKey:)
     UploadQueue.swift                        modified (Task 4), replaced (Task 5): cancel(recordID:)
     ConnectionTester.swift                   modified: probe goes into the template's folder
 TidyShotTests/
@@ -113,6 +118,7 @@ TidyShotTests/
   HistoryStoreTests.swift                    modified
   UploadQueueTests.swift                     modified
   S3DestinationConfigTests.swift             modified
+  S3DestinationTests.swift                   modified: dotted-bucket DELETE
   ConnectionTesterTests.swift                modified
   AppSettingsTests.swift                     modified
 docs/testing/phase-3-manual-checklist.md     new
@@ -126,10 +132,13 @@ README.md                                    modified
 - **Click behaviour:** click copies the public URL for an uploaded capture, and puts the local file on the pasteboard (as a file URL, so Finder pastes a copy and Slack attaches it) for one that was never uploaded.
 - **Thumbnail format:** PNG. A JPEG would turn the transparent rounded corners of window captures black.
 - **Two thumbnail paths:** at capture time the `CGImage` is already decoded, so `ThumbnailMaker.thumbnail(from: CGImage)` draws into a `CGContext` (exact size from `targetSize(for:maxSide:)`); for files on disk `CGImageSourceCreateThumbnailAtIndex` with `kCGImageSourceThumbnailMaxPixelSize` is used, which never upscales. Both give `320 × 200` for a `640 × 400` source (verified).
-- **Capture counter on the record:** `{counter}` is drawn once per capture, used for the file name and the object key, and stored in `CaptureRecord.counter`, so a retry expands to the same value. A retry also expands `{date}` from the record's timestamp, not the retry time, so folders stay stable.
+- **Keys are named when the upload starts:** the object key's `TemplateContext` is built in `startUpload` (first upload and every retry), with `{counter}` drawn then and only when the key template uses it. Nothing about the key is stored at capture time, so `CaptureRecord` has no counter: an upload-only capture taken before a destination existed does not carry counter 0 into its later upload, and a retry gets a fresh key. `{date}` and `{app}` still come from the record, so a retried upload lands in the capture's own date folder. The file name's counter is drawn when the file is written, as in Phase 1, so a template using `{counter}` in both places draws two values.
+- **Where an object lives:** the record stores an `ObjectLocation` (normalised endpoint, region, bucket, and the path style actually used, so a dotted bucket stays path-style) taken from the queue that uploaded the object or reserved its key. Delete signs its `DELETE` for that location with the current credentials, so editing the Upload tab never sends a delete to the wrong bucket. A Phase 2 record has no location, its object is left alone, and the confirmation says so.
 - **Connection test probe:** goes into the folder the key template produces right now (for `shots/{year}/{month}/{random}` that is `shots/2026/10/tidyshot-probe-XXXXXXXX.txt`), so a bucket policy scoped to a folder is tested too.
-- **Cancellation:** `UploadQueue` runs each job in its own `Task` so `cancel` can cancel it; URLSession's async methods and `Task.sleep` throw on cancellation, the catch block emits `.cancelled` when the id is in `cancelledIDs`, and `cancel` awaits the task so the event has been delivered before it returns. The reserved key is reported because the PUT may have completed server-side in the same instant; the delete flow deletes it (a 404 is a success for `S3Destination.delete`).
-- **Pruning cleans up:** `HistoryStore.didPrune` reports the records dropped by retention; the coordinator removes their thumbnails and pending files. There is no startup sweep of the folders, because an empty history (for example after a corrupt file was set aside) would then delete pending captures that were never uploaded.
+- **Cancellation:** `UploadQueue` runs each job in its own `Task` so `cancel` can cancel it; URLSession's async methods and `Task.sleep` throw on cancellation, the catch block emits `.cancelled(id:reservedKey:)` when the id is in `cancelledIDs`, and `cancel` awaits the task so the event has been delivered before it returns. The reserved key is reported because the PUT may have completed server-side in the same instant; the coordinator stores it as the record's `pendingObjectKey`, so Delete removes it even if a first `DELETE` failed (a 404 is a success for `S3Destination.delete`).
+- **Draining queues:** saving or forgetting credentials replaces the upload queue, but the old one is kept in `drainingQueues` until it reports idle. Its jobs finish against the destination they started with, which is correct because their records store that location, and Delete tries `cancel(recordID:)` on every queue.
+- **Pruning cleans up:** `HistoryStore.didPrune` reports the records dropped by retention; the coordinator removes their thumbnails and pending files. A record whose only copy is in `pending/` is never pruned. There is no startup sweep of the folders, because an empty history (for example after a corrupt file was set aside) would then delete pending captures that were never uploaded; the stores therefore have no orphan sweep at all.
+- **Gallery loading:** cells load their thumbnail in `.task(id:)` (keyed by record id and thumbnail file name, so a capture whose thumbnail lands after the cell appeared reloads it); the provider caches what it loads, remembers records whose thumbnail cannot be made (tried once), and discards a load for a record that `forget` was called on while it ran. The preview pane shows an image only while it belongs to the previewed record, so a deleted capture's preview disappears at once.
 
 ---
 
@@ -182,6 +191,8 @@ struct TemplateExpanderTests {
         #expect(TemplateExpander.parse("{random}") == [.token(.random(length: 6))])
         #expect(TemplateExpander.parse("{random:0}") == [.token(.random(length: 1))])
         #expect(TemplateExpander.parse("{random:999}") == [.token(.random(length: 64))])
+        #expect(TemplateExpander.parse("{random:1000}") == [.token(.random(length: 64))])
+        #expect(TemplateExpander.parse("{random:99999999999999999999999}") == [.token(.random(length: 64))])
         #expect(TemplateExpander.parse("{random:x}") == [.literal("{random:x}")])
     }
 
@@ -231,8 +242,12 @@ struct TemplateExpanderTests {
         #expect(TemplateExpander.normalizeHostname("Tims-MacBook-Pro.local") == "tims-macbook-pro")
         #expect(TemplateExpander.normalizeHostname("miffle.alligator-in.ts.net") == "miffle.alligator-in.ts.net")
         #expect(TemplateExpander.normalizeHostname("Tim's Mac\n") == "tim-s-mac")
+        #expect(TemplateExpander.normalizeHostname("build_host_01") == "build-host-01")
+        #expect(TemplateExpander.normalizeHostname("-a__b--c..d.-e-") == "a-b-c.d.e")
+        #expect(TemplateExpander.normalizeHostname("Café.local") == "caf")
         #expect(TemplateExpander.normalizeHostname("") == "mac")
         #expect(TemplateExpander.normalizeHostname(".local") == "mac")
+        #expect(TemplateExpander.normalizeHostname("__") == "mac")
     }
 
     /// Runs inside the sandboxed test host, so this also proves `gethostname` works there.
@@ -289,8 +304,9 @@ Expected: compile errors including `cannot find 'TemplateExpander' in scope` and
 ```swift
 import Foundation
 
-/// The values a naming template is expanded against. Built once per capture and stored with the
-/// record (timestamp, app name, counter), so a retried upload names its object the same way.
+/// The values a naming template is expanded against: a timestamp, the app name, a counter and
+/// this Mac's host name. `FileNamer` builds one when it writes the file; object keys get one
+/// when their upload starts (from the record's timestamp and app, with a freshly drawn counter).
 nonisolated struct TemplateContext: Sendable, Equatable {
     var date: Date
     var appName: String?
@@ -338,7 +354,10 @@ nonisolated struct TemplateExpander: Sendable {
             case "counter": self = .counter
             case "random": self = .random(length: TemplateExpander.defaultRandomLength)
             default:
-                guard let match = name.wholeMatch(of: /random:(\d{1,3})/), let requested = Int(match.output.1) else { return nil }
+                guard let match = name.wholeMatch(of: /random:(\d+)/) else { return nil }
+                // Any number of digits, clamped as Phase 1's FileNamer did; a number too large for
+                // `Int` is simply the maximum.
+                let requested = Int(match.output.1) ?? TemplateExpander.randomLengthRange.upperBound
                 self = .random(length: min(max(requested, TemplateExpander.randomLengthRange.lowerBound),
                                            TemplateExpander.randomLengthRange.upperBound))
             }
@@ -400,7 +419,8 @@ nonisolated struct TemplateExpander: Sendable {
     }
 
     /// True when `template` contains `{random}`, `{random:N}` or `{counter}`, the tokens that make
-    /// two captures in the same second produce different names.
+    /// two captures produce different names. Without one, any two captures with the same date,
+    /// app and host can produce the same name.
     static func hasCollisionGuard(_ template: String) -> Bool {
         parse(template).contains { segment in
             switch segment {
@@ -464,15 +484,32 @@ nonisolated struct TemplateExpander: Sendable {
         return trimmed.isEmpty ? "x" : trimmed
     }
 
-    /// `Tims-MacBook-Pro.local` becomes `tims-macbook-pro`: lowercased, a trailing `.local`
-    /// removed, anything outside `[a-z0-9.-]` replaced by `-`, ends trimmed. Empty becomes `mac`.
+    /// `Tims-MacBook-Pro.local` becomes `tims-macbook-pro`. Lowercased and a trailing `.local`
+    /// dropped, then reduced to `[a-z0-9.-]`: `_`, spaces, `'`, non-ASCII letters and every other
+    /// character become `-`; a run of `.` and `-` collapses to one character (`.` when the run
+    /// contains one, so domain labels survive); `.` and `-` are trimmed from both ends. An empty
+    /// result becomes `mac`.
     static func normalizeHostname(_ raw: String) -> String {
         var name = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if name.hasSuffix(".local") {
             name.removeLast(".local".count)
         }
-        let safe = keySafe(name)
-        return safe == "x" && !name.contains("x") ? "mac" : safe
+        let alphanumerics = Set("abcdefghijklmnopqrstuvwxyz0123456789")
+        var output = ""
+        // The separator owed before the next letter or digit; never written at either end.
+        var separator: Character?
+        for character in name {
+            if alphanumerics.contains(character) {
+                if let pending = separator, !output.isEmpty {
+                    output.append(pending)
+                }
+                separator = nil
+                output.append(character)
+            } else {
+                separator = character == "." || separator == "." ? "." : "-"
+            }
+        }
+        return output.isEmpty ? "mac" : output
     }
 }
 ```
@@ -580,22 +617,24 @@ git commit -m "feat: shared TemplateExpander with year, month, day and hostname 
 
 ---
 
-### Task 2: Capture records with an optional file, a thumbnail name and the counter; prune hook (TDD)
+### Task 2: Capture records with an optional file, a thumbnail name and an object location; prune hook (TDD)
 
 **Files:**
+- Create: `TidyShot/Upload/ObjectLocation.swift`
 - Modify: `TidyShot/History/CaptureRecord.swift` (full replacement below)
-- Modify: `TidyShot/History/HistoryStore.swift` (two edits below)
+- Modify: `TidyShot/History/HistoryStore.swift` (three edits below)
 - Modify: `TidyShot/App/AppCoordinator.swift` (two edits below, for the optional `fileURL`)
 - Modify: `TidyShot/App/MenuContent.swift` (one edit below)
 - Modify: `TidyShot/Overlay/QuickAccessView.swift` (one edit, two occurrences)
 - Create: `TidyShotTests/CaptureRecordTests.swift`
-- Modify: `TidyShotTests/HistoryStoreTests.swift` (one test added)
+- Modify: `TidyShotTests/HistoryStoreTests.swift` (two tests added)
 
 **Interfaces:**
-- Consumes: `HistoryStore` (Phase 2), `TemplateContext` is not needed yet.
+- Consumes: `HistoryStore`, `S3DestinationConfig.normalized` and `effectivePathStyle` (Phase 2); `TemplateContext` is not needed yet.
 - Produces:
-  - `CaptureRecord`: `var fileURL: URL?`, `var fileIsTemporary: Bool`, `var thumbnailFileName: String?`, `var counter: Int`, `init(id: UUID = UUID(), timestamp: Date = Date(), fileURL: URL?, fileIsTemporary: Bool = false, thumbnailFileName: String? = nil, pixelWidth: Int, pixelHeight: Int, appName: String?, counter: Int = 0, uploadState: UploadState = .none)`, `var uploadedKey: String?`, `var hasLocalFile: Bool`; `uploadedURL`, `isFailed`, `isUploading` unchanged. A custom `init(from:)` defaults the three new fields for Phase 2 files; encoding is synthesised and always writes them.
-  - `HistoryStore`: `@ObservationIgnored var didPrune: (([CaptureRecord]) -> Void)?`, called from `load()` and `add(_:)` with the records that retention dropped.
+  - `nonisolated struct ObjectLocation: Codable, Equatable, Sendable { var endpoint: String; var region: String; var bucket: String; var usePathStyle: Bool; init(endpoint:region:bucket:usePathStyle:); init(config: S3DestinationConfig); var config: S3DestinationConfig }`. `init(config:)` stores the normalised fields and `effectivePathStyle`; `config` has an empty public URL template and is only used to sign `DELETE` requests (Task 6).
+  - `CaptureRecord`: `var fileURL: URL?`, `var fileIsTemporary: Bool`, `var thumbnailFileName: String?`, `var objectLocation: ObjectLocation?`, `var pendingObjectKey: String?`, `init(id: UUID = UUID(), timestamp: Date = Date(), fileURL: URL?, fileIsTemporary: Bool = false, thumbnailFileName: String? = nil, pixelWidth: Int, pixelHeight: Int, appName: String?, uploadState: UploadState = .none, objectLocation: ObjectLocation? = nil, pendingObjectKey: String? = nil)`, `var uploadedKey: String?`, `var hasLocalFile: Bool`, `var isPendingOnly: Bool`; `uploadedURL`, `isFailed`, `isUploading` unchanged. A custom `init(from:)` defaults the four new fields for Phase 2 files; encoding is synthesised and writes the ones that are set.
+  - `HistoryStore`: `@ObservationIgnored var didPrune: (([CaptureRecord]) -> Void)?`, called from `load()` and `add(_:)` with the records that retention dropped. `HistoryStore.pruned` keeps every record whose `isPendingOnly` is true, whatever its age.
 - Every other `CaptureRecord(...)` call in the app and tests still compiles because `fileURL:` accepts a non-optional `URL` and the new parameters have defaults.
 
 - [ ] **Step 1: Write the failing tests**
@@ -649,7 +688,9 @@ struct CaptureRecordTests {
         #expect(record.hasLocalFile)
         #expect(record.fileIsTemporary == false)
         #expect(record.thumbnailFileName == nil)
-        #expect(record.counter == 0)
+        #expect(record.objectLocation == nil)
+        #expect(record.pendingObjectKey == nil)
+        #expect(!record.isPendingOnly)
         #expect(record.appName == "Safari")
         #expect(record.uploadedKey == "aSIS7x.png")
         #expect(record.uploadedURL?.absoluteString == "https://snap.tky.io/aSIS7x.png")
@@ -658,9 +699,12 @@ struct CaptureRecordTests {
     /// Timestamps are stored with millisecond precision, so the fixtures use whole seconds.
     @Test func recordWithoutLocalFileRoundTrips() throws {
         let now = Date(timeIntervalSince1970: 1_792_411_200)
+        let location = ObjectLocation(endpoint: "https://s3.us-west-2.amazonaws.com", region: "us-west-2",
+                                      bucket: "snap.tky.io", usePathStyle: true)
         let uploaded = CaptureRecord(timestamp: now, fileURL: nil, thumbnailFileName: "thumb.png", pixelWidth: 20, pixelHeight: 10,
-                                     appName: nil, counter: 12,
-                                     uploadState: .uploaded(url: URL(string: "https://snap.tky.io/a.png")!, key: "a.png"))
+                                     appName: nil,
+                                     uploadState: .uploaded(url: URL(string: "https://snap.tky.io/a.png")!, key: "a.png"),
+                                     objectLocation: location, pendingObjectKey: "b.png")
         let pending = CaptureRecord(timestamp: now.addingTimeInterval(-1), fileURL: dir.appending(path: "pending/x.png"),
                                     fileIsTemporary: true, pixelWidth: 20, pixelHeight: 10, appName: "Notes",
                                     uploadState: .failed(message: "offline"))
@@ -673,14 +717,23 @@ struct CaptureRecordTests {
         #expect(second.record(id: uploaded.id) == uploaded)
         #expect(second.record(id: pending.id) == pending)
         #expect(second.record(id: uploaded.id)?.hasLocalFile == false)
+        #expect(second.record(id: uploaded.id)?.objectLocation == location)
+        #expect(second.record(id: uploaded.id)?.pendingObjectKey == "b.png")
         #expect(second.record(id: pending.id)?.fileIsTemporary == true)
     }
 
-    @Test func uploadedKeyIsNilUnlessUploaded() {
+    @Test func uploadedKeyAndPendingOnly() {
         let record = CaptureRecord(fileURL: nil, pixelWidth: 1, pixelHeight: 1, appName: nil, uploadState: .failed(message: "x"))
         #expect(record.uploadedKey == nil)
         #expect(record.uploadedURL == nil)
         #expect(record.isFailed)
+        #expect(!record.isPendingOnly)
+
+        var uploadOnly = CaptureRecord(fileURL: dir.appending(path: "pending/x.png"), fileIsTemporary: true, pixelWidth: 1,
+                                       pixelHeight: 1, appName: nil, uploadState: .failed(message: "offline"))
+        #expect(uploadOnly.isPendingOnly)
+        uploadOnly.uploadState = .uploaded(url: URL(string: "https://snap.tky.io/a.png")!, key: "a.png")
+        #expect(!uploadOnly.isPendingOnly)
     }
 }
 ```
@@ -714,6 +767,26 @@ with:
         #expect(second.records.isEmpty)
     }
 
+    /// An upload-only capture that was never uploaded has its only copy in `pending/`; retention
+    /// must not drop the record (and with it the file) however old it is.
+    @Test func pruningKeepsUploadOnlyCapturesThatWereNeverUploaded() {
+        let history = store(retentionDays: 7)
+        var pruned: [UUID] = []
+        history.didPrune = { pruned += $0.map(\.id) }
+        let pendingOnly = CaptureRecord(timestamp: now.addingTimeInterval(-30 * 86_400), fileURL: dir.appending(path: "pending/a.png"),
+                                        fileIsTemporary: true, pixelWidth: 1, pixelHeight: 1, appName: nil,
+                                        uploadState: .failed(message: "offline"))
+        let old = record(age: 30 * 86_400)
+        history.add(pendingOnly)
+        history.add(old)
+
+        #expect(history.records.map(\.id) == [pendingOnly.id])
+        #expect(pruned == [old.id])
+        let reloaded = store(retentionDays: 7)
+        reloaded.load()
+        #expect(reloaded.records.map(\.id) == [pendingOnly.id])
+    }
+
     @Test func missingFileLoadsEmpty() {
 ```
 
@@ -723,9 +796,44 @@ Run:
 ```bash
 xcodegen generate && xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build test 2>&1 | grep -E "error:|Test run" | head
 ```
-Expected: compile errors including `extra argument 'thumbnailFileName' in call` and `value of type 'HistoryStore' has no member 'didPrune'`.
+Expected: compile errors including `extra argument 'thumbnailFileName' in call`, `cannot find 'ObjectLocation' in scope` and `value of type 'HistoryStore' has no member 'didPrune'`.
 
-- [ ] **Step 3: Replace CaptureRecord**
+- [ ] **Step 3: Add ObjectLocation and replace CaptureRecord**
+
+`TidyShot/Upload/ObjectLocation.swift`:
+```swift
+import Foundation
+
+/// Where a capture's object was written: enough of the destination to address the object again
+/// after the Upload tab has been edited. Credentials are not part of it; a delete signs with
+/// whatever credentials are stored at the time.
+nonisolated struct ObjectLocation: Codable, Equatable, Sendable {
+    var endpoint: String
+    var region: String
+    var bucket: String
+    /// The path style actually used, including the automatic one for bucket names with a dot.
+    var usePathStyle: Bool
+
+    init(endpoint: String, region: String, bucket: String, usePathStyle: Bool) {
+        self.endpoint = endpoint
+        self.region = region
+        self.bucket = bucket
+        self.usePathStyle = usePathStyle
+    }
+
+    /// The location `config` writes to.
+    init(config: S3DestinationConfig) {
+        let clean = config.normalized
+        self.init(endpoint: clean.endpoint, region: clean.region, bucket: clean.bucket, usePathStyle: config.effectivePathStyle)
+    }
+
+    /// A destination configuration that addresses this location. Its public URL template is
+    /// empty, so it is only good for signed `HEAD` and `DELETE` requests, which is all a delete needs.
+    var config: S3DestinationConfig {
+        S3DestinationConfig(endpoint: endpoint, region: region, bucket: bucket, usePathStyle: usePathStyle, publicURLTemplate: "")
+    }
+}
+```
 
 `TidyShot/History/CaptureRecord.swift`:
 ```swift
@@ -755,14 +863,18 @@ nonisolated struct CaptureRecord: Codable, Identifiable, Equatable, Sendable {
     var pixelWidth: Int
     var pixelHeight: Int
     var appName: String?
-    /// The `{counter}` value drawn at capture time, reused when the upload is retried so the
-    /// object key does not change. 0 for records from before key templates.
-    var counter: Int
     var uploadState: UploadState
+    /// Where `uploadedKey` and `pendingObjectKey` live: the destination of the queue that
+    /// uploaded the object or reserved the key. Nil for records from before Phase 3 and for
+    /// captures that never reached a bucket; Delete removes nothing from storage without it.
+    var objectLocation: ObjectLocation?
+    /// The key a cancelled upload had reserved. Its PUT may have completed on the server as it
+    /// was cancelled, so Delete removes this key too, also when a first attempt failed.
+    var pendingObjectKey: String?
 
     init(id: UUID = UUID(), timestamp: Date = Date(), fileURL: URL?, fileIsTemporary: Bool = false,
          thumbnailFileName: String? = nil, pixelWidth: Int, pixelHeight: Int, appName: String?,
-         counter: Int = 0, uploadState: UploadState = .none) {
+         uploadState: UploadState = .none, objectLocation: ObjectLocation? = nil, pendingObjectKey: String? = nil) {
         self.id = id
         self.timestamp = timestamp
         self.fileURL = fileURL
@@ -771,16 +883,19 @@ nonisolated struct CaptureRecord: Codable, Identifiable, Equatable, Sendable {
         self.pixelWidth = pixelWidth
         self.pixelHeight = pixelHeight
         self.appName = appName
-        self.counter = counter
         self.uploadState = uploadState
+        self.objectLocation = objectLocation
+        self.pendingObjectKey = pendingObjectKey
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, timestamp, fileURL, fileIsTemporary, thumbnailFileName, pixelWidth, pixelHeight, appName, counter, uploadState
+        case id, timestamp, fileURL, fileIsTemporary, thumbnailFileName, pixelWidth, pixelHeight, appName, uploadState
+        case objectLocation, pendingObjectKey
     }
 
-    /// Phase 2 history files have no `fileIsTemporary`, `thumbnailFileName` or `counter`, and
-    /// always have a `fileURL`; they decode with the defaults. Encoding is synthesised.
+    /// Phase 2 history files have no `fileIsTemporary`, `thumbnailFileName`, `objectLocation` or
+    /// `pendingObjectKey`, and always have a `fileURL`; they decode with the defaults. Encoding
+    /// is synthesised.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(UUID.self, forKey: .id)
@@ -791,8 +906,9 @@ nonisolated struct CaptureRecord: Codable, Identifiable, Equatable, Sendable {
         pixelWidth = try container.decode(Int.self, forKey: .pixelWidth)
         pixelHeight = try container.decode(Int.self, forKey: .pixelHeight)
         appName = try container.decodeIfPresent(String.self, forKey: .appName)
-        counter = try container.decodeIfPresent(Int.self, forKey: .counter) ?? 0
         uploadState = try container.decode(UploadState.self, forKey: .uploadState)
+        objectLocation = try container.decodeIfPresent(ObjectLocation.self, forKey: .objectLocation)
+        pendingObjectKey = try container.decodeIfPresent(String.self, forKey: .pendingObjectKey)
     }
 
     var uploadedURL: URL? {
@@ -808,6 +924,10 @@ nonisolated struct CaptureRecord: Codable, Identifiable, Equatable, Sendable {
 
     var hasLocalFile: Bool { fileURL != nil }
 
+    /// An upload-only capture that has not been uploaded: its PNG in `pending` is the only copy,
+    /// so retention never prunes it.
+    var isPendingOnly: Bool { fileIsTemporary && fileURL != nil && uploadedKey == nil }
+
     var isFailed: Bool {
         if case .failed = uploadState { return true }
         return false
@@ -820,7 +940,7 @@ nonisolated struct CaptureRecord: Codable, Identifiable, Equatable, Sendable {
 }
 ```
 
-- [ ] **Step 4: Add the prune hook to HistoryStore**
+- [ ] **Step 4: Add the prune hook to HistoryStore and keep pending-only records**
 
 In `TidyShot/History/HistoryStore.swift`:
 
@@ -879,6 +999,26 @@ with:
             didPrune(input.filter { !keptIDs.contains($0.id) })
         }
         return kept
+    }
+```
+
+Replace:
+
+```swift
+    static func pruned(_ records: [CaptureRecord], retentionDays: Int, now: Date) -> [CaptureRecord] {
+        let cutoff = now.addingTimeInterval(-Double(retentionDays) * 86_400)
+        return records.filter { $0.timestamp >= cutoff }
+    }
+```
+
+with:
+
+```swift
+    /// Records newer than the retention cutoff, plus every upload-only capture that has not been
+    /// uploaded: its PNG in `pending` is the only copy, so it stays until it is uploaded or deleted.
+    static func pruned(_ records: [CaptureRecord], retentionDays: Int, now: Date) -> [CaptureRecord] {
+        let cutoff = now.addingTimeInterval(-Double(retentionDays) * 86_400)
+        return records.filter { $0.timestamp >= cutoff || $0.isPendingOnly }
     }
 ```
 
@@ -958,17 +1098,17 @@ with:
 
 - [ ] **Step 6: Run the tests to verify they pass**
 
-Run:
+Run (`ObjectLocation.swift` is new since the last `xcodegen generate`):
 ```bash
-xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build test 2>&1 | grep -E "error:|warning: .*TidyShot/|Test run|✘"
+xcodegen generate && xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build test 2>&1 | grep -E "error:|warning: .*TidyShot/|Test run|✘"
 ```
-Expected: no `error:` or `warning:` lines, and `Test run with 121 tests in 19 suites passed`. If `phase2HistoryFileDecodesWithDefaults` fails on `fileURL`, the Phase 2 encoder wrote URLs differently from the fixture; check with `cat ~/Library/Containers/io.tky.tidyshot/Data/Library/Application\ Support/TidyShot/history.json` and copy one real record into the fixture (the fixture's `fileURL` is a plain string because that is how `JSONEncoder` writes `URL` values; it decoded correctly when this plan was verified).
+Expected: no `error:` or `warning:` lines, and `Test run with 122 tests in 19 suites passed` (117 plus 3 `CaptureRecordTests` plus 2 in `HistoryStoreTests`). If `phase2HistoryFileDecodesWithDefaults` fails on `fileURL`, the Phase 2 encoder wrote URLs differently from the fixture; check with `cat ~/Library/Containers/io.tky.tidyshot/Data/Library/Application\ Support/TidyShot/history.json` and copy one real record into the fixture (the fixture's `fileURL` is a plain string because that is how `JSONEncoder` writes `URL` values; it decoded correctly when this plan was verified).
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add TidyShot/History/CaptureRecord.swift TidyShot/History/HistoryStore.swift TidyShot/App/AppCoordinator.swift TidyShot/App/MenuContent.swift TidyShot/Overlay/QuickAccessView.swift TidyShotTests/CaptureRecordTests.swift TidyShotTests/HistoryStoreTests.swift
-git commit -m "feat: capture records with optional local file, thumbnail name and counter; prune hook"
+git add TidyShot/Upload/ObjectLocation.swift TidyShot/History/CaptureRecord.swift TidyShot/History/HistoryStore.swift TidyShot/App/AppCoordinator.swift TidyShot/App/MenuContent.swift TidyShot/Overlay/QuickAccessView.swift TidyShotTests/CaptureRecordTests.swift TidyShotTests/HistoryStoreTests.swift
+git commit -m "feat: capture records with optional local file, thumbnail name and object location; prune hook"
 ```
 
 ---
@@ -987,9 +1127,10 @@ git commit -m "feat: capture records with optional local file, thumbnail name an
 **Interfaces:**
 - Consumes: `ImageEncoder.pngData(from:scale:)` (Phase 1).
 - Produces:
-  - `nonisolated enum ThumbnailMaker` with `static let maxSide = 320`, `static let previewMaxSide = 1200`, `static func targetSize(for pixelSize: CGSize, maxSide: Int) -> CGSize`, `static func thumbnail(from image: CGImage, maxSide: Int = maxSide) -> CGImage?`, `static func thumbnail(contentsOf url: URL, maxSide: Int = maxSide) -> CGImage?`, `static func thumbnail(fromPNGData data: Data, maxSide: Int = maxSide) -> CGImage?`, `static func thumbnail(from source: CGImageSource, maxSide: Int) -> CGImage?`, `static func pngData(_ image: CGImage) throws -> Data`.
-  - `nonisolated struct ThumbnailStore: Sendable { static let directoryName = "thumbnails"; let directory: URL; init(directory: URL); init(nextTo historyFileURL: URL); func fileName(for id: UUID) -> String; func url(forFileName name: String) -> URL; func write(_ png: Data, id: UUID) throws -> String; func remove(fileName: String); @discardableResult func removeOrphans(keeping names: Set<String>) -> Int }`.
-  - `nonisolated struct PendingFileStore: Sendable { static let directoryName = "pending"; let directory: URL; init(directory: URL); init(nextTo historyFileURL: URL); func write(_ data: Data, id: UUID, ext: String) throws -> URL; func contains(_ url: URL) -> Bool; func remove(_ url: URL); @discardableResult func removeOrphans(keeping urls: Set<URL>) -> Int }`.
+  - `nonisolated enum ThumbnailMaker` with `static let maxSide = 320`, `static let previewMaxSide = 1200`, `static func targetSize(for pixelSize: CGSize, maxSide: Int) -> CGSize`, `static func thumbnail(from image: CGImage, maxSide: Int = maxSide) -> CGImage?`, `static func thumbnail(fromPNGData data: Data, maxSide: Int = maxSide) -> CGImage?`, `static func thumbnail(from source: CGImageSource, maxSide: Int) -> CGImage?`, `static func pngData(_ image: CGImage) throws -> Data`. Files on disk are read by the caller (through the save folder's security scope) and passed as PNG data, so there is no URL-based variant.
+  - `nonisolated struct ThumbnailStore: Sendable { static let directoryName = "thumbnails"; let directory: URL; init(directory: URL); init(nextTo historyFileURL: URL); func fileName(for id: UUID) -> String; func url(forFileName name: String) -> URL; func write(_ png: Data, id: UUID) throws -> String; func remove(fileName: String) }`.
+  - `nonisolated struct PendingFileStore: Sendable { static let directoryName = "pending"; let directory: URL; init(directory: URL); init(nextTo historyFileURL: URL); func write(_ data: Data, id: UUID, ext: String) throws -> URL; func remove(_ url: URL) throws }`. `remove` ignores a missing file and throws any other error, so Delete can keep the record and say why.
+  - Neither store sweeps orphans: there is no startup sweep (see Design decisions), so such a method would have no caller.
   - `ImageEncoder` becomes `nonisolated enum ImageEncoder` so `ThumbnailMaker` and detached tasks can call it.
 
 - [ ] **Step 1: Write the failing tests**
@@ -1055,14 +1196,9 @@ struct ThumbnailMakerTests {
         #expect(ThumbnailMaker.thumbnail(fromPNGData: Data("not a png".utf8)) == nil)
     }
 
-    @Test func thumbnailFromFileAndPNGRoundTrip() throws {
-        let dir = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: dir) }
-        let file = dir.appending(path: "shot.png")
-        try ImageEncoder.pngData(from: makeImage(width: 1280, height: 800), scale: 2).write(to: file)
-
-        let thumbnail = try #require(ThumbnailMaker.thumbnail(contentsOf: file, maxSide: 160))
+    @Test func thumbnailPNGRoundTrip() throws {
+        let source = try ImageEncoder.pngData(from: makeImage(width: 1280, height: 800), scale: 2)
+        let thumbnail = try #require(ThumbnailMaker.thumbnail(fromPNGData: source, maxSide: 160))
         #expect(thumbnail.width == 160)
         #expect(thumbnail.height == 100)
 
@@ -1070,7 +1206,7 @@ struct ThumbnailMakerTests {
         #expect(Array(png.prefix(8)) == [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
         let reread = try #require(ThumbnailMaker.thumbnail(fromPNGData: png, maxSide: 1000))
         #expect(reread.width == 160)
-        #expect(ThumbnailMaker.thumbnail(contentsOf: dir.appending(path: "missing.png")) == nil)
+        #expect(reread.height == 100)
     }
 }
 ```
@@ -1105,21 +1241,6 @@ struct ThumbnailStoreTests {
         #expect(!FileManager.default.fileExists(atPath: store.url(forFileName: name).path(percentEncoded: false)))
         store.remove(fileName: name)
     }
-
-    @Test func removeOrphansKeepsNamedFiles() throws {
-        let store = ThumbnailStore(directory: dir.appending(path: "thumbnails"))
-        defer { try? FileManager.default.removeItem(at: dir) }
-        #expect(store.removeOrphans(keeping: []) == 0)
-
-        let keep = try store.write(Data([1]), id: UUID())
-        let orphanA = try store.write(Data([2]), id: UUID())
-        let orphanB = try store.write(Data([3]), id: UUID())
-        #expect(store.removeOrphans(keeping: [keep]) == 2)
-
-        let remaining = try FileManager.default.contentsOfDirectory(atPath: store.directory.path(percentEncoded: false))
-        #expect(remaining == [keep])
-        #expect(!remaining.contains(orphanA) && !remaining.contains(orphanB))
-    }
 }
 ```
 
@@ -1136,30 +1257,33 @@ struct PendingFileStoreTests {
         dir = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
     }
 
-    @Test func writePutsTheFileInsideTheFolder() throws {
+    @Test func writePutsTheFileInsideTheFolderAndRemoveIgnoresAMissingFile() throws {
         let store = PendingFileStore(nextTo: dir.appending(path: "history.json"))
         defer { try? FileManager.default.removeItem(at: dir) }
         let id = UUID()
         let url = try store.write(Data("png".utf8), id: id, ext: "png")
         #expect(url.lastPathComponent == "\(id.uuidString).png")
-        #expect(store.contains(url))
-        #expect(!store.contains(dir.appending(path: "elsewhere.png")))
+        #expect(url.deletingLastPathComponent().lastPathComponent == PendingFileStore.directoryName)
         #expect(try Data(contentsOf: url) == Data("png".utf8))
 
-        store.remove(url)
+        try store.remove(url)
         #expect(!FileManager.default.fileExists(atPath: url.path(percentEncoded: false)))
-        store.remove(url)
+        try store.remove(url)
     }
 
-    @Test func removeOrphansKeepsReferencedFiles() throws {
+    /// Anything but "already gone" is reported, so Delete keeps the record and says why.
+    @Test func removeThrowsWhenTheFileCannotBeDeleted() throws {
         let store = PendingFileStore(directory: dir.appending(path: "pending"))
-        defer { try? FileManager.default.removeItem(at: dir) }
-        #expect(store.removeOrphans(keeping: []) == 0)
+        let url = try store.write(Data([1]), id: UUID(), ext: "png")
+        let folder = store.directory.path(percentEncoded: false)
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: folder)
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: folder)
+            try? FileManager.default.removeItem(at: dir)
+        }
 
-        let keep = try store.write(Data([1]), id: UUID(), ext: "png")
-        _ = try store.write(Data([2]), id: UUID(), ext: "png")
-        #expect(store.removeOrphans(keeping: [keep]) == 1)
-        #expect(try FileManager.default.contentsOfDirectory(atPath: store.directory.path(percentEncoded: false)) == [keep.lastPathComponent])
+        #expect(throws: (any Error).self) { try store.remove(url) }
+        #expect(FileManager.default.fileExists(atPath: url.path(percentEncoded: false)))
     }
 }
 ```
@@ -1224,13 +1348,10 @@ nonisolated enum ThumbnailMaker {
         return context.makeImage()
     }
 
-    /// Decodes a PNG file into a thumbnail through ImageIO. Used for records from before
-    /// thumbnails existed and for the gallery's larger preview.
-    static func thumbnail(contentsOf url: URL, maxSide: Int = maxSide) -> CGImage? {
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
-        return thumbnail(from: source, maxSide: maxSide)
-    }
-
+    /// Decodes PNG bytes into a thumbnail through ImageIO. Used for records from before
+    /// thumbnails existed and for the gallery's larger preview; the bytes come from
+    /// `AppCoordinator.readLocalFile(of:)`, which holds the save folder's security scope, so there
+    /// is no variant that opens a URL itself.
     static func thumbnail(fromPNGData data: Data, maxSide: Int = maxSide) -> CGImage? {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
         return thumbnail(from: source, maxSide: maxSide)
@@ -1293,23 +1414,10 @@ nonisolated struct ThumbnailStore: Sendable {
         return name
     }
 
-    /// Removes the thumbnail; a missing file is not an error.
+    /// Removes the thumbnail; a missing file is not an error. A thumbnail is TidyShot's own
+    /// cache, so a failure is not worth stopping a delete for.
     func remove(fileName: String) {
         try? FileManager.default.removeItem(at: url(forFileName: fileName))
-    }
-
-    /// Deletes every file in the folder whose name is not in `keeping` (thumbnails of pruned
-    /// records). Returns how many were removed; a missing folder counts as empty.
-    @discardableResult
-    func removeOrphans(keeping names: Set<String>) -> Int {
-        guard let present = try? FileManager.default.contentsOfDirectory(atPath: directory.path(percentEncoded: false)) else { return 0 }
-        var removed = 0
-        for name in present where !names.contains(name) {
-            if (try? FileManager.default.removeItem(at: url(forFileName: name))) != nil {
-                removed += 1
-            }
-        }
-        return removed
     }
 }
 ```
@@ -1343,32 +1451,15 @@ nonisolated struct PendingFileStore: Sendable {
         return url
     }
 
-    /// True when `url` is a file directly inside this folder.
-    func contains(_ url: URL) -> Bool {
-        url.deletingLastPathComponent().standardizedFileURL.path(percentEncoded: false)
-            == directory.standardizedFileURL.path(percentEncoded: false)
-    }
-
-    /// Removes the file; a missing file is not an error.
-    func remove(_ url: URL) {
-        try? FileManager.default.removeItem(at: url)
-    }
-
-    /// Deletes every file in the folder that no record in `keeping` points at. Returns how many
-    /// were removed; a missing folder counts as empty.
-    @discardableResult
-    func removeOrphans(keeping urls: Set<URL>) -> Int {
-        guard let present = try? FileManager.default.contentsOfDirectory(atPath: directory.path(percentEncoded: false)) else { return 0 }
-        let kept = Set(urls.map { $0.standardizedFileURL.path(percentEncoded: false) })
-        var removed = 0
-        for name in present {
-            let url = directory.appending(path: name)
-            guard !kept.contains(url.standardizedFileURL.path(percentEncoded: false)) else { continue }
-            if (try? FileManager.default.removeItem(at: url)) != nil {
-                removed += 1
-            }
+    /// Removes the file. A file that is already gone is not an error; any other failure throws,
+    /// because this file may be the capture's only copy and Delete must not drop its record
+    /// while the file stays behind.
+    func remove(_ url: URL) throws {
+        do {
+            try FileManager.default.removeItem(at: url)
+        } catch let error as CocoaError where error.code == .fileNoSuchFile {
+            return
         }
-        return removed
     }
 }
 ```
@@ -1379,7 +1470,7 @@ Run:
 ```bash
 xcodegen generate && xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build test 2>&1 | grep -E "error:|warning: .*TidyShot/|Test run|✘"
 ```
-Expected: no `error:` or `warning:` lines, and `Test run with 131 tests in 22 suites passed` (5 + 3 + 2 new tests in three new suites).
+Expected: no `error:` or `warning:` lines, and `Test run with 131 tests in 22 suites passed` (5 + 2 + 2 new tests in three new suites).
 
 - [ ] **Step 7: Commit**
 
@@ -1398,20 +1489,21 @@ git commit -m "feat: thumbnail maker, thumbnail store and pending file store"
 - Modify: `TidyShot/Upload/Destination.swift` (one edit: `UploadJob.naming`)
 - Modify: `TidyShot/Upload/UploadQueue.swift` (two edits)
 - Modify: `TidyShot/Upload/ConnectionTester.swift` (two edits)
-- Modify: `TidyShot/App/AppCoordinator.swift` (six edits)
+- Modify: `TidyShot/App/AppCoordinator.swift` (two edits, both in `startUpload`)
 - Modify: `TidyShot/Settings/UploadSettingsView.swift` (full replacement below)
+- Modify, only if the Upload tab scrolls: `TidyShot/Settings/SettingsView.swift` (one edit in Step 9)
 - Modify: `TidyShotTests/ObjectKeyNamerTests.swift` (full replacement below)
 - Modify: `TidyShotTests/S3DestinationConfigTests.swift`, `TidyShotTests/UploadQueueTests.swift`, `TidyShotTests/ConnectionTesterTests.swift`, `TidyShotTests/AppSettingsTests.swift` (edits below)
 
 **Interfaces:**
-- Consumes: `TemplateExpander`, `TemplateContext`, `HostName` (Task 1), `CaptureRecord.counter` (Task 2).
+- Consumes: `TemplateExpander`, `TemplateContext`, `HostName` (Task 1), `AppSettings.nextCounter()` (Phase 1).
 - Produces:
-  - `nonisolated struct ObjectKeyNamer: Sendable` with `static let defaultTemplate = "{random:6}"`, `static let literalCharacters: Set<Character>`, `enum TemplateError: LocalizedError, Equatable, Sendable { case empty; case illegalCharacter(Character); case unknownToken(String); case unbalancedBraces; case dotSegment(String) }`, `var template: String`, `var randomString: @Sendable (Int) -> String`, `init(template: String = ObjectKeyNamer.defaultTemplate, randomString: @escaping @Sendable (Int) -> String = FileNamer.randomString)`, `func makeKey(ext: String, context: TemplateContext) -> String`, `static func normalize(_ template: String) -> String`, `static func fold(_ key: String) -> String`, `static func validate(_ template: String) -> TemplateError?`, `static func collisionWarning(for template: String) -> String?`, `static func folder(of key: String) -> String`, `static func migratedTemplate(prefix: String, length: Int) -> String`. The Phase 2 members `prefix`, `length`, `lengthRange`, `defaultLength`, `clamp`, `join`, `normalizePrefix` are gone.
+  - `nonisolated struct ObjectKeyNamer: Sendable` with `static let defaultTemplate = "{random:6}"`, `static let literalCharacters: Set<Character>`, `enum TemplateError: LocalizedError, Equatable, Sendable { case empty; case illegalCharacter(Character); case unknownToken(String); case unbalancedBraces; case dotSegment(String) }`, `var template: String`, `var randomString: @Sendable (Int) -> String`, `init(template: String = ObjectKeyNamer.defaultTemplate, randomString: @escaping @Sendable (Int) -> String = FileNamer.randomString)`, `func makeKey(ext: String, context: TemplateContext) -> String`, `static func normalize(_ template: String) -> String`, `static func fold(_ key: String) -> String`, `static func validate(_ template: String) -> TemplateError?`, `static func collisionWarning(for template: String) -> String?`, `static func folder(of key: String) -> String`, `static func migratedTemplate(prefix: String, length: Int) -> String` (the prefix is sanitised into `literalCharacters`, so the result always validates). The Phase 2 members `prefix`, `length`, `lengthRange`, `defaultLength`, `clamp`, `join`, `normalizePrefix` are gone.
   - `S3DestinationConfig`: `var keyTemplate: String` replaces `keyPrefix` and `keyLength`; `init(endpoint:region:bucket:usePathStyle:sendPublicReadACL:publicURLTemplate:keyTemplate:)` with `keyTemplate` defaulting to `ObjectKeyNamer.defaultTemplate`; `ConfigError.invalidKeyTemplate(String)`; `normalized` folds the template; `validationError` reports an invalid template; custom `init(from:)` migrates `keyPrefix`/`keyLength`.
   - `UploadJob` gains `let naming: TemplateContext` and `init(id:data:contentType:fileExtension:naming: TemplateContext = TemplateContext())`.
   - `UploadQueue` expands the key for every attempt with `keyNamer.makeKey(ext: job.fileExtension, context: job.naming)`.
   - `ConnectionTester.run(destination:session:randomString:)` keeps its signature (`randomString` becomes `@escaping`) and puts the probe into `ObjectKeyNamer.folder(of:)` the template's expansion.
-  - `AppCoordinator` draws the counter once per capture, stores it on the record, builds the queue with `ObjectKeyNamer(template: destination.config.keyTemplate)`, and gives every job `TemplateContext(date: record.timestamp, appName: record.appName, counter: record.counter)`.
+  - `AppCoordinator.startUpload` builds the queue with `ObjectKeyNamer(template: config.keyTemplate)` and names every job when it is enqueued: `TemplateContext(date: record.timestamp, appName: record.appName, counter: counter)`, where `counter` is `settings.nextCounter()` if the key template contains `{counter}` and 0 otherwise. Nothing about the key is decided in `save`, and the record lookup comes before `uploadingIDs.insert`, so a missing record never leaves the menu bar icon spinning.
   - `UploadSettingsView` replaces the prefix field and length stepper with a "Key template" field, a live example, a red validation message, and the orange collision warning.
 
 - [ ] **Step 1: Write the failing tests**
@@ -1488,7 +1580,7 @@ struct ObjectKeyNamerTests {
     @Test func collisionWarningOnlyWithoutRandomOrCounter() {
         #expect(ObjectKeyNamer.collisionWarning(for: "{random:6}") == nil)
         #expect(ObjectKeyNamer.collisionWarning(for: "{date}/{counter}") == nil)
-        #expect(ObjectKeyNamer.collisionWarning(for: "{date}/{hostname}")?.hasPrefix("This template has neither {random} nor {counter}.") == true)
+        #expect(ObjectKeyNamer.collisionWarning(for: "{date}/{hostname}")?.hasPrefix("This template has no {random} or {counter}, so captures can produce the same key") == true)
     }
 
     @Test func folderOfKey() {
@@ -1501,6 +1593,17 @@ struct ObjectKeyNamerTests {
         #expect(ObjectKeyNamer.migratedTemplate(prefix: "", length: 6) == "{random:6}")
         #expect(ObjectKeyNamer.migratedTemplate(prefix: " /a/b/ ", length: 1) == "a/b/{random:4}")
         #expect(ObjectKeyNamer.migratedTemplate(prefix: "p", length: 99) == "p/{random:32}")
+    }
+
+    /// Phase 2 accepted any prefix text; the migrated template must still pass `validate`.
+    @Test func migratedTemplateSanitisesThePrefix() {
+        let spaced = ObjectKeyNamer.migratedTemplate(prefix: "team shots/a+b", length: 8)
+        #expect(spaced == "team-shots/a-b/{random:8}")
+        #expect(ObjectKeyNamer.validate(spaced) == nil)
+        let braced = ObjectKeyNamer.migratedTemplate(prefix: "../{date}", length: 6)
+        #expect(braced == "-date-/{random:6}")
+        #expect(ObjectKeyNamer.validate(braced) == nil)
+        #expect(ObjectKeyNamer.validate(ObjectKeyNamer.migratedTemplate(prefix: "é ü//./x", length: 6)) == nil)
     }
 
     @Test func realKeysUseTheFileNamerAlphabet() {
@@ -1572,6 +1675,7 @@ with:
         #expect(try decode("{\(common),\"keyPrefix\":\"shots\",\"keyLength\":8}").keyTemplate == "shots/{random:8}")
         #expect(try decode("{\(common),\"keyPrefix\":\"\",\"keyLength\":6}").keyTemplate == "{random:6}")
         #expect(try decode("{\(common),\"keyPrefix\":\"/a/b/\",\"keyLength\":99}").keyTemplate == "a/b/{random:32}")
+        #expect(try decode("{\(common),\"keyPrefix\":\"my shots+1\",\"keyLength\":8}").keyTemplate == "my-shots-1/{random:8}")
         #expect(try decode("{\(common)}").keyTemplate == "{random:6}")
         #expect(try decode("{\(common),\"keyTemplate\":\"{date}/{random}\",\"keyPrefix\":\"ignored\"}").keyTemplate == "{date}/{random}")
     }
@@ -1764,12 +1868,12 @@ nonisolated struct ObjectKeyNamer: Sendable {
         return nil
     }
 
-    /// Shown in Settings when nothing in the template varies between two captures in the same
-    /// second. Nil when the template has `{random}`, `{random:N}` or `{counter}`.
+    /// Shown in Settings when nothing in the template is guaranteed to differ between two
+    /// captures. Nil when the template has `{random}`, `{random:N}` or `{counter}`.
     static func collisionWarning(for template: String) -> String? {
         TemplateExpander.hasCollisionGuard(template)
             ? nil
-            : "This template has neither {random} nor {counter}. Two captures in the same second would want the same key; only the check before each upload keeps them apart."
+            : "This template has no {random} or {counter}, so captures can produce the same key; only the HEAD check before each upload keeps a capture from overwriting an earlier object."
     }
 
     /// `shots/2026/10` for `shots/2026/10/aB3dE9.png`, empty for a key without folders. The
@@ -1781,8 +1885,12 @@ nonisolated struct ObjectKeyNamer: Sendable {
 
     /// The Phase 2 settings (optional prefix folder plus random length 4...32) as a template:
     /// prefix `shots` and length 8 become `shots/{random:8}`; no prefix and 6 become `{random:6}`.
+    /// Phase 2 accepted any prefix text, so every character outside `literalCharacters` (a space,
+    /// `+`, a brace) becomes `-`, slashes are folded, and folders made only of dots are dropped;
+    /// the result always passes `validate`.
     static func migratedTemplate(prefix: String, length: Int) -> String {
-        let folder = fold(prefix.trimmingCharacters(in: .whitespacesAndNewlines))
+        let mapped = String(prefix.trimmingCharacters(in: .whitespacesAndNewlines).map { literalCharacters.contains($0) ? $0 : "-" })
+        let folder = mapped.split(separator: "/").filter { !$0.allSatisfy { $0 == "." } }.joined(separator: "/")
         let name = "{random:\(min(max(length, 4), 32))}"
         return folder.isEmpty ? name : "\(folder)/\(name)"
     }
@@ -2076,9 +2184,9 @@ with:
         let key = (folder.isEmpty ? "" : folder + "/") + "tidyshot-probe-\(randomString(8)).txt"
 ```
 
-- [ ] **Step 6: Wire the template and the counter through AppCoordinator**
+- [ ] **Step 6: Name the object key when the upload starts**
 
-In `TidyShot/App/AppCoordinator.swift`, six edits, listed in the order to apply them (not file order): the queue's namer in `startUpload`, the job it enqueues, the counter in `save`, the signature of `writeFile`, the counter line inside `writeFile` (which moves to `save`), and the record in `save`:
+In `TidyShot/App/AppCoordinator.swift` (both edits are in `startUpload`; `save` and `writeFile` are not touched, so the file name keeps drawing its own counter exactly as in Phase 1):
 
 Replace:
 
@@ -2095,6 +2203,14 @@ with:
 Replace:
 
 ```swift
+        guard let queue else { return }
+        uploadingIDs.insert(recordID)
+        // `save` adds new records already marked uploading and shows them in the overlay, so
+        // only a retry (a record in another state) needs the write and the overlay refresh.
+        if history.record(id: recordID)?.isUploading != true {
+            history.update(id: recordID) { $0.uploadState = .uploading(fraction: 0) }
+            refreshOverlay(for: recordID)
+        }
         let job = UploadJob(id: recordID, data: data, contentType: "image/png", fileExtension: "png")
         Task { await queue.enqueue(job) }
 ```
@@ -2102,66 +2218,23 @@ Replace:
 with:
 
 ```swift
-        guard let record = history.record(id: recordID) else { return }
+        // Look the record up before marking it uploading, so a missing record never leaves an
+        // id in `uploadingIDs` (and the menu bar icon spinning) with no job to clear it.
+        guard let queue, let record = history.record(id: recordID) else { return }
+        uploadingIDs.insert(recordID)
+        // `save` adds new records already marked uploading and shows them in the overlay, so
+        // only a retry (a record in another state) needs the write and the overlay refresh.
+        if !record.isUploading {
+            history.update(id: recordID) { $0.uploadState = .uploading(fraction: 0) }
+            refreshOverlay(for: recordID)
+        }
+        // The key is named now, not at capture time: a capture taken while no destination was set
+        // up, and every retry, get a counter drawn when their upload starts. The date and app stay
+        // the capture's own, so a retried upload lands in the capture's date folder.
+        let counter = destination.config.keyTemplate.contains("{counter}") ? settings.nextCounter() : 0
         let job = UploadJob(id: recordID, data: data, contentType: "image/png", fileExtension: "png",
-                            naming: TemplateContext(date: record.timestamp, appName: record.appName, counter: record.counter))
+                            naming: TemplateContext(date: record.timestamp, appName: record.appName, counter: counter))
         Task { await queue.enqueue(job) }
-```
-
-Replace:
-
-```swift
-        guard let url = await writeFile(png, result: result, appName: appName, alreadyOnClipboard: copyImageNow) else { return }
-```
-
-with:
-
-```swift
-        // One counter per capture, shared by the file name and the object key.
-        let needsCounter = settings.fileNameTemplate.contains("{counter}")
-            || destination?.config.keyTemplate.contains("{counter}") == true
-        let counter = needsCounter ? settings.nextCounter() : 0
-        guard let url = await writeFile(png, result: result, appName: appName, counter: counter, alreadyOnClipboard: copyImageNow) else { return }
-```
-
-Replace:
-
-```swift
-    private func writeFile(_ png: Data, result: CaptureResult, appName: String?, alreadyOnClipboard: Bool) async -> URL? {
-```
-
-with:
-
-```swift
-    private func writeFile(_ png: Data, result: CaptureResult, appName: String?, counter: Int, alreadyOnClipboard: Bool) async -> URL? {
-```
-
-Replace:
-
-```swift
-            let counter = settings.fileNameTemplate.contains("{counter}") ? settings.nextCounter() : 0
-            let baseName
-```
-
-with:
-
-```swift
-            let baseName
-```
-
-Replace:
-
-```swift
-        let record = CaptureRecord(fileURL: url, pixelWidth: result.image.width, pixelHeight: result.image.height,
-                                   appName: appName, uploadState: destination != nil ? .uploading(fraction: 0) : .none)
-```
-
-with:
-
-```swift
-        let record = CaptureRecord(fileURL: url, pixelWidth: result.image.width, pixelHeight: result.image.height,
-                                   appName: appName, counter: counter,
-                                   uploadState: destination != nil ? .uploading(fraction: 0) : .none)
 ```
 
 - [ ] **Step 7: Replace the Upload tab**
@@ -2342,18 +2415,36 @@ Run:
 ```bash
 xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build test 2>&1 | grep -E "error:|warning: .*TidyShot/|Test run|✘"
 ```
-Expected: no `error:` or `warning:` lines, and `Test run with 140 tests in 22 suites passed` (ObjectKeyNamerTests goes from 5 to 11, S3DestinationConfigTests gains 2, UploadQueueTests gains 1).
+Expected: no `error:` or `warning:` lines, and `Test run with 141 tests in 22 suites passed` (ObjectKeyNamerTests goes from 5 to 12, S3DestinationConfigTests gains 2, UploadQueueTests gains 1).
 
-- [ ] **Step 9: Check the migration against the real preferences**
+- [ ] **Step 9: Check the migration against the real preferences, and that the Upload tab does not scroll**
 
-Run:
+The app is sandboxed, so its preferences live in the container, not in `~/Library/Preferences`. Run:
 ```bash
-defaults read io.tky.tidyshot s3DestinationConfig | head -c 400; echo
+defaults read ~/Library/Containers/io.tky.tidyshot/Data/Library/Preferences/io.tky.tidyshot.plist s3DestinationConfig | head -c 400; echo
 ```
-Expected: the stored JSON still has `keyPrefix` and `keyLength` (nothing has been rewritten yet). Build and launch, open Settings > Upload: the "Key template" field shows `{random:6}` for an empty prefix and length 6, or `<prefix>/{random:<length>}` otherwise, with an example such as `xxxxxx.png`. Click Save. Run the `defaults read` again. Expected: the JSON now has `keyTemplate` and neither `keyPrefix` nor `keyLength`. Quit the app.
+Expected: the stored JSON still has `keyPrefix` and `keyLength` (nothing has been rewritten yet). Build and launch:
 
 ```bash
 xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -configuration Debug -derivedDataPath .build build -quiet && open .build/Build/Products/Debug/TidyShot.app
+```
+
+Open Settings > Upload: the "Key template" field shows `{random:6}` for an empty prefix and length 6, or `<prefix>/{random:<length>}` otherwise (a prefix with a space or `+` shows them as `-`), with an example such as `xxxxxx.png`. Type `{date}/{hostname}` into the field: the orange warning under the example appears. Now check the tab does not scroll: with the template field, its caption, the example, the warning and the Save buttons all present, everything down to the Save buttons is visible without scrolling, and scrolling inside the form moves nothing. Put the template back, click Save, and run the `defaults read` again. Expected: the JSON now has `keyTemplate` and neither `keyPrefix` nor `keyLength`. Quit the app.
+
+If the Upload tab scrolls, raise the Settings window from 600 by 720 to 600 by 800, rebuild, and check again; add `TidyShot/Settings/SettingsView.swift` to the `git add` in Step 10.
+
+In `TidyShot/Settings/SettingsView.swift`:
+
+Replace:
+
+```swift
+        .frame(width: 600, height: 720)
+```
+
+with:
+
+```swift
+        .frame(width: 600, height: 800)
 ```
 
 - [ ] **Step 10: Commit**
@@ -2376,9 +2467,9 @@ git commit -m "feat: object key templates with migration of the Phase 2 prefix a
 **Interfaces:**
 - Consumes: `UploadJob.naming` (Task 4).
 - Produces:
-  - `UploadEvent.cancelled(id: UUID)`: terminal, emitted exactly once for a cancelled job, never followed by `.failed`.
+  - `UploadEvent.cancelled(id: UUID, reservedKey: String?)`: terminal, emitted exactly once for a cancelled job, never followed by `.failed`. `reservedKey` is the key the job had claimed with HEAD-before-PUT (nil for a job cancelled before that), the same value `cancel` returns.
   - `UploadQueue.CancelResult` (`nonisolated enum ... Sendable, Equatable { case notFound; case stopped(reservedKey: String?) }`) and `func cancel(recordID: UUID) async -> CancelResult`, which returns after the `.cancelled` event has been delivered to the handler. `enqueue`, `isIdle`, `init` are unchanged.
-  - `AppCoordinator.handle` on `.cancelled`: removes the id from `uploadingIDs`, marks the record `.failed(message: "Upload cancelled.")`, refreshes the overlay, posts no notification (Task 6's delete flow removes the record right after).
+  - `AppCoordinator.handle` on `.cancelled`: removes the id from `uploadingIDs`, marks the record `.failed(message: "Upload cancelled.")`, refreshes the overlay, posts no notification (Task 6's delete flow removes the record right after). Storing `reservedKey` as the record's `pendingObjectKey`, with the queue's location, comes in Task 6, where queues know their location.
   - `FakeDestination.State.blockingUploadsRemaining: Int` (tests): that many uploads sleep for 60 s and throw `CancellationError` when cancelled.
 
 - [ ] **Step 1: Write the failing tests**
@@ -2446,7 +2537,7 @@ with:
 
         let result = await queue.cancel(recordID: id)
         #expect(result == .stopped(reservedKey: "s/KKKKKK.png"))
-        #expect(log.events == [.started(id: id, attempt: 1), .cancelled(id: id)])
+        #expect(log.events == [.started(id: id, attempt: 1), .cancelled(id: id, reservedKey: "s/KKKKKK.png")])
         try await eventually { await queue.isIdle }
         #expect(destination.state.withLock { $0.uploads.isEmpty })
         #expect(log.events.count == 2)
@@ -2464,7 +2555,7 @@ with:
         try await eventually { destination.state.withLock { $0.uploadAttempts } == 1 }
 
         #expect(await queue.cancel(recordID: second) == .stopped(reservedKey: nil))
-        #expect(log.events.contains(.cancelled(id: second)))
+        #expect(log.events.contains(.cancelled(id: second, reservedKey: nil)))
         #expect(await queue.cancel(recordID: first) == .stopped(reservedKey: "s/KKKKKK.png"))
         try await eventually { await queue.isIdle }
         #expect(destination.state.withLock { $0.uploadAttempts } == 1)
@@ -2503,7 +2594,7 @@ with:
         try await eventually { sleeping.withLock { $0 } }
 
         #expect(await queue.cancel(recordID: id) == .stopped(reservedKey: "KKKKKK.png"))
-        #expect(log.events == [.started(id: id, attempt: 1), .cancelled(id: id)])
+        #expect(log.events == [.started(id: id, attempt: 1), .cancelled(id: id, reservedKey: "KKKKKK.png")])
         try await eventually { await queue.isIdle }
         #expect(destination.state.withLock { $0.uploadAttempts } == 1)
     }
@@ -2522,7 +2613,7 @@ with:
         _ = await queue.cancel(recordID: first)
         try await eventually { log.events.contains(.uploaded(id: second, url: URL(string: "https://snap.tky.io/s/KKKKKK.png")!, key: "s/KKKKKK.png")) }
         try await eventually { await queue.isIdle }
-        #expect(log.events.contains(.cancelled(id: first)))
+        #expect(log.events.contains(.cancelled(id: first, reservedKey: "s/KKKKKK.png")))
         #expect(destination.state.withLock { $0.uploads.count } == 1)
     }
 
@@ -2555,7 +2646,9 @@ with:
     case uploaded(id: UUID, url: URL, key: String)
     case failed(id: UUID, message: String)
     /// Terminal, like `.failed`, after `UploadQueue.cancel(recordID:)`. Never followed by `.failed`.
-    case cancelled(id: UUID)
+    /// `reservedKey` is the key the job had claimed, nil when it was cancelled before HEAD
+    /// found one; its PUT may have completed on the server, so a delete removes it too.
+    case cancelled(id: UUID, reservedKey: String?)
 }
 ```
 
@@ -2627,7 +2720,7 @@ actor UploadQueue {
     func cancel(recordID: UUID) async -> CancelResult {
         if let index = pending.firstIndex(where: { $0.id == recordID }) {
             pending.remove(at: index)
-            await events(.cancelled(id: recordID))
+            await events(.cancelled(id: recordID, reservedKey: nil))
             return .stopped(reservedKey: nil)
         }
         guard let current, current.id == recordID else { return .notFound }
@@ -2667,8 +2760,8 @@ actor UploadQueue {
                 return
             } catch {
                 if cancelledIDs.contains(job.id) {
-                    // `reservedKeys` is left for `cancel` to report.
-                    await events(.cancelled(id: job.id))
+                    // `reservedKeys` is left for `cancel` to report as well.
+                    await events(.cancelled(id: job.id, reservedKey: reservedKeys[job.id]))
                     return
                 }
                 if UploadError.isRetryable(error), attempt < policy.maxAttempts {
@@ -2677,7 +2770,7 @@ actor UploadQueue {
                         try await sleep(policy.delay(beforeAttempt: attempt))
                     } catch {
                         if cancelledIDs.contains(job.id) {
-                            await events(.cancelled(id: job.id))
+                            await events(.cancelled(id: job.id, reservedKey: reservedKeys[job.id]))
                             return
                         }
                         // A backoff sleep that fails on its own ends the job instead of retrying.
@@ -2724,8 +2817,9 @@ with:
 ```swift
         case .failed(let id, let message):
             markFailed(id, message: message)
-        case .cancelled(let id):
-            // Requested by the delete flow, which removes the record next; no notification.
+        case .cancelled(let id, _):
+            // Requested by the delete flow (Task 6), which removes the record next; no
+            // notification. Task 6 also stores the reserved key on the record.
             uploadingIDs.remove(id)
             history.update(id: id) { $0.uploadState = .failed(message: "Upload cancelled.") }
             refreshOverlay(for: id)
@@ -2738,7 +2832,7 @@ Run:
 ```bash
 xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build test 2>&1 | grep -E "error:|warning: .*TidyShot/|Test run|✘"
 ```
-Expected: no `error:` or `warning:` lines, and `Test run with 145 tests in 22 suites passed`. The existing `cancelledBackoffEmitsFailedAndStops` still passes: a sleep that throws `CancellationError` without anyone calling `cancel` ends the job with `.failed`, because the id is not in `cancelledIDs`.
+Expected: no `error:` or `warning:` lines, and `Test run with 146 tests in 22 suites passed`. The existing `cancelledBackoffEmitsFailedAndStops` still passes: a sleep that throws `CancellationError` without anyone calling `cancel` ends the job with `.failed`, because the id is not in `cancelledIDs`.
 
 - [ ] **Step 7: Commit**
 
@@ -2754,6 +2848,7 @@ git commit -m "feat: cancel a pending or in-flight upload with a single cancelle
 **Files:**
 - Create: `TidyShot/History/CaptureDeletion.swift`
 - Create: `TidyShotTests/CaptureDeletionTests.swift`
+- Modify: `TidyShotTests/S3DestinationTests.swift` (one test added: DELETE for a dotted bucket)
 - Modify: `TidyShot/Settings/AppSettings.swift` (one edit: `AfterCaptureAction.uploadOnly`)
 - Modify: `TidyShot/Settings/GeneralSettingsView.swift` (one edit)
 - Modify: `TidyShot/Output/Pasteboard.swift` (one edit: `copy(fileURL:)`)
@@ -2762,16 +2857,18 @@ git commit -m "feat: cancel a pending or in-flight upload with a single cancelle
 - Modify: `TidyShot/App/AppCoordinator.swift` (full replacement below)
 
 **Interfaces:**
-- Consumes: `CaptureRecord` fields and `HistoryStore.didPrune` (Task 2), `ThumbnailMaker`, `ThumbnailStore`, `PendingFileStore` (Task 3), `ObjectKeyNamer`, `TemplateContext` (Task 4), `UploadQueue.cancel(recordID:)`, `UploadEvent.cancelled` (Task 5), `S3Destination.delete(key:)` (Phase 2).
+- Consumes: `CaptureRecord` fields, `ObjectLocation` and `HistoryStore.didPrune` (Task 2), `ThumbnailMaker`, `ThumbnailStore`, `PendingFileStore` (Task 3), `ObjectKeyNamer`, `TemplateContext` (Task 4), `UploadQueue.cancel(recordID:)`, `UploadEvent.cancelled(id:reservedKey:)` (Task 5), `S3Destination.delete(key:)` (Phase 2).
 - Produces:
   - `AfterCaptureAction.uploadOnly` (title "Upload only, keep no local file", raw value `uploadOnly`) and `var uploads: Bool` (true for `.upload` and `.uploadOnly`).
   - `Pasteboard.copy(fileURL: URL)`.
-  - `SaveLocation.remove(at fileURL: URL) throws` (a missing file is not an error; throws `CocoaError(.fileNoSuchFile)` when no folder is set).
-  - `nonisolated enum CaptureDeletion { static func objectKeys(for record: CaptureRecord, afterCancel: CaptureRecord?, reservedKey: String?) -> [String]; static func confirmationText(for record: CaptureRecord) -> String }`.
+  - `SaveLocation.remove(at fileURL: URL) throws` (a missing file is not an error; when no folder is set it throws `CocoaError(.fileWriteNoPermission)` with the description "No save folder is set, so TidyShot cannot reach this file.", which Delete reports instead of pretending the file is gone).
+  - `nonisolated enum CaptureDeletion { static func objectKeys(for record: CaptureRecord) -> [String]; static func sharedKeys(_ keys: [String], at location: ObjectLocation, with others: [CaptureRecord]) -> [String]; static let historyOnlyNote: String; static func confirmationText(for record: CaptureRecord) -> String }`.
   - `QuickAccessController.Actions` gains `var delete: (UUID) -> Void`; `QuickAccessController.close(recordID:)`; `QuickAccessModel.onDelete`; the view shows a trash button under the X, hides "Reveal in Finder" when the record has no local file, and labels an upload-only capture "Upload only, no local file".
-  - `AppCoordinator`: `let thumbnails: ThumbnailStore`, `let pendingFiles: PendingFileStore`, `func readLocalFile(of record: CaptureRecord) throws -> Data`, `func copyLinkOrFile(recordID: UUID)` (replaces `copyURL(recordID:)`), `func deleteCapture(recordID: UUID) async`, `func historyItemSelected(_:)` kept for the menu until Task 7. `save(_:appName:)`, `retryUpload`, `retryFailedUploads`, `reveal`, `makeDestination`, `destinationDidChange` keep their signatures.
+  - `AppCoordinator`: `let thumbnails: ThumbnailStore`, `let pendingFiles: PendingFileStore`, `func readLocalFile(of record: CaptureRecord) throws -> Data`, `func copyLinkOrFile(recordID: UUID)` (replaces `copyURL(recordID:)`), `func deleteCapture(recordID: UUID) async`, `func historyItemSelected(_:)` kept for the menu until Task 7. `save(_:appName:)`, `retryUpload`, `retryFailedUploads`, `reveal`, `makeDestination`, `destinationDidChange` keep their signatures. Private: `UploadLane` (a queue, its `ObjectLocation` and its key template), `queue: UploadLane?`, `drainingQueues: [UploadLane]`, `deletingIDs: Set<UUID>`, `loadCredentials()`, `cancelUpload(of:)`, `removeRecord(_:)`, and `handle(_:at:)`, which stores the location on `.uploaded` and the reserved key plus location on `.cancelled`.
 
-Flow of `save` now: encode; `action.uploads` decides whether `makeDestination()` is called (one keychain read); copy the image now under the same three rules as Phase 2; draw one counter if either template contains `{counter}`; write the file (upload-only: `pendingFiles.write`, no prompt, `lastCaptureURL` untouched; otherwise the save folder as before); warn once if upload was wanted but there is no destination (two different messages); shutter sound; make the thumbnail; add the record (`uploading` with a destination, `failed("No upload destination is configured.")` for upload-only without one, `none` otherwise); overlay; enqueue or post the Phase 1 "saved" notification (save mode only). On `.uploaded` of a temporary file the file is removed and the record loses its `fileURL`.
+Flow of `save` now: encode; `action.uploads` decides whether `makeDestination()` is called (one keychain read); copy the image now under the same three rules as Phase 2; write the file (upload-only: `pendingFiles.write`, no prompt, `lastCaptureURL` untouched; otherwise the save folder as before, where `writeFile` draws the file name's counter as in Phase 1); warn once if upload was wanted but there is no destination (two different messages); shutter sound; add the record (`uploading` with a destination, `failed("No upload destination is configured.")` for upload-only without one, `none` otherwise); start the thumbnail on a detached task (the record gets `thumbnailFileName` when it finishes); overlay; enqueue (the key is named in `startUpload`) or post the Phase 1 "saved" notification (save mode only). On `.uploaded` of a temporary file the file is removed and the record loses its `fileURL`.
+
+Flow of `deleteCapture`: ignore the call if the id is in `deletingIDs`; one alert with "Delete", "Remove from History Only" and "Cancel". Delete: cancel the upload on the current queue or any draining queue (the `.cancelled` handler stores the reserved key as `pendingObjectKey`); re-read the record; if it has keys and an `objectLocation`, load the current credentials (none: "Not deleted"), skip keys another record not being deleted shares at that location, and `DELETE` the rest with `S3Destination(config: location.config, credentials:)` (any failure: "Not deleted", record kept); remove the local file (any error but "already gone": "Not deleted", record kept); remove the thumbnail and the record; post "Not deleted from storage" for each skipped shared key. Remove from History Only: cancel the upload, remove a temporary file in `pending`, the thumbnail and the record; nothing in the bucket or the save folder is touched.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -2783,44 +2880,102 @@ import Testing
 
 struct CaptureDeletionTests {
     let url = URL(string: "https://snap.tky.io/aB3dE9.png")!
+    let location = ObjectLocation(endpoint: "https://s3.us-west-2.amazonaws.com", region: "us-west-2",
+                                  bucket: "snap.tky.io", usePathStyle: true)
 
     func record(state: CaptureRecord.UploadState, fileURL: URL? = URL(fileURLWithPath: "/Users/tim/Desktop/Shot.png"),
-                temporary: Bool = false) -> CaptureRecord {
-        CaptureRecord(fileURL: fileURL, fileIsTemporary: temporary, pixelWidth: 10, pixelHeight: 10, appName: "Safari", uploadState: state)
+                temporary: Bool = false, location: ObjectLocation? = nil, pendingKey: String? = nil) -> CaptureRecord {
+        CaptureRecord(fileURL: fileURL, fileIsTemporary: temporary, pixelWidth: 10, pixelHeight: 10, appName: "Safari",
+                      uploadState: state, objectLocation: location, pendingObjectKey: pendingKey)
     }
 
-    @Test func objectKeysForUploadedCapture() {
-        let uploaded = record(state: .uploaded(url: url, key: "aB3dE9.png"))
-        #expect(CaptureDeletion.objectKeys(for: uploaded, afterCancel: uploaded, reservedKey: nil) == ["aB3dE9.png"])
-    }
+    @Test func objectKeysAreTheUploadedAndThePendingKey() {
+        let uploaded = record(state: .uploaded(url: url, key: "aB3dE9.png"), location: location)
+        #expect(CaptureDeletion.objectKeys(for: uploaded) == ["aB3dE9.png"])
 
-    @Test func objectKeysForCancelledUploadIncludeReservedAndLateSuccess() {
-        let uploading = record(state: .uploading(fraction: 0.5))
-        #expect(CaptureDeletion.objectKeys(for: uploading, afterCancel: uploading, reservedKey: "Qx12Zz.png") == ["Qx12Zz.png"])
+        let cancelled = record(state: .failed(message: "Upload cancelled."), location: location, pendingKey: "Qx12Zz.png")
+        #expect(CaptureDeletion.objectKeys(for: cancelled) == ["Qx12Zz.png"])
 
-        let finishedAnyway = record(state: .uploaded(url: url, key: "aB3dE9.png"))
-        #expect(CaptureDeletion.objectKeys(for: uploading, afterCancel: finishedAnyway, reservedKey: "aB3dE9.png") == ["aB3dE9.png"])
-        #expect(CaptureDeletion.objectKeys(for: uploading, afterCancel: nil, reservedKey: nil) == [])
+        let both = record(state: .uploaded(url: url, key: "aB3dE9.png"), location: location, pendingKey: "Qx12Zz.png")
+        #expect(CaptureDeletion.objectKeys(for: both) == ["aB3dE9.png", "Qx12Zz.png"])
+
+        let same = record(state: .uploaded(url: url, key: "aB3dE9.png"), location: location, pendingKey: "aB3dE9.png")
+        #expect(CaptureDeletion.objectKeys(for: same) == ["aB3dE9.png"])
     }
 
     @Test func objectKeysForLocalOnlyCaptureAreEmpty() {
-        #expect(CaptureDeletion.objectKeys(for: record(state: .none), afterCancel: nil, reservedKey: nil) == [])
-        #expect(CaptureDeletion.objectKeys(for: record(state: .failed(message: "offline")), afterCancel: nil, reservedKey: nil) == [])
+        #expect(CaptureDeletion.objectKeys(for: record(state: .none)) == [])
+        #expect(CaptureDeletion.objectKeys(for: record(state: .failed(message: "offline"))) == [])
+        #expect(CaptureDeletion.objectKeys(for: record(state: .uploading(fraction: 0.5))) == [])
+    }
+
+    @Test func sharedKeysAreTheOnesAnotherCaptureUsesAtTheSameLocation() {
+        var otherBucket = location
+        otherBucket.bucket = "elsewhere"
+        let others = [
+            record(state: .uploaded(url: url, key: "same.png"), location: location),
+            record(state: .uploaded(url: url, key: "moved.png"), location: otherBucket),
+            record(state: .failed(message: "Upload cancelled."), location: location, pendingKey: "reserved.png"),
+            record(state: .uploaded(url: url, key: "legacy.png")),
+        ]
+        #expect(CaptureDeletion.sharedKeys(["same.png", "moved.png", "reserved.png", "legacy.png", "mine.png"], at: location, with: others)
+                == ["same.png", "reserved.png"])
+        #expect(CaptureDeletion.sharedKeys(["same.png"], at: location, with: []) == [])
     }
 
     @Test func confirmationTextNamesWhatIsRemoved() {
-        #expect(CaptureDeletion.confirmationText(for: record(state: .uploaded(url: url, key: "aB3dE9.png")))
-                == "This removes the uploaded object https://snap.tky.io/aB3dE9.png, the file Shot.png, and its entry in Recent Captures. It cannot be undone.")
-        #expect(CaptureDeletion.confirmationText(for: record(state: .uploaded(url: url, key: "aB3dE9.png"), fileURL: nil))
-                == "This removes the uploaded object https://snap.tky.io/aB3dE9.png and its entry in Recent Captures. It cannot be undone.")
+        let note = " " + CaptureDeletion.historyOnlyNote
+        #expect(CaptureDeletion.confirmationText(for: record(state: .uploaded(url: url, key: "aB3dE9.png"), location: location))
+                == "Delete removes the uploaded object https://snap.tky.io/aB3dE9.png, the file Shot.png, and its entry in Recent Captures. It cannot be undone." + note)
+        #expect(CaptureDeletion.confirmationText(for: record(state: .uploaded(url: url, key: "aB3dE9.png"), fileURL: nil, location: location))
+                == "Delete removes the uploaded object https://snap.tky.io/aB3dE9.png and its entry in Recent Captures. It cannot be undone." + note)
         #expect(CaptureDeletion.confirmationText(for: record(state: .none))
-                == "This removes the file Shot.png and its entry in Recent Captures. It cannot be undone.")
+                == "Delete removes the file Shot.png and its entry in Recent Captures. It cannot be undone." + note)
         #expect(CaptureDeletion.confirmationText(for: record(state: .uploading(fraction: 0.2), fileURL: URL(fileURLWithPath: "/tmp/p.png"), temporary: true))
-                == "This removes the upload in progress, the temporary file, and its entry in Recent Captures. It cannot be undone.")
+                == "Delete removes the upload in progress, the temporary file, and its entry in Recent Captures. It cannot be undone." + note)
+        #expect(CaptureDeletion.confirmationText(for: record(state: .failed(message: "Upload cancelled."), fileURL: nil, location: location, pendingKey: "Qx12Zz.png"))
+                == "Delete removes any object the cancelled upload left in the bucket and its entry in Recent Captures. It cannot be undone." + note)
         #expect(CaptureDeletion.confirmationText(for: record(state: .failed(message: "x"), fileURL: nil))
-                == "This removes its entry in Recent Captures. It cannot be undone.")
+                == "Delete removes its entry in Recent Captures. It cannot be undone." + note)
+    }
+
+    /// A Phase 2 record does not know which bucket its object went to, so Delete leaves it.
+    @Test func confirmationTextSaysWhenTheObjectStays() {
+        #expect(CaptureDeletion.confirmationText(for: record(state: .uploaded(url: url, key: "aB3dE9.png")))
+                == "Delete removes the file Shot.png and its entry in Recent Captures. It cannot be undone. The uploaded object https://snap.tky.io/aB3dE9.png stays in the bucket: it was uploaded before TidyShot recorded where objects go. "
+                + CaptureDeletion.historyOnlyNote)
     }
 }
+```
+
+In `TidyShotTests/S3DestinationTests.swift`, add a test before `errorBodyIsSummarisedFromS3XML`:
+
+Replace:
+
+```swift
+    @Test func errorBodyIsSummarisedFromS3XML() async throws {
+```
+
+with:
+
+```swift
+    /// Delete builds its destination from the record's stored location. A dotted bucket is always
+    /// addressed path-style, because a TLS wildcard cannot cover `snap.tky.io.s3.amazonaws.com`.
+    @Test func deleteForDottedBucketUsesPathStyle() async throws {
+        var dotted = config
+        dotted.bucket = "snap.tky.io"
+        let location = ObjectLocation(config: dotted)
+        #expect(location.usePathStyle)
+        let (session, stub) = StubSession.make { _ in (204, Data()) }
+        try await destination(location.config, session: session).delete(key: "aB3dE9.png")
+
+        let request = try #require(stub.requests.first)
+        #expect(request.httpMethod == "DELETE")
+        #expect(request.url?.absoluteString == "https://s3.us-east-1.amazonaws.com/snap.tky.io/aB3dE9.png")
+        #expect(request.url?.path() == "/snap.tky.io/aB3dE9.png")
+    }
+
+    @Test func errorBodyIsSummarisedFromS3XML() async throws {
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -2838,27 +2993,45 @@ Expected: compile errors containing `cannot find 'CaptureDeletion' in scope`.
 import Foundation
 
 /// The pure parts of deleting a capture, shared by the overlay and the gallery: which objects to
-/// remove from the bucket and what the confirmation says. `AppCoordinator.deleteCapture` does the I/O.
+/// remove from the bucket, which of them another capture still needs, and what the confirmation
+/// says. `AppCoordinator.deleteCapture` does the I/O.
 nonisolated enum CaptureDeletion {
-    /// Object keys to DELETE, in order and without duplicates: the key the capture is uploaded
-    /// under; the key it ended up under if its upload finished while it was being cancelled
-    /// (`afterCancel` is the record re-read after `UploadQueue.cancel`); and the key a cancelled
-    /// upload had reserved, because its PUT may have completed on the server.
-    static func objectKeys(for record: CaptureRecord, afterCancel: CaptureRecord?, reservedKey: String?) -> [String] {
+    /// The second paragraph of every confirmation, explaining the middle button.
+    static let historyOnlyNote = "Remove from History Only removes just the entry and keeps the uploaded object and any file in your save folder."
+
+    /// Object keys that may hold the capture, in order and without duplicates: the key it was
+    /// uploaded under, and the key a cancelled upload had reserved (its PUT may have completed
+    /// on the server as it was cancelled). Both live at `record.objectLocation`.
+    static func objectKeys(for record: CaptureRecord) -> [String] {
         var keys: [String] = []
-        for key in [record.uploadedKey, afterCancel?.uploadedKey, reservedKey].compactMap({ $0 }) where !keys.contains(key) {
+        for key in [record.uploadedKey, record.pendingObjectKey].compactMap({ $0 }) where !keys.contains(key) {
             keys.append(key)
         }
         return keys
     }
 
-    /// The informative text of the one confirmation, naming exactly what will be removed.
+    /// The keys among `keys` that a record in `others` also points at, at the same location.
+    /// A template without `{random}` or `{counter}` can give two captures the same key when HEAD
+    /// cannot see the first object, and deleting it would break the other capture's URL.
+    static func sharedKeys(_ keys: [String], at location: ObjectLocation, with others: [CaptureRecord]) -> [String] {
+        keys.filter { key in
+            others.contains { other in
+                other.objectLocation == location && (other.uploadedKey == key || other.pendingObjectKey == key)
+            }
+        }
+    }
+
+    /// The informative text of the one confirmation, naming exactly what Delete removes. A record
+    /// without an `objectLocation` (uploaded before Phase 3) keeps its object, and the text says so.
     static func confirmationText(for record: CaptureRecord) -> String {
+        let knowsLocation = record.objectLocation != nil
         var parts: [String] = []
-        if let url = record.uploadedURL {
+        if let url = record.uploadedURL, knowsLocation {
             parts.append("the uploaded object \(url.absoluteString)")
         } else if record.isUploading {
             parts.append("the upload in progress")
+        } else if record.pendingObjectKey != nil, knowsLocation {
+            parts.append("any object the cancelled upload left in the bucket")
         }
         if let fileURL = record.fileURL {
             parts.append(record.fileIsTemporary ? "the temporary file" : "the file \(fileURL.lastPathComponent)")
@@ -2870,7 +3043,11 @@ nonisolated enum CaptureDeletion {
         case 2: list = "\(parts[0]) and \(parts[1])"
         default: list = parts.dropLast().joined(separator: ", ") + ", and " + parts[parts.count - 1]
         }
-        return "This removes \(list). It cannot be undone."
+        var text = "Delete removes \(list). It cannot be undone."
+        if let url = record.uploadedURL, !knowsLocation {
+            text += " The uploaded object \(url.absoluteString) stays in the bucket: it was uploaded before TidyShot recorded where objects go."
+        }
+        return text + " " + historyOnlyNote
     }
 }
 ```
@@ -2881,7 +3058,7 @@ Run:
 ```bash
 xcodegen generate && xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build test 2>&1 | grep -E "error:|warning: .*TidyShot/|Test run|✘"
 ```
-Expected: `Test run with 149 tests in 23 suites passed`.
+Expected: `Test run with 152 tests in 23 suites passed` (146 plus 5 `CaptureDeletionTests` plus 1 in `S3DestinationTests`).
 
 - [ ] **Step 5: Add the after-capture action, the file pasteboard write and the save-folder delete**
 
@@ -2994,9 +3171,12 @@ with:
 
 ```swift
     /// Deletes a file inside the save folder, holding security-scoped access. A file that is
-    /// already gone is not an error.
+    /// already gone is not an error; any other failure throws, so Delete keeps the record.
     func remove(at fileURL: URL) throws {
-        guard let currentURL else { throw CocoaError(.fileNoSuchFile) }
+        guard let currentURL else {
+            throw CocoaError(.fileWriteNoPermission,
+                             userInfo: [NSLocalizedDescriptionKey: "No save folder is set, so TidyShot cannot reach this file."])
+        }
         try withAccess(to: currentURL) {
             do {
                 try FileManager.default.removeItem(at: fileURL)
@@ -3260,6 +3440,21 @@ import ScreenCaptureKit
 /// Owns app-wide state and wires hotkeys, selection, capture, output, upload, and history together.
 @Observable
 final class AppCoordinator {
+    /// An upload queue and where its destination writes. Upload events carry no destination, so
+    /// the location travels with the queue and is stored on the records it uploads.
+    private struct UploadLane {
+        let queue: UploadQueue
+        let location: ObjectLocation
+        let keyTemplate: String
+    }
+
+    /// The buttons of the delete confirmation.
+    private enum DeleteChoice {
+        case delete
+        case removeFromHistoryOnly
+        case cancel
+    }
+
     static let shared = AppCoordinator()
 
     let engine = CaptureEngine()
@@ -3274,7 +3469,16 @@ final class AppCoordinator {
     private let permissionWindow = PermissionWindowController()
     private let overlay = QuickAccessController()
     @ObservationIgnored private lazy var selector = SelectionController(engine: engine)
-    @ObservationIgnored private var queue: UploadQueue?
+    /// The queue new uploads go to, built from the destination of the first upload after launch
+    /// or after the Upload tab was saved.
+    @ObservationIgnored private var queue: UploadLane?
+    /// Queues replaced by `destinationDidChange()`, kept until they report idle. Their jobs
+    /// finish against the destination they started with (their records store that location),
+    /// and Delete can still cancel them.
+    @ObservationIgnored private var drainingQueues: [UploadLane] = []
+    /// Records whose delete is in progress (alert showing or requests running): a second click
+    /// shows no second alert, and the shared-key check ignores them.
+    @ObservationIgnored private var deletingIDs: Set<UUID> = []
     /// Set after the first "Upload not configured" notification so later captures stay quiet.
     @ObservationIgnored private var warnedUploadNotConfigured = false
 
@@ -3384,7 +3588,7 @@ final class AppCoordinator {
     // MARK: Save and upload
 
     /// Encode, copy to clipboard (image now, or URL later), write the file (save folder, or the
-    /// container's `pending` folder in upload-only mode), make the thumbnail, record in history,
+    /// container's `pending` folder in upload-only mode), record in history, start the thumbnail,
     /// show the overlay, and start the upload. A file is always written before the upload starts;
     /// if it cannot be written the image stays on the clipboard, so a capture is never dropped.
     func save(_ result: CaptureResult, appName: String?) async {
@@ -3413,18 +3617,14 @@ final class AppCoordinator {
             Pasteboard.copy(image: result.image, pngData: png, scale: result.scale)
         }
 
-        // One counter per capture, shared by the file name and the object key, and kept on the
-        // record so a retry names the object the same way.
-        let needsCounter = settings.fileNameTemplate.contains("{counter}")
-            || destination?.config.keyTemplate.contains("{counter}") == true
-        let counter = needsCounter ? settings.nextCounter() : 0
+        // The object key is not named here: `startUpload` names it when the upload starts.
         let id = UUID()
         let fileURL: URL
         if action == .uploadOnly {
             guard let url = writePendingFile(png, id: id, result: result, alreadyOnClipboard: copyImageNow) else { return }
             fileURL = url
         } else {
-            guard let url = await writeFile(png, result: result, appName: appName, counter: counter, alreadyOnClipboard: copyImageNow) else { return }
+            guard let url = await writeFile(png, result: result, appName: appName, alreadyOnClipboard: copyImageNow) else { return }
             fileURL = url
             lastCaptureURL = url
         }
@@ -3447,10 +3647,10 @@ final class AppCoordinator {
             state = .none
         }
         let record = CaptureRecord(id: id, fileURL: fileURL, fileIsTemporary: action == .uploadOnly,
-                                   thumbnailFileName: makeThumbnail(from: result.image, id: id),
                                    pixelWidth: result.image.width, pixelHeight: result.image.height,
-                                   appName: appName, counter: counter, uploadState: state)
+                                   appName: appName, uploadState: state)
         history.add(record)
+        makeThumbnail(from: result.image, for: id)
         showOverlay(for: record, image: result.image, scale: result.scale)
 
         if let destination {
@@ -3469,15 +3669,17 @@ final class AppCoordinator {
         notifier.notifyError(message, title: "Upload not configured")
     }
 
-    /// Writes the PNG into the save folder. Returns nil after notifying, with the image left on
-    /// the clipboard, when there is no folder or the write fails.
-    private func writeFile(_ png: Data, result: CaptureResult, appName: String?, counter: Int, alreadyOnClipboard: Bool) async -> URL? {
+    /// Writes the PNG into the save folder, drawing the file name's `{counter}` as Phase 1 did.
+    /// Returns nil after notifying, with the image left on the clipboard, when there is no folder
+    /// or the write fails.
+    private func writeFile(_ png: Data, result: CaptureResult, appName: String?, alreadyOnClipboard: Bool) async -> URL? {
         guard let folder = await saveLocation.ensureFolder() else {
             keepOnClipboard(result, png: png, alreadyOnClipboard: alreadyOnClipboard)
             notifier.notifyError("No folder was chosen. The image is on the clipboard.", title: "Not saved")
             return nil
         }
         do {
+            let counter = settings.fileNameTemplate.contains("{counter}") ? settings.nextCounter() : 0
             let baseName = FileNamer(template: settings.fileNameTemplate).name(appName: appName, counter: counter)
             return try saveLocation.write(png, baseName: baseName, ext: "png", in: folder)
         } catch {
@@ -3506,15 +3708,28 @@ final class AppCoordinator {
         }
     }
 
-    /// Writes the 320 px thumbnail and returns its file name, or nil (logged) when that fails;
-    /// the capture goes ahead without one and the gallery shows a placeholder.
-    private func makeThumbnail(from image: CGImage, id: UUID) -> String? {
-        do {
-            guard let small = ThumbnailMaker.thumbnail(from: image) else { return nil }
-            return try thumbnails.write(try ThumbnailMaker.pngData(small), id: id)
-        } catch {
-            NSLog("Thumbnail failed: \(error.localizedDescription)")
-            return nil
+    /// Makes and writes the 320 px thumbnail on a detached task, off the main actor, and stores
+    /// its file name on the record when that finishes. Until then the gallery makes one from the
+    /// file itself; a failure is logged and the gallery falls back the same way. If the record was
+    /// deleted in the meantime the new file is removed again.
+    private func makeThumbnail(from image: CGImage, for id: UUID) {
+        let store = thumbnails
+        Task { [weak self] in
+            let name = await Task.detached(priority: .utility) { () -> String? in
+                do {
+                    guard let small = ThumbnailMaker.thumbnail(from: image) else { return nil }
+                    return try store.write(try ThumbnailMaker.pngData(small), id: id)
+                } catch {
+                    NSLog("Thumbnail failed: \(error.localizedDescription)")
+                    return nil
+                }
+            }.value
+            guard let name else { return }
+            guard let self, self.history.record(id: id) != nil else {
+                store.remove(fileName: name)
+                return
+            }
+            self.history.update(id: id) { $0.thumbnailFileName = name }
         }
     }
 
@@ -3534,7 +3749,13 @@ final class AppCoordinator {
     /// stored, or the keychain could not be read. "No item" is the normal not-configured case and
     /// stays silent here; any other keychain error is logged and reported once per launch.
     func makeDestination() -> S3Destination? {
-        guard let config = settings.s3Config, config.isComplete else { return nil }
+        guard let config = settings.s3Config, config.isComplete, let credentials = loadCredentials() else { return nil }
+        return S3Destination(config: config, credentials: credentials)
+    }
+
+    /// The stored credentials, or nil when there are none or the keychain could not be read
+    /// (logged and reported once per launch).
+    private func loadCredentials() -> AWSCredentials? {
         let stored: AWSCredentials?
         do {
             stored = try credentialStore.load(account: KeychainCredentialStore.defaultAccount)
@@ -3546,24 +3767,43 @@ final class AppCoordinator {
         guard let credentials = stored, !credentials.accessKeyID.isEmpty, !credentials.secretAccessKey.isEmpty else {
             return nil
         }
-        return S3Destination(config: config, credentials: credentials)
+        return credentials
     }
 
     /// Called by the Upload settings tab after saving or forgetting credentials, so the next
-    /// upload uses the new settings.
+    /// upload builds a queue from the new settings. The old queue is not dropped while it has
+    /// work: it moves to `drainingQueues` until it reports idle, so its jobs still deliver their
+    /// events (and finish against the destination they started with) and Delete can cancel them.
     func destinationDidChange() {
+        guard let old = queue else { return }
         queue = nil
+        drainingQueues.append(old)
+        Task { [weak self] in
+            while !(await old.queue.isIdle) {
+                try? await Task.sleep(for: .milliseconds(500))
+            }
+            self?.drainingQueues.removeAll { $0.queue === old.queue }
+        }
+    }
+
+    /// A queue for `destination` whose events are handled with the location they upload to.
+    private func makeLane(for destination: S3Destination) -> UploadLane {
+        let location = ObjectLocation(config: destination.config)
+        let keyTemplate = destination.config.keyTemplate
+        let queue = UploadQueue(destination: destination,
+                                keyNamer: ObjectKeyNamer(template: keyTemplate),
+                                events: { [weak self] event in self?.handle(event, at: location) })
+        return UploadLane(queue: queue, location: location, keyTemplate: keyTemplate)
     }
 
     /// Enqueues `data` for `recordID`. `destination` is only used when the queue has to be
     /// created (first upload, or after the Upload tab was saved); callers read it once.
     private func startUpload(recordID: UUID, data: Data, destination: S3Destination) {
-        if queue == nil {
-            queue = UploadQueue(destination: destination,
-                                keyNamer: ObjectKeyNamer(template: destination.config.keyTemplate),
-                                events: { [weak self] event in self?.handle(event) })
-        }
-        guard let queue, let record = history.record(id: recordID) else { return }
+        // Look the record up before marking it uploading, so a missing record never leaves an
+        // id in `uploadingIDs` (and the menu bar icon spinning) with no job to clear it.
+        guard let record = history.record(id: recordID) else { return }
+        let lane = queue ?? makeLane(for: destination)
+        queue = lane
         uploadingIDs.insert(recordID)
         // `save` adds new records already marked uploading and shows them in the overlay, so
         // only a retry (a record in another state) needs the write and the overlay refresh.
@@ -3571,9 +3811,13 @@ final class AppCoordinator {
             history.update(id: recordID) { $0.uploadState = .uploading(fraction: 0) }
             refreshOverlay(for: recordID)
         }
+        // The key is named now, not at capture time: a capture taken while no destination was set
+        // up, and every retry, get a counter drawn when their upload starts. The date and app stay
+        // the capture's own, so a retried upload lands in the capture's date folder.
+        let counter = lane.keyTemplate.contains("{counter}") ? settings.nextCounter() : 0
         let job = UploadJob(id: recordID, data: data, contentType: "image/png", fileExtension: "png",
-                            naming: TemplateContext(date: record.timestamp, appName: record.appName, counter: record.counter))
-        Task { await queue.enqueue(job) }
+                            naming: TemplateContext(date: record.timestamp, appName: record.appName, counter: counter))
+        Task { await lane.queue.enqueue(job) }
     }
 
     /// Re-reads the file and uploads it again.
@@ -3647,26 +3891,58 @@ final class AppCoordinator {
 
     // MARK: Delete
 
-    /// Shared by the overlay and the gallery. One confirmation; then, in order, the object in the
-    /// bucket (cancelling an in-flight upload first), the local file, the thumbnail, and the
-    /// history record. If the object cannot be deleted the record stays, with a notification, so
-    /// Delete can be tried again; a local file that is already gone is not an error.
+    /// Shared by the overlay and the gallery. One confirmation with three answers. Delete stops
+    /// an in-flight upload, removes the object from the bucket the record says it went to, then
+    /// the local file, the thumbnail and the record. A failed `DELETE` or a local file that
+    /// cannot be removed keeps the record, with a notification, so Delete can be tried again; a
+    /// local file that is already gone is not an error. "Remove from History Only" drops just the
+    /// record, for a capture whose object can no longer be deleted.
     func deleteCapture(recordID: UUID) async {
-        guard let record = history.record(id: recordID), confirmDelete(of: record) else { return }
+        guard !deletingIDs.contains(recordID), let record = history.record(id: recordID) else { return }
+        deletingIDs.insert(recordID)
+        defer { deletingIDs.remove(recordID) }
 
-        var reservedKey: String?
-        if uploadingIDs.contains(recordID), let queue,
-           case .stopped(let key) = await queue.cancel(recordID: recordID) {
-            reservedKey = key
+        switch confirmDelete(of: record) {
+        case .cancel:
+            return
+        case .removeFromHistoryOnly:
+            // Stop an upload still running so it cannot finish for a record that is gone. Nothing
+            // in the bucket or the save folder is touched; a temporary file in `pending` is
+            // TidyShot's own copy that nothing else would ever remove, so it goes with the record.
+            await cancelUpload(of: recordID)
+            guard let current = history.record(id: recordID) else { return }
+            if current.fileIsTemporary, let fileURL = current.fileURL {
+                do {
+                    try pendingFiles.remove(fileURL)
+                } catch {
+                    NSLog("Could not remove \(fileURL.lastPathComponent): \(error.localizedDescription)")
+                }
+            }
+            removeRecord(current)
+            return
+        case .delete:
+            break
         }
-        let keys = CaptureDeletion.objectKeys(for: record, afterCancel: history.record(id: recordID), reservedKey: reservedKey)
-        if !keys.isEmpty {
-            guard let destination = makeDestination() else {
-                notifier.notifyError("Set up the destination in Settings > Upload so the uploaded object can be removed, then try again.",
+
+        // After this the record holds any key the cancelled job had reserved (`pendingObjectKey`),
+        // or its uploaded key if the upload finished first.
+        await cancelUpload(of: recordID)
+        guard let current = history.record(id: recordID) else { return }
+
+        var sharedKeys: [String] = []
+        let keys = CaptureDeletion.objectKeys(for: current)
+        if !keys.isEmpty, let location = current.objectLocation {
+            guard let credentials = loadCredentials() else {
+                notifier.notifyError("Save credentials in Settings > Upload so the uploaded object can be removed, then try again, or choose Remove from History Only.",
                                      title: "Not deleted")
                 return
             }
-            for key in keys {
+            // Never delete an object another capture still points at.
+            let others = history.records.filter { $0.id != recordID && !deletingIDs.contains($0.id) }
+            sharedKeys = CaptureDeletion.sharedKeys(keys, at: location, with: others)
+            // Built from where the object went, not from the current Upload settings.
+            let destination = S3Destination(config: location.config, credentials: credentials)
+            for key in keys where !sharedKeys.contains(key) {
                 do {
                     try await destination.delete(key: key)
                 } catch {
@@ -3676,50 +3952,80 @@ final class AppCoordinator {
             }
         }
 
-        guard let current = history.record(id: recordID) else { return }
         if let fileURL = current.fileURL {
-            if current.fileIsTemporary {
-                pendingFiles.remove(fileURL)
-            } else {
-                do {
+            do {
+                if current.fileIsTemporary {
+                    try pendingFiles.remove(fileURL)
+                } else {
                     try saveLocation.remove(at: fileURL)
-                } catch {
-                    NSLog("Could not delete \(fileURL.lastPathComponent): \(error.localizedDescription)")
                 }
+            } catch {
+                notifier.notifyError("Could not delete \(fileURL.lastPathComponent): \(error.localizedDescription)", title: "Not deleted")
+                return
             }
             if lastCaptureURL == fileURL {
                 lastCaptureURL = nil
             }
         }
-        if let name = current.thumbnailFileName {
+        removeRecord(current)
+        for key in sharedKeys {
+            notifier.notifyError("Another capture shares this key, \(key), so its object was kept. This capture was removed from Recent Captures.",
+                                 title: "Not deleted from storage")
+        }
+    }
+
+    /// Stops the upload for `recordID` in whichever queue has it: the current one, or one that
+    /// a settings change replaced and that is still finishing its jobs. Returns after that
+    /// queue's `.cancelled` event has been handled, so the record holds the reserved key.
+    private func cancelUpload(of recordID: UUID) async {
+        guard uploadingIDs.contains(recordID) else { return }
+        for lane in [queue].compactMap({ $0 }) + drainingQueues {
+            if case .stopped = await lane.queue.cancel(recordID: recordID) {
+                return
+            }
+        }
+    }
+
+    /// Removes the record and its thumbnail, and closes the overlay if it shows the record.
+    private func removeRecord(_ record: CaptureRecord) {
+        if let name = record.thumbnailFileName {
             thumbnails.remove(fileName: name)
         }
-        history.remove(id: recordID)
-        overlay.close(recordID: recordID)
+        history.remove(id: record.id)
+        overlay.close(recordID: record.id)
     }
 
     /// The one confirmation. The app is activated first so the alert appears in front even when
     /// it was triggered from the non-activating overlay panel.
-    private func confirmDelete(of record: CaptureRecord) -> Bool {
+    private func confirmDelete(of record: CaptureRecord) -> DeleteChoice {
         let alert = NSAlert()
         alert.messageText = "Delete this capture?"
         alert.informativeText = CaptureDeletion.confirmationText(for: record)
         alert.alertStyle = .warning
         alert.addButton(withTitle: "Delete").hasDestructiveAction = true
+        alert.addButton(withTitle: "Remove from History Only")
         alert.addButton(withTitle: "Cancel")
         NSApplication.shared.activate(ignoringOtherApps: true)
-        return alert.runModal() == .alertFirstButtonReturn
+        switch alert.runModal() {
+        case .alertFirstButtonReturn: return .delete
+        case .alertSecondButtonReturn: return .removeFromHistoryOnly
+        default: return .cancel
+        }
     }
 
     /// Thumbnails and temporary files of records dropped by retention. Files in the save folder
-    /// are left alone.
+    /// are left alone. (A record whose temporary file is its only copy is never pruned.)
     private func removeFiles(ofPruned records: [CaptureRecord]) {
         for record in records {
             if let name = record.thumbnailFileName {
                 thumbnails.remove(fileName: name)
             }
             if record.fileIsTemporary, let fileURL = record.fileURL {
-                pendingFiles.remove(fileURL)
+                do {
+                    try pendingFiles.remove(fileURL)
+                } catch {
+                    NSLog("Could not remove \(fileURL.lastPathComponent): \(error.localizedDescription)")
+                }
             }
         }
     }
@@ -3740,7 +4046,8 @@ final class AppCoordinator {
         }
     }
 
-    private func handle(_ event: UploadEvent) {
+    /// `location` is where the queue that sent `event` uploads to.
+    private func handle(_ event: UploadEvent, at location: ObjectLocation) {
         switch event {
         case .started(let id, let attempt):
             if attempt > 1 {
@@ -3756,13 +4063,24 @@ final class AppCoordinator {
             }
         case .uploaded(let id, let url, let key):
             uploadingIDs.remove(id)
-            // Upload-only mode: the temporary file has done its job.
+            // Upload-only mode: the temporary file has done its job. If it cannot be removed the
+            // record keeps pointing at it, so Delete can still remove it later.
+            var removedTemporaryFile = false
             if let record = history.record(id: id), record.fileIsTemporary, let fileURL = record.fileURL {
-                pendingFiles.remove(fileURL)
+                do {
+                    try pendingFiles.remove(fileURL)
+                    removedTemporaryFile = true
+                } catch {
+                    NSLog("Could not remove \(fileURL.lastPathComponent) after upload: \(error.localizedDescription)")
+                }
             }
             history.update(id: id) { record in
                 record.uploadState = .uploaded(url: url, key: key)
-                if record.fileIsTemporary {
+                record.objectLocation = location
+                if record.pendingObjectKey == key {
+                    record.pendingObjectKey = nil
+                }
+                if removedTemporaryFile {
                     record.fileURL = nil
                     record.fileIsTemporary = false
                 }
@@ -3774,10 +4092,18 @@ final class AppCoordinator {
             refreshOverlay(for: id)
         case .failed(let id, let message):
             markFailed(id, message: message)
-        case .cancelled(let id):
+        case .cancelled(let id, let reservedKey):
             // Requested by the delete flow, which removes the record next; no notification.
             uploadingIDs.remove(id)
-            history.update(id: id) { $0.uploadState = .failed(message: "Upload cancelled.") }
+            history.update(id: id) { record in
+                record.uploadState = .failed(message: "Upload cancelled.")
+                if let reservedKey {
+                    // The PUT may have landed as it was cancelled. Persisted, so Delete removes
+                    // this key even if its first DELETE fails and it is tried again later.
+                    record.pendingObjectKey = reservedKey
+                    record.objectLocation = location
+                }
+            }
             refreshOverlay(for: id)
         }
     }
@@ -3821,7 +4147,7 @@ Run:
 ```bash
 xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build test 2>&1 | grep -E "error:|warning: .*TidyShot/|Test run|✘"
 ```
-Expected: no `error:` or `warning:` lines, and `Test run with 149 tests in 23 suites passed`.
+Expected: no `error:` or `warning:` lines, and `Test run with 152 tests in 23 suites passed`.
 
 - [ ] **Step 9: Smoke-run upload-only and the overlay's Delete**
 
@@ -3833,12 +4159,12 @@ With a working destination configured: in Settings > General choose "Upload only
 ```bash
 ls ~/Library/Containers/io.tky.tidyshot/Data/Library/Application\ Support/TidyShot/pending ~/Library/Containers/io.tky.tidyshot/Data/Library/Application\ Support/TidyShot/thumbnails
 ```
-Expected: `pending` is empty (or absent) and `thumbnails` holds one `<UUID>.png`; `open` that PNG: it is at most 320 px on its longest side. Now click the trash button. Expected: an alert "Delete this capture?" whose text names the uploaded object URL and "its entry in Recent Captures"; click Delete; the overlay closes, `curl -I <url>` returns 403 or 404, the thumbnail file is gone, and `history.json` no longer lists the capture. Take another capture and click the trash while the ring is still moving (a fullscreen capture on a slow connection, or Network Link Conditioner). Expected: the alert names "the upload in progress" and "the temporary file"; after Delete nothing is left in `pending`, in the bucket, or in `history.json`, and the menu bar icon is the viewfinder again. Switch back to "Upload and copy URL" and quit.
+Expected: `pending` is empty (or absent) and `thumbnails` holds one `<UUID>.png`; `open` that PNG: it is at most 320 px on its longest side. `history.json` lists the capture with an `objectLocation` naming your endpoint, region and bucket. Now click the trash button. Expected: an alert "Delete this capture?" whose text names the uploaded object URL and "its entry in Recent Captures", with the buttons "Delete", "Remove from History Only" and "Cancel"; click Delete; the overlay closes, `curl -I <url>` returns 403 or 404, the thumbnail file is gone, and `history.json` no longer lists the capture. Take another capture and click the trash while the ring is still moving (a fullscreen capture on a slow connection, or Network Link Conditioner). Expected: the alert names "the upload in progress" and "the temporary file"; after Delete nothing is left in `pending`, in the bucket, or in `history.json`, and the menu bar icon is the viewfinder again. Take a third capture, click the trash and choose "Remove from History Only": the overlay closes and `history.json` no longer lists it, but `curl -I <url>` still returns 200. Switch back to "Upload and copy URL" and quit.
 
 - [ ] **Step 10: Commit**
 
 ```bash
-git add TidyShot/History/CaptureDeletion.swift TidyShotTests/CaptureDeletionTests.swift TidyShot/Settings/AppSettings.swift TidyShot/Settings/GeneralSettingsView.swift TidyShot/Output/Pasteboard.swift TidyShot/Output/SaveLocation.swift TidyShot/Overlay/QuickAccessModel.swift TidyShot/Overlay/QuickAccessController.swift TidyShot/Overlay/QuickAccessView.swift TidyShot/App/AppCoordinator.swift
+git add TidyShot/History/CaptureDeletion.swift TidyShotTests/CaptureDeletionTests.swift TidyShotTests/S3DestinationTests.swift TidyShot/Settings/AppSettings.swift TidyShot/Settings/GeneralSettingsView.swift TidyShot/Output/Pasteboard.swift TidyShot/Output/SaveLocation.swift TidyShot/Overlay/QuickAccessModel.swift TidyShot/Overlay/QuickAccessController.swift TidyShot/Overlay/QuickAccessView.swift TidyShot/App/AppCoordinator.swift
 git commit -m "feat: upload-only mode, thumbnails at capture, and delete from the overlay"
 ```
 
@@ -3858,9 +4184,9 @@ git commit -m "feat: upload-only mode, thumbnails at capture, and delete from th
 **Interfaces:**
 - Consumes: `HistoryStore` (observable `records`, `update`), `ThumbnailStore`, `ThumbnailMaker`, `CaptureRecord` fields, `AppCoordinator.readLocalFile(of:)`, `copyLinkOrFile`, `retryUpload`, `reveal`, `deleteCapture` (Tasks 2 to 6).
 - Produces:
-  - `final class ThumbnailProvider` (main actor) with `static let previewCacheLimit = 8`, `init(store: ThumbnailStore, history: HistoryStore, readFile: @escaping (CaptureRecord) throws -> Data)`, `func thumbnail(for record: CaptureRecord) -> NSImage?`, `func preview(for record: CaptureRecord) async -> NSImage?`, `func forget(_ id: UUID)`.
-  - `@Observable final class GalleryModel` with `let history: HistoryStore`, `let provider: ThumbnailProvider`, `private(set) var hoveredID: UUID?`, `private(set) var preview: NSImage?`, `var records: [CaptureRecord]`, `var previewRecord: CaptureRecord?`, `func thumbnail(for:) -> NSImage?`, `func hover(_ id: UUID)`, `func loadPreview()`.
-  - `struct GalleryActions { var copy, retry, reveal, delete: (UUID) -> Void }`, `struct GalleryView: View { static let minimumSize: CGSize; let model: GalleryModel; let actions: GalleryActions }`, plus `GalleryCell`, `GalleryStatusBadge` (with `static func title(for:) -> String`), `GalleryMenuItems`, `GalleryPreviewPane`.
+  - `final class ThumbnailProvider` (main actor) with `static let previewCacheLimit = 8`, `init(store: ThumbnailStore, history: HistoryStore, readFile: @escaping (CaptureRecord) throws -> Data)`, `func thumbnail(for record: CaptureRecord) async -> NSImage?`, `func preview(for record: CaptureRecord) async -> NSImage?`, `func forget(_ id: UUID)`. Reading a stored thumbnail, decoding and encoding run on detached tasks; `history.update` runs after the generation task completes; a record whose thumbnail cannot be made is remembered and not tried again; `forget` bumps a per-id generation so a load still running for that id is discarded (nil, nothing cached, a freshly written thumbnail removed); `previewOrder` never holds an id twice.
+  - `@Observable final class GalleryModel` with `let history: HistoryStore`, `let provider: ThumbnailProvider`, `private(set) var hoveredID: UUID?`, `var preview: NSImage?` (get only: the loaded image while it belongs to `previewRecord`, nil once that record is deleted or leaves the history), `var records: [CaptureRecord]`, `var previewRecord: CaptureRecord?`, `func thumbnail(for:) async -> NSImage?`, `func hover(_ id: UUID)`, `func loadPreview() async`.
+  - `struct GalleryActions { var copy, retry, reveal, delete: (UUID) -> Void }`, `struct GalleryView: View { static let minimumSize: CGSize; let model: GalleryModel; let actions: GalleryActions }` (loads the preview from `.task(id: model.previewRecord?.id)`), plus `GalleryCell` (loads its thumbnail into `@State` from `.task(id:)` keyed by record id and thumbnail file name), `GalleryStatusBadge` (with `static func title(for:) -> String`), `GalleryMenuItems`, `GalleryPreviewPane`. No view `body` calls the provider.
   - `final class GalleryWindowController { init(model: GalleryModel, actions: GalleryActions); func show(); func close() }` and `final class GalleryWindow: NSWindow` (Escape and ⌘W close).
   - `AppCoordinator.showGallery()`; `historyItemSelected(_:)` is removed; `MenuContent.title(for:)` is removed. The menu gets "Recent Captures…" and keeps "Retry Failed Uploads" (only while something is failed).
 
@@ -3898,7 +4224,7 @@ struct ThumbnailProviderTests {
         CaptureRecord(fileURL: file, thumbnailFileName: thumbnail, pixelWidth: 640, pixelHeight: 400, appName: "Safari")
     }
 
-    @Test func storedThumbnailIsUsedWithoutReadingTheFile() throws {
+    @Test func storedThumbnailIsUsedWithoutReadingTheFile() async throws {
         let item = record()
         let name = try store.write(try png(width: 320, height: 200), id: item.id)
         var stored = item
@@ -3907,30 +4233,38 @@ struct ThumbnailProviderTests {
         var reads = 0
         let provider = ThumbnailProvider(store: store, history: history) { _ in reads += 1; throw CocoaError(.fileNoSuchFile) }
 
-        let image = provider.thumbnail(for: stored)
+        let image = await provider.thumbnail(for: stored)
         #expect(image?.size == CGSize(width: 320, height: 200))
         #expect(reads == 0)
-        #expect(provider.thumbnail(for: stored) === image)
+        #expect(await provider.thumbnail(for: stored) === image)
     }
 
-    @Test func legacyRecordGetsAThumbnailGeneratedAndStored() throws {
+    @Test func legacyRecordGetsAThumbnailGeneratedOnceAndStored() async throws {
         let item = record()
         history.add(item)
         let data = try png(width: 640, height: 400)
-        let provider = ThumbnailProvider(store: store, history: history) { _ in data }
+        var reads = 0
+        let provider = ThumbnailProvider(store: store, history: history) { _ in reads += 1; return data }
 
-        let image = provider.thumbnail(for: item)
+        let image = await provider.thumbnail(for: item)
         #expect(image?.size == CGSize(width: 320, height: 200))
         let name = history.record(id: item.id)?.thumbnailFileName
         #expect(name == "\(item.id.uuidString).png")
         #expect(FileManager.default.fileExists(atPath: store.url(forFileName: name ?? "").path(percentEncoded: false)))
+        #expect(await provider.thumbnail(for: item) === image)
+        #expect(reads == 1)
     }
 
-    @Test func recordWithoutFileOrThumbnailGetsPlaceholder() {
+    /// The negative cache: a record whose thumbnail cannot be made is tried once, not on every
+    /// appearance of its cell.
+    @Test func recordWithoutAReadableFileGetsAPlaceholderAndIsTriedOnce() async {
         let item = record(file: nil)
         history.add(item)
-        let provider = ThumbnailProvider(store: store, history: history) { _ in throw CocoaError(.fileNoSuchFile) }
-        #expect(provider.thumbnail(for: item) == nil)
+        var reads = 0
+        let provider = ThumbnailProvider(store: store, history: history) { _ in reads += 1; throw CocoaError(.fileNoSuchFile) }
+        #expect(await provider.thumbnail(for: item) == nil)
+        #expect(await provider.thumbnail(for: item) == nil)
+        #expect(reads == 1)
         #expect(history.record(id: item.id)?.thumbnailFileName == nil)
     }
 
@@ -3952,6 +4286,27 @@ struct ThumbnailProviderTests {
         provider.forget(withFile.id)
         #expect(await provider.preview(for: withFile) !== preview)
     }
+
+    /// Runs code in the middle of a load: `readFile` is called after the load has started and
+    /// before its decode finishes.
+    final class ReadHook {
+        var onRead: (() -> Void)?
+    }
+
+    @Test func forgetDuringALoadDiscardsIt() async throws {
+        let item = record()
+        let data = try png(width: 2000, height: 1000)
+        let hook = ReadHook()
+        let provider = ThumbnailProvider(store: store, history: history) { _ in
+            hook.onRead?()
+            return data
+        }
+        hook.onRead = { provider.forget(item.id) }
+        #expect(await provider.preview(for: item) == nil)
+
+        hook.onRead = nil
+        #expect(await provider.preview(for: item)?.size == CGSize(width: 1200, height: 600))
+    }
 }
 ```
 
@@ -3969,10 +4324,12 @@ Expected: compile errors containing `cannot find 'ThumbnailProvider' in scope`.
 ```swift
 import AppKit
 
-/// Thumbnails and larger previews for the gallery. Thumbnails come from the `thumbnails` folder;
-/// a record from before thumbnails existed gets one generated from its local file the first time
-/// it is shown (and the record is updated), or a placeholder (nil) when it has no file either.
-/// Previews are decoded from the local file off the main thread and fall back to the thumbnail.
+/// Thumbnails and larger previews for the gallery, through async methods that the gallery calls
+/// from `.task` modifiers, never from a view body. Thumbnails come from the `thumbnails` folder;
+/// a record from before thumbnails existed gets one made from its local file the first time it
+/// is shown (the record is updated once that finishes), or a placeholder (nil) when it has no
+/// readable file, and such a record is not tried again. Previews are decoded from the local file
+/// off the main thread and fall back to the thumbnail.
 final class ThumbnailProvider {
     static let previewCacheLimit = 8
 
@@ -3980,8 +4337,14 @@ final class ThumbnailProvider {
     private let history: HistoryStore
     private let readFile: (CaptureRecord) throws -> Data
     private var thumbnails: [UUID: NSImage] = [:]
+    /// Records whose thumbnail could not be made from their file; tried once per launch.
+    private var unavailable: Set<UUID> = []
     private var previews: [UUID: NSImage] = [:]
+    /// Ids in `previews`, oldest first, each at most once.
     private var previewOrder: [UUID] = []
+    /// Bumped by `forget`. A load compares the value from its start with the one at its end, so
+    /// a load still running for a deleted record is discarded.
+    private var generations: [UUID: Int] = [:]
 
     /// `readFile` returns the record's PNG, or throws when there is none (see
     /// `AppCoordinator.readLocalFile(of:)`).
@@ -3992,44 +4355,77 @@ final class ThumbnailProvider {
     }
 
     /// The 320 px thumbnail, or nil for a placeholder.
-    func thumbnail(for record: CaptureRecord) -> NSImage? {
-        if let cached = thumbnails[record.id] { return cached }
-        if let name = record.thumbnailFileName, let image = NSImage(contentsOf: store.url(forFileName: name)) {
-            thumbnails[record.id] = image
-            return image
+    func thumbnail(for record: CaptureRecord) async -> NSImage? {
+        let id = record.id
+        if let cached = thumbnails[id] { return cached }
+        let generation = generations[id, default: 0]
+        if let name = record.thumbnailFileName {
+            let url = store.url(forFileName: name)
+            let data = await Task.detached(priority: .userInitiated) { try? Data(contentsOf: url) }.value
+            guard generations[id, default: 0] == generation else { return nil }
+            if let data, let image = NSImage(data: data) {
+                thumbnails[id] = image
+                return image
+            }
         }
-        guard let data = try? readFile(record),
-              let small = ThumbnailMaker.thumbnail(fromPNGData: data),
-              let png = try? ThumbnailMaker.pngData(small),
-              let name = try? store.write(png, id: record.id) else { return nil }
-        history.update(id: record.id) { $0.thumbnailFileName = name }
-        let image = NSImage(cgImage: small, size: .zero)
-        thumbnails[record.id] = image
+        // No stored thumbnail (a record from before Phase 3, or one whose capture-time thumbnail
+        // is still being written): make one from the local file, once.
+        guard !unavailable.contains(id) else { return nil }
+        guard let data = try? readFile(record) else {
+            unavailable.insert(id)
+            return nil
+        }
+        let store = store
+        let made = await Task.detached(priority: .utility) { () -> (image: CGImage, name: String)? in
+            guard let small = ThumbnailMaker.thumbnail(fromPNGData: data),
+                  let png = try? ThumbnailMaker.pngData(small),
+                  let name = try? store.write(png, id: id) else { return nil }
+            return (small, name)
+        }.value
+        guard generations[id, default: 0] == generation, history.record(id: id) != nil else {
+            // Deleted while the thumbnail was being made: do not leave its file behind.
+            if let made { store.remove(fileName: made.name) }
+            return nil
+        }
+        guard let made else {
+            unavailable.insert(id)
+            return nil
+        }
+        history.update(id: id) { $0.thumbnailFileName = made.name }
+        let image = NSImage(cgImage: made.image, size: .zero)
+        thumbnails[id] = image
         return image
     }
 
     /// Up to 1200 px from the local file, or the thumbnail when the record has no file left.
     func preview(for record: CaptureRecord) async -> NSImage? {
-        if let cached = previews[record.id] { return cached }
-        guard let data = try? readFile(record) else { return thumbnail(for: record) }
+        let id = record.id
+        if let cached = previews[id] { return cached }
+        let generation = generations[id, default: 0]
+        guard let data = try? readFile(record) else { return await thumbnail(for: record) }
         let decoded = await Task.detached(priority: .userInitiated) {
             ThumbnailMaker.thumbnail(fromPNGData: data, maxSide: ThumbnailMaker.previewMaxSide)
         }.value
-        guard let decoded else { return thumbnail(for: record) }
+        guard generations[id, default: 0] == generation else { return nil }
+        guard let decoded else { return await thumbnail(for: record) }
         let image = NSImage(cgImage: decoded, size: .zero)
-        previews[record.id] = image
-        previewOrder.append(record.id)
+        previews[id] = image
+        // Two overlapping loads for one id must not leave it in the order twice.
+        previewOrder.removeAll { $0 == id }
+        previewOrder.append(id)
         if previewOrder.count > Self.previewCacheLimit {
             previews[previewOrder.removeFirst()] = nil
         }
         return image
     }
 
-    /// Drops cached images for a deleted record.
+    /// Drops everything cached for a deleted record and discards any load still running for it.
     func forget(_ id: UUID) {
         thumbnails[id] = nil
+        unavailable.remove(id)
         previews[id] = nil
         previewOrder.removeAll { $0 == id }
+        generations[id, default: 0] += 1
     }
 }
 ```
@@ -4040,7 +4436,7 @@ Run:
 ```bash
 xcodegen generate && xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build test 2>&1 | grep -E "error:|warning: .*TidyShot/|Test run|✘"
 ```
-Expected: `Test run with 153 tests in 24 suites passed`. If `previewComesFromTheFileOrFallsBackToTheThumbnail` reports a Sendable error on the detached task, the SDK's `CGImage` lost its `Sendable` conformance; return `try? ThumbnailMaker.pngData(...)` (a `Data`) from the detached task instead and build the `NSImage` from that data on the main actor.
+Expected: `Test run with 157 tests in 24 suites passed` (152 plus 5 `ThumbnailProviderTests`). If the build reports a Sendable error on a detached task in `ThumbnailProvider`, the SDK's `CGImage` lost its `Sendable` conformance; return `try? ThumbnailMaker.pngData(...)` (a `Data`) from the detached task instead and build the `NSImage` from that data on the main actor.
 
 - [ ] **Step 5: Write the model, the views and the window**
 
@@ -4053,14 +4449,19 @@ import Observation
 /// larger preview for it.
 @Observable
 final class GalleryModel {
+    /// A decoded preview and the record it belongs to.
+    private struct LoadedPreview {
+        let id: UUID
+        let image: NSImage
+    }
+
     let history: HistoryStore
     @ObservationIgnored let provider: ThumbnailProvider
 
     /// The last cell the mouse entered. Kept when the mouse leaves, so the preview pane does not
     /// flicker back to the newest capture between cells.
     private(set) var hoveredID: UUID?
-    private(set) var preview: NSImage?
-    @ObservationIgnored private var previewTask: Task<Void, Never>?
+    private var loadedPreview: LoadedPreview?
 
     init(history: HistoryStore, provider: ThumbnailProvider) {
         self.history = history
@@ -4075,28 +4476,30 @@ final class GalleryModel {
         return records.first
     }
 
-    func thumbnail(for record: CaptureRecord) -> NSImage? {
-        provider.thumbnail(for: record)
+    /// The preview image while it belongs to `previewRecord`. It is nil while a new preview loads
+    /// and as soon as the record it was loaded for is deleted or leaves the history, so the pane
+    /// never shows a capture that is gone.
+    var preview: NSImage? {
+        guard let loadedPreview, loadedPreview.id == previewRecord?.id else { return nil }
+        return loadedPreview.image
+    }
+
+    func thumbnail(for record: CaptureRecord) async -> NSImage? {
+        await provider.thumbnail(for: record)
     }
 
     func hover(_ id: UUID) {
         guard id != hoveredID else { return }
         hoveredID = id
-        loadPreview()
     }
 
-    /// Loads the preview for `previewRecord`; a newer request cancels an older one.
-    func loadPreview() {
-        previewTask?.cancel()
-        guard let record = previewRecord else {
-            preview = nil
-            return
-        }
-        previewTask = Task { [provider] in
-            let image = await provider.preview(for: record)
-            guard !Task.isCancelled else { return }
-            preview = image
-        }
+    /// Loads the preview for `previewRecord`. Called from the gallery's `.task(id:)`, which
+    /// cancels it when the previewed record changes (hover, a new capture, a deletion).
+    func loadPreview() async {
+        guard let record = previewRecord else { return }
+        let image = await provider.preview(for: record)
+        guard !Task.isCancelled, let image else { return }
+        loadedPreview = LoadedPreview(id: record.id, image: image)
     }
 }
 ```
@@ -4132,8 +4535,7 @@ struct GalleryView: View {
                 ScrollView {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 170, maximum: 220), spacing: 12)], spacing: 12) {
                         ForEach(model.records) { record in
-                            GalleryCell(record: record, thumbnail: model.thumbnail(for: record),
-                                        isHovered: model.hoveredID == record.id, actions: actions)
+                            GalleryCell(record: record, model: model, isHovered: model.hoveredID == record.id, actions: actions)
                                 .onHover { inside in
                                     if inside { model.hover(record.id) }
                                 }
@@ -4148,17 +4550,27 @@ struct GalleryView: View {
                 .frame(width: 320)
         }
         .frame(minWidth: Self.minimumSize.width, minHeight: Self.minimumSize.height)
-        .onAppear { model.loadPreview() }
-        .onChange(of: model.records.first?.id) { model.loadPreview() }
+        // Runs on appear and again whenever the previewed record changes; SwiftUI cancels the
+        // previous load.
+        .task(id: model.previewRecord?.id) { await model.loadPreview() }
     }
+}
+
+/// What a cell's thumbnail depends on: the record, and its stored thumbnail, which a capture
+/// gets a moment after its cell may already be on screen.
+private struct ThumbnailKey: Hashable {
+    let id: UUID
+    let fileName: String?
 }
 
 /// One thumbnail with a status badge. Click copies; the context menu has everything else.
 struct GalleryCell: View {
     let record: CaptureRecord
-    let thumbnail: NSImage?
+    let model: GalleryModel
     let isHovered: Bool
     let actions: GalleryActions
+    /// Loaded by the `.task` below, never in `body`.
+    @State private var thumbnail: NSImage?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -4196,6 +4608,9 @@ struct GalleryCell: View {
         .contextMenu { GalleryMenuItems(record: record, actions: actions) }
         .help(record.uploadedURL != nil ? "Click to copy the URL" : record.hasLocalFile ? "Click to copy the file" : "")
         .accessibilityLabel(GalleryStatusBadge.title(for: record.uploadState))
+        .task(id: ThumbnailKey(id: record.id, fileName: record.thumbnailFileName)) {
+            thumbnail = await model.thumbnail(for: record)
+        }
     }
 }
 
@@ -4368,7 +4783,6 @@ final class GalleryWindowController {
         // comes to the front and takes keyboard focus.
         NSApplication.shared.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
-        model.loadPreview()
     }
 
     func close() {
@@ -4396,13 +4810,13 @@ final class GalleryWindow: NSWindow {
 
 - [ ] **Step 6: Wire the gallery into the coordinator and the menu**
 
-In `TidyShot/App/AppCoordinator.swift`, four edits: two lazy properties next to `selector`, `showGallery()` after `showPermissionWindow()`, the removal of `historyItemSelected(_:)`, and one line at the end of `deleteCapture`:
+In `TidyShot/App/AppCoordinator.swift`, four edits: two lazy properties next to `selector`, `showGallery()` after `showPermissionWindow()`, the removal of `historyItemSelected(_:)`, and one line in `removeRecord`, which both Delete and Remove from History Only use:
 
 Replace:
 
 ```swift
     @ObservationIgnored private lazy var selector = SelectionController(engine: engine)
-    @ObservationIgnored private var queue: UploadQueue?
+    /// The queue new uploads go to, built from the destination of the first upload after launch
 ```
 
 with:
@@ -4419,7 +4833,7 @@ with:
             retry: { [weak self] id in self?.retryUpload(recordID: id) },
             reveal: { [weak self] id in self?.reveal(recordID: id) },
             delete: { [weak self] id in Task { await self?.deleteCapture(recordID: id) } }))
-    @ObservationIgnored private var queue: UploadQueue?
+    /// The queue new uploads go to, built from the destination of the first upload after launch
 ```
 
 Replace:
@@ -4465,17 +4879,17 @@ Delete this block:
 Replace:
 
 ```swift
-        history.remove(id: recordID)
-        overlay.close(recordID: recordID)
+        history.remove(id: record.id)
+        overlay.close(recordID: record.id)
     }
 ```
 
 with:
 
 ```swift
-        history.remove(id: recordID)
-        thumbnailProvider.forget(recordID)
-        overlay.close(recordID: recordID)
+        history.remove(id: record.id)
+        thumbnailProvider.forget(record.id)
+        overlay.close(recordID: record.id)
     }
 ```
 
@@ -4543,7 +4957,7 @@ Run:
 ```bash
 xcodegen generate && xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build test 2>&1 | grep -E "error:|warning: .*TidyShot/|Test run|✘"
 ```
-Expected: no `error:` or `warning:` lines, and `Test run with 153 tests in 24 suites passed`.
+Expected: no `error:` or `warning:` lines, and `Test run with 157 tests in 24 suites passed`.
 
 - [ ] **Step 8: Smoke-run the gallery**
 
@@ -4551,7 +4965,7 @@ Run:
 ```bash
 xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -configuration Debug -derivedDataPath .build build -quiet && open .build/Build/Products/Debug/TidyShot.app
 ```
-Open the menu. Expected: "Recent Captures…" where the submenu was. Click it. Expected: a resizable window titled "Recent Captures" comes to the front with a grid of thumbnails newest first (the Phase 2 captures whose files still exist get thumbnails now; `thumbnails/` fills up and `history.json` gains `thumbnailFileName` entries), a status capsule on each, and the newest capture large in the right-hand pane with date, pixel size, app, URL and buttons. Hover another cell: it highlights and the pane switches to it. Click an Uploaded cell, paste into Notes: the URL. Right-click a cell: Copy URL or Copy File, Retry Upload (Failed only), Reveal in Finder (local file only), Delete…. Press Escape: the window closes; reopen it from the menu; press ⌘W: it closes. Take a capture with the window open: the new cell appears at the top and its badge goes Uploading, then Uploaded, without reopening. Quit.
+Open the menu. Expected: "Recent Captures…" where the submenu was. Click it. Expected: a resizable window titled "Recent Captures" comes to the front with a grid of thumbnails newest first (the Phase 2 captures whose files still exist get thumbnails now; `thumbnails/` fills up and `history.json` gains `thumbnailFileName` entries), a status capsule on each, and the newest capture large in the right-hand pane with date, pixel size, app, URL and buttons. Hover another cell: it highlights and the pane switches to it. Click an Uploaded cell, paste into Notes: the URL. Right-click a cell: Copy URL or Copy File, Retry Upload (Failed only), Reveal in Finder (local file only), Delete…. Press Escape: the window closes; reopen it from the menu; press ⌘W: it closes. Take a capture with the window open: the new cell appears at the top with its thumbnail and its badge goes Uploading, then Uploaded, without reopening. Hover that capture so the pane shows it, then Delete… it from its context menu: the pane switches to the newest remaining capture at once and never shows the deleted one again. Scroll the grid up and down quickly: it stays smooth (thumbnails load in `.task`, not in `body`). Quit.
 
 - [ ] **Step 9: Commit**
 
@@ -4562,10 +4976,11 @@ git commit -m "feat: recent captures gallery window replacing the history submen
 
 ---
 
-### Task 8: Forget Credentials, manual checklist, README, end-to-end check, PR
+### Task 8: Forget Credentials, manual checklist, README, end-to-end check
 
 **Files:**
 - Modify: `TidyShot/Settings/UploadSettingsView.swift` (two edits below)
+- Modify, only if the Upload tab scrolls and Task 4 did not already change it: `TidyShot/Settings/SettingsView.swift` (the Task 4 Step 9 edit, 600 by 800)
 - Create: `docs/testing/phase-3-manual-checklist.md`
 - Modify: `README.md` (edits below)
 
@@ -4632,9 +5047,17 @@ Run:
 ```bash
 xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build test 2>&1 | grep -E "error:|warning: .*TidyShot/|Test run|✘"
 ```
-Expected: no `error:` or `warning:` lines, and `Test run with 153 tests in 24 suites passed`.
+Expected: no `error:` or `warning:` lines, and `Test run with 157 tests in 24 suites passed`.
 
-- [ ] **Step 3: Write the manual checklist**
+- [ ] **Step 3: Check that the Upload tab still does not scroll**
+
+Run:
+```bash
+xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -configuration Debug -derivedDataPath .build build -quiet && open .build/Build/Products/Debug/TidyShot.app
+```
+Open Settings > Upload and type `{date}/{hostname}` into the key template so the orange warning shows. Expected: the key template field, its caption, the example, the warning, the Forget Credentials button and the Save buttons are all visible without scrolling. If the tab scrolls and `TidyShot/Settings/SettingsView.swift` still says `.frame(width: 600, height: 720)`, apply the Task 4 Step 9 edit (change it to `.frame(width: 600, height: 800)`), rebuild, check again, and add `TidyShot/Settings/SettingsView.swift` to the `git add` in Step 7. Put the template back and quit without saving.
+
+- [ ] **Step 4: Write the manual checklist**
 
 `docs/testing/phase-3-manual-checklist.md`:
 ````markdown
@@ -4651,18 +5074,25 @@ history including at least one Phase 2 capture (made before this build).
 
 ## Gallery
 - [ ] The menu shows "Recent Captures…" and no submenu; with an empty history the window shows "No captures yet".
-- [ ] The grid lists captures newest first with a thumbnail and a status capsule each; Phase 2 captures whose files exist get thumbnails on first display (`thumbnails/` gains files, `history.json` gains `thumbnailFileName`); a Phase 2 capture whose file was deleted shows the placeholder icon.
+- [ ] The grid lists captures newest first with a thumbnail and a status capsule each; Phase 2 captures whose files exist get thumbnails on first display (`thumbnails/` gains files, `history.json` gains `thumbnailFileName`); a Phase 2 capture whose file was deleted shows the placeholder icon, and scrolling past it again does not make the gallery try again (no new `thumbnails/` file, no stutter).
 - [ ] Hovering a cell highlights it and the right-hand pane shows it larger with date, `W × H px`, app, URL or status, and file path.
 - [ ] Clicking an Uploaded cell copies the URL (paste into Notes); clicking a Saved cell copies the file (paste in Finder makes a copy).
 - [ ] Context menu offers Copy URL or Copy File, Retry Upload (Failed only), Reveal in Finder (local file only), Delete….
-- [ ] Delete… on an uploaded capture: the alert names the object URL and the file; Cancel changes nothing; Delete removes the row, `curl -I <url>` gives 403 or 404, the file is gone from the save folder, the thumbnail is gone from `thumbnails/`.
+- [ ] Delete… on an uploaded capture: one alert, whose text names the object URL and the file, with the buttons "Delete", "Remove from History Only" and "Cancel"; Cancel changes nothing; Delete removes the row, `curl -I <url>` gives 403 or 404, the file is gone from the save folder, the thumbnail is gone from `thumbnails/`, and the preview pane no longer shows it.
+- [ ] Delete… on a Phase 2 capture that was uploaded: the alert says the uploaded object stays in the bucket; Delete removes the row and the file, and `curl -I <url>` still gives 200.
 - [ ] Delete… while offline on an uploaded capture: notification "Not deleted" and the row stays; back online, Delete… works.
+- [ ] Network Link Conditioner at 100% packet loss, Delete… on an uploaded capture, choose Delete, then choose Delete… on the same capture again (gallery) and click its trash button (overlay) while the request hangs: no second alert appears.
+- [ ] Forget Credentials, then Delete… on an uploaded capture: notification "Not deleted" telling you to save credentials or choose Remove from History Only, and the row stays; Delete… again and choose "Remove from History Only": the row and thumbnail go, the object (`curl -I <url>` gives 200) and the file in the save folder stay. Re-enter the credentials.
+- [ ] Make the local file undeletable (`chflags uchg <file>` on a Saved capture), Delete…: notification "Not deleted" naming the file and the reason, and the row stays; `chflags nouchg <file>`, Delete… works.
+- [ ] Change the Upload tab's bucket (to a second bucket you can write to) and Save, then Delete… a capture uploaded before the change: the object is removed from the bucket it was uploaded to (`curl -I <old url>` gives 403 or 404), not looked for in the new one.
+- [ ] Key template `shared/{date}` and a key that cannot read objects (HEAD answers 403 for existing keys), two captures the same day: both rows point at the same key; Delete… the first: notification "Not deleted from storage" saying another capture shares this key, the row goes, and the second capture's URL still works.
 - [ ] Retry Upload on a Failed capture with the network restored turns the capsule Uploaded and copies the URL.
 - [ ] The window remembers its size and position across close and reopen; Escape and ⌘W close it.
-- [ ] With the window open, a new capture appears at the top and its capsule goes Uploading, then Uploaded.
+- [ ] With the window open, a new capture appears at the top with its thumbnail and its capsule goes Uploading, then Uploaded.
 
 ## Overlay delete
 - [ ] Trash button during an upload (fullscreen capture or Network Link Conditioner): the alert names "the upload in progress"; after Delete the overlay closes, the menu bar icon returns to the viewfinder, no object is in the bucket (list it, or GET the URL the overlay would have shown), no row, no file, no thumbnail.
+- [ ] Trash button during an upload, right after saving the Upload tab (so the upload runs on the replaced queue): the upload is still cancelled, and the menu bar icon returns to the viewfinder.
 - [ ] Trash button after the upload finished: object, row, file and thumbnail gone.
 - [ ] Cancel in the alert keeps everything and the overlay stays.
 - [ ] Clicking the thumbnail of an upload-only capture does nothing (no Finder reveal).
@@ -4670,27 +5100,30 @@ history including at least one Phase 2 capture (made before this build).
 ## Upload only
 - [ ] Settings > General, "Upload only, keep no local file": the caption appears; with no save folder chosen, a capture shows no folder prompt, the overlay goes to "URL copied", pasting gives the URL, `pending/` is empty afterwards, the gallery row shows "No local file" and no Reveal item, "Reveal Last Capture" is disabled.
 - [ ] Wi-Fi off, capture: overlay "Upload failed" with Retry, `pending/<UUID>.png` exists; Wi-Fi on, Retry from the gallery: Uploaded, and the pending file is gone.
+- [ ] Wi-Fi off, capture in upload-only, then set retention to 1 day and wait past it (or change the record's `timestamp` in `history.json` to two days ago before relaunching) and take another capture: the failed upload-only row and its `pending/` file are still there.
 - [ ] Forget Credentials, then capture in upload-only: one "Upload not configured" notification, the image is on the clipboard, the row is Failed and the pending file stays; re-enter credentials, Retry Upload: Uploaded.
 - [ ] "Also copy image" on: paste gives the image until the upload finishes, then the URL.
 
 ## Key templates
-- [ ] After updating from Phase 2 with prefix `shots` and length 8 saved, Settings > Upload shows `shots/{random:8}`; after Save, `defaults read io.tky.tidyshot s3DestinationConfig` contains `keyTemplate` and no `keyPrefix` or `keyLength`.
-- [ ] Template `shots/{year}/{month}/{hostname}-{random:8}`: the example updates as you type; Save; capture: the URL is `https://snap.tky.io/shots/2026/10/<hostname>-XXXXXXXX.png` with the hostname lowercased and without `.local`.
-- [ ] Template `{date}/{app}`: the orange warning appears; Save works; two captures within one second: the second fails with "Could not find an unused object key after 5 tries." and keeps its file for retry.
+- [ ] After updating from Phase 2 with prefix `shots` and length 8 saved, Settings > Upload shows `shots/{random:8}`; after Save, `defaults read ~/Library/Containers/io.tky.tidyshot/Data/Library/Preferences/io.tky.tidyshot.plist s3DestinationConfig` contains `keyTemplate` and no `keyPrefix` or `keyLength`.
+- [ ] Template `shots/{year}/{month}/{hostname}-{random:8}`: the example updates as you type; Save; capture: the URL is `https://snap.tky.io/shots/2026/10/<hostname>-XXXXXXXX.png` with the hostname lowercased, without `.local`, and only `a-z`, `0-9`, `.` and `-` in it (an `_` in the Mac's host name shows as `-`).
+- [ ] Template `{date}/{app}`: the orange warning appears and says the template has no {random} or {counter}, so captures can produce the same key and only the HEAD check keeps a capture from overwriting an earlier object; Save works; two captures of the same app on the same day: the second fails with "Could not find an unused object key after 5 tries." and keeps its file for retry.
+- [ ] Settings > Upload with the warning showing does not scroll: everything down to the Save buttons is visible.
 - [ ] Template `my shots/{random}`: red message `" " is not allowed…`; Save shows "Key template: …" and does not save. Template `{foo}`: red `{foo} is not a token.`
 - [ ] Save and Test Connection with a folder template: the status line's probe URL is inside that folder and the probe is gone afterwards.
 - [ ] File name template `{year}-{month}-{day} {hostname} {app}` names local files as expected; the default template still gives `Screenshot 2026-10-19 at 11.56.03.png`.
-- [ ] A retried failed upload lands under the capture's own date folder, not today's, and with the same `{counter}` value.
+- [ ] A retried failed upload lands under the capture's own date folder, not today's; with `{counter}` in the key template, the retry's key has a newly drawn counter value, and an upload-only capture taken before a destination existed gets a real counter (not 0) when it is retried.
 
 ## Forget credentials
 - [ ] Forget Credentials: the three fields clear, the status reads "Credentials removed from the keychain…", Keychain Access no longer has "TidyShot S3 credentials"; a capture gives "Upload not configured"; re-enter and Save: uploads work again.
+- [ ] Forget Credentials while an upload is running: that upload still finishes (Uploaded, URL copied) and the menu bar icon returns to the viewfinder.
 
 ## History hygiene
-- [ ] Retention 1 day with older captures present, then capture: older rows disappear, their files in `thumbnails/` and `pending/` are gone, and their files in the save folder remain.
+- [ ] Retention 1 day with older captures present, then capture: older rows disappear, their files in `thumbnails/` are gone, and their files in the save folder remain; a failed upload-only capture is kept with its `pending/` file however old it is.
 - [ ] Quit, replace `history.json` with `not json`, relaunch: the gallery is empty, `thumbnails/` and `pending/` are untouched, and `history.json.corrupt-<number>` exists.
 ````
 
-- [ ] **Step 4: Update the README**
+- [ ] **Step 5: Update the README**
 
 In `README.md`, replace the whole `## Upload` section (from the heading to the line before `## Documents`) with:
 
@@ -4708,7 +5141,8 @@ The key template defaults to `{random:6}` (`aSIS7x.png`). Tokens: `{date}` `{yea
 digits, `.`, `_`, `-` and `/` are allowed between tokens, and `/` makes folders, so
 `shots/{year}/{month}/{hostname}-{random:8}` is valid. The same tokens work in the file name
 template. The app checks that a key is unused before uploading; a template without `{random}` or
-`{counter}` gets a warning because only that check then keeps two captures apart. By default no
+`{counter}` gets a warning, because captures can then produce the same key and only that check
+keeps an upload from overwriting an earlier object. By default no
 ACL header is sent; turn on "Send public-read ACL" only if your bucket relies on object ACLs
 rather than a bucket policy or CDN.
 
@@ -4722,8 +5156,10 @@ file; a failed upload keeps it until a retry succeeds or the capture is deleted.
 The menu's Recent Captures… item opens a gallery of thumbnails, newest first. Hover for a larger
 preview, click to copy the URL (or the file when it was never uploaded), and use the context menu
 to retry a failed upload, reveal the file, or delete the capture, which removes the object from
-the bucket, the local file, the thumbnail and the history entry after one confirmation. The
-Quick Access overlay has the same Delete; while an upload is still running it cancels it first.
+the bucket it was uploaded to, the local file, the thumbnail and the history entry after one
+confirmation. The confirmation also offers Remove from History Only, which drops just the entry
+and keeps the object and the file. The Quick Access overlay has the same Delete; while an upload
+is still running it cancels it first.
 Thumbnails live in `~/Library/Containers/io.tky.tidyshot/Data/Library/Application Support/TidyShot/thumbnails`.
 ````
 
@@ -4733,7 +5169,7 @@ Then add one line to the `## Documents` list after the Phase 2 checklist:
 - Phase 3 manual test checklist: `docs/testing/phase-3-manual-checklist.md`
 ```
 
-- [ ] **Step 5: Run the end-to-end check**
+- [ ] **Step 6: Run the end-to-end check**
 
 Run:
 ```bash
@@ -4741,29 +5177,16 @@ xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -configuration Debug -de
 ```
 Set the key template to `shots/{year}/{month}/{hostname}-{random:8}`, Save and Test Connection, press `⌃⇧4`, drag a rectangle, paste into Slack: a working `https://snap.tky.io/shots/2026/10/<hostname>-XXXXXXXX.png` link. Open Recent Captures…, hover the new capture, right-click, Delete…, confirm: the link now returns 403 or 404. Then work through `docs/testing/phase-3-manual-checklist.md` and, because Task 4 changed the Upload tab and Task 6 the save flow, the "Upload settings" and "Capture and upload" sections of `docs/testing/phase-2-manual-checklist.md` (read "key template" where it says "key prefix" and skip the random name length stepper item).
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add TidyShot/Settings/UploadSettingsView.swift docs/testing/phase-3-manual-checklist.md README.md
 git commit -m "feat: forget credentials, Phase 3 checklist and README"
 ```
 
-- [ ] **Step 7: Push and open the PR**
+- [ ] **Step 8: Stop here**
 
-Phase 3 is done when both checklists pass. Push `phase-3-gallery` and open a PR against `main` with the results in the description (no Claude Code session URL):
-
-```bash
-git push -u origin phase-3-gallery
-gh pr create --base main --head phase-3-gallery --title "Phase 3: recent captures gallery, upload-only mode and key templates" --body "$(cat <<'BODY'
-Replaces the Recent Captures submenu with a thumbnail gallery (hover preview, click to copy, retry, delete from bucket plus history plus disk), adds Delete to the Quick Access overlay with cancellation of an in-flight upload, adds the "Upload only, keep no local file" action, turns the object key into a template sharing one token engine with the file name template (with migration of the Phase 2 prefix and length), and adds Forget Credentials.
-
-- Unit tests: `Test run with 153 tests in 24 suites passed`.
-- Manual checklist `docs/testing/phase-3-manual-checklist.md`: all items pass.
-- Phase 2 checklist sections "Upload settings" and "Capture and upload": pass.
-BODY
-)"
-```
-Expected: `gh` prints the PR URL.
+Phase 3 is done when both checklists pass and the last test run reads `Test run with 157 tests in 24 suites passed`. Do not push and do not open a PR: stop here; the controller pushes and opens the PR after the whole-branch review. Report the final test line and the checklist results.
 
 ---
 
