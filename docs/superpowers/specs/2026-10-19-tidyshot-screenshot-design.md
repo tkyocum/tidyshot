@@ -28,19 +28,19 @@ Tiers: **P0** is the MVP, **P1** follows once the upload loop is solid, **P2** i
 | All-in-One mode | One hotkey, then pick mode from a small toolbar; locks size and aspect ratio; remembers last selection | P1 | Good default hotkey once area/window/fullscreen exist |
 | Capture previous area | Re-capture the last rectangle | P1 | Cheap once selection is stored |
 | Quick Access Overlay | Thumbnail in a screen corner after capture with copy, save, annotate, share, drag-out, auto-close, restore closed overlay, multi-display | P0 (minimal), P1 (full) | MVP shows upload status plus copy/save/drag; the rest in P1 |
-| After-capture action | Preference: show overlay, save, copy, open editor, or upload automatically | P0 | Upload-and-copy-URL is the default this app exists for |
+| After-capture action | Preference: show overlay, save, copy, open editor, or upload automatically | P0 | Upload-and-copy-URL is the default this app exists for. Phase 3 adds "Upload only" (no local file kept), see 2.4 |
 | Upload and copy link | One click, link copied | P0 | Replaced by S3 destination |
 | Window with background | Padding plus wallpaper, custom image, or solid colour behind a window shot | P2 | Pure image compositing |
 | Transparent window / shadow toggle | Keep or drop the window shadow | P1 | `ignoreShadowsSingleWindow` in ScreenCaptureKit |
 | Freeze screen | Snapshot the display before selecting, so moving content is capturable | P1 | Capture full display first, then crop |
 | Self-timer | Delay before capture | P1 | Trivial once capture exists |
 | Hide desktop icons | Clean desktop during capture | P2 | Cover window at desktop icon level (sandbox-safe); not a Finder `defaults` write |
-| Scrolling capture | Captures content taller than the screen, any app | P2 | Hardest screenshot feature: synthetic scroll events and image stitching |
-| Annotate | Arrow, rect, ellipse, line, pencil, highlighter, text, counter, blur, pixelate, spotlight, crop; editable project file | P1 (basic set), P2 (blur/pixelate/spotlight/counter) | Biggest UI surface in the app |
+| Scrolling capture | Captures content taller than the screen, any app | P1 (own phase) | Hardest screenshot feature: synthetic scroll events and image stitching; requested explicitly, gets Phase 5 |
+| Annotate | Arrow, rect, ellipse, line, pencil, highlighter, text, counter, blur, pixelate, redact, spotlight, crop; editable project file | P1 (basic set plus blur, pixelate, redact), P2 (spotlight/counter) | Biggest UI surface in the app. Blur, pixelate and a solid redact rectangle ship in the first editor release because screenshots of dashboards and terminals carry secrets |
 | Background tool | 20 backgrounds, padding, presets, auto balance | P2 | Compositing step shared with "window with background" |
 | Pin (floating screenshot) | Always-on-top window, opacity, nudge with arrows, lock mode | P1 | Small `NSPanel` |
 | Text recognition (OCR) | Select area, copy text, QR codes | P2 | Apple Vision framework, on-device |
-| Capture history | Recent captures with filter, restore, delete, one month retention | P1 | Also the retry queue for failed uploads |
+| Capture history | Recent captures with filter, restore, delete, one month retention | P1 | Also the retry queue for failed uploads. Phase 2 shipped a text menu; Phase 3 turns it into a gallery, see 2.4 |
 | File naming template | Placeholders for date, app, counter; auto-increment | P0 | Shared with the S3 object key scheme |
 | URL scheme | `cleanshot://capture-area?action=upload`, `capture-window`, `capture-fullscreen`, `all-in-one`, `self-timer` | P1 | Lets Raycast, Keyboard Maestro, and scripts drive the app |
 | Screen recording, video editor, GIF | Full recording stack | Later | Separate plan |
@@ -70,6 +70,16 @@ Verified against the macOS 27.0 SDK shipped with Xcode 27.1 on this machine:
 - `SCStreamConfiguration` exposes `showsCursor`, `ignoreShadowsSingleWindow`, `captureResolution`, `shouldBeOpaque`, and `includeChildWindows`, which cover the window-shot options above.
 
 Prior art: macshot (GPL-3.0) is an open-source Swift app with S3-compatible upload and link copying. Useful for reading how others handled the upload UX. Its GPL licence rules out copying code into this private project, so its source is off limits; only its documented behaviour is used as reference. VivyShot, Capso, and Mio are ScreenCaptureKit-based but have no upload.
+
+### 2.4 Features added after Phase 2 (2026-10-19)
+
+**Recent captures gallery.** The Phase 2 "Recent Captures" text submenu becomes a gallery window opened from the menu bar: a grid of thumbnails of recent captures, newest first; hovering a thumbnail shows a larger preview; clicking a thumbnail copies its public URL (or the local file when it was never uploaded); a delete action removes the object from object storage (`S3Destination.delete`), the history record, and the local file if present, after one confirmation. Thumbnails are generated at capture time and stored under Application Support next to `history.json`, so they survive deletion of the original and the "Upload only" mode below. Failed uploads keep their retry action in the gallery.
+
+**Upload only mode.** A third after-capture action, "Upload only, keep no local file": the PNG is written to a temporary folder inside the app container (no save-folder prompt), uploaded, the URL copied, and the temporary file deleted on success. On failure the file stays until the retry succeeds or the record is deleted, so a capture is never lost. The history record then has no local file and shows only the thumbnail and URL.
+
+**Blur, pixelate, redact in the editor.** Promoted into the first annotation release (see the Annotate row).
+
+**Scrolling capture.** Promoted from "extras" to its own phase (see the Scrolling capture row). Design sketch: the user picks a window or area; the app captures a frame, posts a scroll-wheel event to the target (`CGEvent`, which needs the Accessibility permission, so a second first-run flow), captures again, and stitches frames by locating the overlap with a row-signature match; stops when two consecutive frames are identical or the user clicks. Horizontal scrolling and a manual "scroll yourself" mode come after vertical works.
 
 ## 3. Core workflow in detail
 
@@ -152,22 +162,32 @@ Each phase ends with something usable. Phases 1 and 2 deliver the headline workf
 - Capture history list in the menu with retry for failures.
 - Done when: hotkey, drag, and paste a working `https://snap.tky.io/xxxxx.png` link into Slack within about two seconds of releasing the mouse.
 
-### Phase 3: overlay and capture polish (2 to 3 days)
-- Full overlay: save-as, drag-out, annotate button (opens Preview until Phase 4), close and restore, position setting, multi-display, stacking.
+### Phase 3: recent captures gallery and upload-only mode (3 to 4 days)
+- Thumbnail generation at capture time, stored under Application Support; history records gain a thumbnail path and allow a nil local file.
+- Gallery window from the menu bar: grid, hover preview, click copies URL, delete from object storage plus history plus local file with confirmation, retry for failures.
+- "Upload only" after-capture action: temp file in the container, upload, copy URL, delete on success, keep on failure.
+- "Forget credentials" button in the Upload tab.
+
+### Phase 4: annotation (1 to 2 weeks)
+- Editor window with arrow, rectangle, ellipse, line, pencil, highlighter, text, crop, undo, colour palette, and from the first release blur, pixelate, and a solid redact rectangle.
+- Save over, save copy, copy, upload from editor; overlay's Annotate button opens it.
+- Then spotlight, counter, and an editable project format.
+
+### Phase 5: scrolling capture (1 to 2 weeks)
+- Accessibility permission flow for posting scroll events.
+- Vertical scrolling capture of a window or area with automatic stop; stitching by overlap detection; preview before save or upload.
+- Then horizontal scrolling and a manual mode.
+
+### Phase 6: overlay and capture polish (2 to 3 days)
+- Full overlay: save-as, drag-out, close and restore, stacking, multi-display.
 - All-in-One mode and capture-previous-area.
 - Freeze screen, self-timer, cursor and shadow options, window shot with transparent background.
 - Pin to screen.
 - URL scheme (`tidyshot://capture-area?action=upload` and friends).
 
-### Phase 4: annotation (1 to 2 weeks)
-- Editor window with arrow, rectangle, ellipse, line, pencil, highlighter, text, crop, undo, and colour palette.
-- Save over, save copy, copy, upload from editor.
-- Then blur, pixelate, spotlight, counter, and an editable project format.
-
-### Phase 5: extras (as wanted)
+### Phase 7: extras (as wanted)
 - Background tool and window-with-background.
 - OCR via Vision, QR codes.
-- Scrolling capture.
 - Hide desktop icons during capture.
 
 ### Later: screen recording
