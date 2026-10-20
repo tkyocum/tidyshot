@@ -85,6 +85,18 @@ Prior art: macshot (GPL-3.0) is an open-source Swift app with S3-compatible uplo
 
 **Scrolling capture.** Promoted from "extras" to its own phase (see the Scrolling capture row). Design sketch: the user picks a window or area; the app captures a frame, posts a scroll-wheel event to the target (`CGEvent`, which needs the Accessibility permission, so a second first-run flow), captures again, and stitches frames by locating the overlap with a row-signature match; stops when two consecutive frames are identical or the user clicks. Horizontal scrolling and a manual "scroll yourself" mode come after vertical works.
 
+### 2.5 Feedback after the Phase 3 build (2026-10-19)
+
+**Recent Captures as a hover submenu.** The gallery window is replaced. The menu bar moves from SwiftUI `MenuBarExtra` to an AppKit `NSStatusItem` with an `NSMenu`, because the "Recent Captures" item must open on hover and hold rows with custom views. Its submenu lists the newest captures (up to 15), each row a custom view: thumbnail, name, relative time ("2 minutes ago"), and three small icon buttons: copy URL, copy image, delete. Clicking the row copies the URL (or the file when never uploaded) and closes the menu. Hovering the thumbnail shows a larger image (up to 560 by 420 points) in a floating preview panel placed on the side of the submenu away from the status menu, falling back to the other side when there is no room and always kept on screen; it follows the hovered row and hides when the menu closes. Copy image puts the PNG and TIFF on the clipboard from the local file, or downloads the object with a signed GET when no local file exists (upload-only captures), with a short notification while it downloads. Delete is the same single delete path as the overlay.
+
+**Simpler delete confirmation.** The alert reads "Delete this capture?" with one line naming where the capture disappears from ("Removes it from object storage, your save folder and history." when a save-folder file exists, "Removes it from object storage and from history." otherwise) and two buttons, Delete and Cancel. Deleting implies removing the history entry. If the storage DELETE fails, a second alert offers "Remove from history anyway?" with Remove and Cancel, so a record whose object cannot be deleted is never stuck. The same second alert, with "The file stays where it is.", follows when the file in the save folder cannot be removed (it lies outside the current save folder, for example after another folder was chosen, or the folder's bookmark no longer resolves); any object this capture alone owned has been deleted by then (shared keys and pre-Phase 3 records keep theirs), so without it the record could never leave history. A second alert waits until no menu is open. The three-button alert from 2.4 is withdrawn.
+
+**No `{app}` token.** Removed from both templates, the captions, and the README. Stored templates containing `{app}` are migrated by dropping the token and collapsing any doubled separator.
+
+**Upload settings clarity.** Endpoint and Public URL fields show a neutral "Required" prompt; the example value sits in a caption under each field, so an unfilled field cannot be mistaken for a filled one. Save and Test Connection reports success without echoing the probe URL.
+
+**Adaptive crosshair.** The selection crosshair samples the frozen snapshot under the cursor and draws black on light backgrounds and white on dark ones; before the snapshot arrives it is white with a one-pixel dark edge.
+
 ## 3. Core workflow in detail
 
 ```
@@ -173,6 +185,14 @@ Each phase ends with something usable. Phases 1 and 2 deliver the headline workf
 - "Upload only" after-capture action: temp file in the container, upload, copy URL, delete on success, keep on failure.
 - Object key templates (`{random:N}`, `{date}`, `{year}`, `{month}`, `{day}`, `{time}`, `{hostname}`, `{app}`, `{counter}`, literal folders) sharing the token engine with `FileNamer`; the key prefix field folds into the template.
 - "Forget credentials" button in the Upload tab.
+
+### Phase 3.1: feedback from the Phase 3 build (2 to 3 days)
+- Menu bar on `NSStatusItem` + `NSMenu`; Recent Captures hover submenu with custom rows (thumbnail, name, relative time, copy URL, copy image, delete) and a floating preview on the side of the submenu away from the status menu (the other side when there is no room, always on screen); gallery window removed.
+- `S3Destination.download(key:)` (signed GET) for copy-image on upload-only captures.
+- Two-button delete alert, with a "remove from history anyway" fallback only after a failed storage DELETE or a save-folder file that cannot be removed.
+- `{app}` token removed with migration of stored templates.
+- Upload tab: "Required" prompts with example captions; connection test result without the probe URL.
+- Adaptive crosshair colour from the snapshot.
 
 ### Phase 4: annotation (1 to 2 weeks)
 - Editor window with arrow, rectangle, ellipse, line, pencil, highlighter, text, crop, undo, colour palette, and from the first release blur, pixelate, and a solid redact rectangle.

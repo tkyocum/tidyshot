@@ -20,7 +20,7 @@ nonisolated struct ConnectionTestResult: Sendable, Equatable {
     var summary: String {
         switch outcome {
         case .readable:
-            "Upload and public read both work. \(publicURL?.absoluteString ?? "")"
+            "Upload and public read both work."
         case .notPublic(let status):
             "Upload worked, but the public URL returned HTTP \(status). Check the bucket policy, CDN, or the public URL template."
         case .publicCheckFailed(let message):
@@ -37,8 +37,12 @@ nonisolated enum ConnectionTester {
 
     static func run(destination: S3Destination,
                     session: URLSession = .shared,
-                    randomString: @Sendable (Int) -> String = FileNamer.randomString) async -> ConnectionTestResult {
-        let key = ObjectKeyNamer.join(prefix: destination.config.keyPrefix, name: "tidyshot-probe-\(randomString(8)).txt")
+                    randomString: @escaping @Sendable (Int) -> String = FileNamer.randomString) async -> ConnectionTestResult {
+        // The probe goes into the folder real uploads would use right now, so a bucket policy
+        // scoped to that folder is tested too.
+        let namer = ObjectKeyNamer(template: destination.config.keyTemplate, randomString: randomString)
+        let folder = ObjectKeyNamer.folder(of: namer.makeKey(ext: "txt", context: TemplateContext()))
+        let key = (folder.isEmpty ? "" : folder + "/") + "tidyshot-probe-\(randomString(8)).txt"
         do {
             try await destination.upload(probeBody, key: key, contentType: "text/plain") { _ in }
         } catch {

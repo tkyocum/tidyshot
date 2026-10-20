@@ -4,7 +4,7 @@ import Testing
 
 struct ConnectionTesterTests {
     let config = S3DestinationConfig(endpoint: "https://s3.us-east-1.amazonaws.com", region: "us-east-1", bucket: "snap",
-                                     keyPrefix: "p", publicURLTemplate: "https://snap.tky.io/{key}")
+                                     publicURLTemplate: "https://snap.tky.io/{key}", keyTemplate: "p/{random:6}")
 
     func destination(_ session: URLSession) -> S3Destination {
         S3Destination(config: config,
@@ -33,6 +33,14 @@ struct ConnectionTesterTests {
                          "GET https://snap.tky.io/p/tidyshot-probe-ZZZZZZZZ.txt",
                          "DELETE https://snap.s3.us-east-1.amazonaws.com/p/tidyshot-probe-ZZZZZZZZ.txt"])
         #expect(requests[1].value(forHTTPHeaderField: "authorization") == nil)
+    }
+
+    /// The probe is deleted by the time the result shows, so its URL is not echoed.
+    @Test func readableSummaryDoesNotEchoTheProbeURL() {
+        let result = ConnectionTestResult(probeKey: "p/tidyshot-probe-ZZZZZZZZ.txt",
+                                          publicURL: URL(string: "https://snap.tky.io/p/tidyshot-probe-ZZZZZZZZ.txt"),
+                                          outcome: .readable)
+        #expect(result.summary == "Upload and public read both work.")
     }
 
     @Test func notPublicWhenGetIsForbidden() async {

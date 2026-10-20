@@ -14,8 +14,11 @@ struct SettingsView: View {
             OverlaySettingsView()
                 .tabItem { Label("Overlay", systemImage: "macwindow.on.rectangle") }
         }
-        // Tall enough for the Upload tab's five sections so no tab needs to scroll.
-        .frame(width: 600, height: 720)
+        // The Phase 3 height. The Upload tab's grouped Form is taller than this (about 970 points
+        // with the key template's collision warning, about 1010 with a status line under the Save
+        // buttons) and scrolls; a window tall enough to show all of it would not fit a laptop
+        // screen.
+        .frame(width: 600, height: 800)
         .onAppear {
             NSApplication.shared.activate()
         }

@@ -1,10 +1,30 @@
 import Foundation
 
 /// Uploads jobs one at a time, in order, with HEAD-before-PUT key reservation and retry with
-/// backoff. Reports progress and results through `events`, which runs on the main actor.
+/// backoff. Reports progress and results through `events`, which runs on the main actor. A job
+/// can be cancelled while pending or in flight; it then ends with a single `.cancelled` event.
 actor UploadQueue {
     typealias EventHandler = @MainActor @Sendable (UploadEvent) -> Void
     typealias Sleeper = @Sendable (Duration) async throws -> Void
+
+    /// What `cancel(recordID:)` found.
+    nonisolated enum CancelResult: Sendable, Equatable {
+        /// Nothing pending or in flight had that id: it already finished (its `.uploaded` or
+        /// `.failed` event has been delivered) or was never enqueued.
+        case notFound
+        /// The job has ended and its `.cancelled` event has been delivered. `reservedKey` is the
+        /// object key the job had claimed with HEAD-before-PUT, nil when it was cancelled before
+        /// that. The PUT for that key may have completed on the server just as it was cancelled,
+        /// so a caller that is deleting the capture deletes this key too.
+        case stopped(reservedKey: String?)
+    }
+
+    /// How a job's task ended, after its terminal event was delivered.
+    private nonisolated enum JobOutcome: Sendable {
+        case uploaded
+        case failed
+        case cancelled(reservedKey: String?)
+    }
 
     static let maxKeyAttempts = 5
 
@@ -15,6 +35,11 @@ actor UploadQueue {
     private let events: EventHandler
     private var pending: [UploadJob] = []
     private var isDraining = false
+    /// The job being processed and the task running it, so `cancel` can stop it and wait for it.
+    private var current: (id: UUID, task: Task<JobOutcome, Never>)?
+    private var cancelledIDs: Set<UUID> = []
+    /// Key reserved by the in-flight job, reported in its `.cancelled` event if it is cancelled.
+    private var reservedKeys: [UUID: String] = [:]
 
     init(destination: any Destination,
          keyNamer: ObjectKeyNamer,
@@ -37,50 +62,94 @@ actor UploadQueue {
         Task { await drain() }
     }
 
+    /// Stops the job for `recordID`. A pending job is dropped and reports `.cancelled` at once. An
+    /// in-flight job has its task cancelled, which makes the HEAD, the PUT, or the backoff sleep
+    /// throw; the job then reports `.cancelled` instead of `.failed`, and this call returns once
+    /// that event has been delivered. If the job ends some other way first (its PUT finished, or
+    /// it had already reported `.uploaded` or `.failed`), this returns `.notFound`. Later jobs
+    /// continue.
+    func cancel(recordID: UUID) async -> CancelResult {
+        if let index = pending.firstIndex(where: { $0.id == recordID }) {
+            pending.remove(at: index)
+            await events(.cancelled(id: recordID, reservedKey: nil))
+            return .stopped(reservedKey: nil)
+        }
+        guard let current, current.id == recordID else { return .notFound }
+        cancelledIDs.insert(recordID)
+        current.task.cancel()
+        let outcome = await current.task.value
+        cancelledIDs.remove(recordID)
+        reservedKeys[recordID] = nil
+        // The job's own outcome decides the result, so concurrent cancels agree on it.
+        if case .cancelled(let key) = outcome { return .stopped(reservedKey: key) }
+        return .notFound
+    }
+
     private func drain() async {
         while !pending.isEmpty {
             let job = pending.removeFirst()
-            await process(job)
+            let task = Task { await process(job) }
+            current = (job.id, task)
+            _ = await task.value
+            current = nil
         }
         isDraining = false
     }
 
-    private func process(_ job: UploadJob) async {
+    /// Runs `job` to its end, delivers the terminal event, and returns how it ended.
+    private func process(_ job: UploadJob) async -> JobOutcome {
         var attempt = 1
         while true {
             await events(.started(id: job.id, attempt: attempt))
             do {
-                let key = try await reserveKey(ext: job.fileExtension)
+                let key = try await reserveKey(ext: job.fileExtension, context: job.naming)
+                reservedKeys[job.id] = key
                 let id = job.id
                 let events = events
                 try await destination.upload(job.data, key: key, contentType: job.contentType) { fraction in
                     Task { await events(.progress(id: id, fraction: fraction)) }
                 }
                 let url = try destination.publicURL(for: key)
+                reservedKeys[job.id] = nil
                 await events(.uploaded(id: job.id, url: url, key: key))
-                return
+                return .uploaded
             } catch {
+                if cancelledIDs.contains(job.id) {
+                    return await deliverCancelled(job.id)
+                }
                 if UploadError.isRetryable(error), attempt < policy.maxAttempts {
                     attempt += 1
                     do {
                         try await sleep(policy.delay(beforeAttempt: attempt))
                     } catch {
-                        // A cancelled backoff sleep ends the job instead of retrying.
+                        if cancelledIDs.contains(job.id) {
+                            return await deliverCancelled(job.id)
+                        }
+                        // A backoff sleep that fails on its own ends the job instead of retrying.
+                        reservedKeys[job.id] = nil
                         await events(.failed(id: job.id, message: error.localizedDescription))
-                        return
+                        return .failed
                     }
                     continue
                 }
+                reservedKeys[job.id] = nil
                 await events(.failed(id: job.id, message: error.localizedDescription))
-                return
+                return .failed
             }
         }
     }
 
+    /// Delivers `.cancelled` with the key the job reserved (`cancel` clears the entry).
+    private func deliverCancelled(_ id: UUID) async -> JobOutcome {
+        let key = reservedKeys[id]
+        await events(.cancelled(id: id, reservedKey: key))
+        return .cancelled(reservedKey: key)
+    }
+
     /// Generates keys until HEAD reports one unused.
-    private func reserveKey(ext: String) async throws -> String {
+    private func reserveKey(ext: String, context: TemplateContext) async throws -> String {
         for _ in 0..<Self.maxKeyAttempts {
-            let key = keyNamer.makeKey(ext: ext)
+            let key = keyNamer.makeKey(ext: ext, context: context)
             if try await destination.exists(key: key) == false {
                 return key
             }

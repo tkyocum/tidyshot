@@ -10,6 +10,10 @@ final class HistoryStore {
 
     private(set) var records: [CaptureRecord] = []
 
+    /// Called with the records dropped by retention on `load()` and `add(_:)`, so their
+    /// thumbnails and temporary files can be removed. Files in the user's save folder are never
+    /// touched.
+    @ObservationIgnored var didPrune: (([CaptureRecord]) -> Void)?
     @ObservationIgnored let fileURL: URL
     @ObservationIgnored private let retentionDays: () -> Int
     @ObservationIgnored private let now: () -> Date
@@ -53,14 +57,24 @@ final class HistoryStore {
             loaded[index].uploadState = .failed(message: "Upload was interrupted.")
             interrupted = true
         }
-        records = Self.sortedNewestFirst(Self.pruned(loaded, retentionDays: retentionDays(), now: now()))
+        records = Self.sortedNewestFirst(prune(loaded))
         if interrupted { save() }
     }
 
     func add(_ record: CaptureRecord) {
         records.insert(record, at: 0)
-        records = Self.sortedNewestFirst(Self.pruned(records, retentionDays: retentionDays(), now: now()))
+        records = Self.sortedNewestFirst(prune(records))
         save()
+    }
+
+    /// Drops expired records and reports them through `didPrune`.
+    private func prune(_ input: [CaptureRecord]) -> [CaptureRecord] {
+        let kept = Self.pruned(input, retentionDays: retentionDays(), now: now())
+        if kept.count != input.count, let didPrune {
+            let keptIDs = Set(kept.map(\.id))
+            didPrune(input.filter { !keptIDs.contains($0.id) })
+        }
+        return kept
     }
 
     func record(id: UUID) -> CaptureRecord? {
@@ -95,9 +109,12 @@ final class HistoryStore {
         records.filter(\.isFailed)
     }
 
+    /// Records newer than the retention cutoff, plus every upload-only capture that has not been
+    /// uploaded (its PNG in `pending` is the only copy, so it stays until it is uploaded or
+    /// deleted) and every record with an upload in flight (its `.uploaded` event needs the record).
     static func pruned(_ records: [CaptureRecord], retentionDays: Int, now: Date) -> [CaptureRecord] {
         let cutoff = now.addingTimeInterval(-Double(retentionDays) * 86_400)
-        return records.filter { $0.timestamp >= cutoff }
+        return records.filter { $0.timestamp >= cutoff || $0.isPendingOnly || $0.isUploading }
     }
 
     /// Newest first; equal timestamps keep their current relative order.

@@ -9,7 +9,9 @@ nonisolated protocol Destination: Sendable {
     /// Uploads `data` to `key`. `progress` receives fractions in 0...1 from the transport thread.
     func upload(_ data: Data, key: String, contentType: String,
                 progress: @escaping @Sendable (Double) -> Void) async throws
-    /// Best-effort removal, used by the connection test to clean up its probe object.
+    /// Removes the object at `key`. Used by Delete (the capture's object, and any key its
+    /// cancelled upload had reserved), by the cleanup of an object uploaded for a record that no
+    /// longer exists, and by the connection test to remove its probe object.
     func delete(key: String) async throws
     /// Where `key` can be read from after upload.
     func publicURL(for key: String) throws -> URL
@@ -22,6 +24,17 @@ nonisolated struct UploadJob: Sendable, Identifiable {
     let contentType: String
     /// Without a dot, for example `png`.
     let fileExtension: String
+    /// What the object key template is expanded against (capture time, counter, hostname).
+    /// The queue expands it afresh for every key attempt, so only `{random}` changes on a collision.
+    let naming: TemplateContext
+
+    init(id: UUID, data: Data, contentType: String, fileExtension: String, naming: TemplateContext = TemplateContext()) {
+        self.id = id
+        self.data = data
+        self.contentType = contentType
+        self.fileExtension = fileExtension
+        self.naming = naming
+    }
 }
 
 nonisolated enum UploadEvent: Sendable, Equatable {
@@ -29,6 +42,10 @@ nonisolated enum UploadEvent: Sendable, Equatable {
     case progress(id: UUID, fraction: Double)
     case uploaded(id: UUID, url: URL, key: String)
     case failed(id: UUID, message: String)
+    /// Terminal, like `.failed`, after `UploadQueue.cancel(recordID:)`. Never followed by `.failed`.
+    /// `reservedKey` is the key the job had claimed, nil when it was cancelled before HEAD
+    /// found one; its PUT may have completed on the server, so a delete removes it too.
+    case cancelled(id: UUID, reservedKey: String?)
 }
 
 nonisolated enum UploadError: LocalizedError, Equatable, Sendable {

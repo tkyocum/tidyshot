@@ -3,7 +3,7 @@ import Foundation
 import ImageIO
 import UniformTypeIdentifiers
 
-enum ImageEncoder {
+nonisolated enum ImageEncoder {
     enum EncodeError: LocalizedError {
         case destinationUnavailable
         case finalizeFailed
@@ -33,5 +33,17 @@ enum ImageEncoder {
             throw EncodeError.finalizeFailed
         }
         return data as Data
+    }
+
+    /// Decodes PNG bytes (a capture's file, or its object downloaded for Copy Image) and reads the
+    /// scale back from the DPI that `pngData(from:scale:)` writes: 144 DPI gives 2, and no DPI
+    /// gives 1. PNG stores pixels per metre, so the DPI comes back a fraction off and is rounded.
+    /// Nil when the bytes are not an image.
+    static func decode(_ data: Data) -> (image: CGImage, scale: CGFloat)? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
+        let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+        let dpi = properties?[kCGImagePropertyDPIWidth] as? Double ?? 72
+        return (image, max(1, (dpi / 72).rounded()))
     }
 }

@@ -18,7 +18,7 @@ struct GeneralSettingsView: View {
                 }
             }
             TextField("File name", text: $settings.fileNameTemplate)
-            Text("Tokens: {date} {time} {datetime} {app} {counter} {random} {random:8}")
+            Text("Tokens: \(TemplateExpander.tokenList)")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Picker("After capture", selection: $settings.afterCaptureAction) {
@@ -26,10 +26,15 @@ struct GeneralSettingsView: View {
                     Text(action.title).tag(action)
                 }
             }
-            if settings.afterCaptureAction == .upload {
+            if settings.afterCaptureAction.uploads {
                 Toggle("Also copy image (the URL replaces it when the upload finishes)", isOn: $settings.alsoCopyImageWhenUploading)
             } else {
                 Toggle("Copy image to clipboard", isOn: $settings.copyImageToClipboard)
+            }
+            if settings.afterCaptureAction == .uploadOnly {
+                Text("The PNG is kept inside TidyShot only until the upload succeeds. Recent Captures keeps a thumbnail and the URL; a failed upload keeps the file until you retry or delete it.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             Toggle("Show notification", isOn: $settings.showNotification)
             Toggle("Play sound", isOn: $settings.playSound)

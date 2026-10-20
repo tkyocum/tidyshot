@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// Destination fields, credentials (saved to the Keychain), key naming, and Save and Test Connection.
+/// Destination fields, credentials (saved to the Keychain), the object key template, and Save
+/// and Test Connection.
 struct UploadSettingsView: View {
     private let coordinator = AppCoordinator.shared
 
@@ -17,17 +18,25 @@ struct UploadSettingsView: View {
     var body: some View {
         Form {
             Section("Destination") {
-                TextField("Endpoint", text: $draft.endpoint, prompt: Text("https://s3.us-west-2.amazonaws.com"))
+                // A prompt that looks like a value reads as filled in; the example goes underneath.
+                // Verbatim, because a string literal is parsed as Markdown and the URL would become
+                // a blue, clickable link instead of grey caption text.
+                TextField("Endpoint", text: $draft.endpoint, prompt: Text("Required"))
+                Text(verbatim: "Example: https://s3.us-west-2.amazonaws.com")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 TextField("Region", text: $draft.region, prompt: Text("us-west-2, or auto for R2"))
                 TextField("Bucket", text: $draft.bucket)
-                TextField("Key prefix (optional folder)", text: $draft.keyPrefix)
                 Toggle("Use path-style URLs (MinIO)", isOn: $draft.usePathStyle)
                 Text("Buckets whose name contains a dot always use path-style URLs; the provider's TLS certificate cannot cover them as a subdomain.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Toggle("Send public-read ACL with each upload", isOn: $draft.sendPublicReadACL)
-                TextField("Public URL", text: $draft.publicURLTemplate, prompt: Text("https://snap.tky.io/{key}"))
-                Text("{key} is replaced with the object key, including the prefix.")
+                TextField("Public URL", text: $draft.publicURLTemplate, prompt: Text("Required"))
+                Text(verbatim: "Example: https://snap.tky.io/{key}")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text("{key} is replaced with the full object key, including any folders from the key template.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -44,12 +53,29 @@ struct UploadSettingsView: View {
                 Text("Stored in your login keychain, never in preferences. A session token is only needed for temporary credentials.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                Button("Forget Credentials", role: .destructive) { forgetCredentials() }
+                    .disabled(isTesting)
             }
             Section("Object keys") {
-                Stepper("Random name length: \(draft.keyLength)", value: $draft.keyLength, in: ObjectKeyNamer.lengthRange)
-                Text("Example: \(exampleKey)")
+                TextField("Key template", text: $draft.keyTemplate, prompt: Text(ObjectKeyNamer.defaultTemplate))
+                    .font(.body.monospaced())
+                Text("Tokens: \(TemplateExpander.tokenList). Letters, digits, . _ - and / between tokens; / makes folders. The .png extension is added.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if let problem = ObjectKeyNamer.validate(draft.keyTemplate) {
+                    Text(problem.localizedDescription)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                } else {
+                    Text("Example: \(exampleKey)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if let warning = ObjectKeyNamer.collisionWarning(for: draft.keyTemplate) {
+                        Label(warning, systemImage: "exclamationmark.triangle")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
+                }
             }
             Section {
                 HStack {
@@ -74,9 +100,11 @@ struct UploadSettingsView: View {
         .onAppear(perform: load)
     }
 
+    /// The template expanded for a capture taken right now, with `x` for every random character.
     private var exampleKey: String {
-        ObjectKeyNamer(prefix: draft.keyPrefix, length: draft.keyLength, randomString: { String(repeating: "x", count: $0) })
-            .makeKey(ext: "png")
+        let context = TemplateContext(counter: 42)
+        return ObjectKeyNamer(template: draft.keyTemplate, randomString: { String(repeating: "x", count: $0) })
+            .makeKey(ext: "png", context: context)
     }
 
     /// Fills the form. No stored item leaves the credential fields empty; a keychain error is
@@ -123,6 +151,23 @@ struct UploadSettingsView: View {
         coordinator.destinationDidChange()
         show("Saved.", isError: false)
         return true
+    }
+
+    /// Deletes the keychain item and clears the three fields. The destination fields stay, so
+    /// entering a new key pair and saving is all it takes to upload again.
+    private func forgetCredentials() {
+        do {
+            try coordinator.credentialStore.delete(account: KeychainCredentialStore.defaultAccount)
+        } catch {
+            show(error.localizedDescription, isError: true)
+            return
+        }
+        accessKeyID = ""
+        secretAccessKey = ""
+        sessionToken = ""
+        keychainError = nil
+        coordinator.destinationDidChange()
+        show("Credentials removed from the keychain. Uploads stay off until new ones are saved.", isError: false)
     }
 
     /// Saves the form, then runs the connection test against what was saved.

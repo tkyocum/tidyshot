@@ -67,6 +67,31 @@ final class SaveLocation {
         }
     }
 
+    /// Reads `fileURL` inside `folder`, holding that folder's security-scoped access for the read.
+    /// Touches no instance state, so it can run off the main actor (thumbnail and preview loads).
+    nonisolated static func readScoped(_ fileURL: URL, folder: URL) throws -> Data {
+        let accessing = folder.startAccessingSecurityScopedResource()
+        defer { if accessing { folder.stopAccessingSecurityScopedResource() } }
+        return try Data(contentsOf: fileURL)
+    }
+
+    /// Deletes a file inside the save folder, holding security-scoped access. A file that is
+    /// already gone is not an error; any other failure throws, and Delete then offers to remove the
+    /// record from history and leave the file.
+    func remove(at fileURL: URL) throws {
+        guard let currentURL else {
+            throw CocoaError(.fileWriteNoPermission,
+                             userInfo: [NSLocalizedDescriptionKey: "No save folder is set, so TidyShot cannot reach this file."])
+        }
+        try withAccess(to: currentURL) {
+            do {
+                try FileManager.default.removeItem(at: fileURL)
+            } catch let error as CocoaError where error.code == .fileNoSuchFile {
+                return
+            }
+        }
+    }
+
     private func withAccess<T>(to folder: URL, _ body: () throws -> T) rethrows -> T {
         let accessing = folder.startAccessingSecurityScopedResource()
         defer { if accessing { folder.stopAccessingSecurityScopedResource() } }

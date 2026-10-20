@@ -1,15 +1,28 @@
 import Foundation
 
-/// PUT, HEAD and DELETE Object over URLSession with SigV4 headers. Works with AWS S3,
-/// Cloudflare R2, Backblaze B2 and MinIO, which all speak the same three requests.
+/// PUT, HEAD, GET and DELETE Object over URLSession with SigV4 headers. Works with AWS S3,
+/// Cloudflare R2, Backblaze B2 and MinIO, which all speak the same four requests.
 nonisolated struct S3Destination: Destination {
     let config: S3DestinationConfig
     let credentials: AWSCredentials
     let session: URLSession
     let now: @Sendable () -> Date
 
+    /// The session every request uses unless a test passes its own. It has no URL cache: a GET's
+    /// response (a capture downloaded for Copy Image, often sensitive) would otherwise be stored in
+    /// the container's on-disk cache and stay there after Delete. The request's
+    /// `reloadIgnoringLocalAndRemoteCacheData` only governs loading, not storing, and a per-task
+    /// `willCacheResponse` is never called for `data(for:delegate:)`, so only a session without a
+    /// cache prevents it. Ephemeral, so cookies and credentials are not persisted either. One
+    /// session for all destinations, because a URLSession lives until it is invalidated.
+    static let uncachedSession: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.urlCache = nil
+        return URLSession(configuration: configuration)
+    }()
+
     init(config: S3DestinationConfig, credentials: AWSCredentials,
-         session: URLSession = .shared, now: @escaping @Sendable () -> Date = { Date() }) {
+         session: URLSession = S3Destination.uncachedSession, now: @escaping @Sendable () -> Date = { Date() }) {
         self.config = config.normalized
         self.credentials = credentials
         self.session = session
@@ -62,6 +75,19 @@ nonisolated struct S3Destination: Destination {
         guard (200..<300).contains(http.statusCode) || http.statusCode == 404 else {
             throw Self.failure(http, bodyText: Self.excerpt(body))
         }
+    }
+
+    /// GET Object, signed like the other requests (the bucket need not be public). Copy Image uses
+    /// it for captures that have no local file. Unlike `delete`, a 404 is an error: there is
+    /// nothing to copy.
+    func download(key: String) async throws -> Data {
+        let request = try signedRequest(method: "GET", key: key, body: nil, extraHeaders: [])
+        let (body, response) = try await session.data(for: request, delegate: UploadProgressDelegate())
+        let http = try Self.httpResponse(response)
+        guard (200..<300).contains(http.statusCode) else {
+            throw Self.failure(http, bodyText: Self.excerpt(body))
+        }
+        return body
     }
 
     func publicURL(for key: String) throws -> URL {

@@ -180,6 +180,55 @@ struct S3DestinationTests {
         #expect(stub.requests.map(\.httpMethod) == ["DELETE"])
     }
 
+    /// Delete builds its destination from the record's stored location. A dotted bucket is always
+    /// addressed path-style, because a TLS wildcard cannot cover `snap.tky.io.s3.amazonaws.com`.
+    @Test func deleteForDottedBucketUsesPathStyle() async throws {
+        var dotted = config
+        dotted.bucket = "snap.tky.io"
+        let location = ObjectLocation(config: dotted)
+        #expect(location.usePathStyle)
+        let (session, stub) = StubSession.make { _ in (204, Data()) }
+        try await destination(location.config, session: session).delete(key: "aB3dE9.png")
+
+        let request = try #require(stub.requests.first)
+        #expect(request.httpMethod == "DELETE")
+        #expect(request.url?.absoluteString == "https://s3.us-east-1.amazonaws.com/snap.tky.io/aB3dE9.png")
+        #expect(request.url?.path() == "/snap.tky.io/aB3dE9.png")
+    }
+
+    /// Copy Image downloads upload-only captures. Expected signature computed independently with
+    /// a reference implementation.
+    @Test func downloadIsASignedGetThatReturnsTheBody() async throws {
+        let png = Data([0x89, 0x50, 0x4E, 0x47])
+        let (session, stub) = StubSession.make { _ in (200, png) }
+        let data = try await destination(config, session: session).download(key: "aSIS7.png")
+
+        #expect(data == png)
+        let request = try #require(stub.requests.first)
+        #expect(request.httpMethod == "GET")
+        #expect(request.url?.absoluteString == "https://snap.s3.us-east-1.amazonaws.com/aSIS7.png")
+        #expect(request.value(forHTTPHeaderField: "x-amz-content-sha256") == S3Signer.emptyPayloadHash)
+        #expect(request.value(forHTTPHeaderField: "authorization") == "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20261019/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=2b2032e36f0ecee5dda47c71b2b5cb033deed81114e1626e47639929cb0f7162")
+    }
+
+    @Test func downloadThrowsTheSummarisedErrorOnFailure() async throws {
+        let xml = "<Error><Code>NoSuchKey</Code><Message>The specified key does not exist.</Message></Error>"
+        let (session, stub) = StubSession.make { _ in (404, Data(xml.utf8)) }
+        await #expect(throws: UploadError.httpStatus(404, body: "NoSuchKey: The specified key does not exist.")) {
+            try await destination(config, session: session).download(key: "gone.png")
+        }
+        #expect(stub.requests.map(\.httpMethod) == ["GET"])
+    }
+
+    /// A downloaded capture must not stay in the container's on-disk URL cache after Delete. The
+    /// request's cache policy only governs loading, not storing, so the session the app uses (the
+    /// default) has no URL cache at all, and it is one shared session, not one per destination.
+    @Test func defaultSessionHasNoURLCache() {
+        let destination = S3Destination(config: config, credentials: credentials)
+        #expect(destination.session === S3Destination.uncachedSession)
+        #expect(destination.session.configuration.urlCache == nil)
+    }
+
     @Test func errorBodyIsSummarisedFromS3XML() async throws {
         let xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Error><Code>AccessDenied</Code><Message>Access Denied</Message><RequestId>x</RequestId></Error>"
         let (session, _) = StubSession.make { _ in (403, Data(xml.utf8)) }
