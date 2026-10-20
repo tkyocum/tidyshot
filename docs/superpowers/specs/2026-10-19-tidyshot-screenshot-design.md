@@ -75,6 +75,8 @@ Prior art: macshot (GPL-3.0) is an open-source Swift app with S3-compatible uplo
 
 **Recent captures gallery.** The Phase 2 "Recent Captures" text submenu becomes a gallery window opened from the menu bar: a grid of thumbnails of recent captures, newest first; hovering a thumbnail shows a larger preview; clicking a thumbnail copies its public URL (or the local file when it was never uploaded); a delete action removes the object from object storage (`S3Destination.delete`), the history record, and the local file if present, after one confirmation. Thumbnails are generated at capture time and stored under Application Support next to `history.json`, so they survive deletion of the original and the "Upload only" mode below. Failed uploads keep their retry action in the gallery.
 
+**Delete from the overlay.** The Quick Access overlay gets a Delete action for the capture just taken: it removes the object from storage, the history record, the thumbnail, and the local file, with a single confirmation, so a bad shot can be killed and retaken in two clicks. It shares the implementation with the gallery delete. While the upload is still in flight, Delete cancels it first (the upload queue gains a cancel for that record) and then removes whatever was written.
+
 **Upload only mode.** A third after-capture action, "Upload only, keep no local file": the PNG is written to a temporary folder inside the app container (no save-folder prompt), uploaded, the URL copied, and the temporary file deleted on success. On failure the file stays until the retry succeeds or the record is deleted, so a capture is never lost. The history record then has no local file and shows only the thumbnail and URL.
 
 **Blur, pixelate, redact in the editor.** Promoted into the first annotation release (see the Annotate row).
@@ -167,6 +169,7 @@ Each phase ends with something usable. Phases 1 and 2 deliver the headline workf
 ### Phase 3: recent captures gallery and upload-only mode (3 to 4 days)
 - Thumbnail generation at capture time, stored under Application Support; history records gain a thumbnail path and allow a nil local file.
 - Gallery window from the menu bar: grid, hover preview, click copies URL, delete from object storage plus history plus local file with confirmation, retry for failures.
+- Delete action on the Quick Access overlay, sharing the gallery's delete; cancelling an in-flight upload first.
 - "Upload only" after-capture action: temp file in the container, upload, copy URL, delete on success, keep on failure.
 - Object key templates (`{random:N}`, `{date}`, `{year}`, `{month}`, `{day}`, `{time}`, `{hostname}`, `{app}`, `{counter}`, literal folders) sharing the token engine with `FileNamer`; the key prefix field folds into the template.
 - "Forget credentials" button in the Upload tab.
