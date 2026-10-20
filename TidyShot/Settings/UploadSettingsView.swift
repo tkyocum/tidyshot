@@ -44,6 +44,8 @@ struct UploadSettingsView: View {
                 Text("Stored in your login keychain, never in preferences. A session token is only needed for temporary credentials.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                Button("Forget Credentials", role: .destructive) { forgetCredentials() }
+                    .disabled(isTesting)
             }
             Section("Object keys") {
                 TextField("Key template", text: $draft.keyTemplate, prompt: Text(ObjectKeyNamer.defaultTemplate))
@@ -141,6 +143,23 @@ struct UploadSettingsView: View {
         coordinator.destinationDidChange()
         show("Saved.", isError: false)
         return true
+    }
+
+    /// Deletes the keychain item and clears the three fields. The destination fields stay, so
+    /// entering a new key pair and saving is all it takes to upload again.
+    private func forgetCredentials() {
+        do {
+            try coordinator.credentialStore.delete(account: KeychainCredentialStore.defaultAccount)
+        } catch {
+            show(error.localizedDescription, isError: true)
+            return
+        }
+        accessKeyID = ""
+        secretAccessKey = ""
+        sessionToken = ""
+        keychainError = nil
+        coordinator.destinationDidChange()
+        show("Credentials removed from the keychain. Uploads stay off until new ones are saved.", isError: false)
     }
 
     /// Saves the form, then runs the connection test against what was saved.

@@ -50,17 +50,36 @@ Change them in Settings > Shortcuts.
 ## Upload
 
 Settings > Upload takes an S3-compatible endpoint (AWS S3, Cloudflare R2, Backblaze B2, MinIO),
-region, bucket, optional key prefix, and a public URL template such as `https://snap.tky.io/{key}`.
-Credentials are stored in your login keychain. Save and Test Connection saves the form, then
-uploads a small probe object, fetches it through the public URL without credentials, and deletes it.
+region, bucket, a public URL template such as `https://snap.tky.io/{key}`, and an object key
+template. Credentials are stored in your login keychain; Forget Credentials removes them again.
+Save and Test Connection saves the form, then uploads a small probe object into the folder your
+key template would use, fetches it through the public URL without credentials, and deletes it.
 
-Object keys are random, 6 characters by default (4 to 32). The app checks that a key is unused
-before uploading. By default no ACL header is sent; turn on "Send public-read ACL" only if your
-bucket relies on object ACLs rather than a bucket policy or CDN.
+The key template defaults to `{random:6}` (`aSIS7x.png`). Tokens: `{date}` `{year}` `{month}`
+`{day}` `{time}` `{datetime}` `{hostname}` `{app}` `{counter}` `{random}` `{random:N}`; letters,
+digits, `.`, `_`, `-` and `/` are allowed between tokens, and `/` makes folders, so
+`shots/{year}/{month}/{hostname}-{random:8}` is valid. The same tokens work in the file name
+template. The app checks that a key is unused before uploading; a template without `{random}` or
+`{counter}` gets a warning, because captures can then produce the same key and only that check
+keeps an upload from overwriting an earlier object. By default no
+ACL header is sent; turn on "Send public-read ACL" only if your bucket relies on object ACLs
+rather than a bucket policy or CDN.
 
-After a capture the file is saved locally first, then uploaded; the public URL replaces the
-clipboard contents when the upload finishes. Failed uploads stay in the menu's Recent Captures
-list with a retry action.
+After capture, "Upload and copy URL" saves the file locally first, then uploads it; the public
+URL replaces the clipboard contents when the upload finishes. "Upload only, keep no local file"
+writes the PNG inside TidyShot's container instead, uploads it, copies the URL and deletes the
+file; a failed upload keeps it until a retry succeeds or the capture is deleted.
+
+## Recent Captures
+
+The menu's Recent Captures… item opens a gallery of thumbnails, newest first. Hover for a larger
+preview, click to copy the URL (or the file when it was never uploaded), and use the context menu
+to retry a failed upload, reveal the file, or delete the capture, which removes the object from
+the bucket it was uploaded to, the local file, the thumbnail and the history entry after one
+confirmation. The confirmation also offers Remove from History Only, which drops just the entry
+and keeps the object and the file. The Quick Access overlay has the same Delete; while an upload
+is still running it cancels it first.
+Thumbnails live in `~/Library/Containers/io.tky.tidyshot/Data/Library/Application Support/TidyShot/thumbnails`.
 
 ## Documents
 
@@ -68,3 +87,4 @@ list with a retry action.
 - Plans: `docs/superpowers/plans/`
 - Phase 1 manual test checklist: `docs/testing/phase-1-manual-checklist.md`
 - Phase 2 manual test checklist: `docs/testing/phase-2-manual-checklist.md`
+- Phase 3 manual test checklist: `docs/testing/phase-3-manual-checklist.md`
