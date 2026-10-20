@@ -97,6 +97,8 @@ Prior art: macshot (GPL-3.0) is an open-source Swift app with S3-compatible uplo
 
 **Adaptive crosshair.** The selection crosshair samples the frozen snapshot under the cursor and draws black on light backgrounds and white on dark ones; before the snapshot arrives it is white with a one-pixel dark edge.
 
+**Loupe crosshair (feedback after the Phase 3.1 build, 2026-10-20).** The cross inside the loupe stayed white, so over light pixels it vanished while the main crosshair turned black. The loupe's cross uses the same `CrosshairStyle` as the main crosshair (black at 0.8 alpha over light pixels, white at 0.8 alpha over dark ones, outlined before the snapshot arrives); the loupe's white ring is unchanged. Fixed as the first task of Phase 4.
+
 ## 3. Core workflow in detail
 
 ```
