@@ -69,6 +69,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
             menu.addItem(item("Screen Recording permission needed…", #selector(showPermission)))
             menu.addItem(.separator())
         }
+        menu.addItem(captureItem("All-in-One", .allInOne, #selector(allInOne)))
         menu.addItem(captureItem("Capture Area", .captureArea, #selector(captureArea)))
         menu.addItem(captureItem("Capture Window", .captureWindow, #selector(captureWindow)))
         menu.addItem(captureItem("Capture Fullscreen", .captureFullscreen, #selector(captureFullscreen)))
@@ -115,6 +116,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     // MARK: Actions (AppKit calls these after the menu has closed)
 
     @objc private func showPermission() { coordinator.showPermissionWindow() }
+    @objc private func allInOne() { Task { await coordinator.captureAllInOne() } }
     @objc private func captureArea() { Task { await coordinator.captureArea() } }
     @objc private func captureWindow() { Task { await coordinator.captureWindow() } }
     @objc private func captureFullscreen() { Task { await coordinator.captureFullscreen() } }

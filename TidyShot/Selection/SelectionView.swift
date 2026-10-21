@@ -41,6 +41,34 @@ final class SelectionView: NSView {
     private var completedRect: CGRect?
     private var trackingArea: NSTrackingArea?
 
+    // MARK: All-in-One state
+
+    /// The adjustable selection on this display, view coordinates. Set through `beginAdjusting`
+    /// (a drag, a window click, the preselected rect); a resize, move, nudge or typed size changes it.
+    private(set) var adjustRect: CGRect?
+    /// True while `adjustRect` came from a window click: the Window button is enabled.
+    private(set) var adjustRectIsWindow = false
+    /// The toolbar's lock, from `settings.allInOneAspectLock` when the overlay opens.
+    var isAspectLocked = false
+    /// Width over height kept while locked. Set when the lock goes on and when a new rect is set while locked.
+    private var lockedRatio: CGFloat?
+    /// The Timer button's seconds; nil leaves it out (Task 3 sets it).
+    var timerSeconds: Int?
+    /// A new rect: `fromWindow` is true for a window click. The controller clears the other displays.
+    var onAdjustRectSet: ((_ fromWindow: Bool) -> Void)?
+    /// A press that resolved to nothing (no drag, no window, no rect here). The controller cancels
+    /// unless another display holds a rect.
+    var onEmptyClick: (() -> Void)?
+    /// Capture, Window, Fullscreen, Scrolling or Timer, with the rect in AppKit global points.
+    var onAllInOneAction: ((AllInOneAction, CGRect) -> Void)?
+    var onAspectLockChanged: ((Bool) -> Void)?
+    private enum AdjustDrag {
+        case resize(SelectionHandle, CGRect)
+        case move(start: CGPoint, original: CGRect)
+    }
+    private var adjustDrag: AdjustDrag?
+    private var toolbar: AllInOneToolbar?
+
     private let dimColor = NSColor.black.withAlphaComponent(0.35)
     private let labelFont = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
 
@@ -52,16 +80,27 @@ final class SelectionView: NSView {
 
     override func updateTrackingAreas() {
         if let trackingArea { removeTrackingArea(trackingArea) }
-        let area = NSTrackingArea(rect: bounds,
-                                  options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect],
-                                  owner: self, userInfo: nil)
+        var options: NSTrackingArea.Options = [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect]
+        // All-in-One sets the cursor itself (see `updateAllInOneCursor`).
+        if mode == .allInOne { options.insert(.cursorUpdate) }
+        let area = NSTrackingArea(rect: bounds, options: options, owner: self, userInfo: nil)
         addTrackingArea(area)
         trackingArea = area
         super.updateTrackingAreas()
     }
 
     override func resetCursorRects() {
+        // Overlapping cursor rects are undefined in AppKit, so All-in-One sets the cursor itself.
+        guard mode != .allInOne else { return }
         addCursorRect(bounds, cursor: .crosshair)
+    }
+
+    override func cursorUpdate(with event: NSEvent) {
+        guard mode == .allInOne else {
+            super.cursorUpdate(with: event)
+            return
+        }
+        updateAllInOneCursor(at: convert(event.locationInWindow, from: nil))
     }
 
     // MARK: Mouse
@@ -76,6 +115,7 @@ final class SelectionView: NSView {
     override func mouseMoved(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         cursor = point
+        updateAllInOneCursor(at: point)
         crosshairStyle = style(at: point)
         needsDisplay = true
         if let window {
@@ -85,11 +125,19 @@ final class SelectionView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        if mode == .allInOne {
+            allInOneMouseDown(event)
+            return
+        }
         dragStart = convert(event.locationInWindow, from: nil)
         dragRect = nil
     }
 
     override func mouseDragged(with event: NSEvent) {
+        if mode == .allInOne {
+            allInOneMouseDragged(event)
+            return
+        }
         guard let start = dragStart else { return }
         let point = convert(event.locationInWindow, from: nil)
         cursor = point
@@ -104,6 +152,10 @@ final class SelectionView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
+        if mode == .allInOne {
+            allInOneMouseUp(event)
+            return
+        }
         defer {
             dragStart = nil
             dragRect = nil
@@ -125,6 +177,30 @@ final class SelectionView: NSView {
     }
 
     override func keyDown(with event: NSEvent) {
+        if mode == .allInOne {
+            // Command or Control: not the overlay's, so Cmd-Return and Cmd-arrow neither capture
+            // nor nudge. Shift-arrow stays the 10 pt nudge.
+            guard event.modifierFlags.intersection([.command, .control]).isEmpty else {
+                super.keyDown(with: event)
+                return
+            }
+            switch SelectionAdjust.keyCommand(keyCode: event.keyCode, hasRect: adjustRect != nil) {
+            case .cancel?:
+                onCancel?()
+            case .capture?:
+                fireAllInOne(.capture)
+            case .nudge(let arrow)?:
+                if let adjustRect {
+                    self.adjustRect = SelectionAdjust.nudged(adjustRect, key: arrow,
+                                                             shift: event.modifierFlags.contains(.shift), bounds: bounds)
+                    layoutToolbar()
+                    needsDisplay = true
+                }
+            case nil:
+                super.keyDown(with: event)
+            }
+            return
+        }
         if event.keyCode == 53 { // Escape
             onCancel?()
         } else {
@@ -142,6 +218,15 @@ final class SelectionView: NSView {
         if let completedRect {
             punchHole(completedRect)
             stroke(NSBezierPath(rect: completedRect.insetBy(dx: 0.5, dy: 0.5)))
+            return
+        }
+
+        if mode == .allInOne, let adjustRect, dragRect == nil {
+            punchHole(adjustRect)
+            stroke(NSBezierPath(rect: adjustRect.insetBy(dx: 0.5, dy: 0.5)))
+            drawHandles(on: adjustRect)
+            if adjustDrag != nil { drawSizeLabel(for: adjustRect) }
+            if case .resize = adjustDrag, let cursor { drawLoupe(at: cursor) }
             return
         }
 
@@ -166,6 +251,21 @@ final class SelectionView: NSView {
 
         if let cursor, mode != .window {
             drawLoupe(at: cursor)
+        }
+    }
+
+    /// All-in-One's eight handles: white 8 pt knobs with a half-opaque black ring.
+    private func drawHandles(on rect: CGRect) {
+        let diameter: CGFloat = 8
+        for handle in SelectionHandle.resizeHandles {
+            guard let point = handle.point(on: rect) else { continue }
+            let knob = NSBezierPath(ovalIn: CGRect(x: point.x - diameter / 2, y: point.y - diameter / 2,
+                                                   width: diameter, height: diameter))
+            NSColor.white.setFill()
+            knob.fill()
+            NSColor.black.withAlphaComponent(0.5).setStroke()
+            knob.lineWidth = 1
+            knob.stroke()
         }
     }
 
@@ -294,5 +394,192 @@ final class SelectionView: NSView {
         ring.lineWidth = 2
         NSColor.white.setStroke()
         ring.stroke()
+    }
+}
+
+// MARK: All-in-One
+
+extension SelectionView {
+    /// A new rect (view coordinates, on this display): handles and toolbar appear. While locked,
+    /// its ratio becomes the one kept.
+    func beginAdjusting(_ rect: CGRect, fromWindow: Bool) {
+        adjustRect = rect
+        adjustRectIsWindow = fromWindow
+        lockedRatio = isAspectLocked && rect.height > 0 ? rect.width / rect.height : nil
+        layoutToolbar()
+        needsDisplay = true
+    }
+
+    /// Another display took the selection.
+    func clearAdjustRect() {
+        adjustRect = nil
+        adjustRectIsWindow = false
+        lockedRatio = nil
+        adjustDrag = nil
+        layoutToolbar()
+        needsDisplay = true
+    }
+
+    fileprivate func allInOneMouseDown(_ event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        dragRect = nil
+        guard let adjustRect,
+              let handle = SelectionAdjust.handle(at: point, rect: adjustRect, tolerance: SelectionAdjust.handleTolerance) else {
+            dragStart = point // a new rect, or a click outside
+            return
+        }
+        if handle == .inside {
+            if event.clickCount == 2 {
+                fireAllInOne(.capture)
+                return
+            }
+            adjustDrag = .move(start: point, original: adjustRect)
+        } else {
+            adjustDrag = .resize(handle, adjustRect)
+        }
+    }
+
+    fileprivate func allInOneMouseDragged(_ event: NSEvent) {
+        let raw = convert(event.locationInWindow, from: nil)
+        // The rect stays on this display: the pointer is clamped to it.
+        let point = CGPoint(x: min(max(raw.x, bounds.minX), bounds.maxX), y: min(max(raw.y, bounds.minY), bounds.maxY))
+        cursor = point
+        crosshairStyle = style(at: point)
+        switch adjustDrag {
+        case .resize(let handle, let original):
+            adjustRect = SelectionAdjust.resized(original, handle: handle, to: point, lockedRatio: lockedRatio,
+                                                 bounds: bounds, minSide: SelectionAdjust.minSide)
+        case .move(let start, let original):
+            adjustRect = SelectionAdjust.moved(original, by: CGVector(dx: point.x - start.x, dy: point.y - start.y),
+                                               bounds: bounds)
+        case nil:
+            guard let start = dragStart else { return }
+            dragRect = CGRect(x: min(start.x, point.x), y: min(start.y, point.y),
+                              width: abs(point.x - start.x), height: abs(point.y - start.y)).integral
+        }
+        toolbar?.isHidden = true
+        updateAllInOneCursor(at: point)
+        needsDisplay = true
+        if let window {
+            onMouseMoved?(window.convertToScreen(CGRect(origin: event.locationInWindow, size: .zero)).origin)
+        }
+    }
+
+    fileprivate func allInOneMouseUp(_ event: NSEvent) {
+        defer {
+            dragStart = nil
+            dragRect = nil
+            adjustDrag = nil
+            layoutToolbar()
+            updateAllInOneCursor(at: cursor)
+            needsDisplay = true
+        }
+        // A resize or move already changed the rect; a double-click already fired.
+        guard adjustDrag == nil, dragStart != nil else { return }
+        switch SelectionOutcome.resolve(mode: .allInOne, dragRect: dragRect, hasHighlight: highlightedRect != nil) {
+        case .area(let rect):
+            beginAdjusting(SelectionAdjust.fitted(rect, in: bounds), fromWindow: false)
+            onAdjustRectSet?(false)
+        case .window:
+            guard let highlightedRect else { return }
+            beginAdjusting(SelectionAdjust.fitted(highlightedRect, in: bounds), fromWindow: true)
+            onAdjustRectSet?(true)
+        case .cancel:
+            if adjustRect == nil { onEmptyClick?() }
+        }
+    }
+
+    /// Shows the toolbar under (or above, or inside) the rect, or hides it while there is no rect
+    /// or a drag, resize or move runs. The menu bar's safe-area inset is left free at the top.
+    fileprivate func layoutToolbar() {
+        guard mode == .allInOne, let adjustRect, adjustDrag == nil, dragRect == nil else {
+            toolbar?.isHidden = true
+            return
+        }
+        let toolbar = self.toolbar ?? makeToolbar()
+        toolbar.update(size: adjustRect.size, locked: isAspectLocked, windowEnabled: adjustRectIsWindow)
+        var screenBounds = bounds
+        screenBounds.size.height -= window?.screen?.safeAreaInsets.top ?? 0
+        toolbar.frame = AllInOneToolbarPlacement.frame(toolbarSize: toolbar.fittingSize, selection: adjustRect,
+                                                       screenBounds: screenBounds)
+        toolbar.isHidden = false
+    }
+
+    private func makeToolbar() -> AllInOneToolbar {
+        let toolbar = AllInOneToolbar(timerSeconds: timerSeconds)
+        toolbar.onAction = { [weak self] action in
+            guard let self else { return }
+            window?.makeFirstResponder(self)
+            if action == .cancel { onCancel?() } else { fireAllInOne(action) }
+        }
+        toolbar.onSize = { [weak self] width, height in
+            guard let self, let adjustRect else { return }
+            self.adjustRect = SelectionAdjust.sized(adjustRect, width: width.map { CGFloat($0) },
+                                                    height: height.map { CGFloat($0) },
+                                                    lockedRatio: lockedRatio, bounds: bounds)
+            layoutToolbar()
+            needsDisplay = true
+        }
+        toolbar.onToggleLock = { [weak self] in
+            guard let self else { return }
+            isAspectLocked.toggle()
+            lockedRatio = isAspectLocked ? adjustRect.flatMap { $0.height > 0 ? $0.width / $0.height : nil } : nil
+            onAspectLockChanged?(isAspectLocked)
+            window?.makeFirstResponder(self)
+            layoutToolbar()
+        }
+        toolbar.onFieldDone = { [weak self] in
+            guard let self else { return }
+            window?.makeFirstResponder(self)
+        }
+        addSubview(toolbar)
+        self.toolbar = toolbar
+        return toolbar
+    }
+
+    /// Hands the rect, in AppKit global points, to the controller. Window only while the rect
+    /// came from a window click.
+    fileprivate func fireAllInOne(_ action: AllInOneAction) {
+        guard let adjustRect, let window, action.isEnabled(hasWindow: adjustRectIsWindow) else { return }
+        onAllInOneAction?(action, window.convertToScreen(convert(adjustRect, to: nil)))
+    }
+
+    /// Arrow over the toolbar, the resize cursor over a handle, an open hand inside (closed while
+    /// moving), the crosshair elsewhere. A resize keeps its handle's cursor while it runs.
+    fileprivate func updateAllInOneCursor(at point: CGPoint?) {
+        guard mode == .allInOne else { return }
+        switch adjustDrag {
+        case .move?:
+            NSCursor.closedHand.set()
+            return
+        case .resize(let handle, _)?:
+            resizeCursor(for: handle).set()
+            return
+        case nil:
+            break
+        }
+        if let point, let toolbar, !toolbar.isHidden, toolbar.frame.contains(point) { NSCursor.arrow.set(); return }
+        guard let point, let adjustRect,
+              let handle = SelectionAdjust.handle(at: point, rect: adjustRect, tolerance: SelectionAdjust.handleTolerance) else {
+            NSCursor.crosshair.set()
+            return
+        }
+        resizeCursor(for: handle).set()
+    }
+
+    private func resizeCursor(for handle: SelectionHandle) -> NSCursor {
+        let position: NSCursor.FrameResizePosition
+        switch handle {
+        case .inside: return .openHand
+        case .topLeft: position = .topLeft
+        case .top: position = .top
+        case .topRight: position = .topRight
+        case .right: position = .right
+        case .bottomRight: position = .bottomRight
+        case .bottom: position = .bottom
+        case .bottomLeft: position = .bottomLeft
+        case .left: position = .left
+        }
+        return .frameResize(position: position, directions: .all)
     }
 }

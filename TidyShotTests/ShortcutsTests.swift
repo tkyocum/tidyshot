@@ -29,4 +29,16 @@ struct ShortcutsTests {
         #expect(Set(names.map(\.rawValue)).count == names.count)
         #expect(Set(names.compactMap(\.initialShortcut)).count == names.count - 1)
     }
+
+    /// ⌃⇧1 sits before ⌃⇧2 to ⌃⇧6 (spec 2.9). No two names share a key or a default shortcut
+    /// (Restore Closed Overlay has none).
+    @Test func allInOneIsControlShiftOne() {
+        #expect(KeyboardShortcuts.Name.allInOne.rawValue == "allInOne")
+        #expect(KeyboardShortcuts.Name.allInOne.initialShortcut == .init(.one, modifiers: [.control, .shift]))
+        let names: [KeyboardShortcuts.Name] = [.allInOne, .captureArea, .captureWindow, .captureFullscreen,
+                                               .captureScrolling, .capturePreviousArea, .restoreOverlay,
+                                               .cancelScrollingCapture]
+        #expect(Set(names.map(\.rawValue)).count == names.count)
+        #expect(Set(names.compactMap(\.initialShortcut)).count == names.count - 1)
+    }
 }

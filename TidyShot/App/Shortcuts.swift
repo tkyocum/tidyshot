@@ -1,6 +1,8 @@
 import KeyboardShortcuts
 
 extension KeyboardShortcuts.Name {
+    /// All-in-One (spec 2.9): the first capture item, ⌃⇧1.
+    static let allInOne = Self("allInOne", initial: .init(.one, modifiers: [.control, .shift]))
     static let captureArea = Self("captureArea", initial: .init(.four, modifiers: [.control, .shift]))
     static let captureWindow = Self("captureWindow", initial: .init(.two, modifiers: [.control, .shift]))
     static let captureFullscreen = Self("captureFullscreen", initial: .init(.three, modifiers: [.control, .shift]))

@@ -5,6 +5,7 @@ import ScreenCaptureKit
 /// On success the overlay stays up until `dismiss()` so the capture can exclude it by window.
 final class SelectionController {
     private let engine: CaptureEngine
+    private let settings: AppSettings
     /// The Quick Access cards on screen, left out of every capture and snapshot taken here.
     private let cardWindowNumbers: () -> Set<CGWindowID>
     private var windows: [SelectionWindow] = []
@@ -18,24 +19,50 @@ final class SelectionController {
     private var cachedOverlayWindows: [SCWindow]?
     /// Freeze screen: one snapshot per display, taken before any overlay window existed. Cleared by `dismiss()`.
     private var frozenSnapshots: [CGDirectDisplayID: FrozenSnapshot] = [:]
+    /// All-in-One's caller, waiting for a choice (nil: cancelled).
+    private var allInOneContinuation: CheckedContinuation<AllInOneChoice?, Never>?
+    /// All-in-One: the window whose frame the current rect came from, for the Window button.
+    private var pickedWindow: SCWindow?
+    private var isIdle: Bool { continuation == nil && allInOneContinuation == nil }
 
-    init(engine: CaptureEngine, cardWindowNumbers: @escaping () -> Set<CGWindowID> = { [] }) {
+    init(engine: CaptureEngine, settings: AppSettings, cardWindowNumbers: @escaping () -> Set<CGWindowID> = { [] }) {
         self.engine = engine
+        self.settings = settings
         self.cardWindowNumbers = cardWindowNumbers
     }
 
     func select(mode: SelectionMode, content: SCShareableContent, freeze: CaptureOptions? = nil) async -> Selection? {
-        guard continuation == nil, !NSScreen.screens.isEmpty else { return nil }
+        // All-in-One resolves through `selectAllInOne`.
+        guard isIdle, mode != .allInOne, !NSScreen.screens.isEmpty else { return nil }
+        await present(mode: mode, content: content, freeze: freeze, preselect: nil)
+        return await withCheckedContinuation { continuation = $0 }
+    }
+
+    /// All-in-One (spec 2.9): the overlay opens on `preselect` (CoreGraphics global points) when it
+    /// is on a display, otherwise as Capture Scrolling's; it stays adjustable until a toolbar
+    /// button, Return or a double-click picks the choice. On a choice the overlay stays up until
+    /// `dismiss()`; `freeze` works as in area mode.
+    func selectAllInOne(content: SCShareableContent, freeze: CaptureOptions? = nil,
+                        preselect: CGRect? = nil) async -> AllInOneChoice? {
+        guard isIdle, !NSScreen.screens.isEmpty else { return nil }
+        await present(mode: .allInOne, content: content, freeze: freeze, preselect: preselect)
+        return await withCheckedContinuation { allInOneContinuation = $0 }
+    }
+
+    /// Shows one overlay window per screen in `mode`, with the freeze snapshots taken first and
+    /// the loupe snapshots started after.
+    private func present(mode: SelectionMode, content: SCShareableContent, freeze: CaptureOptions?,
+                         preselect: CGRect?) async {
         displays = content.displays
         self.mode = mode
-        // Window picking is offered in window and scrolling mode; area mode shows just the crosshair.
+        // Window picking is offered in window, scrolling and All-in-One mode; area mode shows just the crosshair.
         picker = mode == .area ? nil : WindowPicker(content: content)
 
-        // Freeze (area mode only): every display is captured before any overlay window appears,
-        // so the snapshot holds neither the dimming nor the crosshair. Window and scrolling mode
-        // ignore it (spec 2.9). A display that fails is simply absent and stays live.
+        // Freeze (area and All-in-One): every display is captured before any overlay window
+        // appears, so the snapshot holds neither the dimming nor the crosshair. Window and
+        // scrolling mode stay live (spec 2.9). A display that fails is simply absent and stays live.
         frozenSnapshots = [:]
-        if mode == .area, let freeze {
+        if mode == .area || mode == .allInOne, let freeze {
             frozenSnapshots = await captureFrozenSnapshots(options: freeze)
         }
 
@@ -50,7 +77,8 @@ final class SelectionController {
             }
             // Callbacks hop to the next run-loop turn so the view is never torn down inside its own event handler.
             view.onComplete = { [weak self] appKitRect in Task { self?.finishArea(appKitRect) } }
-            view.onCancel = { [weak self] in Task { self?.finish(nil) } }
+            view.onCancel = { [weak self] in Task { self?.cancel() } }
+            if mode == .allInOne { configureAllInOne(view) }
             view.onMouseMoved = { [weak self] globalPoint in self?.updateHover(at: globalPoint) }
             // Capture the hovered window now; a mouseMoved could change it before the Task runs.
             view.onPickWindow = { [weak self] in
@@ -69,12 +97,114 @@ final class SelectionController {
         // activate(ignoringOtherApps:) is marked for future deprecation in the SDK; it compiles without a warning today.
         NSApplication.shared.activate(ignoringOtherApps: true)
         windows.first { $0.frame.contains(NSEvent.mouseLocation) }?.makeKey()
+        if mode == .allInOne, let preselect { placePreselected(preselect) }
         updateHover(at: NSEvent.mouseLocation)
         if mode != .window {
             snapshotTask = Task { await takeSnapshots() }
         }
+    }
 
-        return await withCheckedContinuation { continuation = $0 }
+    // MARK: All-in-One
+
+    private func configureAllInOne(_ view: SelectionView) {
+        view.isAspectLocked = settings.allInOneAspectLock
+        // Task 3 (Self-Timer) sets `settings.selfTimerSeconds` here; nil leaves the Timer button out.
+        view.timerSeconds = nil
+        view.onAdjustRectSet = { [weak self, weak view] fromWindow in
+            guard let self, let view else { return }
+            allInOneRectSet(on: view, fromWindow: fromWindow)
+        }
+        view.onEmptyClick = { [weak self] in Task { self?.allInOneEmptyClick() } }
+        view.onAllInOneAction = { [weak self] action, appKitRect in
+            Task { self?.finishAllInOne(action, appKitRect: appKitRect) }
+        }
+        view.onAspectLockChanged = { [weak self] locked in self?.settings.allInOneAspectLock = locked }
+    }
+
+    /// The preselected rect on the screen holding its centre, as that view's adjustable rect.
+    /// Nothing when it is on no screen: the overlay opens with no rect.
+    private func placePreselected(_ cgRect: CGRect) {
+        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
+        let appKitRect = Geometry.appKitRect(fromCG: cgRect, primaryHeight: primaryHeight)
+        guard let rect = SelectionAdjust.restored(appKitRect, displayFrames: windows.map(\.frame)),
+              let index = windows.firstIndex(where: { $0.frame.contains(CGPoint(x: rect.midX, y: rect.midY)) })
+        else { return }
+        let frame = windows[index].frame
+        views[index].beginAdjusting(rect.offsetBy(dx: -frame.minX, dy: -frame.minY), fromWindow: false)
+        windows[index].makeKey()
+    }
+
+    /// A new rect on `view`: the other displays drop theirs, the window it came from is
+    /// remembered (or forgotten), and its window becomes key so Return and the arrows reach it.
+    private func allInOneRectSet(on view: SelectionView, fromWindow: Bool) {
+        pickedWindow = fromWindow ? hoveredWindow : nil
+        for other in views where other !== view {
+            other.clearAdjustRect()
+        }
+        if let index = views.firstIndex(where: { $0 === view }) {
+            windows[index].makeKey()
+        }
+    }
+
+    /// A click that selected nothing: cancels while no display holds a rect, otherwise gives the
+    /// key back to the display that does.
+    private func allInOneEmptyClick() {
+        if let index = views.firstIndex(where: { $0.adjustRect != nil }) {
+            windows[index].makeKey()
+        } else {
+            cancel()
+        }
+    }
+
+    /// A toolbar button, Return or a double-click. The rect is clipped to the display under its
+    /// centre, as an area selection is.
+    private func finishAllInOne(_ action: AllInOneAction, appKitRect: CGRect) {
+        if action == .window {
+            if let pickedWindow { resumeAllInOne(.window(pickedWindow)) }
+            return
+        }
+        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
+        guard case let (rect, display)? = clippedToDisplay(Geometry.cgRect(fromAppKit: appKitRect, primaryHeight: primaryHeight)) else {
+            resumeAllInOne(nil)
+            return
+        }
+        switch action {
+        case .capture: resumeAllInOne(.area(rect: rect, display: display))
+        case .fullscreen: resumeAllInOne(.fullscreen(display))
+        case .scrolling: resumeAllInOne(.scrolling(rect: rect, display: display))
+        case .timer: resumeAllInOne(.timer(rect: rect, display: display))
+        case .window, .cancel: resumeAllInOne(nil)
+        }
+    }
+
+    /// Resumes All-in-One's caller. Cancel dismisses the overlay at once; a choice leaves it up.
+    private func resumeAllInOne(_ choice: AllInOneChoice?) {
+        guard let allInOneContinuation else { return }
+        snapshotTask?.cancel()
+        snapshotTask = nil
+        self.allInOneContinuation = nil
+        if choice == nil {
+            dismiss()
+        }
+        allInOneContinuation.resume(returning: choice)
+    }
+
+    /// Escape, Cancel, or an empty click: whichever caller waits gets nil.
+    private func cancel() {
+        if allInOneContinuation != nil {
+            resumeAllInOne(nil)
+        } else {
+            finish(nil)
+        }
+    }
+
+    /// `cgRect` clipped to the display under its centre, or the first display; nil when nothing
+    /// of it is on that display.
+    private func clippedToDisplay(_ cgRect: CGRect) -> (CGRect, SCDisplay)? {
+        let centre = CGPoint(x: cgRect.midX, y: cgRect.midY)
+        guard let display = displays.first(where: { $0.frame.contains(centre) }) ?? displays.first else { return nil }
+        let clipped = cgRect.intersection(display.frame)
+        return clipped.isEmpty ? nil : (clipped, display)
     }
 
     /// One `engine.capture(.display(_:))` per display with whatever `overlayWindows()` excludes:
@@ -150,6 +280,7 @@ final class SelectionController {
         displays = []
         picker = nil
         hoveredWindow = nil
+        pickedWindow = nil
     }
 
     /// `globalPoint` is in AppKit global coordinates. No-op in area mode.
@@ -192,17 +323,11 @@ final class SelectionController {
     /// `cgRect` (CoreGraphics global points) clipped to the display under its centre, or the
     /// first display. Cancels when nothing of it is on that display.
     private func finishArea(cgRect: CGRect) {
-        let centre = CGPoint(x: cgRect.midX, y: cgRect.midY)
-        guard let display = displays.first(where: { $0.frame.contains(centre) }) ?? displays.first else {
+        guard case let (rect, display)? = clippedToDisplay(cgRect) else {
             finish(nil)
             return
         }
-        let clipped = cgRect.intersection(display.frame)
-        guard !clipped.isEmpty else {
-            finish(nil)
-            return
-        }
-        finish(.area(rect: clipped, display: display))
+        finish(.area(rect: rect, display: display))
     }
 
     /// Resumes the waiting caller. Cancel dismisses the overlay at once; success leaves it up.

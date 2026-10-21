@@ -191,4 +191,14 @@ struct AppSettingsTests {
         #expect(defaults.object(forKey: "overlayCloseAfterDrag") as? Bool == false)
         #expect(!AppSettings(defaults: defaults).overlayCloseAfterDrag)
     }
+
+    /// All-in-One's aspect lock is off by default and persists (spec 2.9).
+    @Test func allInOneAspectLockDefaultsOffAndPersists() {
+        let defaults = freshDefaults()
+        let first = AppSettings(defaults: defaults)
+        #expect(!first.allInOneAspectLock)
+        first.allInOneAspectLock = true
+        #expect(defaults.object(forKey: "allInOneAspectLock") as? Bool == true)
+        #expect(AppSettings(defaults: defaults).allInOneAspectLock)
+    }
 }

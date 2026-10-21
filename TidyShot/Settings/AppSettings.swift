@@ -54,6 +54,7 @@ final class AppSettings {
         static let lastAreaRect = "lastAreaRect"
         static let windowShadow = "windowShadow"
         static let freezeScreen = "freezeScreen"
+        static let allInOneAspectLock = "allInOneAspectLock"
     }
 
     @ObservationIgnored private let defaults: UserDefaults
@@ -96,6 +97,8 @@ final class AppSettings {
     var windowShadow: Bool { didSet { defaults.set(windowShadow, forKey: Keys.windowShadow) } }
     /// The Capture tab's Freeze screen while selecting (spec 2.9). Area selections then show a still image.
     var freezeScreen: Bool { didSet { defaults.set(freezeScreen, forKey: Keys.freezeScreen) } }
+    /// All-in-One's aspect-ratio lock, as the toolbar last left it (spec 2.9).
+    var allInOneAspectLock: Bool { didSet { defaults.set(allInOneAspectLock, forKey: Keys.allInOneAspectLock) } }
 
     /// The five editor values as one value. Setting it writes all five keys.
     var editorDefaults: EditorDefaults {
@@ -137,6 +140,7 @@ final class AppSettings {
             Keys.scrollingAutoScroll: true,
             Keys.windowShadow: false,
             Keys.freezeScreen: false,
+            Keys.allInOneAspectLock: false,
         ])
         showsCursor = defaults.bool(forKey: Keys.showsCursor)
         copyImageToClipboard = defaults.bool(forKey: Keys.copyImageToClipboard)
@@ -168,6 +172,7 @@ final class AppSettings {
         lastAreaRect = defaults.data(forKey: Keys.lastAreaRect).flatMap { try? JSONDecoder().decode(StoredRect.self, from: $0) }
         windowShadow = defaults.bool(forKey: Keys.windowShadow)
         freezeScreen = defaults.bool(forKey: Keys.freezeScreen)
+        allInOneAspectLock = defaults.bool(forKey: Keys.allInOneAspectLock)
 
         // Property observers do not run during init, so templates rewritten by
         // `TemplateMigration` are stored here, once.

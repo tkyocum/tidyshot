@@ -29,7 +29,7 @@ final class AppCoordinator {
     private let notifier = Notifier()
     private let permissionWindow = PermissionWindowController()
     private let overlay = QuickAccessController(settings: AppSettings.shared)
-    @ObservationIgnored private lazy var selector = SelectionController(engine: engine, cardWindowNumbers: { [weak self] in self?.overlay.windowNumbers ?? [] })
+    @ObservationIgnored private lazy var selector = SelectionController(engine: engine, settings: settings, cardWindowNumbers: { [weak self] in self?.overlay.windowNumbers ?? [] })
     @ObservationIgnored private lazy var scrollCapture = ScrollCaptureController(engine: engine, settings: settings)
     /// Thumbnails and previews for Recent Captures.
     @ObservationIgnored private(set) lazy var thumbnailProvider = ThumbnailProvider(
@@ -119,6 +119,9 @@ final class AppCoordinator {
     }
 
     private func registerShortcuts() {
+        KeyboardShortcuts.onKeyUp(for: .allInOne) { [weak self] in
+            Task { await self?.captureAllInOne() }
+        }
         KeyboardShortcuts.onKeyUp(for: .captureFullscreen) { [weak self] in
             Task { await self?.captureFullscreen() }
         }
@@ -162,6 +165,50 @@ final class AppCoordinator {
         await runSelection(mode: .window)
     }
 
+    /// All-in-One (spec 2.9): one adjustable selection whose toolbar picks the capture. Opens on
+    /// `preselect` (CoreGraphics global points; a URL command's rect, Task 5) or else the last
+    /// area, when it is on a connected display. Capture and Window are taken while the overlay is
+    /// up, with the overlay and the cards excluded, so the pointer is never in them; Fullscreen
+    /// dismisses the overlay first and follows Show cursor, as Capture Fullscreen does. Each ends
+    /// in `save(_:)`.
+    func captureAllInOne(preselect: CGRect? = nil) async {
+        await withCaptureLock {
+            guard let content = await loadContent() else { return }
+            // Freeze applies to Capture; the snapshots follow the cursor setting, as in area mode.
+            let freeze = settings.freezeScreen ? CaptureOptions(settings: settings, duringSelection: false) : nil
+            guard let choice = await selector.selectAllInOne(content: content, freeze: freeze,
+                                                             preselect: preselect ?? settings.lastAreaRect?.cgRect)
+            else { return }
+
+            let result: CaptureResult?
+            switch choice {
+            case .area(let rect, let display):
+                result = await areaResult(rect: rect, display: display)
+            case .window(let window):
+                result = await capture(.window(window), duringSelection: true)
+            case .fullscreen(let display):
+                // As Capture Fullscreen: the overlay goes first and the pointer follows Show cursor.
+                // Its windows stay excluded in case the window server has not dropped them yet; the
+                // arrow replaces the crosshair the overlay set, which is not the user's pointer.
+                let overlays = await selector.overlayWindows()
+                selector.dismiss()
+                NSCursor.arrow.set()
+                result = await capture(.display(display), excludingWindows: overlays)
+            case .scrolling(let rect, let display):
+                await runScrolling(rect: rect, display: display)
+                return
+            case .timer:
+                // Task 3 (Self-Timer) runs the countdown here; until then the Timer button is not shown.
+                selector.dismiss()
+                return
+            }
+            selector.dismiss()
+            if let result {
+                await save(result)
+            }
+        }
+    }
+
     /// Capture Scrolling: select an area or a window's frame, run the scrolling session, and save
     /// the stitched image like any capture. During a session the shortcut is Start, then Done.
     func captureScrolling() async {
@@ -177,21 +224,28 @@ final class AppCoordinator {
                 selector.dismiss()
                 return
             }
-            guard rect.height >= CGFloat(ScrollCaptureLimits.minimumAreaHeightPoints) else {
-                selector.dismiss()
-                notifier.notifyError("Select an area at least 100 points tall.", title: "Scrolling capture")
-                return
-            }
-            settings.lastAreaRect = StoredRect(rect)
+            await runScrolling(rect: rect, display: display)
+        }
+    }
+
+    /// A scrolling capture of an area chosen in the overlay, which is still up: refuses one under
+    /// 100 pt with the Phase 5 message, stores the previous area, dismisses the overlay, runs the
+    /// session and saves the stitched image like any capture.
+    private func runScrolling(rect: CGRect, display: SCDisplay) async {
+        guard rect.height >= CGFloat(ScrollCaptureLimits.minimumAreaHeightPoints) else {
             selector.dismiss()
-            let outcome = await scrollCapture.run(rect: rect, display: display)
-            if let notice = outcome.failureNotice {
-                notifier.notifyError(notice.body, title: notice.title)
-            }
-            if let image = outcome.imageToSave {
-                await save(CaptureResult(image: image.image, scale: image.scale,
-                                         target: .area(rect: rect, display: display)))
-            }
+            notifier.notifyError("Select an area at least 100 points tall.", title: "Scrolling capture")
+            return
+        }
+        settings.lastAreaRect = StoredRect(rect)
+        selector.dismiss()
+        let outcome = await scrollCapture.run(rect: rect, display: display)
+        if let notice = outcome.failureNotice {
+            notifier.notifyError(notice.body, title: notice.title)
+        }
+        if let image = outcome.imageToSave {
+            await save(CaptureResult(image: image.image, scale: image.scale,
+                                     target: .area(rect: rect, display: display)))
         }
     }
 
@@ -230,13 +284,7 @@ final class AppCoordinator {
             let result: CaptureResult?
             switch selection {
             case .area(let rect, let display):
-                settings.lastAreaRect = StoredRect(rect)
-                if let frozen = frozenResult(for: rect, display: display) {
-                    result = frozen
-                } else {
-                    let overlays = await selector.overlayWindows()
-                    result = await capture(.area(rect: rect, display: display), excludingWindows: overlays, duringSelection: true)
-                }
+                result = await areaResult(rect: rect, display: display)
             case .window(let window):
                 result = await capture(.window(window), duringSelection: true)
             }
@@ -246,6 +294,17 @@ final class AppCoordinator {
                 await save(result)
             }
         }
+    }
+
+    /// An area chosen in the overlay, which is still up: stores it as the previous area, then cuts
+    /// it from the frozen snapshot or captures it live with the overlay and the cards excluded.
+    private func areaResult(rect: CGRect, display: SCDisplay) async -> CaptureResult? {
+        settings.lastAreaRect = StoredRect(rect)
+        if let frozen = frozenResult(for: rect, display: display) {
+            return frozen
+        }
+        let overlays = await selector.overlayWindows()
+        return await capture(.area(rect: rect, display: display), excludingWindows: overlays, duringSelection: true)
     }
 
     /// The selection cut from the display's frozen snapshot, or nil when there is none (freeze off,
