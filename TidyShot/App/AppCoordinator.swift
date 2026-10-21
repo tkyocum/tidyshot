@@ -28,6 +28,7 @@ final class AppCoordinator {
     private let permissionWindow = PermissionWindowController()
     private let overlay = QuickAccessController()
     @ObservationIgnored private lazy var selector = SelectionController(engine: engine)
+    @ObservationIgnored private lazy var scrollCapture = ScrollCaptureController(engine: engine)
     /// Thumbnails and previews for Recent Captures.
     @ObservationIgnored private(set) lazy var thumbnailProvider = ThumbnailProvider(
         store: thumbnails, history: history, saveFolder: { [unowned self] in self.saveLocation.currentURL },
@@ -111,6 +112,10 @@ final class AppCoordinator {
         }
         // Escape must never be swallowed outside a scrolling capture; the session enables it.
         KeyboardShortcuts.disable(.cancelScrollingCapture)
+        // Live only while a scrolling session runs: the controller enables and disables it.
+        KeyboardShortcuts.onKeyUp(for: .cancelScrollingCapture) { [weak self] in
+            self?.scrollCapture.cancel()
+        }
     }
 
     func captureFullscreen() async {
@@ -130,9 +135,14 @@ final class AppCoordinator {
         await runSelection(mode: .window)
     }
 
-    /// Capture Scrolling: select an area or a window's frame, then (Task 5) run the scrolling
-    /// session. Until then one frame of the area is captured and saved like an area capture.
+    /// Capture Scrolling: select an area or a window's frame, run the scrolling session, and save
+    /// the stitched image like any capture. During a session the shortcut is Start, then Done.
     func captureScrolling() async {
+        // During a session the shortcut is Start, then Done (the lock is held meanwhile).
+        if scrollCapture.isRunning {
+            scrollCapture.advance()
+            return
+        }
         await withCaptureLock {
             guard let content = await loadContent() else { return }
             guard let selection = await selector.select(mode: .scrolling, content: content) else { return }
@@ -145,11 +155,14 @@ final class AppCoordinator {
                 notifier.notifyError("Select an area at least 100 points tall.", title: "Scrolling capture")
                 return
             }
-            let overlays = await selector.overlayWindows()
-            let result = await capture(.area(rect: rect, display: display), excludingWindows: overlays)
             selector.dismiss()
-            if let result {
-                await save(result)
+            let outcome = await scrollCapture.run(rect: rect, display: display)
+            if let notice = outcome.failureNotice {
+                notifier.notifyError(notice.body, title: notice.title)
+            }
+            if let image = outcome.imageToSave {
+                await save(CaptureResult(image: image.image, scale: image.scale,
+                                         target: .area(rect: rect, display: display)))
             }
         }
     }
