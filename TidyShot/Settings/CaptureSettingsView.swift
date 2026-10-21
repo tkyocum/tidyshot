@@ -5,6 +5,10 @@ struct CaptureSettingsView: View {
 
     var body: some View {
         Form {
+            Toggle("Freeze screen while selecting", isOn: $settings.freezeScreen)
+            Text("Area selections show a still image of the screen and the capture is cut from it, so menus, tooltips and video stay as they were when you pressed the shortcut.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
             Toggle("Show cursor in screenshots", isOn: $settings.showsCursor)
             Text("Fullscreen, previous-area, self-timer and URL captures show the pointer where it is. Area captures show it only with Freeze screen on. TidyShot never captures its own crosshair.")
                 .font(.caption)

@@ -14,22 +14,37 @@ final class SelectionController {
     private var hoveredWindow: SCWindow?
     private var snapshotTask: Task<Void, Never>?
     private var cachedOverlayWindows: [SCWindow]?
+    /// Freeze screen: one snapshot per display, taken before any overlay window existed. Cleared by `dismiss()`.
+    private var frozenSnapshots: [CGDirectDisplayID: FrozenSnapshot] = [:]
 
     init(engine: CaptureEngine) {
         self.engine = engine
     }
 
-    func select(mode: SelectionMode, content: SCShareableContent) async -> Selection? {
+    func select(mode: SelectionMode, content: SCShareableContent, freeze: CaptureOptions? = nil) async -> Selection? {
         guard continuation == nil, !NSScreen.screens.isEmpty else { return nil }
         displays = content.displays
         self.mode = mode
         // Window picking is offered in window and scrolling mode; area mode shows just the crosshair.
         picker = mode == .area ? nil : WindowPicker(content: content)
 
+        // Freeze (area mode only): every display is captured before any overlay window appears,
+        // so the snapshot holds neither the dimming nor the crosshair. Window and scrolling mode
+        // ignore it (spec 2.9). A display that fails is simply absent and stays live.
+        frozenSnapshots = [:]
+        if mode == .area, let freeze {
+            frozenSnapshots = await captureFrozenSnapshots(options: freeze)
+        }
+
         for screen in NSScreen.screens {
             let window = SelectionWindow(screen: screen)
             let view = SelectionView(frame: CGRect(origin: .zero, size: screen.frame.size))
             view.mode = mode
+            if let frozen = frozenSnapshots[window.displayID] {
+                view.snapshotScale = frozen.scale
+                view.snapshot = frozen.image
+                view.isFrozen = true
+            }
             // Callbacks hop to the next run-loop turn so the view is never torn down inside its own event handler.
             view.onComplete = { [weak self] appKitRect in Task { self?.finishArea(appKitRect) } }
             view.onCancel = { [weak self] in Task { self?.finish(nil) } }
@@ -59,6 +74,28 @@ final class SelectionController {
         return await withCheckedContinuation { continuation = $0 }
     }
 
+    /// One `engine.capture(.display(_:))` per display with whatever `overlayWindows()` excludes
+    /// (nothing yet; Task 3 adds the Quick Access cards). Failures are dropped. Sequential: a
+    /// task group of main-actor children is rejected by the Swift 6 compiler here, because
+    /// `SCDisplay` and `SCWindow` are not Sendable.
+    private func captureFrozenSnapshots(options: CaptureOptions) async -> [CGDirectDisplayID: FrozenSnapshot] {
+        let excluded = await overlayWindows()
+        var found: [CGDirectDisplayID: FrozenSnapshot] = [:]
+        for display in displays {
+            guard let result = try? await engine.capture(.display(display), options: options,
+                                                         excludingWindows: excluded) else { continue }
+            found[display.displayID] = FrozenSnapshot(displayID: display.displayID, image: result.image,
+                                                      scale: result.scale)
+        }
+        return found
+    }
+
+    /// The snapshot taken for `displayID` before the overlay appeared, valid until `dismiss()`.
+    /// Nil when freeze was off, the mode does not freeze, or that display's snapshot failed.
+    func frozenCapture(for displayID: CGDirectDisplayID) -> FrozenSnapshot? {
+        frozenSnapshots[displayID]
+    }
+
     /// Our overlay windows as ScreenCaptureKit sees them, for `excludingWindows`, through
     /// `OverlayWindowLookup` (by window number, so other TidyShot windows are unaffected, with a
     /// short retry). A complete result is cached until `dismiss()`, so the capture after selection
@@ -66,6 +103,7 @@ final class SelectionController {
     func overlayWindows() async -> [SCWindow] {
         let wanted = Set(windows.compactMap { $0.windowNumber > 0 ? CGWindowID($0.windowNumber) : nil })
         if let cachedOverlayWindows, cachedOverlayWindows.count >= wanted.count { return cachedOverlayWindows }
+        guard !wanted.isEmpty else { return [] }
         let found = await OverlayWindowLookup.windows(numbers: wanted, engine: engine)
         if !wanted.isEmpty, found.count >= wanted.count { cachedOverlayWindows = found }
         return found
@@ -73,10 +111,12 @@ final class SelectionController {
 
     /// One screenshot per display with our overlay excluded, delivered to the view on that display.
     private func takeSnapshots() async {
+        let pending = displays.filter { frozenSnapshots[$0.displayID] == nil }
+        guard !pending.isEmpty else { return }
         let overlays = await overlayWindows()
         // A snapshot taken without every overlay excluded would show the dimming in the loupe; skip instead.
         guard overlays.count >= windows.count else { return }
-        for display in displays {
+        for display in pending {
             guard !Task.isCancelled else { return }
             guard let index = windows.firstIndex(where: { $0.displayID == display.displayID }) else { continue }
             guard let result = try? await engine.capture(.display(display),
@@ -93,6 +133,7 @@ final class SelectionController {
         snapshotTask?.cancel()
         snapshotTask = nil
         cachedOverlayWindows = nil
+        frozenSnapshots = [:]
         for window in windows {
             window.orderOut(nil)
             window.contentView = nil

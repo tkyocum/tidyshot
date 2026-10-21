@@ -120,4 +120,14 @@ struct AppSettingsTests {
         #expect(defaults.object(forKey: "windowShadow") as? Bool == true)
         #expect(AppSettings(defaults: defaults).windowShadow)
     }
+
+    /// Freeze screen while selecting is off by default and persists (spec 2.9).
+    @Test func freezeScreenDefaultsOffAndPersists() {
+        let defaults = freshDefaults()
+        let first = AppSettings(defaults: defaults)
+        #expect(!first.freezeScreen)
+        first.freezeScreen = true
+        #expect(defaults.object(forKey: "freezeScreen") as? Bool == true)
+        #expect(AppSettings(defaults: defaults).freezeScreen)
+    }
 }

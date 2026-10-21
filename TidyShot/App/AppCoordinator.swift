@@ -167,17 +167,25 @@ final class AppCoordinator {
         }
     }
 
-    /// Show the overlay, capture with the overlay excluded, dismiss, then save.
+    /// Show the overlay, capture with the overlay excluded (or cut the frozen snapshot), dismiss, then save.
     private func runSelection(mode: SelectionMode) async {
         await withCaptureLock {
             guard let content = await loadContent() else { return }
-            guard let selection = await selector.select(mode: mode, content: content) else { return }
+            // Freeze applies to area mode only. The snapshots follow the cursor setting: they are
+            // taken before the overlay, so the pointer in them is the real one.
+            let freeze = mode == .area && settings.freezeScreen
+                ? CaptureOptions(settings: settings, duringSelection: false) : nil
+            guard let selection = await selector.select(mode: mode, content: content, freeze: freeze) else { return }
 
             let result: CaptureResult?
             switch selection {
             case .area(let rect, let display):
-                let overlays = await selector.overlayWindows()
-                result = await capture(.area(rect: rect, display: display), excludingWindows: overlays, duringSelection: true)
+                if let frozen = frozenResult(for: rect, display: display) {
+                    result = frozen
+                } else {
+                    let overlays = await selector.overlayWindows()
+                    result = await capture(.area(rect: rect, display: display), excludingWindows: overlays, duringSelection: true)
+                }
             case .window(let window):
                 result = await capture(.window(window), duringSelection: true)
             }
@@ -187,6 +195,18 @@ final class AppCoordinator {
                 await save(result)
             }
         }
+    }
+
+    /// The selection cut from the display's frozen snapshot, or nil when there is none (freeze off,
+    /// or that display's snapshot failed) or the crop failed; the caller then captures live.
+    private func frozenResult(for rect: CGRect, display: SCDisplay) -> CaptureResult? {
+        guard let frozen = selector.frozenCapture(for: display.displayID) else { return nil }
+        guard let image = FreezeCrop.cropped(frozen.image, selection: rect, displayFrame: display.frame,
+                                             scale: frozen.scale) else {
+            NSLog("Freeze crop failed for \(rect) on display \(display.displayID); capturing live")
+            return nil
+        }
+        return CaptureResult(image: image, scale: frozen.scale, target: .area(rect: rect, display: display))
     }
 
     func revealLastCapture() {

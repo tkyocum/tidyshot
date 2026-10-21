@@ -23,6 +23,14 @@ final class SelectionView: NSView {
         }
     }
     var snapshotScale: CGFloat = 2
+    /// Freeze screen: draw `snapshot` opaque under the dimming, so the screen looks stopped. Set
+    /// with `snapshot`, only on a view whose display has a frozen snapshot.
+    var isFrozen = false {
+        didSet { if isFrozen != oldValue { needsDisplay = true } }
+    }
+    private var showsFrozenBackdrop: Bool { isFrozen && snapshot != nil }
+    /// Frozen, the view paints every pixel, which lets AppKit skip compositing it over the window.
+    override var isOpaque: Bool { showsFrozenBackdrop }
     /// Recomputed when the cursor moves or the snapshot arrives, never while drawing.
     private var crosshairStyle: CrosshairStyle = .outlined
 
@@ -127,6 +135,7 @@ final class SelectionView: NSView {
     // MARK: Drawing
 
     override func draw(_ dirtyRect: NSRect) {
+        drawFrozenBackdrop(in: dirtyRect)
         dimColor.setFill()
         bounds.fill()
 
@@ -161,8 +170,27 @@ final class SelectionView: NSView {
     }
 
     private func punchHole(_ rect: CGRect) {
-        NSColor.clear.setFill()
-        rect.fill(using: .copy)
+        guard showsFrozenBackdrop, let snapshot, let context = NSGraphicsContext.current?.cgContext else {
+            NSColor.clear.setFill()
+            rect.fill(using: .copy)
+            return
+        }
+        context.saveGState()
+        context.clip(to: rect)
+        context.interpolationQuality = .none
+        context.draw(snapshot, in: bounds)
+        context.restoreGState()
+    }
+
+    /// The snapshot at one pixel per pixel, clipped to what needs drawing. Row 0 of a `CGImage`
+    /// is the top, which is the top of this non-flipped view when the image fills `bounds`.
+    private func drawFrozenBackdrop(in dirtyRect: NSRect) {
+        guard showsFrozenBackdrop, let snapshot, let context = NSGraphicsContext.current?.cgContext else { return }
+        context.saveGState()
+        context.clip(to: dirtyRect)
+        context.interpolationQuality = .none
+        context.draw(snapshot, in: bounds)
+        context.restoreGState()
     }
 
     private func drawCrosshair(at point: CGPoint) {
