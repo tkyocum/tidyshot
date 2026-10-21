@@ -66,6 +66,8 @@ These points go beyond 2.9's text, settle what it left open or correct it, and T
 | Task 5 | 55 | 5 | 802 tests in 95 suites |
 | Task 6 | 0 | 0 | 802 tests in 95 suites |
 
+Task 6 correction: review fixes added 8 tests and no suite after the rows above were written, so every row from Task 1 on is short by the fixes landed up to it: 0b2e1cd +4 after Task 1 (opposite edges stay on half-point drags, and three more edge cases, all in `SelectionAdjustTests`; `AllInOneToolbarPlacementTests` gains an assertion in an existing test), 400d912 +1 after Task 3 (the self-timer badge's level, `SelfTimerTests`), 6c4758b +2 after Task 4 (zoom and actual size in whole points and capped to the screen, `PinGeometryTests`) and 9136820 +1 after Task 5 (a queued capture command after the first is dropped, `URLCommandHandlerTests`). The rows stay as written; with the fixes, Tasks 1 to 5 end at 718, 721, 735, 754 and 810 tests (the suite counts are unchanged), and the real run after Task 6 reads `Test run with 810 tests in 95 suites passed`.
+
 The totals come from each task's declared tests. Task 6 checks them against a real run and adds a note for any difference.
 
 ---

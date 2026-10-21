@@ -19,7 +19,9 @@ open .build-rel/Build/Products/Release/TidyShot.app
 Run the Release build: scrolling capture compares frames as they arrive, and an unoptimised Debug
 build is about 40 times slower and cannot keep up. The tests use the Debug configuration. Scrolling
 capture diagnostics (`ScrollDiag`, written to `scrolldiag.log` in the app container's temporary
-folder) exist only in Debug builds.
+folder) exist only in Debug builds. Release builds are signed without the `get-task-allow`
+entitlement that ad-hoc signing would add, so no other process of your account can attach to
+TidyShot and borrow its Screen Recording permission; Debug keeps it for the tests and the debugger.
 
 Or open `TidyShot.xcodeproj` in Xcode after `xcodegen generate`.
 
@@ -51,11 +53,13 @@ rebuilds lose this grant like they lose Screen Recording.
 
 | Action | Shortcut |
 |---|---|
+| All-in-One | ⌃⇧1 |
 | Capture area | ⌃⇧4 |
 | Capture window | ⌃⇧2 |
 | Capture fullscreen | ⌃⇧3 |
 | Capture scrolling | ⌃⇧5 |
 | Capture previous area | ⌃⇧6 |
+| Self-timer | none; set one in Settings > Shortcuts |
 | Restore closed overlay | none; set one in Settings > Shortcuts |
 
 Change them in Settings > Shortcuts.
@@ -103,12 +107,13 @@ Horizontal scrolling is not supported.
 
 ## Capture options
 
-Settings > Capture has three options. *Freeze screen while selecting* shows a still picture of the
+Settings > Capture has four options. *Freeze screen while selecting* shows a still picture of the
 screen while you drag an area and cuts the capture from it, so menus, tooltips and video stay as
 they were when you pressed the shortcut; window mode and scrolling capture are live. *Show cursor in
-screenshots* puts the pointer into fullscreen and previous-area captures, and into area captures
-only with freeze on; TidyShot never captures its own crosshair. *Include window shadow* keeps the
-system shadow around a window capture; the corners are transparent either way.
+screenshots* puts the pointer into fullscreen, previous-area, self-timer and URL captures, and into
+area captures only with freeze on; TidyShot never captures its own crosshair. *Include window
+shadow* keeps the system shadow around a window capture; the corners are transparent either way.
+*Self-timer* sets the countdown to 3, 5 or 10 seconds.
 
 Capture Previous Area (⌃⇧6) captures the rectangle of your last area capture (or scrolling capture)
 again, with no selection. It says so when there is no previous area or its display is gone.
@@ -120,7 +125,7 @@ to the number set in Settings > Overlay. Settings > Overlay also chooses the dis
 on: the capture's display (default), the pointer's, or the main display. The cards are not in any
 capture.
 
-A card shows the upload status and has Annotate and Delete buttons, `Save As…` and `Copy URL` or
+A card shows the upload status and has Annotate, Pin and Delete buttons, `Save As…` and `Copy URL` or
 `Retry`, and a close badge when you point at it; a right-click or Control-click opens a menu with
 every action, including Copy Image. Closing a card does not delete the capture: Restore Closed
 Overlay in the menu (or its shortcut) brings back the ten most recently closed cards, newest first.
@@ -132,6 +137,85 @@ named like the link when the capture was uploaded; the original stays where it w
 mode the file is kept for as long as the card shows, so you can drag it after the link is on the
 clipboard. A card for an older upload-only capture downloads its file when it is restored, and can
 be dragged once that has finished. Settings > Overlay has *Close after dragging out*.
+
+## All-in-One
+
+All-in-One (⌃⇧1) opens a selection that stays adjustable. Drag a rectangle, or click a window to
+take its frame; then drag the handles to resize it, drag inside to move it, or nudge it with the
+arrow keys (Shift for 10 points). The toolbar under the selection has width and height fields, an
+aspect-ratio lock, and Capture, Window, Fullscreen, Scrolling, Timer and Cancel. Return or a
+double-click inside captures the area; Escape cancels. It opens with your last area already
+selected, when that is on a connected display.
+
+## Self-timer
+
+Self-Timer (in the menu; no default shortcut) lets you select an area or click a window, then counts
+down 3, 5 or 10 seconds (Settings > Capture) before it captures, so you can open a menu or show a
+tooltip first. Escape cancels from any app.
+
+## Pin to screen
+
+Pin a capture from its card (the pin button or the right-click menu) to keep a floating copy above
+other windows, on every Space. Drag it to move it, drag an edge to resize it, and with the pin
+clicked (one click gives it the keyboard): arrow keys move it (Shift for 10 points), ⌘+ and ⌘- zoom
+(never past the screen), ⌘0 is actual size (fitted to the screen when the capture is larger), ⌘C
+copies, Escape or ⌘W closes, and Option-scroll changes the opacity. Its right-click menu has Copy
+Image, Save As…, Annotate, Opacity, Actual Size, Lock and Close. A locked pin lets clicks through to
+the window beneath; *Unlock Pinned Screenshots* in the menu bar menu makes pins clickable again. Pins
+close when you quit, and deleting a capture closes its pins.
+
+## URL scheme
+
+Raycast, Keyboard Maestro, Shortcuts and scripts can drive TidyShot with `tidyshot://` URLs:
+
+```bash
+open 'tidyshot://capture-area?action=upload'
+```
+
+The names follow CleanShot X's, so a CleanShot macro works after changing `cleanshot://` to
+`tidyshot://`.
+
+| Command | What it does | Parameters |
+|---|---|---|
+| `capture-area` | Select an area; with a rectangle, capture it at once | `action`, `x`, `y`, `width`, `height`, `display` |
+| `capture-window` | Click a window | `action` |
+| `capture-fullscreen` | Capture the display under the pointer | `action` |
+| `capture-previous-area` | Capture your last area again | `action` |
+| `all-in-one` | All-in-One; a rectangle is preselected | `action`, `x`, `y`, `width`, `height`, `display` |
+| `self-timer` | Select, then count down | `action` |
+| `capture-scrolling` (or `scrolling-capture`) | Scrolling capture; a rectangle skips the selection, and the capture waits until you click Start (Return in the frontmost app does not start it) | `action`, `x`, `y`, `width`, `height`, `display` |
+| `restore-recently-closed` | Restore Closed Overlay | none |
+
+`action` is `upload` (upload only when that is your after-capture setting, otherwise save, upload
+and copy the URL), `save` (save and copy the image), `copy` (the image on the clipboard and nothing
+else: no file, no history, no card, no upload), `annotate` (then open the editor) or `pin` (then pin
+it). Without `action` the after-capture setting in Settings > General applies.
+
+`x`, `y`, `width` and `height` are points from the bottom-left corner of the display, as in
+CleanShot: all four or none, plain numbers such as `120` or `40.5`, width and height above 0. A
+rectangle that runs off the display is clipped to it. `display` is 1 for the main display and 2, 3
+and so on for the others in the order macOS lists them; without it, the display under the pointer.
+Command and parameter names, and actions, may be in any case. Other parameters are ignored, and a
+parameter given twice is an error.
+
+**Security.** Any app on this Mac can open a `tidyshot://` URL, and a web page can once you let
+your browser open TidyShot. Settings > General > URL commands has two switches. *Allow URL commands
+(tidyshot://)* is on by default; off, every command is refused. *Allow URL commands that capture
+without a selection* is off by default: it covers the three commands that capture without your drag
+or click (`capture-fullscreen`, `capture-previous-area`, and `capture-area` with a rectangle), which
+are otherwise refused with a notification naming the app that sent them. Turn it on only for macros
+that need it (a Keyboard Maestro macro for a fullscreen shot, say): any app on the Mac can then take
+a screenshot through TidyShot and read it from the clipboard. The name shown is what the sending app
+calls itself. Every other command waits for your drag, click or Start, and commands never take a
+file path.
+
+Errors (an unknown command or action, a bad rectangle, a missing display, a parameter given twice)
+appear as notifications titled *TidyShot URL command*. A command that arrives while a capture runs
+is ignored, and of several URLs that wait for TidyShot to launch only the first capture command
+runs. If `open tidyshot://…` starts an old build, more than one TidyShot.app is registered: list
+them with
+`/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -dump | grep -i tidyshot`
+and remove the stale ones with `lsregister -u <path>`.
 
 ## Upload
 
@@ -285,3 +369,4 @@ Cancelling the save panel keeps the editor open.
 - Phase 4b manual test checklist: `docs/testing/phase-4b-manual-checklist.md`
 - Phase 5 manual test checklist: `docs/testing/phase-5-manual-checklist.md`
 - Phase 6a manual test checklist: `docs/testing/phase-6a-manual-checklist.md`
+- Phase 6b manual test checklist: `docs/testing/phase-6b-manual-checklist.md`
