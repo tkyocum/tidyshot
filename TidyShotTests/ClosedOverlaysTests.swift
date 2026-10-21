@@ -80,6 +80,46 @@ struct ClosedOverlaysTests {
         #expect(restored == [c, b, a])
     }
 
+    /// A card pushed out by a restore goes to the back, so the next restore reaches older cards
+    /// rather than cycling through those on screen.
+    @Test func didCloseBehindAppendsAtTheEnd() {
+        var closed = ClosedOverlays()
+        closed.didClose(a, reason: .user)
+        closed.didClose(b, reason: .user)
+        closed.didCloseBehind(c)
+        #expect(closed.ids == [b, a, c])
+        closed.didCloseBehind(b)
+        #expect(closed.ids == [a, c, b])
+    }
+
+    @Test func didCloseBehindKeepsTheTenNewestAndDropsFromTheEnd() {
+        var closed = ClosedOverlays()
+        let ids = (0..<ClosedOverlays.limit).map { _ in UUID() }
+        for id in ids.reversed() {
+            closed.didClose(id, reason: .autoClose)
+        }
+        let extra = UUID()
+        closed.didCloseBehind(extra)
+        #expect(closed.ids == ids)
+    }
+
+    /// With a stack of two and cards 1...4 closed, restoring walks back through all four: each
+    /// restore pushes the oldest on-screen card behind, instead of to the front.
+    @Test func walkingBackThroughMoreIdsThanTheStackHolds() {
+        let ids = (0..<4).map { _ in UUID() }
+        var closed = ClosedOverlays()
+        for id in ids { closed.didClose(id, reason: .autoClose) }   // newest first: 3, 2, 1, 0
+        var shown: [UUID] = []                                       // newest first, at most 2
+        var restored: [UUID] = []
+        for _ in 0..<ids.count {
+            guard let id = closed.popRestorable(exists: { _ in true }, shown: Set(shown)) else { break }
+            restored.append(id)
+            shown.insert(id, at: 0)
+            if shown.count > 2 { closed.didCloseBehind(shown.removeLast()) }
+        }
+        #expect(restored == ids.reversed())
+    }
+
     /// What the menu item's enabled state reads; it changes nothing.
     @Test func hasRestorableMatchesPop() {
         var closed = ClosedOverlays()

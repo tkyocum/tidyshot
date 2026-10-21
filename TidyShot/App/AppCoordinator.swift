@@ -57,6 +57,9 @@ final class AppCoordinator {
     @ObservationIgnored private var latestCapture: (id: UUID, image: ScaledImage)?
     /// Recently closed cards for Restore Closed Overlay. In memory only.
     @ObservationIgnored private var closedOverlays = ClosedOverlays()
+    /// True while `restoreClosedOverlay` shows its card, so the card that push-out closes goes to
+    /// the back of the restore list.
+    @ObservationIgnored private var isRestoring = false
     /// Records whose editor image is loading, so a second Annotate does not open a second editor.
     @ObservationIgnored private var openingEditorIDs: Set<UUID> = []
     /// Set when the first same-key replace of this launch posts `EditorUploadPlan.cacheNote`.
@@ -461,12 +464,16 @@ final class AppCoordinator {
     /// remembered.
     private func overlayDidClose(_ id: UUID, reason: QuickAccessCloseReason) {
         forgetLatestCapture(id)
-        closedOverlays.didClose(id, reason: reason)
+        if isRestoring, reason == .pushedOut {
+            closedOverlays.didCloseBehind(id)
+        } else {
+            closedOverlays.didClose(id, reason: reason)
+        }
     }
 
     /// Whether Restore Closed Overlay has a card to bring back (the menu item's state).
     var canRestoreClosedOverlay: Bool {
-        closedOverlays.hasRestorable(exists: { history.record(id: $0) != nil }, shown: Set(overlay.shownIDs))
+        closedOverlays.hasRestorable(exists: { history.record(id: $0) != nil }, shown: Set(overlay.shownIDs).union(deletingIDs))
     }
 
     /// Restore Closed Overlay: the newest closed card whose capture still exists and is not
@@ -475,12 +482,14 @@ final class AppCoordinator {
     /// `settings.showOverlay`: it is an explicit request.
     func restoreClosedOverlay() async {
         guard let id = closedOverlays.popRestorable(exists: { history.record(id: $0) != nil },
-                                                    shown: Set(overlay.shownIDs)),
+                                                    shown: Set(overlay.shownIDs).union(deletingIDs)),
               let record = history.record(id: id) else { return }
         let thumbnail = await thumbnailProvider.thumbnail(for: record)
-        // Deleted during the read, or shown by a second restore meanwhile.
-        guard let current = history.record(id: id), !overlay.isShowing(recordID: id),
+        // Deleted (or being deleted) during the read, or shown by a second restore meanwhile.
+        guard let current = history.record(id: id), !deletingIDs.contains(id), !overlay.isShowing(recordID: id),
               let screen = overlay.screen ?? overlayScreen(captureDisplayID: nil) else { return }
+        isRestoring = true
+        defer { isRestoring = false }
         overlay.show(record: current, thumbnail: thumbnail, screen: screen,
                      autoCloseSeconds: settings.overlayAutoCloseSeconds, actions: overlayActions())
     }
@@ -1200,6 +1209,8 @@ final class AppCoordinator {
         controller.present()
         // The editor is now the capture's surface; the record stays in Recent Captures.
         overlay.close(recordID: record.id, reason: .editorOpened)
+        // The card may already be closed (editor opened from Recent Captures): not restorable.
+        closedOverlays.didClose(record.id, reason: .editorOpened)
     }
 
     /// The editor's actions for `recordID`. Save, Save As…, Copy, Upload and Upload as New all go

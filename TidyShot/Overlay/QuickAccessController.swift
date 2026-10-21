@@ -230,6 +230,7 @@ final class QuickAccessController {
             watchPointer()
         } else {
             cancelPendingRelayout()
+            trim(to: screen)
             layout(on: screen, animated: true)
         }
     }
@@ -291,7 +292,9 @@ final class QuickAccessController {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(seconds))
                 guard !Task.isCancelled else { return }
-                if card?.model.isHovered == true { continue }
+                // The pointer's place now, not the last hover event: a card that slid away or
+                // under a still pointer is judged where it is.
+                if let panel = card?.panel, panel.frame.contains(NSEvent.mouseLocation) { continue }
                 break
             }
             guard !Task.isCancelled, let self, let card else { return }

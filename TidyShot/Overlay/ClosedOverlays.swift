@@ -17,6 +17,16 @@ nonisolated struct ClosedOverlays: Equatable, Sendable {
         }
     }
 
+    /// A card pushed out by a restore goes to the back of the list, as the oldest, so the next
+    /// restore does not cycle through the cards on screen.
+    mutating func didCloseBehind(_ id: UUID) {
+        ids.removeAll { $0 == id }
+        ids.append(id)
+        if ids.count > Self.limit {
+            ids.removeLast(ids.count - Self.limit)
+        }
+    }
+
     /// Removes and returns the newest id that `exists` (still has a history record) and is not
     /// `shown`. Ids without a record are dropped on the way; shown ones stay.
     mutating func popRestorable(exists: (UUID) -> Bool, shown: Set<UUID>) -> UUID? {

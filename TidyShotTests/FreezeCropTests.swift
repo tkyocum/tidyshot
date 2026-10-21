@@ -43,6 +43,25 @@ struct FreezeCropTests {
         #expect(rect == CGRect(x: 0, y: 0, width: 2880, height: 1800))
     }
 
+    /// The same on the vertical axis.
+    @Test func roundingPastTheBottomEdgeMovesTheOriginBack() {
+        let rect = FreezeCrop.pixelRect(selection: CGRect(x: 0, y: 0.25, width: 1440, height: 899.75),
+                                        displayFrame: primary, scale: 2, imageSize: retinaImage)
+        #expect(rect == CGRect(x: 0, y: 0, width: 2880, height: 1800))
+    }
+
+    /// At 1x a point is a pixel: the origin and size round to whole pixels, and the far edge is
+    /// still held to the image.
+    @Test func aNonRetinaSelectionRoundsToWholePixels() {
+        let image = CGSize(width: 1440, height: 900)
+        #expect(FreezeCrop.pixelRect(selection: CGRect(x: 10.3, y: 20.2, width: 100.3, height: 50.4),
+                                     displayFrame: primary, scale: 1, imageSize: image)
+                == CGRect(x: 10, y: 20, width: 100, height: 50))
+        #expect(FreezeCrop.pixelRect(selection: CGRect(x: 0.5, y: 0, width: 1439.5, height: 900),
+                                     displayFrame: primary, scale: 1, imageSize: image)
+                == CGRect(x: 0, y: 0, width: 1440, height: 900))
+    }
+
     @Test func roundingPastTheNearEdgeClampsToZero() {
         let rect = FreezeCrop.pixelRect(selection: CGRect(x: -0.3, y: 0, width: 100, height: 100),
                                         displayFrame: primary, scale: 2, imageSize: retinaImage)

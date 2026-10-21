@@ -43,6 +43,7 @@ struct QuickAccessView: View {
         .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .contextMenu { menuItems }
         .onHover { model.isHovered = $0 }
+        .accessibilityElement(children: .contain)
         .accessibilityAction(named: "Close") { model.onClose() }
     }
 
