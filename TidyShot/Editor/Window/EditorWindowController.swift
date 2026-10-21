@@ -244,6 +244,10 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
         }
         if outcome.closesWindow(documentUnchanged: unchanged) {
             window?.close()
+        } else if outcome.enqueued {
+            // Edited while the upload started: the window stays open on purpose, with the newer
+            // edit unsaved.
+            NSSound.beep()
         }
         return outcome.enqueued
     }

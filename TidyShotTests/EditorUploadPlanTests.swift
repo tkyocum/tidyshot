@@ -312,8 +312,8 @@ struct EditorUploadPlanTests {
         #expect(savedOnly.marksSaved)
         #expect(!savedOnly.closesWindow(documentUnchanged: true))
 
-        // Enqueued with no local write (file outside the save folder): the edit is in the upload,
-        // so the window still closes; it is not marked saved, and a newer edit keeps it open.
+        // The pure rule closes on enqueue alone (the coordinator always writes locally first, to
+        // pending/<id>.png when there is nothing to write over); a newer edit keeps it open.
         let uploadOnly = EditorUploadOutcome(wroteLocally: false, enqueued: true)
         #expect(!uploadOnly.marksSaved)
         #expect(uploadOnly.closesWindow(documentUnchanged: true))

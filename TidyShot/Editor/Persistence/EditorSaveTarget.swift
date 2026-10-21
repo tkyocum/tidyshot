@@ -26,24 +26,33 @@ nonisolated enum EditorSaveTarget {
         return .saveFolderFile(fileURL, folder: saveFolder)
     }
 
-    /// The local write before an Upload (⌘U, ⌥⌘U).
+    /// The local write before an Upload (⌘U, ⌥⌘U). An Upload always leaves the edit in a local
+    /// file, so a failed upload keeps it and Retry never uploads an unedited original.
     enum UploadWrite: Equatable, Sendable {
         /// Save over the Save target first (`applyLocalEdit`), so the file equals the object.
         case saveTarget
-        /// An uploaded upload-only capture with no file: the edit gets `pending/<id>.png` first.
+        /// Nothing to write over (an uploaded upload-only capture with no file, a save-folder file
+        /// outside the current folder, or no folder): the edit gets `pending/<id>.png` and the
+        /// record switches to it, as an upload-only capture. A save-folder original stays where it is.
         case newPendingFile
-        /// A save-folder file outside the current folder, or no folder: nothing is written locally.
-        /// The edit then lives only in the upload, which can fail, so the editor is not marked
-        /// saved (it still closes once the upload is enqueued).
-        case noLocalWrite
     }
 
     static func uploadWrite(for record: CaptureRecord, saveFolder: URL?) -> UploadWrite {
         switch plan(for: record, saveFolder: saveFolder) {
         case .saveFolderFile, .pendingFile: .saveTarget
-        case .unavailable where record.fileURL == nil: .newPendingFile
-        case .unavailable: .noLocalWrite
+        case .unavailable: .newPendingFile
         }
+    }
+
+    /// True when a Save As… to `url` lands on the record's own file and ⌘S could write over that
+    /// file now; the coordinator then runs Save, so the record, its thumbnail and the stale flag
+    /// follow. Paths are compared standardized.
+    static func saveAsWritesOverOwnFile(_ url: URL, record: CaptureRecord?, saveFolder: URL?, isDeleting: Bool) -> Bool {
+        guard let record, let fileURL = record.fileURL,
+              url.standardizedFileURL == fileURL.standardizedFileURL,
+              EditorAvailability.refusal(for: .save, record: record, saveFolder: saveFolder, isDeleting: isDeleting) == nil
+        else { return false }
+        return EditorSaveCommand.forSave(record: record, saveFolder: saveFolder) == .writeOver
     }
 
     /// The subtitle note for an edit that was saved locally but that the link does not show yet.

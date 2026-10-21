@@ -77,6 +77,8 @@ Review follow-ups: `supersededCleanupNeverDeletesALink` in `EditorUploadPlanTest
 
 Feedback round 1 (2026-10-20, Save As…, plain toolbar buttons, Upload closes the editor): 8 new tests net (Save As suggestion, save command, close-sheet button, upload outcome, toolbar width) bring the real run to 413 tests in 52 suites.
 
+Feedback round 1 review fixes: `saveAsOntoTheOwnFileIsASave` in `EditorSaveTargetTests` brings the real run to 414 tests in 52 suites.
+
 ---
 
 ### Task 1: Two-tone crosshair and loupe cross

@@ -87,13 +87,35 @@ struct EditorSaveTargetTests {
         #expect(EditorSaveTarget.uploadWrite(for: uploadOnly, saveFolder: folder) == .newPendingFile)
     }
 
-    /// A file outside the current folder, or no folder: Upload writes nothing locally, so the
-    /// editor must stay unsaved.
-    @Test func uploadWritesNothingLocallyOutsideTheSaveFolder() {
+    /// A file outside the current folder, or no folder: the original is left where it is and the
+    /// edit gets `pending/<id>.png`, so a failed upload keeps it and Retry uploads the edited bytes,
+    /// never the unredacted original.
+    @Test func uploadOutsideTheSaveFolderGetsAPendingFile() {
         let outside = saved(in: URL(filePath: "/Users/tim/Desktop", directoryHint: .isDirectory))
-        #expect(EditorSaveTarget.uploadWrite(for: outside, saveFolder: folder) == .noLocalWrite)
-        #expect(EditorSaveTarget.uploadWrite(for: saved(), saveFolder: nil) == .noLocalWrite)
+        #expect(EditorSaveTarget.uploadWrite(for: outside, saveFolder: folder) == .newPendingFile)
+        #expect(EditorSaveTarget.uploadWrite(for: saved(), saveFolder: nil) == .newPendingFile)
         #expect(actions(outside).contains(.upload))
+    }
+
+    /// Save As… onto the record's own file, when ⌘S could write over it, goes through Save, so
+    /// the record, thumbnail and stale flag follow. Any other URL, or a file Save cannot write
+    /// over now, is a plain Save As….
+    @Test func saveAsOntoTheOwnFileIsASave() throws {
+        let record = saved(state: .uploaded(url: link, key: "a.png"))
+        let fileURL = try #require(record.fileURL)
+        let sameFileSpelledDifferently = folder.appending(path: "sub/../Screenshot 2026-10-20 at 10.00.00.png")
+        #expect(EditorSaveTarget.saveAsWritesOverOwnFile(fileURL, record: record, saveFolder: folder, isDeleting: false))
+        #expect(EditorSaveTarget.saveAsWritesOverOwnFile(sameFileSpelledDifferently, record: record,
+                                                         saveFolder: folder, isDeleting: false))
+        let elsewhere = URL(filePath: "/Users/tim/Desktop/Screenshot 2026-10-20 at 10.00.00.png")
+        #expect(!EditorSaveTarget.saveAsWritesOverOwnFile(elsewhere, record: record, saveFolder: folder, isDeleting: false))
+        // Save cannot write over it now: outside the current folder, deleting, uploading, deleted.
+        let otherFolder = URL(filePath: "/Users/tim/Pictures/Other", directoryHint: .isDirectory)
+        #expect(!EditorSaveTarget.saveAsWritesOverOwnFile(fileURL, record: record, saveFolder: otherFolder, isDeleting: false))
+        #expect(!EditorSaveTarget.saveAsWritesOverOwnFile(fileURL, record: record, saveFolder: folder, isDeleting: true))
+        #expect(!EditorSaveTarget.saveAsWritesOverOwnFile(fileURL, record: saved(state: .uploading(fraction: 0.1)),
+                                                          saveFolder: folder, isDeleting: false))
+        #expect(!EditorSaveTarget.saveAsWritesOverOwnFile(fileURL, record: nil, saveFolder: folder, isDeleting: false))
     }
 
     @Test func noticeOnlyWhenUploadIsStale() {

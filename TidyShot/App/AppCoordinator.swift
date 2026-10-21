@@ -1201,6 +1201,13 @@ final class AppCoordinator {
     /// still holds what TidyShot put there for `recordID` gets the edited image. Never refused,
     /// like Copy.
     private func editorSaveAs(recordID: UUID, image: ScaledImage, to url: URL) async -> Bool {
+        // The panel picked the record's own file, which Save can write over: run Save, so the
+        // record, its thumbnail and the stale flag follow.
+        if EditorSaveTarget.saveAsWritesOverOwnFile(url, record: history.record(id: recordID),
+                                                    saveFolder: saveLocation.currentURL,
+                                                    isDeleting: deletingIDs.contains(recordID)) {
+            return await editorSave(recordID: recordID, image: image)
+        }
         let png: Data
         do {
             png = try await Task.detached(priority: .userInitiated) {
@@ -1232,8 +1239,8 @@ final class AppCoordinator {
     /// the object; then it goes through the live lane like any upload, over the link's own key for
     /// a replace or under a new template key. The outcome says whether the edit was written
     /// locally (the editor marks itself saved) and whether the job was enqueued (the editor then
-    /// closes, with or without a local write; the link reaches the clipboard through `.uploaded`).
-    /// A refused upload leaves the window open.
+    /// closes; the link reaches the clipboard through `.uploaded`). Every enqueued upload has
+    /// written the edit locally first. A refused upload leaves the window open.
     private func editorUpload(recordID: UUID, image: ScaledImage, asNew: Bool) async -> EditorUploadOutcome {
         let action: EditorAction = asNew ? .uploadAsNew : .upload
         // 1. The editor's available set can lag behind the record.
@@ -1255,14 +1262,15 @@ final class AppCoordinator {
         // 3. The local write, on the record as it is after the encode.
         if refuseUpload(action, recordID: recordID) { return .refused }
         guard let record = history.record(id: recordID) else { return .refused }
-        var wroteLocally = false
         switch EditorSaveTarget.uploadWrite(for: record, saveFolder: saveLocation.currentURL) {
         case .saveTarget:
             guard await applyLocalEdit(recordID: recordID, png: png, image: image) else { return .refused }
-            wroteLocally = true
         case .newPendingFile:
-            // An uploaded upload-only capture: its pending file went after its upload. The edit gets
-            // pending/<id>.png, so Retry and Delete see a file and handle(.uploaded) removes it.
+            // Nothing to write over: an uploaded upload-only capture (its pending file went after
+            // its upload), or a save-folder file outside the current folder (or no folder). The edit
+            // gets pending/<id>.png and the record switches to it, so Retry and a replace retry read
+            // the edited bytes, a failed upload keeps them (keepsUnuploadedEdit), and
+            // handle(.uploaded) removes the file. A save-folder original is left where it is.
             do {
                 let url = try pendingFiles.write(png, id: recordID, ext: "png")
                 history.update(id: recordID) { record in
@@ -1278,16 +1286,9 @@ final class AppCoordinator {
             // Now a pending-file target: applyLocalEdit rewrites the same bytes and does the
             // bookkeeping (pixel size, editedAt, uploadIsStale, thumbnail, clipboard, editor state).
             guard await applyLocalEdit(recordID: recordID, png: png, image: image) else { return .refused }
-            wroteLocally = true
-        case .noLocalWrite:
-            // A save-folder file outside the current folder, or no folder: the file is not
-            // rewritten and the subtitle says so. The clipboard still must not keep the original.
-            // The document is not marked saved; the editor still closes once the job is enqueued
-            // (feedback round 1), so a failed upload of this edit leaves no local copy of it.
-            await replaceClipboardIfStillOriginal(recordID: recordID, png: png, image: image)
         }
         // 4. Plan on the live record, against where the lane writes (as in startUpload).
-        let notEnqueued = EditorUploadOutcome(wroteLocally: wroteLocally, enqueued: false)
+        let notEnqueued = EditorUploadOutcome(wroteLocally: true, enqueued: false)
         if refuseUpload(action, recordID: recordID) { return notEnqueued }
         guard let current = history.record(id: recordID) else { return notEnqueued }
         let location = queue?.location ?? ObjectLocation(config: destination.config)
@@ -1313,7 +1314,7 @@ final class AppCoordinator {
         } else {
             startUpload(recordID: recordID, data: png, destination: destination)
         }
-        return EditorUploadOutcome(wroteLocally: wroteLocally, enqueued: true)
+        return EditorUploadOutcome(wroteLocally: true, enqueued: true)
     }
 
     /// Posts the live refusal for `action` as "Not uploaded". True when the upload must stop.
@@ -1365,12 +1366,12 @@ final class AppCoordinator {
     }
 
     /// The clipboard rule (spec 2.6), after a local edit (Save, or the write before Upload) or a
-    /// Save As…. Puts the
-    /// edited PNG and TIFF on the clipboard only while it still holds exactly what TidyShot put
-    /// there for `recordID`, and leaves anything copied since alone. The TIFF is made in a detached
-    /// task. Ownership is checked again after that await, right before the write, so a URL that a
-    /// finished upload copied in the meantime is never overwritten. TidyShot then owns the
-    /// clipboard for this record at the new count, so a later edit replaces this one too.
+    /// Save As…. Puts the edited PNG and TIFF on the clipboard only while it still holds exactly
+    /// what TidyShot put there for `recordID`, and leaves anything copied since alone. The TIFF is
+    /// made in a detached task. Ownership is checked again after that await, right before the
+    /// write, so a URL that a finished upload copied in the meantime is never overwritten.
+    /// TidyShot then owns the clipboard for this record at the new count, so a later edit replaces
+    /// this one too.
     private func replaceClipboardIfStillOriginal(recordID: UUID, png: Data, image: ScaledImage) async {
         guard EditorClipboard.shouldReplace(owner: clipboardOwner, recordID: recordID,
                                             currentChangeCount: NSPasteboard.general.changeCount) else { return }

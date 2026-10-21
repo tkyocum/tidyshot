@@ -135,11 +135,12 @@ Upload sends the edit at once and closes the editor; the link is on the clipboar
 upload finishes. If the upload cannot start (no destination set up, or the capture is busy), the
 editor stays open and a notification says why. If it fails later, the capture keeps the edited
 file, and Annotate on its Recent Captures row opens it again. A capture whose file is outside the
-current save folder uploads and closes too, but its file is not rewritten, so if that upload fails
-the edit is gone; use Save As… first to keep a copy.
+current save folder keeps its edit in TidyShot's own pending folder, as an upload-only capture
+does, and the original file stays where it is.
 
 Upload also saves the edit over the local file first, as Save would, so the file and the uploaded
-object match; a file outside the current save folder is left as it was. On a capture that is
+object match; a file outside the current save folder is left as it was, and the edit is kept in
+TidyShot's pending folder instead. On a capture that is
 already uploaded it replaces the object under the same key: the link you shared
 keeps working and shows the edit. It makes a new link instead when Settings > Upload now points at
 another endpoint, region or bucket, or when another capture shares the link; a capture uploaded
