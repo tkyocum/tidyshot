@@ -94,6 +94,14 @@ struct EditorFlattenerTests {
         .arrow(Segment(id: UUID(), from: from, to: to, color: blue, lineWidth: lineWidth))
     }
 
+    func ellipse(_ rect: CGRect, lineWidth: CGFloat = 4) -> Annotation {
+        .ellipse(ShapeBox(id: UUID(), rect: rect, color: red, lineWidth: lineWidth))
+    }
+
+    func line(from: CGPoint, to: CGPoint, lineWidth: CGFloat = 4) -> Annotation {
+        .line(Segment(id: UUID(), from: from, to: to, color: blue, lineWidth: lineWidth))
+    }
+
     /// A tile whose rows tell top from bottom: magenta on top, a clear bottom row, green between.
     func markedTile(for effect: Annotation, width: Int, height: Int) -> EffectTile {
         EffectTile(effect: effect, image: makeImage(width: width, height: height) { _, y in
@@ -189,6 +197,43 @@ struct EditorFlattenerTests {
         #expect(output[12, row] == original[12, row])
         #expect(output[30, 11] == Self.bluePixel)
         #expect(output[61, 12] == original[61, 12])
+    }
+
+    /// A 4 px stroke on the ellipse in (10, 8, 40, 24) sits inside the rect: the centre line is the
+    /// ellipse in (12, 10, 36, 20), centre (30, 20) with radii 18 and 10, so the band runs from radii
+    /// (16, 8) to (20, 12). The bounding box's corners and the hollow are untouched, which tells an
+    /// ellipse from a rectangle, and the off-centre rows tell a flip.
+    @Test func ellipseStrokePixels() throws {
+        let base = makeImage()
+        let original = try Bitmap(base)
+        let output = try Bitmap(flatten(base, [ellipse(CGRect(x: 10, y: 8, width: 40, height: 24))]))
+        let stroked = [(11, 19), (11, 20), (47, 19), (47, 20), (30, 9), (29, 9), (30, 30), (29, 30), (42, 26)]
+        for (x, y) in stroked {
+            #expect(output[x, y] == Self.redPixel, "stroke at \(x), \(y)")
+        }
+        let untouched = [(30, 20), (20, 20), (10, 8), (49, 8), (10, 31), (49, 31), (8, 20), (30, 6)]
+        for (x, y) in untouched {
+            #expect(output[x, y] == original[x, y], "untouched at \(x), \(y)")
+        }
+    }
+
+    /// A level line along row 12 (rows 10 to 13 at 4 px) with round caps: the pixels just beyond
+    /// each end, which a butt cap would leave alone, are painted. A diagonal from (10, 30) to
+    /// (40, 40) crosses (25, 35). Neither line is near the middle row, so a flip would move them.
+    @Test func lineStrokePixels() throws {
+        let base = makeImage()
+        let original = try Bitmap(base)
+        let level = line(from: CGPoint(x: 8, y: 12), to: CGPoint(x: 56, y: 12))
+        let slanted = line(from: CGPoint(x: 10, y: 30), to: CGPoint(x: 40, y: 40))
+        let output = try Bitmap(flatten(base, [level, slanted]))
+        let stroked = [(30, 10), (30, 13), (8, 11), (7, 11), (7, 12), (56, 11), (56, 12), (25, 35)]
+        for (x, y) in stroked {
+            #expect(output[x, y] == Self.bluePixel, "stroke at \(x), \(y)")
+        }
+        let untouched = [(30, 8), (30, 15), (4, 12), (60, 12), (25, 40), (25, 30)]
+        for (x, y) in untouched {
+            #expect(output[x, y] == original[x, y], "untouched at \(x), \(y)")
+        }
     }
 
     /// The rectangle was created before the redaction, yet its stroke covers the tile: effects

@@ -1,13 +1,12 @@
 import Foundation
 
 /// The tool object behind each `EditorTool`. The switch is exhaustive with no default, so a new
-/// case does not compile until it is wired here. 4b adds `RectDragTool(tool: .ellipse)` and
-/// `TwoPointTool(tool: .line)`.
+/// case does not compile until it is wired here.
 func makeTool(for tool: EditorTool) -> any CanvasTool {
     switch tool {
     case .select: return SelectTool()
-    case .redact, .pixelate, .blur, .rectangle: return RectDragTool(tool: tool)
-    case .arrow: return TwoPointTool(tool: tool)
+    case .redact, .pixelate, .blur, .rectangle, .ellipse: return RectDragTool(tool: tool)
+    case .arrow, .line: return TwoPointTool(tool: tool)
     }
 }
 

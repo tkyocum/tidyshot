@@ -12,13 +12,18 @@ nonisolated enum AnnotationDrawing {
     static let outlineDash: [CGFloat] = [4, 4]
 
     /// Draws a drawing in image pixels. Effects draw nothing here, because they are tiles on the
-    /// base layer. `scale` is the capture scale, which sizes the arrow head.
+    /// base layer. `scale` is the capture scale, which sizes the arrow head only; the other
+    /// drawings are sized by their stored line widths.
     static func draw(_ annotation: Annotation, in context: CGContext, scale: CGFloat) {
         switch annotation {
         case .rectangle(let box):
             drawRectangle(box, in: context)
         case .arrow(let segment):
             drawArrow(segment, in: context, scale: scale)
+        case .ellipse(let box):
+            strokeEllipse(box, in: context)
+        case .line(let segment):
+            strokeLine(segment, in: context)
         case .redact, .blur, .pixelate:
             break
         }
@@ -115,5 +120,36 @@ nonisolated enum AnnotationDrawing {
         context.addLine(to: head.right)
         context.closePath()
         context.fillPath()
+    }
+
+    /// Stroked inset by half the line width, so the stroke sits inside the rect, as the rectangle's
+    /// does. An ellipse no wider or taller than the line is filled instead, because the inset
+    /// ellipse would be empty.
+    private static func strokeEllipse(_ box: ShapeBox, in context: CGContext) {
+        let rect = box.rect.standardized
+        guard rect.width > 0, rect.height > 0, box.lineWidth > 0 else { return }
+        context.saveGState()
+        defer { context.restoreGState() }
+        if rect.width <= box.lineWidth || rect.height <= box.lineWidth {
+            context.setFillColor(box.color.cgColor)
+            context.fillEllipse(in: rect)
+            return
+        }
+        context.setStrokeColor(box.color.cgColor)
+        context.setLineWidth(box.lineWidth)
+        context.strokeEllipse(in: rect.insetBy(dx: box.lineWidth / 2, dy: box.lineWidth / 2))
+    }
+
+    /// A straight stroke from `from` to `to` with round caps and no head.
+    private static func strokeLine(_ segment: Segment, in context: CGContext) {
+        guard segment.from != segment.to, segment.lineWidth > 0 else { return }
+        context.saveGState()
+        defer { context.restoreGState() }
+        context.setStrokeColor(segment.color.cgColor)
+        context.setLineWidth(segment.lineWidth)
+        context.setLineCap(.round)
+        context.move(to: segment.from)
+        context.addLine(to: segment.to)
+        context.strokePath()
     }
 }

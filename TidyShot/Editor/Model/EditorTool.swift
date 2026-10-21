@@ -1,7 +1,7 @@
 /// The editor's tools. `toolbarOrder` is the only source for the toolbar's tools group, and
 /// `makeTool(for:)` switches over every case with no default, so a new case is wired in both.
 nonisolated enum EditorTool: String, CaseIterable, Sendable {
-    case select, redact, pixelate, blur, rectangle, arrow
+    case select, redact, pixelate, blur, rectangle, arrow, ellipse, line
 
     /// The unmodified key that picks the tool, in upper case.
     var letter: Character {
@@ -12,6 +12,8 @@ nonisolated enum EditorTool: String, CaseIterable, Sendable {
         case .blur: "B"
         case .rectangle: "R"
         case .arrow: "A"
+        case .ellipse: "E"
+        case .line: "L"
         }
     }
 
@@ -23,6 +25,8 @@ nonisolated enum EditorTool: String, CaseIterable, Sendable {
         case .blur: "Blur"
         case .rectangle: "Rectangle"
         case .arrow: "Arrow"
+        case .ellipse: "Ellipse"
+        case .line: "Line"
         }
     }
 
@@ -35,6 +39,8 @@ nonisolated enum EditorTool: String, CaseIterable, Sendable {
         case .blur: "drop.halffull"
         case .rectangle: "rectangle"
         case .arrow: "arrow.up.right"
+        case .ellipse: "circle"
+        case .line: "line.diagonal"
         }
     }
 
@@ -45,14 +51,14 @@ nonisolated enum EditorTool: String, CaseIterable, Sendable {
     var isEffect: Bool {
         switch self {
         case .redact, .pixelate, .blur: true
-        case .select, .rectangle, .arrow: false
+        case .select, .rectangle, .arrow, .ellipse, .line: false
         }
     }
 
     /// Select, then Redact first among the drawing tools, because it is the only safe redaction.
-    /// 4b inserts its tools here.
+    /// 4b appends its tools here, in toolbar order.
     static var toolbarOrder: [EditorTool] {
-        [.select, .redact, .pixelate, .blur, .rectangle, .arrow]
+        [.select, .redact, .pixelate, .blur, .rectangle, .arrow, .ellipse, .line]
     }
 
     /// The tool whose letter is `key`, in either case; nil for any other key.

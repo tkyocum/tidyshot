@@ -53,9 +53,12 @@ nonisolated enum AnnotationGeometry {
     static func bounds(of annotation: Annotation, scale: CGFloat) -> CGRect {
         let painted: CGRect
         switch annotation {
-        case .rectangle(let shape):
+        case .rectangle(let shape), .ellipse(let shape):
             // The stroke sits inside the rect.
             painted = shape.rect.standardized
+        case .line(let segment):
+            let cap = segment.lineWidth / 2
+            painted = enclosing([segment.from, segment.to]).insetBy(dx: -cap, dy: -cap)
         case .arrow(let segment):
             let head = ArrowGeometry.head(from: segment.from, to: segment.to, lineWidth: segment.lineWidth, scale: scale)
             let end = ArrowGeometry.shaftEnd(from: segment.from, to: segment.to, lineWidth: segment.lineWidth, scale: scale)

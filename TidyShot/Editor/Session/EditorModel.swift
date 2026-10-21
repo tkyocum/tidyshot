@@ -154,6 +154,12 @@ final class EditorModel: CanvasEditing {
         case .arrow:
             guard start != end else { return nil }
             return .arrow(Segment(id: id, from: start, to: end, color: strokeColor, lineWidth: lineWidthPoints * scale))
+        case .ellipse:
+            guard !rect.isEmpty else { return nil }
+            return .ellipse(ShapeBox(id: id, rect: rect, color: strokeColor, lineWidth: lineWidthPoints * scale))
+        case .line:
+            guard start != end else { return nil }
+            return .line(Segment(id: id, from: start, to: end, color: strokeColor, lineWidth: lineWidthPoints * scale))
         }
     }
 
@@ -243,8 +249,8 @@ final class EditorModel: CanvasEditing {
 
     private static func color(of annotation: Annotation?) -> RGBA? {
         switch annotation {
-        case .rectangle(let box)?: return box.color
-        case .arrow(let segment)?: return segment.color
+        case .rectangle(let box)?, .ellipse(let box)?: return box.color
+        case .arrow(let segment)?, .line(let segment)?: return segment.color
         case .redact(_, let fill)?: return fill
         default: return nil
         }

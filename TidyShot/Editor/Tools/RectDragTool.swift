@@ -1,6 +1,6 @@
 import AppKit
 
-/// Drags out a rect for Redact, Pixelate, Blur and Rectangle (4b adds Ellipse). Shift squares the
+/// Drags out a rect for Redact, Pixelate, Blur, Rectangle and Ellipse. Shift squares the
 /// rect, and Option grows it from the press point as the centre. Both are read from every event,
 /// flagsChanged included. The shape lives in `canvas.transient` until mouseUp commits it once and
 /// selects it. A rect that fails `DragGeometry.isLargeEnough` at the current zoom leaves nothing.

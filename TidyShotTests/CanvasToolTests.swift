@@ -42,6 +42,10 @@ final class FakeCanvasEditing: CanvasEditing {
             return .rectangle(ShapeBox(id: UUID(), rect: rect, color: EditorPalette.defaultStroke, lineWidth: 8))
         case .arrow:
             return .arrow(Segment(id: UUID(), from: from, to: to, color: EditorPalette.defaultStroke, lineWidth: 8))
+        case .ellipse:
+            return .ellipse(ShapeBox(id: UUID(), rect: rect, color: EditorPalette.defaultStroke, lineWidth: 8))
+        case .line:
+            return .line(Segment(id: UUID(), from: from, to: to, color: EditorPalette.defaultStroke, lineWidth: 8))
         default: return nil
         }
     }
@@ -57,15 +61,17 @@ struct CanvasToolTests {
 
     func rect(of annotation: Annotation?) -> CGRect? {
         switch annotation {
-        case .rectangle(let box)?: box.rect
+        case .rectangle(let box)?, .ellipse(let box)?: box.rect
         case .redact(let region, _)?, .pixelate(let region, _)?, .blur(let region, _)?: region.rect
         default: nil
         }
     }
 
     func segment(of annotation: Annotation?) -> Segment? {
-        if case .arrow(let segment)? = annotation { return segment }
-        return nil
+        switch annotation {
+        case .arrow(let segment)?, .line(let segment)?: return segment
+        default: return nil
+        }
     }
 
     func arrow(_ from: CGPoint, _ to: CGPoint) -> Annotation {
@@ -189,6 +195,36 @@ struct CanvasToolTests {
         tool.mouseUp(at(50, 30, shift: true), on: canvas)
         #expect(canvas.commits.count == 1)
         #expect(rect(of: canvas.document.annotations.last) == square)
+    }
+
+    @Test func ellipseShiftMakesCircleAndLineSnapsTo45() throws {
+        let canvas = FakeCanvasEditing()
+        let ellipse = makeTool(for: .ellipse)
+        #expect(ellipse is RectDragTool)
+        ellipse.mouseDown(at(10, 10), on: canvas)
+        ellipse.mouseDragged(at(50, 30), on: canvas)
+        #expect(rect(of: canvas.transient) == CGRect(x: 10, y: 10, width: 40, height: 20))
+        // Shift goes down with the mouse still: the ellipse becomes a circle.
+        ellipse.flagsChanged(at(50, 30, shift: true), on: canvas)
+        #expect(rect(of: canvas.transient) == CGRect(x: 10, y: 10, width: 40, height: 40))
+        ellipse.mouseUp(at(50, 30, shift: true), on: canvas)
+        #expect(canvas.commits.count == 1)
+        #expect(canvas.commits.first?.actionName == "Add Ellipse")
+        #expect(rect(of: canvas.document.annotations.last) == CGRect(x: 10, y: 10, width: 40, height: 40))
+        #expect(canvas.selection == canvas.document.annotations.last?.id)
+
+        let line = makeTool(for: .line)
+        #expect(line is TwoPointTool)
+        line.mouseDown(at(10, 10), on: canvas)
+        line.mouseDragged(at(60, 18), on: canvas)
+        #expect(segment(of: canvas.transient)?.to == CGPoint(x: 60, y: 18))
+        line.flagsChanged(at(60, 18, shift: true), on: canvas)
+        #expect(segment(of: canvas.transient)?.from == CGPoint(x: 10, y: 10))
+        #expect(segment(of: canvas.transient)?.to == CGPoint(x: 60, y: 10))
+        line.mouseUp(at(60, 18, shift: true), on: canvas)
+        #expect(canvas.commits.count == 2)
+        #expect(canvas.commits.last?.actionName == "Add Line")
+        #expect(segment(of: canvas.document.annotations.last)?.to == CGPoint(x: 60, y: 10))
     }
 
     @Test func optionDrawsFromCentre() {

@@ -298,6 +298,21 @@ struct EditorModelTests {
         } else {
             Issue.record("no arrow")
         }
+        if case .ellipse(let shape)? = model.makeAnnotation(.ellipse, from: from, to: to) {
+            #expect(shape.rect == rect)
+            #expect(shape.color == model.strokeColor)
+            #expect(shape.lineWidth == model.lineWidthPoints * 2)
+        } else {
+            Issue.record("no ellipse")
+        }
+        if case .line(let segment)? = model.makeAnnotation(.line, from: from, to: to) {
+            #expect(segment.from == from)
+            #expect(segment.to == to)
+            #expect(segment.color == model.strokeColor)
+            #expect(segment.lineWidth == model.lineWidthPoints * 2)
+        } else {
+            Issue.record("no line")
+        }
         if case .redact(let region, let fill)? = model.makeAnnotation(.redact, from: from, to: to) {
             #expect(region.rect == rect)
             #expect(fill == model.redactColor)
@@ -317,6 +332,8 @@ struct EditorModelTests {
         #expect(model.makeAnnotation(.select, from: from, to: to) == nil)
         #expect(model.makeAnnotation(.redact, from: from, to: CGPoint(x: 12, y: 20)) == nil)
         #expect(model.makeAnnotation(.arrow, from: from, to: from) == nil)
+        #expect(model.makeAnnotation(.ellipse, from: from, to: CGPoint(x: 12, y: 20)) == nil)
+        #expect(model.makeAnnotation(.line, from: from, to: from) == nil)
 
         // One drag keeps one id, so the transient's tile carries over on commit.
         model.transient = model.makeAnnotation(.redact, from: from, to: to)

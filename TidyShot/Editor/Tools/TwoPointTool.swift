@@ -1,6 +1,6 @@
 import AppKit
 
-/// Arrow (4b adds Line): the tail at the press, the head at the pointer. Shift snaps the head to the
+/// Arrow and Line: the tail at the press, the head at the pointer. Shift snaps the head to the
 /// nearest 45 degrees, including through flagsChanged. Option has no effect in 4a. A segment
 /// shorter than the tiny-drag rule leaves nothing.
 final class TwoPointTool: CanvasTool {
