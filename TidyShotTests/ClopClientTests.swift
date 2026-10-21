@@ -39,7 +39,7 @@ struct ClopClientTests {
                                      "aggressiveOptimisation", "source"])
     }
 
-    // MARK: Response (recorded from Clop 3.4.3)
+    // MARK: Response (recorded from Clop 3.6.2)
 
     @Test func responseDecodesTheRecordedReply() throws {
         let responses = try JSONDecoder().decode([ClopResponse].self, from: Self.fixture("reply-optimised.json"))
@@ -48,10 +48,10 @@ struct ClopClientTests {
         #expect(responses.count == 1)
         #expect(response.path == response.forURL.path(percentEncoded: false))
         #expect(response.convertedFrom == nil)
-        #expect(response.oldBytes == 702_114)
-        #expect(response.newBytes == 246_880)
-        #expect(response.oldWidthHeight == CGSize(width: 3094, height: 2352))
-        #expect(response.newWidthHeight == CGSize(width: 3094, height: 2352))
+        #expect(response.oldBytes == 208_709)
+        #expect(response.newBytes == 15_664)
+        #expect(response.oldWidthHeight == CGSize(width: 256, height: 256))
+        #expect(response.newWidthHeight == CGSize(width: 256, height: 256))
     }
 
     @Test func responseDecodesTheAlreadyOptimisedReplyWithoutNewWidthHeight() throws {
@@ -59,8 +59,8 @@ struct ClopClientTests {
         let response = try #require(responses.first)
 
         #expect(response.oldBytes == response.newBytes)
-        #expect(response.oldBytes == 246_880)
-        #expect(response.oldWidthHeight == CGSize(width: 3094, height: 2352))
+        #expect(response.oldBytes == 15_664)
+        #expect(response.oldWidthHeight == nil)
         #expect(response.newWidthHeight == nil)
         #expect(response.convertedFrom == nil)
     }

@@ -73,7 +73,15 @@ nonisolated struct ClopOptimiser: Sendable {
             return .original(.failed(describe(error)))
         }
 
-        guard response.convertedFrom == nil, samePath(response.path, file) else { return .original(.converted) }
+        guard response.convertedFrom == nil, samePath(response.path, file) else {
+            // Clop wrote its converted output (for example <UUID>.jpg) next to the work file.
+            let output = URL(fileURLWithPath: response.path)
+            if output.deletingLastPathComponent().resolvingSymlinksInPath().path
+                == workDirectory.resolvingSymlinksInPath().path {
+                try? FileManager.default.removeItem(at: output)
+            }
+            return .original(.converted)
+        }
         guard response.newBytes < response.oldBytes else { return .original(.notSmaller) }
 
         guard let expected = pixelSize(of: data), let result = try? Data(contentsOf: file),

@@ -130,6 +130,21 @@ struct ClopOptimiserTests {
         #expect(leftovers(in: directory).isEmpty)
     }
 
+    @Test func aConvertedOutputBesideTheWorkFileIsRemoved() async throws {
+        let input = try Self.png(width: 16, height: 16, noisy: true)
+        let converted = Mutex<URL?>(nil)
+        let (outcome, directory) = await run(input) { url in
+            let jpg = url.deletingPathExtension().appendingPathExtension("jpg")
+            try Data([0xFF, 0xD8, 0xFF, 0xD9]).write(to: jpg)
+            converted.withLock { $0 = jpg }
+            return Self.response(for: url, old: 1000, new: 100, path: jpg.path(percentEncoded: false), convertedFrom: "image/png")
+        }
+        let jpg = try #require(converted.withLock { $0 })
+        #expect(outcome == .original(.converted))
+        #expect(!FileManager.default.fileExists(atPath: jpg.path(percentEncoded: false)))
+        #expect(leftovers(in: directory).isEmpty)
+    }
+
     @Test func convertedFromReturnsConverted() async throws {
         let input = try Self.png(width: 16, height: 16, noisy: true)
         let (outcome, directory) = await run(input) { url in

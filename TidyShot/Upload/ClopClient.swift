@@ -1,5 +1,6 @@
 // Adapted from ClopSDK (https://github.com/FuzzyIdeas/ClopSDK), MIT License, Copyright (c) 2023 The low-tech guys. See ThirdPartyNotices.md.
 import CoreFoundation
+import CoreGraphics
 import Foundation
 
 /// The request Clop's optimisation port decodes. Field names, order and types match ClopSDK's

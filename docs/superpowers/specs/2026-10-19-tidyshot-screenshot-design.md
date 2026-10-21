@@ -474,7 +474,7 @@ The Clop app itself is GPLv3. TidyShot only talks to it over the port and never 
    - **`output` parameter.** The SDK's `output` is an extensionless path template: Clop appends the extension, so `x.png` becomes `x.png.png`, and `%f` stands for the input's base name. TidyShot does not use it. It writes a throwaway copy and lets Clop rewrite it.
    - **Clop's cache.** Clop also keeps the original and the result in `~/Library/Caches/Clop/backups/` and `images/`, and TidyShot cannot remove them (see the caption).
 4. **DPI and format: 144 DPI survives; PNGs stay PNG.**
-   - **DPI.** Clop drops the `pHYs` and `sRGB` chunks but keeps `eXIf`, which carries XResolution 144. ImageIO, `NSImage` and `ImageEncoder.decode` still read 144 DPI and scale 2.
+   - **DPI.** Clop 3.4.3 dropped the `pHYs` and `sRGB` chunks but kept `eXIf`, which carries XResolution 144. Clop 3.6.2 (recorded 2026-10-21, the version the test fixtures come from) keeps `pHYs`. Either way ImageIO, `NSImage` and `ImageEncoder.decode` still read 144 DPI and scale 2.
    - **Format.** The result is a 256-colour indexed PNG, which is lossy.
    - **Conversion.** Under Tim's settings PNG is not converted to another format. If a user's Clop settings convert PNG (the response then has a different `path` and a `convertedFrom`), TidyShot uploads its original PNG.
 5. **Licensing: works with Pro; the SDK does not say.**
@@ -545,7 +545,7 @@ Update the Distribution row of section 4 to list it.
 **Tests** (Swift Testing, no live Clop):
 - **`ClopClientTests`:**
   - `ClopRequest` encodes the keys ClopSDK's `OptimisationRequest` uses: `urls` as `file://` strings, `originalUrls` as `[]`, `source == "sdk"`, `hideFloatingResult == true`, `copyToClipboard == false`, and nil optionals omitted.
-  - `ClopResponse` decodes the reply recorded from Clop 3.4.3, both with and without `newWidthHeight`; the second is the already-optimised case.
+  - `ClopResponse` decodes the reply recorded from Clop 3.6.2, both with and without `newWidthHeight`; the second is the already-optimised case.
   - `portName(bundleID:)` gives both port names.
 - **`ClopOptimiserTests`** (fake transport):
   - A smaller valid PNG at the same path returns `.optimised` with its bytes.
