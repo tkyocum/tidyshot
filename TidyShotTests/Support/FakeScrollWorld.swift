@@ -19,6 +19,9 @@ final class FakeScrollWorld: ScrollEventPoster {
     /// for `loadDelay`.
     var loadedLimit: Int?
     var loadDelay: Duration = .milliseconds(300)
+    /// When set, the frame a post shows reaches the session this long after the post, as from a
+    /// slow stream or a busy consumer; until then the session still has the frame from before.
+    var frameDelay: Duration?
     /// The pointer in CoreGraphics global points.
     var pointer: CGPoint
     var permitted = true
@@ -63,7 +66,15 @@ final class FakeScrollWorld: ScrollEventPoster {
         let rows = Int((points * scale * gain).rounded()) * (inverted ? -1 : 1)
         let limit = min(page.maxOffset, loadedLimit ?? page.maxOffset)
         offset = max(0, min(limit, offset + rows))
-        showFrame()
+        if let frameDelay {
+            let frame = page.frame(at: offset, animated: false)
+            Task { [source, clock] in
+                try? await clock.sleep(for: frameDelay)
+                source.send(.frame(frame))
+            }
+        } else {
+            showFrame()
+        }
         afterPost?(self)
     }
 

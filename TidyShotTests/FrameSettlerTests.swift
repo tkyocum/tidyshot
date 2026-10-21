@@ -50,6 +50,19 @@ struct FrameSettlerTests {
         #expect(answers.filter { $0 }.count == times.filter { $0 >= 1500 }.count)
     }
 
+    /// Until a frame from after the step arrives, the frame from before it is all there is, and
+    /// it is not the settled frame however long the wait: only a new frame (here at 400 ms, then
+    /// quiet for 150 ms) or the timeout settles.
+    @Test func thePreStepFrameIsNotTheSettledFrame() {
+        #expect(settled([.idle(at: at(150)), .idle(at: at(399)), frame(2, 400), .idle(at: at(549)), .idle(at: at(550))],
+                        baseline: 1) == [false, false, false, false, true])
+        // A new frame that still shows the baseline (nothing moved) settles once the quiet time
+        // since the step has passed.
+        #expect(settled([.idle(at: at(300)), frame(1, 400)], baseline: 1) == [false, true])
+        // No frame at all: still at the timeout.
+        #expect(settled([.idle(at: at(1499)), .idle(at: at(1500))], baseline: 1) == [false, true])
+    }
+
     @Test func aBaselineHashMeansTheFirstUnchangedFrameIsNotNews() {
         #expect(settled([frame(9, 150)], baseline: 9) == [true])
         #expect(settled([frame(9, 150)], baseline: 8) == [false])
@@ -57,14 +70,16 @@ struct FrameSettlerTests {
     }
 
     @Test func idleFramesCountAsUnchanged() {
-        #expect(settled([.idle(at: at(100)), .idle(at: at(150))], baseline: 1) == [false, true])
+        #expect(settled([frame(1, 20), .idle(at: at(100)), .idle(at: at(150))], baseline: 1) == [false, false, true])
     }
 
-    /// A timer can ask without a frame: the quiet time runs from the step when nothing arrived.
+    /// A timer can ask without a frame: with nothing from after the step, only the timeout
+    /// settles.
     @Test func settledCanBeAskedWithoutAnObservation() {
         let settler = FrameSettler(stepStart: t0)
-        #expect(!settler.isSettled(at: at(149)))
-        #expect(settler.isSettled(at: at(150)))
+        #expect(!settler.isSettled(at: at(150)))
+        #expect(!settler.isSettled(at: at(1499)))
+        #expect(settler.isSettled(at: at(1500)))
         var busy = FrameSettler(stepStart: t0)
         let answer = busy.observe(frame(1, 1000))
         #expect(!answer)

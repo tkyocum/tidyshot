@@ -68,6 +68,24 @@ struct AutoScrollDriverTests {
         #expect(comparison.mismatched == 0)
     }
 
+    /// Frames that reach the session 400 ms after each post, longer than the 150 ms quiet time:
+    /// the frame from before the step is never taken as the settled one, so no step reads as
+    /// still, the driver never reverses, and the image is the whole page.
+    @Test func settlesOnlyOnAFrameFromAfterTheStep() async throws {
+        let clock = FakeScrollClock()
+        let world = makeWorld(clock: clock)
+        world.frameDelay = .milliseconds(400)
+        let session = makeSession(world)
+        try await start(session, world)
+        try await clock.run(until: { session.status == .autoReachedEnd })
+        #expect(world.posted.allSatisfy { $0 > 0 })
+        #expect(world.offset == world.page.maxOffset)
+        try await clock.run(until: { session.phase == .ended })
+        let comparison = world.page.compare(try image(of: session), reached: world.page.maxOffset)
+        #expect(comparison.actualHeight == comparison.expectedHeight)
+        #expect(comparison.mismatched == 0)
+    }
+
     /// A page that loads more when the user reaches its bottom: the first still waits 700 ms and
     /// tries again, finds new content, and goes on to the real end.
     @Test func waitsForLazyLoadingBeforeEnding() async throws {

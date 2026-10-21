@@ -18,6 +18,9 @@ open .build/Build/Products/Debug/TidyShot.app
 
 Or open `TidyShot.xcodeproj` in Xcode after `xcodegen generate`.
 
+The Debug configuration builds the app with `-O` (testability kept on), because scrolling capture
+cannot keep up with the screen unoptimised.
+
 ## Test
 
 ```bash

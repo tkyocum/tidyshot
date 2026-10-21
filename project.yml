@@ -35,6 +35,15 @@ targets:
         CURRENT_PROJECT_VERSION: "1"
         COMBINE_HIDPI_IMAGES: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+      configs:
+        # Scrolling capture compares frames as they arrive; unoptimised it runs about 40x slower
+        # and cannot keep up. Testability stays on so the tests' @testable import works. With -O
+        # Xcode no longer builds the debug dylib, which is what let the hardened, ad-hoc signed
+        # app load the test bundle, so library validation is turned off for Debug explicitly.
+        Debug:
+          SWIFT_OPTIMIZATION_LEVEL: "-O"
+          ENABLE_TESTABILITY: YES
+          RUNTIME_EXCEPTION_DISABLE_LIBRARY_VALIDATION: YES
     info:
       path: TidyShot/Info.plist
       properties:

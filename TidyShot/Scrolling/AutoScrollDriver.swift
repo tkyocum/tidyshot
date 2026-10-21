@@ -120,7 +120,9 @@ final class AutoScrollDriver {
 
     /// Posts `points` (positive scrolls down) as events of at most 50 pt, 10 ms apart, then
     /// waits until the area settles and returns the newest frame with the points actually posted
-    /// (signed). The caller checked the pointer and the grant before the first event; the burst
+    /// (signed). Only frames read after the first event (the session's frame serial past its value
+    /// then) reach the settler, so the frame from before the step is returned only when none came
+    /// before the settler's timeout, and the step then reads as still. The caller checked the pointer and the grant before the first event; the burst
     /// lasts up to about 80 ms, so each later event checks them again, and when the pointer has
     /// left the area (or moved onto the panel, which the environment reports as outside) or the
     /// grant has gone, the rest is not posted and the settler waits for what was. Nil when the
@@ -128,6 +130,7 @@ final class AutoScrollDriver {
     private func scroll(by points: CGFloat, in session: ScrollCaptureSession) async -> (frame: ScrollFrame, posted: CGFloat)? {
         let ignored = Int((ScrollCaptureLimits.scrollbarStripPoints * session.scale).rounded())
         let baseline = session.latestFrame.map { FrameSettler.contentHash(of: $0, ignoringRightColumns: ignored) }
+        // The serial at the step's start: frames past it are the only ones that can settle it.
         var seen = session.frameSerial
         var posted: CGFloat = 0
         for (index, size) in AutoScrollPlan.events(forPoints: abs(points)).enumerated() {

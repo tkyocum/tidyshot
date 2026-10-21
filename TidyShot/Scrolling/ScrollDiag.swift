@@ -5,10 +5,11 @@ import ImageIO
 import Synchronization
 import UniformTypeIdentifiers
 
-/// Debug-only scrolling capture diagnostics: NSLog lines prefixed "ScrollDiag" and PNGs of the
-/// first frame pairs the stitcher compares, in the container's temporary directory. On in Debug
-/// builds, off under tests (they run the finder thousands of times) and when the defaults key
-/// `ScrollDiagOff` is set.
+/// Debug-only scrolling capture diagnostics: NSLog lines prefixed "ScrollDiag", the same lines in
+/// scrolldiag.log, and PNGs of the first frame pairs the stitcher compares, all in the container's
+/// temporary directory. The log file is emptied when a session starts, so it holds the latest
+/// session (NSLog lines do not always reach `log show`). On in Debug builds, off under tests (they
+/// run the finder thousands of times) and when the defaults key `ScrollDiagOff` is set.
 nonisolated enum ScrollDiag {
     static let enabled: Bool = {
         let env = ProcessInfo.processInfo.environment
@@ -21,13 +22,21 @@ nonisolated enum ScrollDiag {
     static let maxPairs = 6
     private static let pairs = Mutex(0)
     private static let origin = ContinuousClock.now
+    /// NSTemporaryDirectory()/scrolldiag.log, in the app's container.
+    static let logURL = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("scrolldiag.log")
+    /// Open from the first `beginSession()`; lines from any thread are appended under the lock.
+    private static let logFile = Mutex<FileHandle?>(nil)
 
     /// Milliseconds since the app first logged a diagnostic, for lining lines up.
     static var t: String { ms(since: origin) }
 
     static func log(_ message: @autoclosure () -> String) {
         guard enabled else { return }
-        NSLog("ScrollDiag t=%@ %@", t, message())
+        let line = "t=\(t) \(message())"
+        NSLog("ScrollDiag %@", line)
+        logFile.withLock { handle in
+            try? handle?.write(contentsOf: Data((line + "\n").utf8))
+        }
     }
 
     static func ms(since start: ContinuousClock.Instant) -> String {
@@ -38,9 +47,21 @@ nonisolated enum ScrollDiag {
         String(format: "%.1f", Double(d.components.seconds) * 1000 + Double(d.components.attoseconds) / 1e15)
     }
 
-    /// Resets the pair counter at the start of a session.
+    /// Resets the pair counter and empties the log file at the start of a session, then logs the
+    /// file's path.
     static func beginSession() {
         pairs.withLock { $0 = 0 }
+        guard enabled else { return }
+        logFile.withLock { handle in
+            if let handle {
+                try? handle.truncate(atOffset: 0)
+            } else {
+                FileManager.default.createFile(atPath: logURL.path, contents: nil)
+                handle = try? FileHandle(forWritingTo: logURL)
+                try? handle?.truncate(atOffset: 0)
+            }
+        }
+        log("log file path=\(logURL.path)")
     }
 
     /// Writes `previous` and `current` as scrolldiag-NN-prev.png and -cur.png, for the first
