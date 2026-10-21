@@ -442,7 +442,8 @@ Neither older writer can clobber an edited thumbnail:
 
 **Behaviour.**
 - **Setting.** The Upload tab gains "Optimize images with Clop" with the caption above, off by default. It is enabled only when Clop is installed (`/Applications/Clop.app`, `/Applications/Setapp/Clop.app`, or a running app whose bundle identifier starts with `com.lowtechguys.Clop`). Otherwise the box is disabled, with a link to the Clop site.
-- **When.** After the PNG is written and before the PUT, the coordinator hands Clop a copy in the container, with `hideGUI: true` and `copyToClipboard: false`, and uploads the bytes Clop returns. The save-folder file stays as captured. The uploaded object and an upload-only pending file are optimised. Editor uploads go through the same step.
+- **When.** After the PNG is written and before the PUT, the coordinator hands Clop a copy in the container, with `hideGUI: true` and `copyToClipboard: false`, and uploads the bytes Clop returns. The save-folder file stays as captured. The uploaded object and an upload-only pending file are optimised.
+- **Annotated images too.** Uploads from the editor (Upload, the same-key replace, Upload as New, and a Retry of any of them) go through the same step, so an annotated screenshot is optimised exactly like a fresh capture. The edited file the editor saves locally stays unoptimised, as a capture's save-folder file does.
 - **Never lose a capture.** Clop is unavailable after a short wait, an optimisation throws or times out, or the result is larger: TidyShot uploads the original bytes, logs why, and posts no error.
 - **Format.** If Clop converts the file (its own settings can turn PNG into JPEG), the object key's extension and the Content-Type follow the returned file.
 
