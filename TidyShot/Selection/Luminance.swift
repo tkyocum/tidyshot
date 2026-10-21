@@ -37,15 +37,22 @@ nonisolated enum Luminance {
     }
 }
 
-/// The colour of the crosshair and the selection border for what is under the cursor.
+/// The colours of the crosshair, the selection borders and the loupe's cross for what is under the
+/// cursor. Each is drawn two-tone: an opaque 1 pt line over a halo one device pixel wider on each
+/// side, in the opposite colour at 0.7 alpha, so it reads on any background.
 nonisolated enum CrosshairStyle: Equatable, Sendable {
-    /// Black at 0.8 alpha, on a light background.
+    /// Black line, white halo, on a light background.
     case dark
-    /// White at 0.8 alpha, on a dark background.
+    /// White line, black halo, on a dark background.
     case light
-    /// White with a one-pixel black edge beneath, readable on anything. Used until the snapshot
-    /// arrives, and when the cursor is outside it.
+    /// White line, black halo (the colours of `.light`), when no luminance is available: before the
+    /// snapshot arrives, and when the sampled square lies wholly outside it.
     case outlined
+
+    /// The line's alpha.
+    static let lineAlpha: CGFloat = 1
+    /// The halo's alpha.
+    static let haloAlpha: CGFloat = 0.7
 
     init(luminance: Double?) {
         guard let luminance else {
@@ -53,5 +60,21 @@ nonisolated enum CrosshairStyle: Equatable, Sendable {
             return
         }
         self = luminance > 0.5 ? .dark : .light
+    }
+
+    /// The line's grey level for `NSColor(white:alpha:)`: 0 is black, 1 is white.
+    var lineWhite: CGFloat {
+        switch self {
+        case .dark: 0
+        case .light, .outlined: 1
+        }
+    }
+
+    /// The halo's grey level, the opposite of `lineWhite`.
+    var haloWhite: CGFloat {
+        switch self {
+        case .dark: 1
+        case .light, .outlined: 0
+        }
     }
 }

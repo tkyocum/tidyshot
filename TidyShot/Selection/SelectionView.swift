@@ -173,21 +173,17 @@ final class SelectionView: NSView {
         stroke(path)
     }
 
-    /// Strokes a 1 pt line in the current `crosshairStyle`: black on light backgrounds, white on
-    /// dark ones, and before the snapshot arrives white over a line one pixel wider on each side
-    /// in black.
+    /// Strokes `path` two-tone in the current `crosshairStyle`. Used for the crosshair, the drag
+    /// and completed rectangle borders, and the loupe's cross. First a halo one device pixel wider
+    /// on each side in the halo colour at `CrosshairStyle.haloAlpha`, then the 1 pt line in the line
+    /// colour at `CrosshairStyle.lineAlpha`: black over white on light backgrounds, white over
+    /// black on dark ones and before the snapshot arrives. Each tone is one stroke of the whole
+    /// path, so where lines cross the halo is not painted twice.
     private func stroke(_ path: NSBezierPath) {
-        switch crosshairStyle {
-        case .dark:
-            NSColor.black.withAlphaComponent(0.8).setStroke()
-        case .light:
-            NSColor.white.withAlphaComponent(0.8).setStroke()
-        case .outlined:
-            NSColor.black.withAlphaComponent(0.8).setStroke()
-            path.lineWidth = 1 + 2 / (window?.backingScaleFactor ?? 2)
-            path.stroke()
-            NSColor.white.setStroke()
-        }
+        NSColor(white: crosshairStyle.haloWhite, alpha: CrosshairStyle.haloAlpha).setStroke()
+        path.lineWidth = 1 + 2 / (window?.backingScaleFactor ?? 2)
+        path.stroke()
+        NSColor(white: crosshairStyle.lineWhite, alpha: CrosshairStyle.lineAlpha).setStroke()
         path.lineWidth = 1
         path.stroke()
     }
@@ -258,14 +254,12 @@ final class SelectionView: NSView {
         context.draw(cropped, in: drawRect)
         context.restoreGState()
 
-        NSColor.white.withAlphaComponent(0.9).setStroke()
         let cross = NSBezierPath()
-        cross.lineWidth = 1
         cross.move(to: CGPoint(x: destination.minX, y: destination.midY + 0.5))
         cross.line(to: CGPoint(x: destination.maxX, y: destination.midY + 0.5))
         cross.move(to: CGPoint(x: destination.midX + 0.5, y: destination.minY))
         cross.line(to: CGPoint(x: destination.midX + 0.5, y: destination.maxY))
-        cross.stroke()
+        stroke(cross)
 
         let ring = NSBezierPath(ovalIn: destination.insetBy(dx: 1, dy: 1))
         ring.lineWidth = 2
