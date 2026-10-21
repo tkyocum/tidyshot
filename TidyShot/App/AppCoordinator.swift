@@ -452,6 +452,7 @@ final class AppCoordinator {
             case .area(let rect, let display):
                 captured = await selectedAreaResult(rect: rect, display: display)
             case .window(let window):
+                // Area mode never returns a window; a click without a drag cancels.
                 captured = await capture(.window(window), duringSelection: true)
             }
             selector.dismiss()
@@ -489,7 +490,7 @@ final class AppCoordinator {
         do {
             scan = try await TextRecognizer().recognize(image)
         } catch {
-            NSLog("Text recognition failed: \(error.localizedDescription)")
+            NSLog("%@", "Text recognition failed: \(error.localizedDescription)")
             notifier.notifyError(error.localizedDescription, title: "Text not recognized")
             return
         }

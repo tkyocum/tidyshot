@@ -61,6 +61,9 @@ final class DesktopCoverController {
         for panel in panels.values {
             panel.orderOut(nil)
         }
+        // A show from hidden captures every screen again, so the kept wallpapers (about 59 MB on
+        // a 5K display) are of no use.
+        panels.removeAll()
         isShowing = false
     }
 

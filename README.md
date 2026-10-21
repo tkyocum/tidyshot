@@ -111,7 +111,7 @@ Horizontal scrolling is not supported.
 Settings > Capture has five options. *Freeze screen while selecting* shows a still picture of the
 screen while you drag an area and cuts the capture from it, so menus, tooltips and video stay as
 they were when you pressed the shortcut; window mode and scrolling capture are live. *Show cursor in
-screenshots* puts the pointer into fullscreen, previous-area, self-timer and URL captures, and into
+screenshots* puts the pointer into fullscreen, previous-area, self-timer and URL captures (not `capture-text` with a rect), and into
 area captures only with freeze on; TidyShot never captures its own crosshair. *Include window
 shadow* keeps the system shadow around a window capture; the corners are transparent either way.
 *Hide desktop icons while capturing* is described under Hide desktop icons below. *Self-timer* sets
@@ -169,7 +169,7 @@ close when you quit, and deleting a capture closes its pins.
 ## Capture Text
 
 Capture Text (⌃⇧7) copies the text in an area instead of an image. Select an area as for Capture
-Area (Freeze screen applies), or click a window; TidyShot reads it on the Mac with Apple's Vision
+Area (Freeze screen applies; a click without a drag closes the overlay and copies nothing); TidyShot reads it on the Mac with Apple's Vision
 and puts the text on the clipboard, one line for each line on screen. When the area holds a QR code
 (or another two-dimensional code: Micro QR, Aztec, Data Matrix or PDF417), the code's contents are
 copied instead, so a "Scan me" caption does not end up in the link; select without the code to get
@@ -194,7 +194,8 @@ The covers sit below every window, on every Space and display. The picture is re
 switch, a display change, wake and every 10 minutes, so a new wallpaper reaches the cover at the
 next of these. Clicks on the covered desktop do nothing: icons cannot be opened or dragged, and
 clicking the picture does not reveal the desktop. Captures show the desktop picture where the icons
-were. When TidyShot cannot read a display's desktop picture, that display stays uncovered and *Desktop
+were. A scrolling capture over the desktop still shows the icons, even with Hide Desktop Icons on,
+because it leaves all of TidyShot's windows, the covers included, out of the picture. When TidyShot cannot read a display's desktop picture, that display stays uncovered and *Desktop
 icons still showing* is posted, once per launch.
 
 ## URL scheme
