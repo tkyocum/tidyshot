@@ -66,6 +66,8 @@ Six points in this plan go beyond 2.9's text or settle what it left open, and Ta
 
 The totals come from each task's declared tests. Task 8 checks them against a real run and adds a note for any difference.
 
+Task 8 correction: the rows above are each task's declared tests and are left as written. Two review-fix commits added tests the rows do not count: 175c101 added 5 after Task 5 (3 in `ClosedOverlaysTests`, 2 in `FreezeCropTests`) and 62bbbb8 added 4 after Task 7 (3 in `DragFileStoreTests`, 1 in `PreviousAreaTests`), no new suite in either. Counted as the commits landed: Task 5 645, fix 175c101 650, Task 6 664, Task 7 680, fix 62bbbb8 684, Task 8 adds none, so the real run reads `Test run with 684 tests in 85 suites passed`.
+
 ---
 
 ### Task 1: Capture options: cursor rule and window shadow

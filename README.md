@@ -55,6 +55,8 @@ rebuilds lose this grant like they lose Screen Recording.
 | Capture window | ⌃⇧2 |
 | Capture fullscreen | ⌃⇧3 |
 | Capture scrolling | ⌃⇧5 |
+| Capture previous area | ⌃⇧6 |
+| Restore closed overlay | none; set one in Settings > Shortcuts |
 
 Change them in Settings > Shortcuts.
 
@@ -98,6 +100,38 @@ editor shows a tall capture as stacked 16,384 pixel strips, the most one GPU tex
 Mac). A capture taller or wider than 16,384 pixels goes on the clipboard as PNG only, without the
 uncompressed TIFF copy, which at that size would take hundreds of megabytes more.
 Horizontal scrolling is not supported.
+
+## Capture options
+
+Settings > Capture has three options. *Freeze screen while selecting* shows a still picture of the
+screen while you drag an area and cuts the capture from it, so menus, tooltips and video stay as
+they were when you pressed the shortcut; window mode and scrolling capture are live. *Show cursor in
+screenshots* puts the pointer into fullscreen and previous-area captures, and into area captures
+only with freeze on; TidyShot never captures its own crosshair. *Include window shadow* keeps the
+system shadow around a window capture; the corners are transparent either way.
+
+Capture Previous Area (⌃⇧6) captures the rectangle of your last area capture (or scrolling capture)
+again, with no selection. It says so when there is no previous area or its display is gone.
+
+## Quick Access overlay
+
+Each capture shows a card in a corner of the screen. Several cards stack, newest at the corner, up
+to the number set in Settings > Overlay. Settings > Overlay also chooses the display they appear
+on: the capture's display (default), the pointer's, or the main display. The cards are not in any
+capture.
+
+A card shows the upload status and has Annotate and Delete buttons, `Save As…` and `Copy URL` or
+`Retry`, and a close badge when you point at it; a right-click or Control-click opens a menu with
+every action, including Copy Image. Closing a card does not delete the capture: Restore Closed
+Overlay in the menu (or its shortcut) brings back the ten most recently closed cards, newest first.
+A card whose capture was deleted, or that was opened in the editor, is not restored.
+
+Drag a card to drop the screenshot into Finder, Slack, a browser, Mail, Messages or Notes. What
+you drop is a copy of the file kept in TidyShot's container until a minute after the card closes,
+named like the link when the capture was uploaded; the original stays where it was. In upload-only
+mode the file is kept for as long as the card shows, so you can drag it after the link is on the
+clipboard. A card for an older upload-only capture downloads its file when it is restored, and can
+be dragged once that has finished. Settings > Overlay has *Close after dragging out*.
 
 ## Upload
 
@@ -250,3 +284,4 @@ Cancelling the save panel keeps the editor open.
 - Phase 4a manual test checklist: `docs/testing/phase-4a-manual-checklist.md`
 - Phase 4b manual test checklist: `docs/testing/phase-4b-manual-checklist.md`
 - Phase 5 manual test checklist: `docs/testing/phase-5-manual-checklist.md`
+- Phase 6a manual test checklist: `docs/testing/phase-6a-manual-checklist.md`
