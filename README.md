@@ -12,14 +12,16 @@ Requires macOS 26 or later.
 brew install xcodegen
 xcodebuild -runFirstLaunch
 xcodegen generate
-xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -configuration Debug -derivedDataPath .build build
-open .build/Build/Products/Debug/TidyShot.app
+xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -configuration Release -derivedDataPath .build-rel build
+open .build-rel/Build/Products/Release/TidyShot.app
 ```
 
-Or open `TidyShot.xcodeproj` in Xcode after `xcodegen generate`.
+Run the Release build: scrolling capture compares frames as they arrive, and an unoptimised Debug
+build is about 40 times slower and cannot keep up. The tests use the Debug configuration. Scrolling
+capture diagnostics (`ScrollDiag`, written to `scrolldiag.log` in the app container's temporary
+folder) exist only in Debug builds.
 
-The Debug configuration builds the app with `-O` (testability kept on), because scrolling capture
-cannot keep up with the screen unoptimised.
+Or open `TidyShot.xcodeproj` in Xcode after `xcodegen generate`.
 
 ## Test
 
