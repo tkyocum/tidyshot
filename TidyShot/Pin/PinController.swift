@@ -54,11 +54,14 @@ final class PinController {
             case .nudge(let dx, let dy, let shift):
                 pin.panel.setFrame(PinGeometry.nudged(pin.panel.frame, dx: dx, dy: dy, shift: shift), display: true)
             case .zoomIn:
-                pin.panel.setFrame(PinGeometry.zoomed(pin.panel.frame, factor: PinGeometry.zoomStep), display: true)
+                pin.panel.setFrame(PinGeometry.zoomed(pin.panel.frame, factor: PinGeometry.zoomStep,
+                                                      visibleFrame: Self.visibleFrame(of: pin)), display: true)
             case .zoomOut:
-                pin.panel.setFrame(PinGeometry.zoomed(pin.panel.frame, factor: 1 / PinGeometry.zoomStep), display: true)
+                pin.panel.setFrame(PinGeometry.zoomed(pin.panel.frame, factor: 1 / PinGeometry.zoomStep,
+                                                      visibleFrame: Self.visibleFrame(of: pin)), display: true)
             case .actualSize:
-                pin.panel.setFrame(PinGeometry.actualSize(pin.panel.frame, imagePoints: pin.imagePoints), display: true)
+                pin.panel.setFrame(PinGeometry.actualSize(pin.panel.frame, imagePoints: pin.imagePoints,
+                                                          visibleFrame: Self.visibleFrame(of: pin)), display: true)
             case .copyImage:
                 actions.copyImage(pin.recordID)
             case .close:
@@ -108,6 +111,11 @@ final class PinController {
     private func close(_ pin: Pin) {
         pin.panel.orderOut(nil)
         pins.removeAll { $0 === pin }
+    }
+
+    /// The visible frame of the pin's screen, or of the main screen when it is off all of them.
+    private static func visibleFrame(of pin: Pin) -> CGRect {
+        (pin.panel.screen ?? NSScreen.main)?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
     }
 
     private static func setOpacity(_ opacity: Double, of pin: Pin) {

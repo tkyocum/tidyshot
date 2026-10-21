@@ -36,19 +36,30 @@ nonisolated enum PinGeometry {
 
     /// `frame` scaled by `factor` about its centre. A factor that would take the shorter side
     /// below `min(minimumSide, its current value)` is raised to the one that reaches it exactly.
-    static func zoomed(_ frame: CGRect, factor: CGFloat) -> CGRect {
+    /// The result is capped to `visibleFrame` and whole-point (see `settled`).
+    static func zoomed(_ frame: CGRect, factor: CGFloat, visibleFrame: CGRect) -> CGRect {
         let shorter = min(frame.width, frame.height)
         let floor = min(minimumSide, shorter)
         let applied = shorter * factor < floor ? floor / shorter : factor
-        let size = CGSize(width: frame.width * applied, height: frame.height * applied)
-        return CGRect(x: frame.midX - size.width / 2, y: frame.midY - size.height / 2,
-                      width: size.width, height: size.height)
+        return settled(centre: CGPoint(x: frame.midX, y: frame.midY),
+                       size: CGSize(width: frame.width * applied, height: frame.height * applied),
+                       visibleFrame: visibleFrame)
     }
 
-    /// The capture's point size, about the centre of `frame`.
-    static func actualSize(_ frame: CGRect, imagePoints: CGSize) -> CGRect {
-        CGRect(x: frame.midX - imagePoints.width / 2, y: frame.midY - imagePoints.height / 2,
-               width: imagePoints.width, height: imagePoints.height)
+    /// The capture's point size, about the centre of `frame`, capped to `visibleFrame` and
+    /// whole-point (see `settled`).
+    static func actualSize(_ frame: CGRect, imagePoints: CGSize, visibleFrame: CGRect) -> CGRect {
+        settled(centre: CGPoint(x: frame.midX, y: frame.midY), size: imagePoints, visibleFrame: visibleFrame)
+    }
+
+    /// A frame of `size` about `centre`: scaled down, keeping the aspect ratio, to fit
+    /// `visibleFrame`, then with the size and the origin rounded to whole points.
+    private static func settled(centre: CGPoint, size: CGSize, visibleFrame: CGRect) -> CGRect {
+        let cap = min(1, visibleFrame.width / size.width, visibleFrame.height / size.height)
+        let width = (size.width * cap).rounded()
+        let height = (size.height * cap).rounded()
+        return CGRect(x: (centre.x - width / 2).rounded(), y: (centre.y - height / 2).rounded(),
+                      width: width, height: height)
     }
 
     /// The panel's `contentMinSize`: the image's aspect with the shorter side at

@@ -86,20 +86,20 @@ struct PinGeometryTests {
     @Test func zoomKeepsTheCentreAndInverts() {
         #expect(PinGeometry.zoomStep == 1.1)
         let frame = CGRect(x: 100, y: 100, width: 400, height: 300)
-        let larger = PinGeometry.zoomed(frame, factor: PinGeometry.zoomStep)
+        let larger = PinGeometry.zoomed(frame, factor: PinGeometry.zoomStep, visibleFrame: visible)
         #expect(approx(larger, CGRect(x: 80, y: 85, width: 440, height: 330)))
-        #expect(approx(PinGeometry.zoomed(larger, factor: 1 / PinGeometry.zoomStep), frame))
+        #expect(approx(PinGeometry.zoomed(larger, factor: 1 / PinGeometry.zoomStep, visibleFrame: visible), frame))
     }
 
     /// The shorter side never goes below 40 pt, or below what it is when it is under 40 already
     /// (a fitted strip): the pin can then only grow.
     @Test func zoomStopsAtTheMinimumSide() {
         #expect(PinGeometry.minimumSide == 40)
-        let small = PinGeometry.zoomed(CGRect(x: 0, y: 0, width: 160, height: 120), factor: 0.25)
-        #expect(approx(small, CGRect(x: 160.0 / 3, y: 40, width: 160.0 / 3, height: 40)))
+        let small = PinGeometry.zoomed(CGRect(x: 0, y: 0, width: 160, height: 120), factor: 0.25, visibleFrame: visible)
+        #expect(approx(small, CGRect(x: 54, y: 40, width: 53, height: 40)))
         let strip = CGRect(x: 100, y: 100, width: 30, height: 225)
-        #expect(approx(PinGeometry.zoomed(strip, factor: 0.5), strip))
-        #expect(approx(PinGeometry.zoomed(strip, factor: 2), CGRect(x: 85, y: -12.5, width: 60, height: 450)))
+        #expect(approx(PinGeometry.zoomed(strip, factor: 0.5, visibleFrame: visible), strip))
+        #expect(approx(PinGeometry.zoomed(strip, factor: 2, visibleFrame: visible), CGRect(x: 85, y: -13, width: 60, height: 450)))
     }
 
     @Test func minimumSizeKeepsTheAspect() {
@@ -119,8 +119,28 @@ struct PinGeometryTests {
 
     @Test func actualSizeKeepsTheCentre() {
         let frame = CGRect(x: 100, y: 100, width: 200, height: 150)
-        #expect(PinGeometry.actualSize(frame, imagePoints: CGSize(width: 400, height: 300))
+        #expect(PinGeometry.actualSize(frame, imagePoints: CGSize(width: 400, height: 300), visibleFrame: visible)
                 == CGRect(x: 0, y: 25, width: 400, height: 300))
+    }
+
+    /// Zoomed and actual-size frames land on whole points, so the image stays sharp.
+    @Test func zoomedAndActualSizeFramesAreWholePoints() {
+        let zoomed = PinGeometry.zoomed(CGRect(x: 100.5, y: 100.5, width: 333, height: 211), factor: 1.1, visibleFrame: visible)
+        #expect(zoomed == CGRect(x: 84, y: 90, width: 366, height: 232))
+        let actual = PinGeometry.actualSize(CGRect(x: 10, y: 10, width: 101, height: 51),
+                                            imagePoints: CGSize(width: 300.4, height: 200), visibleFrame: visible)
+        #expect(actual == CGRect(x: -90, y: -65, width: 300, height: 200))
+    }
+
+    /// Past the visible frame a pin is scaled down to it, keeping the aspect ratio, on either axis.
+    @Test func zoomedAndActualSizeAreCappedToTheVisibleFrame() {
+        let wide = PinGeometry.zoomed(CGRect(x: 0, y: 0, width: 1400, height: 700), factor: 1.1, visibleFrame: visible)
+        #expect(wide.size == CGSize(width: 1440, height: 720))
+        let tall = PinGeometry.zoomed(CGRect(x: 0, y: 0, width: 600, height: 880), factor: 1.1, visibleFrame: visible)
+        #expect(tall.size == CGSize(width: 614, height: 900))
+        let actual = PinGeometry.actualSize(CGRect(x: 100, y: 100, width: 200, height: 150),
+                                            imagePoints: CGSize(width: 2880, height: 1800), visibleFrame: visible)
+        #expect(actual == CGRect(x: -520, y: -275, width: 1440, height: 900))
     }
 
     @Test func largeImagesAreShownFromADownsample() {

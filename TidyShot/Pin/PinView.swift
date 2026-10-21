@@ -39,6 +39,13 @@ final class PinView: NSView {
     override var mouseDownCanMoveWindow: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
+    /// Window dragging can take the click without making a non-activating panel key, and the
+    /// arrows, Escape and the Command keys need it key.
+    override func mouseDown(with event: NSEvent) {
+        window?.makeKey()
+        super.mouseDown(with: event)
+    }
+
     override func viewDidChangeBackingProperties() {
         super.viewDidChangeBackingProperties()
         updateBorder()

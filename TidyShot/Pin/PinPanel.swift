@@ -7,8 +7,9 @@ final class PinPanel: NSPanel {
     init(contentRect: CGRect) {
         super.init(contentRect: contentRect, styleMask: [.borderless, .nonactivatingPanel, .resizable],
                    backing: .buffered, defer: false)
-        level = .floating
+        // isFloatingPanel resets the level to .floating, so it must come first.
         isFloatingPanel = true
+        level = .floating
         hidesOnDeactivate = false
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         isOpaque = false
