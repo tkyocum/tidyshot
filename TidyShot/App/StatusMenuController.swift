@@ -90,6 +90,12 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         reveal.isEnabled = coordinator.lastCaptureURL != nil
         menu.addItem(reveal)
         menu.addItem(.separator())
+        if coordinator.hasLockedPins {
+            menu.addItem(item("Unlock Pinned Screenshots", #selector(unlockPins)))
+        }
+        if coordinator.hasPins {
+            menu.addItem(item("Close Pinned Screenshots", #selector(closePins)))
+        }
         menu.addItem(item("Settings…", #selector(openSettings), key: ","))
         menu.addItem(item("Quit TidyShot", #selector(quit), key: "q"))
     }
@@ -127,6 +133,8 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     @objc private func retryFailedUploads() { coordinator.retryFailedUploads() }
     @objc private func restoreClosedOverlay() { Task { await coordinator.restoreClosedOverlay() } }
     @objc private func revealLastCapture() { coordinator.revealLastCapture() }
+    @objc private func unlockPins() { coordinator.unlockPins() }
+    @objc private func closePins() { coordinator.closePins() }
     @objc private func openSettings() { settingsOpener.open() }
     @objc private func quit() { NSApplication.shared.terminate(nil) }
 }

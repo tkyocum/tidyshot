@@ -18,6 +18,7 @@ final class QuickAccessModel {
     @ObservationIgnored var onReveal: () -> Void = {}
     @ObservationIgnored var onDelete: () -> Void = {}
     @ObservationIgnored var onAnnotate: () -> Void = {}
+    @ObservationIgnored var onPin: () -> Void = {}
     @ObservationIgnored var onClose: () -> Void = {}
     /// The card's Save As… and Copy Image: `AppCoordinator.saveAs(recordID:)` and `copyImage(recordID:)`.
     @ObservationIgnored var onSaveAs: () -> Void = {}
