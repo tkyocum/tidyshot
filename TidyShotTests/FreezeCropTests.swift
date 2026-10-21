@@ -145,4 +145,48 @@ struct FreezeCropTests {
         #expect(FreezeCrop.cropped(quadrants(), selection: CGRect(x: 130, y: 50, width: 10, height: 5),
                                    displayFrame: frame, scale: 2) == nil)
     }
+
+    private func gradient(width: Int, height: Int) throws -> CGImage {
+        let context = try #require(CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
+                                             bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        let pixels = try #require(context.data).assumingMemoryBound(to: UInt8.self)
+        for y in 0..<height {
+            for x in 0..<width {
+                let offset = y * context.bytesPerRow + x * 4
+                pixels[offset] = UInt8(x % 256)
+                pixels[offset + 1] = UInt8(y % 256)
+                pixels[offset + 2] = 7
+                pixels[offset + 3] = 255
+            }
+        }
+        return try #require(context.makeImage())
+    }
+
+    private func bytes(_ image: CGImage) throws -> [UInt8] {
+        let context = try #require(CGContext(data: nil, width: image.width, height: image.height,
+                                             bitsPerComponent: 8, bytesPerRow: image.width * 4,
+                                             space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        let data = try #require(context.data).assumingMemoryBound(to: UInt8.self)
+        return Array(UnsafeBufferPointer(start: data, count: image.width * image.height * 4))
+    }
+
+    /// The crop owns its pixels: it does not keep the whole snapshot alive, and it holds exactly
+    /// what the snapshot held at that rect.
+    @Test func aCropOwnsItsPixelsAndKeepsThem() throws {
+        let source = try gradient(width: 400, height: 300)
+        let frame = CGRect(x: 0, y: 0, width: 200, height: 150)
+        let selection = CGRect(x: 30, y: 20, width: 50, height: 40)
+        let result = try #require(FreezeCrop.cropped(source, selection: selection, displayFrame: frame, scale: 2))
+        #expect(result.width == 100)
+        #expect(result.height == 80)
+        #expect(result.bytesPerRow < source.bytesPerRow)
+        #expect(result.dataProvider !== source.dataProvider)
+        let expected = try #require(source.cropping(to: CGRect(x: 60, y: 40, width: 100, height: 80)))
+        #expect(try bytes(result) == bytes(expected))
+        #expect(FreezeCrop.cropped(source, selection: CGRect(x: 500, y: 0, width: 50, height: 40),
+                                   displayFrame: frame, scale: 2) == nil)
+    }
 }

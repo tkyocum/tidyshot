@@ -49,4 +49,20 @@ struct WindowShadowTests {
         #expect(size.width == 1600)
         #expect(size.height == 1200)
     }
+
+    /// The result's scale follows the size: the filter's with the shadow, the display's without it
+    /// and when the filter is degenerate.
+    @Test func theScaleFollowsTheBranchTheSizeTook() {
+        let shadow = CaptureEngine.windowGeometry(frame: frame, contentRect: withShadow, pointPixelScale: 1.5,
+                                                  displayScale: 2, includeShadow: true)
+        #expect(shadow.scale == 1.5)
+        #expect(shadow.width == 1320)
+        let off = CaptureEngine.windowGeometry(frame: frame, contentRect: withShadow, pointPixelScale: 1.5,
+                                               displayScale: 2, includeShadow: false)
+        #expect(off.scale == 2)
+        let degenerate = CaptureEngine.windowGeometry(frame: frame, contentRect: .zero, pointPixelScale: 1.5,
+                                                      displayScale: 2, includeShadow: true)
+        #expect(degenerate.scale == 2)
+        #expect(degenerate.width == 1600)
+    }
 }

@@ -1207,7 +1207,19 @@ final class AppCoordinator {
             }.value
             guard let self else { return }
             guard self.dragGenerations[recordID, default: 0] == generation else {
-                self.dropStaleDragFolder(recordID)
+                // The folder was replaced while this stage ran (an upload's adopt), so `staged`
+                // may be a file the adopt's place() deleted. A card still showing gets whatever
+                // the folder holds now; otherwise the folder this stage recreated goes.
+                if self.overlay.isShowing(recordID: recordID) {
+                    let current = await Task.detached(priority: .userInitiated) {
+                        store.restage(id: recordID, name: name)
+                    }.value
+                    if self.dragStageSeqs[recordID, default: 0] == seq, self.overlay.isShowing(recordID: recordID) {
+                        self.overlay.setDragFile(current, for: recordID)
+                    }
+                } else {
+                    self.dropStaleDragFolder(recordID)
+                }
                 return
             }
             // A later press staged again; its file is the card's.

@@ -34,10 +34,12 @@ final class CaptureEngine {
             // Off is today's output. On, the shadow lies outside `window.frame`, so the size
             // comes from the filter (see `windowPixelSize`).
             config.ignoreShadows = !options.windowShadow
-            scale = Self.scale(forDisplayID: Self.displayID(containing: window.frame))
-            pixels = Self.windowPixelSize(frame: window.frame, contentRect: filter.contentRect,
-                                          pointPixelScale: CGFloat(filter.pointPixelScale),
-                                          displayScale: scale, includeShadow: options.windowShadow)
+            let displayScale = Self.scale(forDisplayID: Self.displayID(containing: window.frame))
+            let geometry = Self.windowGeometry(frame: window.frame, contentRect: filter.contentRect,
+                                               pointPixelScale: CGFloat(filter.pointPixelScale),
+                                               displayScale: displayScale, includeShadow: options.windowShadow)
+            scale = geometry.scale
+            pixels = (geometry.width, geometry.height)
         }
         config.width = pixels.width
         config.height = pixels.height
@@ -53,11 +55,24 @@ final class CaptureEngine {
     /// the frame, or a zero scale) falls back to the frame, so a capture is never zero-sized.
     static func windowPixelSize(frame: CGRect, contentRect: CGRect, pointPixelScale: CGFloat,
                                 displayScale: CGFloat, includeShadow: Bool) -> (width: Int, height: Int) {
+        let geometry = windowGeometry(frame: frame, contentRect: contentRect, pointPixelScale: pointPixelScale,
+                                      displayScale: displayScale, includeShadow: includeShadow)
+        return (geometry.width, geometry.height)
+    }
+
+    /// The pixel size and the pixels-per-point of a window capture. When the size comes from the
+    /// filter (the branch described at `windowPixelSize`), the scale is the filter's
+    /// `pointPixelScale` too, so the result's points match its pixels; otherwise it is the
+    /// display's.
+    static func windowGeometry(frame: CGRect, contentRect: CGRect, pointPixelScale: CGFloat,
+                               displayScale: CGFloat, includeShadow: Bool) -> (width: Int, height: Int, scale: CGFloat) {
         if includeShadow, pointPixelScale > 0,
            contentRect.width >= frame.width, contentRect.height >= frame.height {
-            return Geometry.pixelSize(points: contentRect.size, scale: pointPixelScale)
+            let size = Geometry.pixelSize(points: contentRect.size, scale: pointPixelScale)
+            return (size.width, size.height, pointPixelScale)
         }
-        return Geometry.pixelSize(points: frame.size, scale: displayScale)
+        let size = Geometry.pixelSize(points: frame.size, scale: displayScale)
+        return (size.width, size.height, displayScale)
     }
 
     /// Backing scale of a display: from its NSScreen when available, otherwise from the display

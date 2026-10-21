@@ -41,12 +41,23 @@ enum FreezeCrop {
         return CGRect(x: x, y: y, width: width, height: height)
     }
 
-    /// `image` cut to the selection, or nil when `pixelRect` is nil. The result shares the
-    /// snapshot's pixels, so it keeps the whole display image alive for as long as it lives:
-    /// up to about 60 MB for a 5K display while its Quick Access card shows. That is accepted.
+    /// `image` cut to the selection, or nil when `pixelRect` is nil. The pixels are copied into
+    /// a context of the crop's own size (`CGImage.cropping(to:)` would share the snapshot's
+    /// pixels and keep the whole display image alive, up to about 60 MB for a 5K display, for as
+    /// long as a card holds the capture), so the snapshot is freed once `dismiss()` drops it.
     static func cropped(_ image: CGImage, selection: CGRect, displayFrame: CGRect, scale: CGFloat) -> CGImage? {
         guard let rect = pixelRect(selection: selection, displayFrame: displayFrame, scale: scale,
-                                   imageSize: CGSize(width: image.width, height: image.height)) else { return nil }
-        return image.cropping(to: rect)
+                                   imageSize: CGSize(width: image.width, height: image.height)),
+              let view = image.cropping(to: rect) else { return nil }
+        let space = image.colorSpace ?? CGColorSpaceCreateDeviceRGB()
+        guard let context = CGContext(data: nil, width: view.width, height: view.height, bitsPerComponent: 8,
+                                      bytesPerRow: 0, space: space, bitmapInfo: image.bitmapInfo.rawValue)
+                ?? CGContext(data: nil, width: view.width, height: view.height, bitsPerComponent: 8,
+                             bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                             bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue
+                                 | CGBitmapInfo.byteOrder32Little.rawValue) else { return view }
+        context.interpolationQuality = .none
+        context.draw(view, in: CGRect(x: 0, y: 0, width: view.width, height: view.height))
+        return context.makeImage() ?? view
     }
 }
