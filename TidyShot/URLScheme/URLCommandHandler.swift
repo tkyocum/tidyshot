@@ -68,13 +68,18 @@ final class URLCommandHandler {
     }
 
     /// Called once `AppCoordinator.start()` has run: the waiting URLs run in the order they came.
+    /// Only the first capture command among them runs; later ones are dropped as if a capture were
+    /// running, so a burst sent before launch cannot open one overlay after another.
     func ready() async {
         guard !isReady else { return }
         isReady = true
         let waiting = queued
         queued = []
+        var captureRan = false
         for item in waiting {
-            await run(item.url, sender: item.sender)
+            if await run(item.url, sender: item.sender, busy: captureRan) {
+                captureRan = true
+            }
         }
     }
 
@@ -85,27 +90,31 @@ final class URLCommandHandler {
         return shown.isEmpty ? nil : shown
     }
 
-    private func run(_ url: URL, sender rawSender: String?) async {
+    /// Runs `url`; `busy` drops a capture command as a running capture does. Returns whether a
+    /// capture command reached the target.
+    @discardableResult
+    private func run(_ url: URL, sender rawSender: String?, busy: Bool = false) async -> Bool {
         let sender = Self.senderName(rawSender)
         let command: URLCommand
         switch URLCommand.parse(url) {
         case .failure(let error):
             // With URL commands off nothing is parsed: every URL gets the same refusal.
             refuse(settings.urlCommandsEnabled ? error.message : URLCommandGate.disabledMessage, url: url, sender: sender)
-            return
+            return false
         case .success(let parsed):
             command = parsed
         }
         if case .refuse(let message) = URLCommandGate.decision(for: command, enabled: settings.urlCommandsEnabled,
                                                                allowSilent: settings.urlCommandsAllowSilent, sender: sender) {
             refuse(message, url: url, sender: sender)
-            return
+            return false
         }
-        guard let target else { return }
+        guard let target else { return false }
         // Never queued behind a running capture, and never a Start or Done for a scrolling session.
-        if command.kind.isCapture, target.isCapturing {
-            NSLog("%@", "URL command from \(sender ?? "an unknown app") dropped, a capture is running: \(url.absoluteString)")
-            return
+        if command.kind.isCapture, busy || target.isCapturing {
+            let reason = busy ? "a queued capture command ran first" : "a capture is running"
+            NSLog("%@", "URL command from \(sender ?? "an unknown app") dropped, \(reason): \(url.absoluteString)")
+            return false
         }
         var placement: ScreenRect?
         if let area = command.area {
@@ -116,10 +125,10 @@ final class URLCommandHandler {
                 placement = resolved
             case .noDisplay(let number):
                 refuse(URLCommandError.noDisplay(String(number)).message, url: url, sender: sender)
-                return
+                return false
             case .outside(let number):
                 refuse(URLCommandGeometry.outsideMessage(display: number), url: url, sender: sender)
-                return
+                return false
             }
         }
         NSLog("%@", "URL command from \(sender ?? "an unknown app"): \(url.absoluteString)")
@@ -139,6 +148,7 @@ final class URLCommandHandler {
         case .captureScrolling: await target.captureScrolling(intent: intent, preselect: placement)
         case .restoreRecentlyClosed: await target.restoreClosedOverlay()
         }
+        return command.kind.isCapture
     }
 
     private func refuse(_ message: String, url: URL, sender: String?) {

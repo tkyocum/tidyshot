@@ -240,9 +240,9 @@ final class AppCoordinator {
 
     /// Capture Scrolling: select an area or a window's frame, run the scrolling session, and save
     /// the stitched image like any capture. During a session the shortcut is Start, then Done. A URL
-    /// command's rect (`preselect`) skips the selection: the session opens on it and waits for
-    /// Start. A URL command never reaches this during a session: the handler drops it while a
-    /// capture runs.
+    /// command's rect (`preselect`) skips the selection: the session opens on it and waits for a
+    /// click on Start. A URL command never reaches this during a session: the handler drops it
+    /// while a capture runs.
     func captureScrolling(intent: CaptureIntent = .standard, preselect: ScreenRect? = nil) async {
         // During a session the shortcut is Start, then Done (the lock is held meanwhile).
         if scrollCapture.isRunning {
@@ -256,10 +256,11 @@ final class AppCoordinator {
                     NSLog("%@", "Capture Scrolling: display \(preselect.displayID) is gone")
                     return
                 }
-                // No selection overlay activated the app, and the panel's Start must take Return.
-                NSApplication.shared.activate(ignoringOtherApps: true)
+                // The app is not activated and the panel is not made key: Start and Done are default
+                // actions, so a Return typed in the frontmost app must not start a capture of the
+                // sender's rect. Start needs a click (or the hotkey).
                 // `runScrolling` refuses a rect under 100 pt; its `dismiss()` is a no-op here.
-                await runScrolling(rect: preselect.rect, display: display, intent: intent)
+                await runScrolling(rect: preselect.rect, display: display, intent: intent, preselected: true)
                 return
             }
             guard let selection = await selector.select(mode: .scrolling, content: content) else { return }
@@ -273,20 +274,28 @@ final class AppCoordinator {
 
     /// A scrolling capture of an area chosen in the overlay, which is still up: refuses one under
     /// 100 pt with the Phase 5 message, stores the previous area, dismisses the overlay, runs the
-    /// session and saves the stitched image like any capture.
-    private func runScrolling(rect: CGRect, display: SCDisplay, intent: CaptureIntent) async {
+    /// session and saves the stitched image like any capture. A URL command's rect (`preselected`)
+    /// opens the panel without making it key and is stored as the previous area only when the
+    /// stitched image is saved, so a cancelled session leaves Previous Area as it was.
+    private func runScrolling(rect: CGRect, display: SCDisplay, intent: CaptureIntent,
+                              preselected: Bool = false) async {
         guard rect.height >= CGFloat(ScrollCaptureLimits.minimumAreaHeightPoints) else {
             selector.dismiss()
             notifier.notifyError("Select an area at least 100 points tall.", title: "Scrolling capture")
             return
         }
-        settings.lastAreaRect = StoredRect(rect)
+        if !preselected {
+            settings.lastAreaRect = StoredRect(rect)
+        }
         selector.dismiss()
-        let outcome = await scrollCapture.run(rect: rect, display: display)
+        let outcome = await scrollCapture.run(rect: rect, display: display, makesPanelKey: !preselected)
         if let notice = outcome.failureNotice {
             notifier.notifyError(notice.body, title: notice.title)
         }
         if let image = outcome.imageToSave {
+            if preselected {
+                settings.lastAreaRect = StoredRect(rect)
+            }
             await save(CaptureResult(image: image.image, scale: image.scale,
                                      target: .area(rect: rect, display: display)), intent: intent)
         }

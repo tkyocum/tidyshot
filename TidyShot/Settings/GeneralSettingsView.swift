@@ -44,7 +44,7 @@ struct GeneralSettingsView: View {
                 Toggle("Allow URL commands (tidyshot://)", isOn: $settings.urlCommandsEnabled)
                 Toggle("Allow URL commands that capture without a selection", isOn: $settings.urlCommandsAllowSilent)
                     .disabled(!settings.urlCommandsEnabled)
-                Text("capture-fullscreen, capture-previous-area and capture-area with x, y, width and height capture at once. Any app on this Mac, and any web page you let open TidyShot, can send them.")
+                Text("capture-fullscreen, capture-previous-area and capture-area with x, y, width and height capture at once. Any app on this Mac, and any web page you let open TidyShot, can send them, and an allowed command lets the sending app read the result from the clipboard.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

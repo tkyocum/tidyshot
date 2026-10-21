@@ -198,6 +198,25 @@ struct URLCommandHandlerTests {
         #expect(target.calls.count == 2)
     }
 
+    /// A burst of capture URLs before launch runs only the first capture command; others still run.
+    @Test func onlyTheFirstQueuedCaptureCommandRuns() async throws {
+        settings.urlCommandsAllowSilent = true
+        let handler = await makeHandler(ready: false)
+        try await send(handler, "tidyshot://capture-area?action=bogus")
+        try await send(handler, "tidyshot://capture-window")
+        try await send(handler, "tidyshot://restore-recently-closed")
+        try await send(handler, "tidyshot://capture-fullscreen")
+        try await send(handler, "tidyshot://capture-scrolling?x=0&y=0&width=400&height=400")
+        try await send(handler, "tidyshot://all-in-one")
+        await handler.ready()
+        // The refused URL does not count as the first capture command.
+        #expect(target.calls == [.window(standard), .restore])
+        #expect(log.notices == [notice("Unknown action “bogus”. Use upload, save, copy, annotate or pin.")])
+        // Once started, URLs run as they come again.
+        try await send(handler, "tidyshot://capture-fullscreen")
+        #expect(target.calls == [.window(standard), .restore, .fullscreen(standard)])
+    }
+
     @Test func theQueueHoldsAtMostEightURLs() async throws {
         #expect(URLCommandHandler.queueLimit == 8)
         let handler = await makeHandler(ready: false)
