@@ -21,6 +21,9 @@ struct AllInOneToolbarPlacementTests {
     @Test func insideTheBottomEdgeWhenNeitherFits() {
         #expect(frame(screen) == CGRect(x: 500, y: 8, width: 440, height: 36))
         #expect(frame(CGRect(x: 100, y: 20, width: 600, height: 860)) == CGRect(x: 180, y: 28, width: 440, height: 36))
+        // A notched display: the menu bar band is off limits, so the toolbar sits inside the bottom edge.
+        #expect(frame(CGRect(x: 100, y: 20, width: 600, height: 820), screen: CGRect(x: 0, y: 0, width: 1440, height: 862))
+                == CGRect(x: 180, y: 28, width: 440, height: 36))
     }
 
     @Test func clampedToTheScreensSides() {

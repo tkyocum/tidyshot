@@ -100,8 +100,8 @@ nonisolated enum SelectionAdjust {
     static func resized(_ rect: CGRect, handle: SelectionHandle, to point: CGPoint, lockedRatio: CGFloat?,
                         bounds: CGRect, minSide: CGFloat) -> CGRect {
         guard handle != .inside else { return rect }
-        let p = CGPoint(x: min(max(point.x, bounds.minX), bounds.maxX),
-                        y: min(max(point.y, bounds.minY), bounds.maxY))
+        let p = CGPoint(x: min(max(point.x, bounds.minX), bounds.maxX).rounded(),
+                        y: min(max(point.y, bounds.minY), bounds.maxY).rounded())
         if let ratio = usableRatio(lockedRatio) {
             return lockedResize(rect, handle: handle, to: p, ratio: ratio, bounds: bounds, minSide: minSide)
         }
@@ -135,10 +135,10 @@ nonisolated enum SelectionAdjust {
         width = max(width, minSide, minSide * ratio)
         let roomWidth = horizontal ? (handle.movesMaxX ? bounds.maxX - rect.minX : rect.maxX - bounds.minX) : bounds.width
         let roomHeight = vertical ? (handle.movesMaxY ? bounds.maxY - rect.minY : rect.maxY - bounds.minY) : bounds.height
-        width = min(width, roomWidth, roomHeight * ratio)
-        let height = width / ratio
-        let x = horizontal ? (handle.movesMaxX ? rect.minX : rect.maxX - width) : rect.midX - width / 2
-        let y = vertical ? (handle.movesMaxY ? rect.minY : rect.maxY - height) : rect.midY - height / 2
+        width = min(width, roomWidth, roomHeight * ratio).rounded(.down)
+        let height = (width / ratio).rounded()
+        let x = horizontal ? (handle.movesMaxX ? rect.minX : rect.maxX - width) : (rect.midX - width / 2).rounded()
+        let y = vertical ? (handle.movesMaxY ? rect.minY : rect.maxY - height) : (rect.midY - height / 2).rounded()
         return fitted(CGRect(x: x, y: y, width: width, height: height), in: bounds)
     }
 
@@ -178,6 +178,8 @@ nonisolated enum SelectionAdjust {
             let shrink = min(1, bounds.width / w, bounds.height / h)
             w *= shrink
             h *= shrink
+            w = w.rounded()
+            h = h.rounded()
         } else {
             w = min(max(w, minSide), bounds.width)
             h = min(max(h, minSide), bounds.height)

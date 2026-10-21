@@ -190,6 +190,45 @@ struct SelectionAdjustTests {
         #expect(size(0, nil) == CGRect(x: 100, y: 296, width: 8, height: 4))
     }
 
+    /// Half-point pointers and odd typed sizes: the fixed edges stay put and every value is whole.
+    @Test func halfPointDragsKeepTheOppositeEdges() {
+        let left = resize(.left, to: 50.5, 200)
+        #expect(left == CGRect(x: 51, y: 100, width: 449, height: 200))
+        #expect(left.maxX == 500)
+        #expect(resize(.bottom, to: 300, 40.5).maxY == 300)
+        let locked = resize(.bottomRight, to: 601, 0, ratio: 2)
+        #expect(locked.maxY == 300)
+        #expect(locked.minX == 100)
+        for value in [locked.minX, locked.minY, locked.width, locked.height] {
+            #expect(value == value.rounded())
+        }
+    }
+
+    /// Bounds at x = 0 and y = 0 limit the width (roomWidth) or the height (roomHeight) of a locked resize.
+    @Test func aLockedResizeStopsAtTheLeftAndBottomBounds() {
+        // An edge: the pointer is clamped to the bounds; the other side grows about the centre.
+        #expect(resize(.left, to: -50, 200, ratio: 2) == CGRect(x: 0, y: 75, width: 500, height: 250))
+        #expect(resize(.bottom, to: 300, -50, ratio: 2) == CGRect(x: 0, y: 0, width: 600, height: 300))
+        // A corner: the room to the left (500) limits the width, so the height follows.
+        #expect(resize(.bottomLeft, to: -50, -50, ratio: 2) == CGRect(x: 0, y: 50, width: 500, height: 250))
+        #expect(resize(.topRight, to: 700, 400, ratio: 2) == CGRect(x: 100, y: 100, width: 600, height: 300))
+        #expect(resize(.bottomLeft, to: 300, 250, ratio: 2) == CGRect(x: 300, y: 200, width: 200, height: 100))
+    }
+
+    @Test func nudgesStopAtTheBounds() {
+        let nearRight = CGRect(x: 1040, y: 700, width: 400, height: 200)
+        #expect(SelectionAdjust.nudged(nearRight, key: .right, shift: false, bounds: bounds) == nearRight)
+        #expect(SelectionAdjust.nudged(nearRight, key: .up, shift: true, bounds: bounds) == nearRight)
+    }
+
+    @Test func aTypedLockedWidthKeepsTheTopEdge() {
+        let high = CGRect(x: 100, y: 200, width: 400, height: 200)
+        let result = SelectionAdjust.sized(high, width: 601, height: nil, lockedRatio: 2, bounds: bounds)
+        #expect(result.maxY == 400)
+        #expect(result.width == 601)
+        #expect(result.height == result.height.rounded())
+    }
+
     @Test func restoreKeepsARectOnItsDisplay() {
         #expect(SelectionAdjust.restored(rect, displayFrames: [main, right]) == rect)
         let second = CGRect(x: 2000, y: 500, width: 300, height: 300)
