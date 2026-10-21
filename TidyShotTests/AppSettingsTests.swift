@@ -253,6 +253,38 @@ struct AppSettingsTests {
         #expect(AppSettings(defaults: defaults).selfTimerSeconds == 3)
     }
 
+    /// Phase 7c: Add background to window captures is off, and the style is the default one.
+    @Test func windowBackgroundDefaultsOffAndPersists() {
+        let defaults = freshDefaults()
+        let first = AppSettings(defaults: defaults)
+        #expect(!first.windowBackground)
+        first.windowBackground = true
+        #expect(defaults.object(forKey: "windowBackground") as? Bool == true)
+        #expect(AppSettings(defaults: defaults).windowBackground)
+    }
+
+    @Test func backgroundStyleIsStoredAsJSONAndRoundTrips() throws {
+        let defaults = freshDefaults()
+        let first = AppSettings(defaults: defaults)
+        #expect(first.backgroundStyle == BackgroundStyle())
+        let style = BackgroundStyle(fill: .solid(RGBA(hex: 0x336699)), padding: 80, cornerRadius: 4,
+                                    shadow: false, aspect: .sixteenNine)
+        first.backgroundStyle = style
+        let data = try #require(defaults.data(forKey: "backgroundStyle"))
+        #expect(try JSONDecoder().decode(BackgroundStyle.self, from: data) == style)
+        #expect(AppSettings(defaults: defaults).backgroundStyle == style)
+    }
+
+    /// JSON that does not decode, or names a fill or aspect this build does not know (written by a
+    /// newer build), reads as the default style.
+    @Test func anUnreadableBackgroundStyleReadsAsTheDefault() {
+        let defaults = freshDefaults()
+        for json in ["not json", #"{"aspect":"twentyOneNine"}"#, #"{"fill":{"video":{}}}"#] {
+            defaults.set(Data(json.utf8), forKey: "backgroundStyle")
+            #expect(AppSettings(defaults: defaults).backgroundStyle == BackgroundStyle())
+        }
+    }
+
     @Test func urlCommandsAreOnAndSilentCapturesOffByDefault() {
         let settings = AppSettings(defaults: freshDefaults())
         #expect(settings.urlCommandsEnabled)
