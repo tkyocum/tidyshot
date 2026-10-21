@@ -434,6 +434,28 @@ Neither older writer can clobber an edited thumbnail:
 - The `.tidyshot` project package. It is local only and never uploaded, and a warning says it keeps the unredacted original.
 - The after-capture open-editor option.
 
+### 2.7 To-do: optimise images with Clop before upload (2026-10-20)
+
+**Request.** Dropshare's Images setting "Optimize images with Clop" (a checkbox with the caption "Clop is an image optimizer that greatly reduces file size.") shrinks images before they upload. TidyShot gets the same option for people who have [Clop](https://lowtechguys.com/clop) installed. Tim owns the paid version.
+
+**Integration.** [ClopSDK](https://github.com/FuzzyIdeas/ClopSDK) is an MIT-licensed Swift package that sends files to the running Clop app over a local Mach port (`com.lowtechguys.Clop.optimisationService`) and returns an `OptimisationResponse` (`path`, `oldBytes`, `newBytes`, sizes). Its main call is `optimise(url:aggressive:downscaleTo:...:hideGUI:copyToClipboard:inTheBackground:) throws`; `waitForClopToBeAvailable(for:)` checks that Clop is reachable. The Clop app itself is GPLv3; TidyShot only talks to it and never reads or copies its code, which keeps decision 7.
+
+**Behaviour.**
+- **Setting.** The Upload tab gains "Optimize images with Clop" with the caption above, off by default. It is enabled only when Clop is installed (`/Applications/Clop.app`, `/Applications/Setapp/Clop.app`, or a running app whose bundle identifier starts with `com.lowtechguys.Clop`). Otherwise the box is disabled, with a link to the Clop site.
+- **When.** After the PNG is written and before the PUT, the coordinator hands Clop a copy in the container, with `hideGUI: true` and `copyToClipboard: false`, and uploads the bytes Clop returns. The save-folder file stays as captured. The uploaded object and an upload-only pending file are optimised. Editor uploads go through the same step.
+- **Never lose a capture.** Clop is unavailable after a short wait, an optimisation throws or times out, or the result is larger: TidyShot uploads the original bytes, logs why, and posts no error.
+- **Format.** If Clop converts the file (its own settings can turn PNG into JPEG), the object key's extension and the Content-Type follow the returned file.
+
+**Open questions, settle before planning.**
+1. **Sandbox.** A sandboxed app cannot look up another app's Mach port without `com.apple.security.temporary-exception.mach-lookup.global-name` for the port names. That is the first new entitlement since Phase 0 and amends the "no new entitlements" constraint. Verify whether it is needed, and whether it blocks a future Mac App Store build.
+2. **File access.** Clop must read the file TidyShot hands it. A file inside TidyShot's container may trigger macOS's prompt for one app reading another app's data. Test this, and if it prompts, hand Clop a file in a location it can read without asking.
+3. **Output path.** The SDK passes an optional output path; check whether Clop optimises in place or writes beside the original, and where.
+4. **DPI.** Check whether optimised PNGs keep the 144 DPI metadata; browsers ignore it, but a pasted image would show at double size without it.
+5. **Licensing.** Confirm whether SDK requests need Clop Pro.
+6. **Dependency.** ClopSDK becomes the second Swift package, which amends the "KeyboardShortcuts as the only package" constraint.
+
+**Placement.** About a day of work once the open questions are settled. It sits with the Phase 7 extras but can be pulled forward after Phase 4b.
+
 ## 3. Core workflow in detail
 
 ```
@@ -550,6 +572,7 @@ Design in 2.6. One release in two PRs.
 - URL scheme (`tidyshot://capture-area?action=upload` and friends).
 
 ### Phase 7: extras (as wanted)
+- Optimise images with Clop before upload (see 2.7); can be pulled forward after Phase 4b.
 - Background tool and window-with-background.
 - OCR via Vision, QR codes.
 - Hide desktop icons during capture.
