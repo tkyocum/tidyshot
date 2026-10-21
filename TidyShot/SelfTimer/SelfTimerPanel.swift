@@ -29,14 +29,15 @@ struct SelfTimerBadge: View {
 }
 
 /// Borderless, non-activating and click-through, so the app the user is working in keeps the
-/// focus, its menus and its keys during the countdown. The capture stream excludes it with the
-/// rest of TidyShot and the stage orders it out before the capture anyway.
+/// focus, its menus and its keys during the countdown. Nothing excludes it from the capture: the
+/// stage orders it and the dashed frame out, and waits for the screen to settle, before capturing.
 final class SelfTimerPanel: NSPanel {
     init(model: SelfTimerModel, frame: CGRect) {
         super.init(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel],
                    backing: .buffered, defer: false)
-        level = .screenSaver
+        // isFloatingPanel resets the level to .floating, so it must come first.
         isFloatingPanel = true
+        level = .screenSaver
         hidesOnDeactivate = false
         ignoresMouseEvents = true
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]

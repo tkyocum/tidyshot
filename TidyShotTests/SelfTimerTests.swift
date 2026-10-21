@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import Foundation
 import Testing
@@ -150,5 +151,13 @@ struct SelfTimerTests {
         #expect(inside == CGRect(x: -898, y: 152, width: 96, height: 96))
         let edge = SelfTimerGeometry.badgeFrame(around: CGRect(x: -1930, y: -210, width: 20, height: 20), in: second)
         #expect(edge == CGRect(x: -1920, y: -200, width: 96, height: 96))
+    }
+
+    /// The badge sits at the screen-saver level; isFloatingPanel would otherwise reset it.
+    @Test func theBadgeSitsAtTheScreenSaverLevel() {
+        let model = SelfTimerModel()
+        model.seconds = 3
+        let panel = SelfTimerPanel(model: model, frame: CGRect(x: 0, y: 0, width: 120, height: 120))
+        #expect(panel.level == .screenSaver)
     }
 }
