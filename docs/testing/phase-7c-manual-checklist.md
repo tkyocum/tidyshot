@@ -74,7 +74,7 @@ capture of 800 x 1200 pt is 1600 x 2400 px, and its canvas is 1792 x 2592 px.
 ## The Settings sheet
 - [ ] The `Done` button closes the sheet and leaves the Settings window open on the Capture tab. Return does the same (it is the default button). Reopen: the style is as you left it.
 - [ ] `Done` also closes the sheet after you have opened the colour panel from the Solid Colour swatch, and after you have used `Choose Image…` (cancel the open panel too).
-- [ ] Change the style in the sheet (swatch, both sliders, Shadow, Aspect Ratio), close it and read `defaults read io.tky.tidyshot backgroundStyle`: JSON that matches. Quit and reopen: the sheet shows the same style.
+- [ ] Change the style in the sheet (swatch, both sliders, Shadow, Aspect Ratio), close it and read the style: `defaults read io.tky.tidyshot backgroundStyle` prints a data blob, not JSON, so use `defaults export io.tky.tidyshot - | plutil -extract backgroundStyle raw -o - - | base64 -d` (or, on the plist itself, `plutil -extract backgroundStyle raw -o - ~/Library/Containers/io.tky.tidyshot/Data/Library/Preferences/io.tky.tidyshot.plist | base64 -d`). It prints JSON that matches. Quit and reopen: the sheet shows the same style.
 - [ ] A slider moves live and every value shows in points (`48 pt`). Padding stops at 0 and 160, Corner Radius at 0 and 40.
 - [ ] Hover each of the twelve gradient swatches: the tool tip is its name, in order Sunset, Ocean, Grape, Peach, Mint, Midnight, Sky, Flamingo, Forest, Lemon, Slate, Berry. Then come `Desktop Picture`, `Solid Colour` and `Custom Image`. Five swatches a row, fifteen in all. The chosen one has an accent ring, and only one at a time.
 - [ ] The Aspect Ratio picker lists `Auto`, `1:1`, `4:3`, `3:2`, `16:10` and `16:9`.
@@ -166,7 +166,7 @@ For the 1200 x 800 pt capture (2400 x 1600 px), Padding 48 (a 2592 x 1792 px min
 
 ## Copy, Save, Save As… and Upload
 With a background on, Padding 48, a visible fill.
-- [ ] Copy (⌘⇧C, or the toolbar button): paste into Preview > File > New from Clipboard. It is the composed image: the fill, the padding, the round corners and the shadow, with annotations.
+- [ ] Copy (⇧⌘C, or ⌘C with nothing selected, since ⌘C with an annotation selected copies the object; or the toolbar button): paste into Preview > File > New from Clipboard. It is the composed image: the fill, the padding, the round corners and the shadow, with annotations.
 - [ ] Save (⌘S) on a capture with a local file: the file in the save folder is the composed image (open it). The editor is clean afterwards. The capture's recorded size and thumbnail in Recent Captures follow: the thumbnail shows the background and the size is the canvas's.
 - [ ] Annotate the saved capture again: it opens as the composed image, flat. The popover's switch is off, because the file is the image; turning it on adds a second background around the first. Write down whether that is what you expect.
 - [ ] Save As… (⇧⌘S): the file is the composed image; the capture and its record are unchanged.

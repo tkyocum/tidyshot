@@ -57,6 +57,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
     private var fillTask: Task<Void, Never>?
     /// The last desktop picture or custom image read, so a slider drag only redraws the fill.
     private var fillSource: (key: BackgroundFillKey, image: CGImage?)?
+    /// Watches for a Space change, which can show another wallpaper; removed when the window closes.
+    private var spaceObserver: NSObjectProtocol?
 
     #if DEBUG
     private static var loggedMainMenu = false
@@ -98,6 +100,10 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
         placeWindow(cascadeFrom: cascadeFrom)
         observeEdited()
         observeBackgroundFill()
+        spaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshDesktopPicture() }
+        }
     }
 
     @available(*, unavailable)
@@ -367,6 +373,15 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
         }
     }
 
+    /// Reads the wallpaper again and re-renders the fill, while a desktop-picture background shows.
+    /// The cached source is keyed by display, so a new wallpaper or Space would not change the key.
+    private func refreshDesktopPicture() {
+        guard let key = backgroundFillKey, key.fill == .desktopPicture else { return }
+        fillSource = nil
+        renderedFill = nil
+        renderBackgroundFill(for: key)
+    }
+
     /// The desktop picture or the custom image for `key` (nil for a gradient or a colour), read
     /// again only when the fill, the display or the stored image changed.
     private func fillSourceImage(for key: BackgroundFillKey) async -> CGImage? {
@@ -378,7 +393,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
             sourceKey.size = .zero
             if let fillSource, fillSource.key == sourceKey { return fillSource.image }
             let image = await BackgroundFillSource.fillImage(for: key.fill, displayID: key.displayID)
-            fillSource = (sourceKey, image)
+            // A refresh cancelled this render and cleared the cache; its image may be the old wallpaper.
+            if !Task.isCancelled { fillSource = (sourceKey, image) }
             return image
         }
     }
@@ -480,12 +496,17 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
     }
 
     func windowWillClose(_ notification: Notification) {
+        if let spaceObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(spaceObserver)
+            self.spaceObserver = nil
+        }
         onClose?(self)
     }
 
-    /// A desktop-picture background follows the display under the window.
+    /// A desktop-picture background follows the display under the window, and its wallpaper is read
+    /// again, since the new screen may show another one.
     func windowDidChangeScreen(_ notification: Notification) {
-        renderBackgroundFill(for: backgroundFillKey)
+        refreshDesktopPicture()
     }
 
     /// The Background popover's `Choose Image…` was given a file that does not decode.

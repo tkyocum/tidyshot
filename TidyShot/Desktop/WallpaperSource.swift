@@ -5,9 +5,10 @@ import ScreenCaptureKit
 /// covers above it do not show in the capture.
 nonisolated struct WallpaperSource: Sendable {
     /// One image per display, at the display's frame times its scale. A display with no wallpaper
-    /// window, or whose capture fails, is left out.
+    /// window, or whose capture fails, is left out. With `displayID`, only that display's wallpaper
+    /// is captured.
     @concurrent
-    func wallpapers() async -> [CGDirectDisplayID: CGImage] {
+    func wallpapers(only displayID: CGDirectDisplayID? = nil) async -> [CGDirectDisplayID: CGImage] {
         guard let content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         else { return [:] }
         let candidates = content.windows.map {
@@ -15,7 +16,8 @@ nonisolated struct WallpaperSource: Sendable {
                                title: $0.title, layer: $0.windowLayer, frame: $0.frame)
         }
         let matches: [(displayID: CGDirectDisplayID, window: SCWindow)] = content.displays.compactMap { display in
-            guard let id = WallpaperMatcher.match(candidates, displayFrame: display.frame),
+            guard displayID == nil || display.displayID == displayID,
+                  let id = WallpaperMatcher.match(candidates, displayFrame: display.frame),
                   let window = content.windows.first(where: { $0.windowID == id })
             else { return nil }
             return (display.displayID, window)

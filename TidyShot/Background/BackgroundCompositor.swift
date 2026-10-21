@@ -1,4 +1,5 @@
 import CoreGraphics
+import Foundation
 
 /// Puts a capture on a background. CoreGraphics only: it runs off the main actor and needs no
 /// NSGraphicsContext.
@@ -72,6 +73,7 @@ nonisolated enum BackgroundCompositor {
             if let fillImage, fillImage.width > 0, fillImage.height > 0 {
                 drawAspectFill(fillImage, in: context, canvas: canvas)
             } else {
+                NSLog("%@", "Background: no image for \(fill == .desktopPicture ? "desktopPicture" : "customImage"), drawing the first gradient")
                 drawGradient(0, in: context, canvas: canvas, space: space)
             }
         case .gradient(let index):

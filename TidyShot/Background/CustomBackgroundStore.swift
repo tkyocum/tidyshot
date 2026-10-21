@@ -61,8 +61,9 @@ nonisolated struct CustomBackgroundStore: Sendable {
 
     /// A small copy of the stored image for the style editor's swatch, or nil.
     func preview(maxSide: Int) -> CGImage? {
-        guard let source = CGImageSourceCreateWithURL(fileURL as CFURL, nil) else { return nil }
-        return ThumbnailMaker.thumbnail(from: source, maxSide: maxSide)
+        // `scaled`, not `thumbnail`, which cuts a tall image to its top.
+        guard let image = image() else { return nil }
+        return ThumbnailMaker.scaled(image, maxSide: maxSide)
     }
 
     /// `Application Support/TidyShot/Backgrounds` (inside the sandbox container).

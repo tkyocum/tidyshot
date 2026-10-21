@@ -84,11 +84,26 @@ struct BackgroundLayoutTests {
     }
 
     @Test func nilWhenTheCanvasIsTooBig() throws {
-        // 16,384 + 2 x 8,192 is exactly 32,768; one more pixel of padding is over.
-        let edge = try #require(layout(16_384, 100, padding: 8_192))
-        #expect(edge.canvasSize.width == 32_768)
+        // 16,384 + 2 x 8,192 is 32,768 wide, and over the area limit with the padding on the height too.
+        #expect(layout(16_384, 100, padding: 8_192) == nil)
         #expect(layout(16_384, 100, padding: 8_193) == nil)
         #expect(layout(100, 100, padding: 160, scale: 1_000) == nil)
+    }
+
+    @Test func canvasAreaIsLimited() throws {
+        // 16,382 + 2 is 16,384 a side, exactly the limit; one more pixel of padding is over.
+        let edge = try #require(layout(16_382, 16_382, padding: 1))
+        #expect(edge.canvasSize == CGSize(width: 16_384, height: 16_384))
+        #expect(layout(16_382, 16_382, padding: 1.5, scale: 1) == nil)
+        #expect(layout(16_381, 16_381, padding: 1) != nil)
+        #expect(layout(16_384, 16_384, padding: 1) == nil)
+    }
+
+    @Test func squareAspectOfATallScrollingCaptureIsOverTheAreaLimit() {
+        // A 1:1 canvas for content 16,000 px tall is as wide as it is tall (about 1 GB at 4 bytes a
+        // pixel); the padding decides whether that passes 16,384 x 16,384.
+        #expect(layout(1_000, 16_000, padding: 50, aspect: .square, scale: 2) != nil)
+        #expect(layout(1_000, 16_000, padding: 100, aspect: .square, scale: 2) == nil)
     }
 
     @Test func emptyContentHasNoLayout() {

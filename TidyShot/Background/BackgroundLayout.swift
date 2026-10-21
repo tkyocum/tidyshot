@@ -6,6 +6,8 @@ nonisolated struct BackgroundLayout: Equatable, Sendable {
     static let maximumContentSide = 16_384
     /// The longest side of the finished canvas.
     static let maximumCanvasSide = 32_768
+    /// The most pixels the finished canvas may have (16,384 x 16,384, about 1 GB at 4 bytes each).
+    static let maximumCanvasArea = 16_384 * 16_384
 
     let canvasSize: CGSize
     /// The content's place on the canvas, top-left origin, whole pixels.
@@ -13,8 +15,8 @@ nonisolated struct BackgroundLayout: Equatable, Sendable {
     /// The corner radius of the content, in pixels.
     let radius: CGFloat
 
-    /// The layout for content of `contentSize` pixels, or nil when the content or the canvas is
-    /// too large to draw (or the content is empty).
+    /// The layout for content of `contentSize` pixels, or nil when the content or the canvas (a side
+    /// or the area) is too large to draw (or the content is empty).
     static func make(contentSize: CGSize, style: BackgroundStyle, scale: CGFloat) -> BackgroundLayout? {
         let contentWidth = Int(contentSize.width.rounded(.up))
         let contentHeight = Int(contentSize.height.rounded(.up))
@@ -35,7 +37,8 @@ nonisolated struct BackgroundLayout: Equatable, Sendable {
                 height = (width * terms.height + terms.width - 1) / terms.width
             }
         }
-        guard width <= maximumCanvasSide, height <= maximumCanvasSide else { return nil }
+        guard width <= maximumCanvasSide, height <= maximumCanvasSide,
+              width * height <= maximumCanvasArea else { return nil }
 
         let origin = CGPoint(x: (width - contentWidth) / 2, y: (height - contentHeight) / 2)
         let radius = min(max(0, style.cornerRadius * Double(scale)),

@@ -14,10 +14,11 @@ nonisolated enum BackgroundFillSource {
         }
     }
 
-    /// The wallpaper of `displayID`, or of the main display when nil, through 7b's `WallpaperSource`.
+    /// The wallpaper of `displayID`, or of the main display when nil, through 7b's `WallpaperSource`,
+    /// which captures only that display's wallpaper window.
     @concurrent
     static func desktopPicture(displayID: CGDirectDisplayID?) async -> CGImage? {
         let id = displayID ?? CGMainDisplayID()
-        return await WallpaperSource().wallpapers()[id]
+        return await WallpaperSource().wallpapers(only: id)[id]
     }
 }
