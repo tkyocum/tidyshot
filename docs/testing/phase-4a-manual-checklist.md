@@ -5,6 +5,10 @@ or delete paths. Automated tests cover the editor model and undo, the geometry, 
 the decision tables for Save, Upload, the clipboard and the shortcuts, and the redaction export end
 to end (`RedactionExportTests`); everything here needs real windows, a real bucket and eyes.
 
+Phase 4b added six tools (Ellipse, Line, Pencil, Highlighter, Text, Crop). Where an item below lists
+the six 4a tools, the toolbar and tool-letter items of `phase-4b-manual-checklist.md` list all
+twelve; this checklist's other sections are unchanged.
+
 Setup: fresh build, Screen Recording granted, save folder set to Desktop, a working destination
 saved in Settings > Upload (served through CloudFront for the Caches section), "Show notification"
 on in Settings > General, "Show Quick Access overlay after capture" on in Settings > Overlay, and

@@ -19,4 +19,9 @@ nonisolated struct RGBA: Codable, Equatable, Sendable {
     var cgColor: CGColor {
         CGColor(srgbRed: CGFloat(red), green: CGFloat(green), blue: CGFloat(blue), alpha: CGFloat(alpha))
     }
+
+    /// The same colour at `alpha`.
+    func withAlpha(_ alpha: Double) -> RGBA {
+        RGBA(red: red, green: green, blue: blue, alpha: alpha)
+    }
 }

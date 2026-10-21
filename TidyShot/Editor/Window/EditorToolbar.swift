@@ -33,8 +33,8 @@ extension EditorWindowController: NSToolbarDelegate, NSToolbarItemValidation {
 
     /// The narrowest content width that shows every item of `itemIdentifiers`: the window buttons
     /// and the title measured from the window, the zoom pop-up at its fixed width, and the items
-    /// AppKit draws itself (the six tool segments; Colour, Options, Copy and Save; the prominent
-    /// Upload; the fixed space) from `EditorWindowGeometry.ToolbarMetrics`.
+    /// AppKit draws itself (one segment per tool in `EditorTool.toolbarOrder`; Colour, Options,
+    /// Copy and Save; the prominent Upload; the fixed space) from `EditorWindowGeometry.ToolbarMetrics`.
     func minimumToolbarContentWidth() -> CGFloat {
         guard let window else { return EditorWindowGeometry.minimumContentSize.width }
         let measured = [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton]
@@ -177,6 +177,7 @@ extension EditorWindowController: NSToolbarDelegate, NSToolbarItemValidation {
     /// view centre, through `CanvasView` like ⌘=, so the canvas stops refitting on resize and
     /// redraws at once.
     @objc func zoomToPercent(_ sender: NSMenuItem) {
+        canvasView.commitTextEditing()
         canvasView.zoom(to: CGFloat(sender.tag) / 100 / model.scale)
     }
 

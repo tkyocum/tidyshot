@@ -1047,6 +1047,12 @@ final class AppCoordinator {
             copy: { [weak self] image in
                 await self?.editorCopy(recordID: recordID, image: image)
             },
+            objectClipboard: EditorObjectClipboard(
+                // An object copy is not an image: clipboardOwner is left alone. The write moves the
+                // change count, so the clipboard rule will not replace the object after a Save.
+                copy: { data in Pasteboard.copy(annotationClip: data) },
+                paste: { Pasteboard.annotationClipData() },
+                canPaste: { Pasteboard.hasAnnotationClip }),
             upload: { [weak self] image, asNew in
                 await self?.editorUpload(recordID: recordID, image: image, asNew: asNew) ?? .refused
             })

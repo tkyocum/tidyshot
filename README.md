@@ -94,29 +94,51 @@ The pencil button on the Quick Access overlay opens the capture in the editor. E
 row has the same button, which also works with the overlay turned off; a capture with no local
 file left is downloaded from the bucket first.
 
-Tools and their keys: Select `V`, Redact `D`, Pixelate `X`, Blur `B`, Rectangle `R`, Arrow `A`.
-Shift squares a box and snaps an arrow to 45 degrees; Option draws a box from its centre. Keys `1`
-to `6` set the line width to 2, 3, 4, 6, 8 or 12 points. With Select, the arrow keys move the
-selection by one pixel (ten with Shift), Delete removes it and Escape deselects. The colour and
-options buttons in the toolbar set the colour, line width, blur radius and pixel size for the tool
-and the selection, and the editor remembers them. At the right of the toolbar are Copy, Save (the
-downward arrow) and Upload (the cloud). The window is never narrower than its toolbar, so every
-button stays in view.
+Tools and their keys: Select `V`, Redact `D`, Pixelate `X`, Blur `B`, Rectangle `R`, Arrow `A`,
+Ellipse `E`, Line `L`, Pencil `P`, Highlighter `H`, Text `T`, Crop `C`. Shift squares a box (a
+circle for Ellipse) and snaps an arrow or a line to 45 degrees; Option draws a box from its centre.
+Keys `1` to `6` set the line width to 2, 3, 4, 6, 8 or 12 points, or, with Text, the text size to
+12, 16, 20, 28, 40 or 56 points. With Select, the arrow keys move the selection by one pixel (ten
+with Shift), Delete removes it and Escape deselects. The colour and options buttons in the toolbar
+set the colour, line width, blur radius and pixel size for the tool and the selection, and the
+editor remembers them. At the right of the toolbar are Copy, Save (the downward arrow) and Upload
+(the cloud). The window is never narrower than its toolbar, so every button stays in view.
+
+Pencil draws a smoothed freehand line. Highlighter draws a wide yellow stroke at 45% opacity that
+darkens what it covers, so dark text stays readable under it. Text: click to place a text and
+type; Return commits, Shift-Return starts a new line, Escape cancels and clicking elsewhere
+commits. Click committed text with Text, or double-click it with Select, to edit it again. While
+you edit, ⌘C, ⌘X, ⌘V, ⌘A and ⌘Z act on the text, and one ⌘Z after committing undoes the whole
+text. Crop: press `C`, drag the eight handles or drag out a new rectangle (the readout shows its
+size in pixels), and press Return to apply or Escape to cancel; picking another tool applies it.
+A crop is undoable and applies last, so Save, Save As…, Copy and Upload all produce the cropped
+image, the capture's recorded size and thumbnail follow it, and nothing outside the crop is in the
+saved or uploaded file. Under an applied crop the covered area is not clickable: Select deselects
+there, Text ignores the press and the drawing tools start at the crop's edge. A paste lands inside
+the crop, and VoiceOver lists only the annotations that reach into it.
+
+⌘D duplicates the selection 10 points down and to the right, and with Select, dragging it with
+Option held drags a copy. ⌘C copies the selected object and ⌘V pastes it, in the same editor or
+another one, at the same size in points; with nothing selected ⌘C still copies the image. Hold
+Space and drag to pan. Each annotation is an accessibility element, so VoiceOver can read the
+canvas.
 
 | Action | Shortcut |
 |---|---|
 | Save (over the file, or Save As… with no file) | ⌘S |
 | Save As… | ⇧⌘S |
-| Copy image | ⌘C or ⇧⌘C |
+| Copy image (⌘C copies the selected object instead) | ⌘C or ⇧⌘C |
 | Upload (same link) and close | ⌘U |
 | Upload as New | ⌥⌘U |
 | Undo, redo | ⌘Z, ⇧⌘Z |
+| Duplicate the selection | ⌘D |
+| Paste an object copied with ⌘C | ⌘V |
 | Close | ⌘W |
 | Zoom to fit, actual size | ⌘0, ⌘1 |
 | Zoom in, out | ⌘=, ⌘- |
 | Select all | ⌘A |
 
-Pinch or ⌘-scroll to zoom around the pointer; scroll to pan.
+Pinch or ⌘-scroll to zoom around the pointer; scroll, or hold Space and drag, to pan.
 
 Only Redact is safe for passwords, tokens and keys. Pixelate and Blur hide text at a glance, but
 public tools can partly recover pixelated or blurred text. A blur or pixelate drawn over a
@@ -174,3 +196,4 @@ Cancelling the save panel keeps the editor open.
 - Phase 3 manual test checklist: `docs/testing/phase-3-manual-checklist.md`
 - Phase 3.1 manual test checklist: `docs/testing/phase-3-1-manual-checklist.md`
 - Phase 4a manual test checklist: `docs/testing/phase-4a-manual-checklist.md`
+- Phase 4b manual test checklist: `docs/testing/phase-4b-manual-checklist.md`

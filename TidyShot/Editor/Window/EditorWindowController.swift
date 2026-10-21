@@ -2,6 +2,15 @@ import AppKit
 import Observation
 import UniformTypeIdentifiers
 
+/// The pasteboard as object copy and paste see it (4b). AppCoordinator implements it, because the
+/// editor never touches the pasteboard.
+struct EditorObjectClipboard {
+    var copy: (Data) -> Void
+    var paste: () -> Data?
+    /// A type check only; validation calls it often.
+    var canPaste: () -> Bool
+}
+
 /// What the editor's document actions do, provided by AppCoordinator: the editor never writes
 /// files, never touches the pasteboard and never enqueues uploads. For Save and Save As… the Bool
 /// says whether the edit was written, which is when the editor marks itself saved; Upload reports
@@ -13,6 +22,7 @@ struct EditorActions {
     /// The save panel's suggested name and folder, read when the panel opens.
     var saveAsSuggestion: () -> EditorNaming.SaveAsSuggestion
     var copy: (ScaledImage) async -> Void
+    var objectClipboard: EditorObjectClipboard
     var upload: (ScaledImage, _ asNew: Bool) async -> EditorUploadOutcome
 }
 
@@ -47,6 +57,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
         baseView.image = model.base
         let canvasView = CanvasView(model: model, baseView: baseView)
         self.canvasView = canvasView
+        canvasView.objectClipboard = actions.objectClipboard
 
         let window = EditorWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 420),
                                   styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -154,24 +165,27 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
 
     /// ⌘S: writes over the record's file, or runs Save As… when there is none to write over.
     @objc func saveDocument(_ sender: Any?) {
+        canvasView.commitTextEditing()
         guard permits(#selector(saveDocument(_:))) else { return }
         runDocumentTask { await self.performSave() }
     }
 
     /// ⇧⌘S: always available, also while the record uploads or is deleted.
     @objc func saveDocumentAs(_ sender: Any?) {
+        canvasView.commitTextEditing()
         guard permits(#selector(saveDocumentAs(_:))) else { return }
         runDocumentTask { await self.performSaveAs() }
     }
 
-    /// ⌘C. In 4a it copies the flattened image, like ⇧⌘C; 4b gives CanvasView an object copy that
-    /// passes this up when nothing is selected.
+    /// ⌘C with nothing selected: copies the flattened image, like ⇧⌘C. With a selection CanvasView
+    /// takes copy: first (object copy) and this is not reached.
     @objc func copy(_ sender: Any?) {
         guard permits(#selector(copy(_:))) else { return }
         copyImage(sender)
     }
 
     @objc func copyImage(_ sender: Any?) {
+        canvasView.commitTextEditing()
         guard permits(#selector(copyImage(_:))) else { return }
         runDocumentTask {
             await self.exportAndDeliver(marksSaved: false) { image in
@@ -184,12 +198,14 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
     /// ⌘U: uploads the edit at once. Once the upload is enqueued the window closes; the link
     /// reaches the clipboard when the upload finishes.
     @objc func uploadDocument(_ sender: Any?) {
+        canvasView.commitTextEditing()
         guard permits(#selector(uploadDocument(_:))) else { return }
         runDocumentTask { await self.performUpload(asNew: false) }
     }
 
     /// ⌥⌘U, a shortcut only: as ⌘U, under a new link.
     @objc func uploadDocumentAsNew(_ sender: Any?) {
+        canvasView.commitTextEditing()
         guard permits(#selector(uploadDocumentAsNew(_:))) else { return }
         runDocumentTask { await self.performUpload(asNew: true) }
     }
@@ -267,6 +283,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
     /// The flattened image and the document it was made from, or nil (with a beep) when the
     /// export failed.
     private func export() async -> (ScaledImage, AnnotationDocument)? {
+        // A crop still being edited is what the window shows, so it is applied (one undo step) first.
+        model.applyCrop()
         let exported = model.document
         guard let image = await model.renderExport() else {
             NSLog("Editor: the export of \(model.recordID) failed")
@@ -278,10 +296,25 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
 
     // MARK: Zoom
 
-    @objc func zoomToFit(_ sender: Any?) { canvasView.fitToView() }
-    @objc func zoomToActualSize(_ sender: Any?) { canvasView.zoom(to: 1 / model.scale) }
-    @objc func zoomIn(_ sender: Any?) { canvasView.zoom(by: 1.25) }
-    @objc func zoomOut(_ sender: Any?) { canvasView.zoom(by: 1 / 1.25) }
+    @objc func zoomToFit(_ sender: Any?) {
+        canvasView.commitTextEditing()
+        canvasView.fitToView()
+    }
+
+    @objc func zoomToActualSize(_ sender: Any?) {
+        canvasView.commitTextEditing()
+        canvasView.zoom(to: 1 / model.scale)
+    }
+
+    @objc func zoomIn(_ sender: Any?) {
+        canvasView.commitTextEditing()
+        canvasView.zoom(by: 1.25)
+    }
+
+    @objc func zoomOut(_ sender: Any?) {
+        canvasView.commitTextEditing()
+        canvasView.zoom(by: 1 / 1.25)
+    }
 
     // MARK: NSUserInterfaceValidations
 
@@ -304,6 +337,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
     // MARK: Closing
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
+        canvasView.commitTextEditing()
         guard model.hasUnsavedChanges else { return true }
         Task {
             if await askToSaveBeforeClosing() {
@@ -319,6 +353,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
     /// there is nothing to write over); it becomes Save As… when this controller's own validation
     /// refuses Save.
     func askToSaveBeforeClosing() async -> Bool {
+        canvasView.commitTextEditing()
         guard model.hasUnsavedChanges else { return true }
         guard let window, window.attachedSheet == nil, !isPerformingAction else {
             NSSound.beep()
@@ -357,5 +392,10 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
 
     func windowWillClose(_ notification: Notification) {
         onClose?(self)
+    }
+
+    /// Space's key-up goes elsewhere once the window is not key, so the pan key is let go here.
+    func windowDidResignKey(_ notification: Notification) {
+        canvasView.endSpacePan()
     }
 }

@@ -18,6 +18,7 @@ nonisolated struct ToolInput: Equatable, Sendable {
 ///   colours and sizes. It reuses the transient's id, so one drag keeps one id, and returns nil
 ///   for Select, an empty rect and a zero-length arrow.
 /// - A nil `transient` at mouseUp means Escape abandoned the drag; the tool commits nothing.
+/// - `beginTextEditing` hands typing to the canvas; the edit commits when it ends, not on mouseUp.
 protocol CanvasEditing: AnyObject {
     var document: AnnotationDocument { get }
     /// View points per image pixel.
@@ -27,8 +28,19 @@ protocol CanvasEditing: AnyObject {
     /// The shape in progress. Never undoable.
     var transient: Annotation? { get set }
     var selection: UUID? { get set }
+    /// The Crop tool's rect while cropping (4b), in image pixels; nil otherwise. Never undoable:
+    /// Return applies it as one commit, Escape drops it.
+    var cropDraft: CGRect? { get set }
+    /// The capture's size in image pixels.
+    var imageSize: CGSize { get }
     func commit(_ new: AnnotationDocument, actionName: String, coalescingKey: String?)
     func makeAnnotation(_ tool: EditorTool, from: CGPoint, to: CGPoint) -> Annotation?
+    /// Builds the freehand stroke for Pencil or Highlighter from the decimated points with the
+    /// current colour and width, reusing the transient's id. Nil for fewer than two points and for
+    /// any other tool.
+    func makeStroke(_ tool: EditorTool, points: [CGPoint]) -> Annotation?
+    /// Starts typing a text annotation: `existing` again, or a new box at `point` (4b).
+    func beginTextEditing(at point: CGPoint, existing id: UUID?)
 }
 
 /// Turns pointer events into a transient shape and one commit per gesture. `makeTool(for:)` in

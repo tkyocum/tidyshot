@@ -5,6 +5,11 @@ import Foundation
 /// holds the CGImage next to the document and never changes it.
 nonisolated struct AnnotationDocument: Codable, Equatable, Sendable {
     var annotations: [Annotation] = []
+    /// The part of the capture export keeps, in image pixels (top-left origin), as
+    /// `CropGeometry.integralCrop` gives it: whole pixels, inside the image, never the whole image.
+    /// Nil keeps the whole capture. `EditorFlattener` applies it last. Optional, so the synthesized
+    /// decoder reads it with `decodeIfPresent` and a document without the key has no crop.
+    var crop: CGRect? = nil
 
     /// Redact, blur and pixelate, in creation order. They render first, on the base layer.
     var effects: [Annotation] { annotations.filter(\.isEffect) }
@@ -41,5 +46,11 @@ nonisolated struct AnnotationDocument: Codable, Equatable, Sendable {
     func moving(id: UUID, by delta: CGVector) -> AnnotationDocument {
         guard let annotation = annotation(id: id) else { return self }
         return replacing(annotation.moved(by: delta))
+    }
+
+    func withCrop(_ crop: CGRect?) -> AnnotationDocument {
+        var copy = self
+        copy.crop = crop
+        return copy
     }
 }

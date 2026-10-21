@@ -12,10 +12,16 @@ final class CanvasView: NSView {
         var transient: Annotation?
         var selection: UUID?
         var transform: CanvasTransform
+        /// The text being typed. A change repaints the whole view, which hides or shows the
+        /// committed copy of a re-edited text.
+        var editingID: UUID?
+        /// The Crop tool's rect. A change repaints the whole view, since the readout sits outside it.
+        var cropDraft: CGRect?
     }
 
-    /// True while a text annotation is being edited (4b). Always false in 4a.
-    var isEditingText = false
+    /// True while a text annotation is being typed. EditorWindow reads it to let the clipboard and
+    /// undo chords through to the text view; KeyRouting reads it to leave every key to it.
+    var isEditingText: Bool { model.isEditingText }
 
     private let model: EditorModel
     private let baseView: BaseImageView
@@ -24,6 +30,9 @@ final class CanvasView: NSView {
     private var shown: Shown
     /// Effects drawn as placeholders because they have no tile to show yet (see `shownTile(for:)`).
     private var pendingIDs: Set<UUID> = []
+    /// The tile each effect showed at the last `syncTiles`, as `BaseImageView` keeps its own. The
+    /// highlighter backdrop copies these, so a replaced or moved tile repaints the area it covered.
+    private var shownTiles: [UUID: TileRepaint.Shown] = [:]
     /// Fit zoom is kept across window resizes until the user zooms or pans.
     private var fitsOnResize = true
     private var isTrackingMouse = false
@@ -31,6 +40,14 @@ final class CanvasView: NSView {
     private var gestureCancelled = false
     /// The last pointer input, re-sent with new modifiers by `flagsChanged`.
     private var lastInput: ToolInput?
+    /// Object copy and paste through the coordinator; set by EditorWindowController.
+    var objectClipboard: EditorObjectClipboard?
+    /// Space is down: the next press pans instead of reaching the tool.
+    private var spaceHeld = false
+    /// The press that started a Space-drag pan, in view points, and the transform at that moment.
+    private var panStart: (viewPoint: CGPoint, transform: CanvasTransform)?
+    /// One element per annotation id, kept so VoiceOver focus survives a refresh.
+    private var accessibilityElements: [UUID: AnnotationAccessibilityElement] = [:]
 
     init(model: EditorModel, baseView: BaseImageView) {
         self.model = model
@@ -38,7 +55,7 @@ final class CanvasView: NSView {
         activeToolKind = model.tool
         activeTool = makeTool(for: model.tool)
         shown = Shown(document: model.document, transient: model.transient, selection: model.selection,
-                      transform: model.transform)
+                      transform: model.transform, editingID: model.textEditing?.box.id, cropDraft: model.cropDraft)
         super.init(frame: .zero)
         wantsLayer = true
         layerContentsRedrawPolicy = .onSetNeedsDisplay
@@ -63,11 +80,20 @@ final class CanvasView: NSView {
 
     // MARK: Zoom and pan
 
-    /// The whole capture inside the view with `EditorWindowGeometry.inset` on every side, never above natural size; kept on resize.
+    /// What Fit shows: the whole capture while cropping or with no crop, else the applied crop.
+    private func fitRect(document: AnnotationDocument, cropDraft: CGRect?) -> CGRect {
+        let whole = CGRect(origin: .zero, size: imagePixelSize)
+        return cropDraft == nil ? (document.crop ?? whole) : whole
+    }
+
+    /// `fitRect` inside the view with `EditorWindowGeometry.inset` on every side, never above
+    /// natural size; kept on resize.
     func fitToView() {
         guard bounds.width > 0, bounds.height > 0 else { return }
-        apply(CanvasTransform.fitting(imagePixelSize: imagePixelSize, in: bounds.size, inset: EditorWindowGeometry.inset,
-                                      captureScale: model.scale), fits: true)
+        let shown = fitRect(document: model.document, cropDraft: model.cropDraft)
+        let fit = CanvasTransform.fitting(imagePixelSize: shown.size, in: bounds.size, inset: EditorWindowGeometry.inset,
+                                          captureScale: model.scale)
+        apply(fit.panned(by: CGPoint(x: -shown.minX * fit.zoom, y: -shown.minY * fit.zoom)), fits: true)
     }
 
     /// Multiplies the zoom by `factor` around `viewPoint` (the view centre when nil), within
@@ -130,20 +156,60 @@ final class CanvasView: NSView {
     // MARK: Pointer
 
     override func mouseDown(with event: NSEvent) {
+        // A click outside the text view while typing commits the text and does nothing else.
+        if model.isEditingText {
+            endTextEditing(commit: true)
+            return
+        }
         window?.makeFirstResponder(self)
+        // Space held: this press pans and the tool never sees it.
+        if spaceHeld, !isTrackingMouse {
+            panStart = (convert(event.locationInWindow, from: nil), model.transform)
+            updatePanCursor()
+            return
+        }
+        // Under an applied crop the dimmed area is not part of the picture: a press there does not pick
+        // anything hidden, except a handle of the selection that sits outside the crop.
+        let pressed = input(for: event, clamped: false)
+        let handling = CropGeometry.press(at: pressed.point, crop: appliedCrop, tool: model.tool,
+                                          selected: model.selection.flatMap { model.document.annotation(id: $0) },
+                                          tolerance: HitTester.tolerance(zoom: model.zoom))
+        switch handling {
+        case .ignore:
+            return
+        case .deselect:
+            model.selection = nil
+            refresh()
+            return
+        case .asPressed, .clampedToEdge:
+            break
+        }
         isTrackingMouse = true
         gestureCancelled = false
-        activeTool.mouseDown(input(for: event), on: model)
+        activeTool.mouseDown(handling == .asPressed ? pressed : input(for: event), on: model)
         refresh()
     }
 
     override func mouseDragged(with event: NSEvent) {
+        // From the press-time transform each time, so device-pixel snapping does not add up.
+        if let panStart {
+            let point = convert(event.locationInWindow, from: nil)
+            apply(panStart.transform.panned(by: CGPoint(x: point.x - panStart.viewPoint.x,
+                                                        y: point.y - panStart.viewPoint.y)), fits: false)
+            return
+        }
         guard isTrackingMouse, !gestureCancelled else { return }
         activeTool.mouseDragged(input(for: event), on: model)
         refresh()
     }
 
     override func mouseUp(with event: NSEvent) {
+        // A pan ends here even when Space was let go first.
+        if panStart != nil {
+            panStart = nil
+            updatePanCursor()
+            return
+        }
         defer {
             isTrackingMouse = false
             gestureCancelled = false
@@ -165,9 +231,16 @@ final class CanvasView: NSView {
         refresh()
     }
 
-    private func input(for event: NSEvent) -> ToolInput {
+    /// The applied crop while it dims the rest of the capture; nil while Crop is open or with none.
+    private var appliedCrop: CGRect? { model.cropDraft == nil ? model.document.crop : nil }
+
+    /// The event as a tool input. A drag or release stays at the crop's edge (the dimmed cover hides the
+    /// rest of the capture); `mouseDown` asks for the raw point and decides what an outside press does.
+    private func input(for event: NSEvent, clamped: Bool = true) -> ToolInput {
         let flags = event.modifierFlags
-        let input = ToolInput(point: model.transform.imagePoint(convert(event.locationInWindow, from: nil)),
+        var point = model.transform.imagePoint(convert(event.locationInWindow, from: nil))
+        if clamped, let crop = appliedCrop { point = CropGeometry.clamped(point, to: crop) }
+        let input = ToolInput(point: point,
                               shift: flags.contains(.shift), option: flags.contains(.option),
                               clickCount: event.clickCount)
         lastInput = input
@@ -175,16 +248,26 @@ final class CanvasView: NSView {
     }
 
     override func resetCursorRects() {
-        addCursorRect(bounds, cursor: activeTool.cursor)
+        addCursorRect(bounds, cursor: currentCursor)
     }
 
     // MARK: Keys (unmodified keys; ⌘ chords are EditorWindow's)
 
     override func keyDown(with event: NSEvent) {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if KeyRouting.isPanKey(characters: event.charactersIgnoringModifiers, command: flags.contains(.command),
+                               control: flags.contains(.control), option: flags.contains(.option),
+                               isEditingText: isEditingText) {
+            // Repeats are swallowed too, so they never reach interpretKeyEvents (which beeps).
+            if !event.isARepeat, !isTrackingMouse {
+                spaceHeld = true
+                updatePanCursor()
+            }
+            return
+        }
         switch KeyRouting.action(characters: event.charactersIgnoringModifiers, command: flags.contains(.command),
                                  control: flags.contains(.control), option: flags.contains(.option),
-                                 isEditingText: isEditingText) {
+                                 isEditingText: isEditingText, tool: model.tool) {
         case .selectTool(let tool):
             guard !isTrackingMouse else { return }
             model.tool = tool
@@ -194,9 +277,45 @@ final class CanvasView: NSView {
             guard widths.indices.contains(index) else { return }
             model.applyLineWidth(points: widths[index])
             refresh()
+        case .textSize(let index):
+            let sizes = EditorPalette.textSizesPoints
+            guard sizes.indices.contains(index) else { return }
+            model.applyTextSize(points: sizes[index])
+            refresh()
         case .none:
             interpretKeyEvents([event])
         }
+    }
+
+    override func keyUp(with event: NSEvent) {
+        if event.charactersIgnoringModifiers == " " {
+            endSpacePan()
+        } else {
+            super.keyUp(with: event)
+        }
+    }
+
+    override func resignFirstResponder() -> Bool {
+        endSpacePan()
+        return super.resignFirstResponder()
+    }
+
+    /// Lets go of Space. A pan already under way finishes on mouseUp.
+    func endSpacePan() {
+        guard spaceHeld else { return }
+        spaceHeld = false
+        updatePanCursor()
+    }
+
+    private var currentCursor: NSCursor {
+        if panStart != nil { return .closedHand }
+        return spaceHeld ? .openHand : activeTool.cursor
+    }
+
+    /// Cursor rects change only when the pointer moves, so the new cursor is also set at once.
+    private func updatePanCursor() {
+        window?.invalidateCursorRects(for: self)
+        currentCursor.set()
     }
 
     /// Escape and ⌘.: abandons a drag in progress (the tool is replaced, so its gesture state goes
@@ -207,6 +326,18 @@ final class CanvasView: NSView {
             activeTool = makeTool(for: activeToolKind)
         }
         model.cancelCurrentOperation()
+        refresh()
+    }
+
+    /// Return and Enter: apply the crop being edited and go back to the tool used before Crop.
+    /// NSResponder does not implement insertNewline:, so outside Crop this beeps as an unhandled
+    /// Return did before; super is not called.
+    override func insertNewline(_ sender: Any?) {
+        guard model.tool == .crop, !isTrackingMouse else {
+            NSSound.beep()
+            return
+        }
+        model.applyCrop()
         refresh()
     }
 
@@ -239,6 +370,107 @@ final class CanvasView: NSView {
         refresh()
     }
 
+    // MARK: Object copy, paste and duplicate
+
+    /// The canvas takes `copy:`, `duplicate:` and `paste:` only when there is something to act on.
+    /// `NSApp.target(forAction:)` asks each responder, so with nothing selected `copy:` goes on to
+    /// EditorWindowController (the image copy), and `duplicate:` or `paste:` finds no target and
+    /// EditorWindow beeps. NSObject declares this nonisolated; the responder chain asks on the main
+    /// thread, and any other thread gets NSObject's answer.
+    nonisolated override func responds(to aSelector: Selector!) -> Bool {
+        let isCopy = aSelector == #selector(copy(_:))
+        let isDuplicate = aSelector == #selector(duplicate(_:))
+        let isPaste = aSelector == #selector(paste(_:))
+        guard isCopy || isDuplicate || isPaste, Thread.isMainThread else { return super.responds(to: aSelector) }
+        return MainActor.assumeIsolated {
+            if isCopy { return hasSelectedAnnotation }
+            if isDuplicate { return !isTrackingMouse && hasSelectedAnnotation }
+            // Cropping shows no selection (Task 4), so a paste waits until Crop ends.
+            return !isTrackingMouse && model.tool != .crop && objectClipboard?.canPaste() == true
+        }
+    }
+
+    private var hasSelectedAnnotation: Bool {
+        model.selection.flatMap { model.document.annotation(id: $0) } != nil
+    }
+
+    /// ⌘C with a selection: the selected annotation goes on the pasteboard under the private type
+    /// only. No notification, and the coordinator's clipboard owner is left alone.
+    @objc func copy(_ sender: Any?) {
+        guard let data = model.objectClip()?.encoded() else {
+            nextResponder?.tryToPerform(#selector(copy(_:)), with: sender)
+            return
+        }
+        objectClipboard?.copy(data)
+    }
+
+    /// ⌘V: the copied annotation, placed by `AnnotationClip.placed`, as one step `Paste <title>`.
+    /// A clip this build cannot read beeps, as nothing to paste does.
+    @objc func paste(_ sender: Any?) {
+        guard !isTrackingMouse, model.tool != .crop, let data = objectClipboard?.paste(),
+              let clip = AnnotationClip.decoded(from: data) else {
+            NSSound.beep()
+            return
+        }
+        model.paste(clip)
+        refresh()
+    }
+
+    /// ⌘D: a copy of the selection 10 pt down and to the right, as one step `Duplicate <title>`.
+    @objc func duplicate(_ sender: Any?) {
+        guard !isTrackingMouse else { return }
+        model.duplicateSelection()
+        refresh()
+    }
+
+    // MARK: Accessibility
+
+    override func isAccessibilityElement() -> Bool { true }
+    override func accessibilityRole() -> NSAccessibility.Role? { .layoutArea }
+    override func accessibilityLabel() -> String? { CanvasAccessibility.canvasLabel }
+
+    /// One element per annotation, in painting order. Elements are reused by id, so VoiceOver
+    /// focus survives a refresh; the label and value are brought up to date here.
+    override func accessibilityChildren() -> [Any]? {
+        let items = CanvasAccessibility.items(in: model.document, scale: model.scale)
+        let ids = Set(items.map(\.id))
+        accessibilityElements = accessibilityElements.filter { ids.contains($0.key) }
+        return items.map { item -> AnnotationAccessibilityElement in
+            let element = accessibilityElements[item.id] ?? AnnotationAccessibilityElement(annotationID: item.id, canvas: self)
+            accessibilityElements[item.id] = element
+            element.setAccessibilityLabel(item.label)
+            element.setAccessibilityValue(item.value)
+            return element
+        }
+    }
+
+    override func accessibilitySelectedChildren() -> [Any]? {
+        guard let id = model.selection, model.document.annotation(id: id) != nil else { return [] }
+        _ = accessibilityChildren()
+        return accessibilityElements[id].map { [$0] } ?? []
+    }
+
+    /// The annotation's painted bounds on screen, at the current zoom and pan, clipped to an applied crop.
+    func accessibilityScreenFrame(of id: UUID) -> NSRect {
+        guard let annotation = model.document.annotation(id: id) else { return .zero }
+        // Only the part inside an applied crop is on screen; the rest is under the cover.
+        var bounds = imageBounds(of: annotation)
+        if let crop = appliedCrop { bounds = bounds.intersection(crop) }
+        guard !bounds.isNull else { return .zero }
+        return NSAccessibility.screenRect(fromView: self, rect: model.transform.viewRect(bounds))
+    }
+
+    func isAccessibilitySelected(_ id: UUID) -> Bool { model.selection == id }
+
+    /// AXPress on an annotation selects it. Nothing while a drag runs or while cropping, which shows
+    /// no selection.
+    func selectFromAccessibility(_ id: UUID) -> Bool {
+        guard !isTrackingMouse, model.tool != .crop, model.document.annotation(id: id) != nil else { return false }
+        model.selection = id
+        refresh()
+        return true
+    }
+
     // MARK: Model to screen
 
     /// Re-registers on every change (Observation reports one change per registration, before it
@@ -252,6 +484,8 @@ final class CanvasView: NSView {
             _ = model.selection
             _ = model.transform
             _ = model.tool
+            _ = model.textEditing
+            _ = model.cropDraft
         } onChange: { [weak self] in
             Task { @MainActor in
                 self?.observeModel()
@@ -268,11 +502,18 @@ final class CanvasView: NSView {
             activeTool = makeTool(for: activeToolKind)
             window?.invalidateCursorRects(for: self)
         }
+        syncTextView()
         let now = Shown(document: model.document, transient: model.transient, selection: model.selection,
-                        transform: model.transform)
+                        transform: model.transform, editingID: model.textEditing?.box.id, cropDraft: model.cropDraft)
         guard now != shown else { return }
         let previous = shown
         shown = now
+        if now.document != previous.document {
+            NSAccessibility.post(element: self, notification: .layoutChanged)
+        }
+        if now.selection != previous.selection {
+            NSAccessibility.post(element: self, notification: .selectedChildrenChanged)
+        }
         baseView.transform = now.transform
         // The effect being dragged is rendered on every change; commits reconcile in the model.
         if now.transient != previous.transient, now.transient?.isEffect == true || previous.transient?.isEffect == true {
@@ -286,11 +527,17 @@ final class CanvasView: NSView {
             NSLog("Editor: undo \"\(model.undoManager.undoActionName)\", redo \"\(model.undoManager.redoActionName)\"")
         }
         #endif
-        if now.document == previous.document, now.selection == previous.selection, now.transform == previous.transform {
+        if now.document == previous.document, now.selection == previous.selection, now.transform == previous.transform,
+           now.cropDraft == previous.cropDraft, now.editingID == previous.editingID {
             setNeedsDisplay(repaintRect(for: previous.transient, in: previous.document)
                 .union(repaintRect(for: now.transient, in: now.document)))
         } else {
             needsDisplay = true
+        }
+        // Starting or ending cropping, and undo or redo of a crop, change what Fit shows.
+        if fitsOnResize, fitRect(document: now.document, cropDraft: now.cropDraft)
+            != fitRect(document: previous.document, cropDraft: previous.cropDraft) {
+            fitToView()
         }
     }
 
@@ -335,6 +582,16 @@ final class CanvasView: NSView {
             }
         }
         pendingIDs = pending
+        var current: [UUID: TileRepaint.Shown] = [:]
+        for (id, tile) in tiles {
+            current[id] = TileRepaint.Shown(image: tile.image, rect: tile.rect)
+        }
+        for id in Set(shownTiles.keys).union(current.keys) {
+            if let dirty = TileRepaint.dirtyRect(old: shownTiles[id], new: current[id]) {
+                setNeedsDisplay(model.transform.viewRect(dirty).insetBy(dx: -8, dy: -8))
+            }
+        }
+        shownTiles = current
     }
 
     /// The tile to show for `effect` and the image-pixel rect it covers, or nil for the placeholder.
@@ -360,10 +617,12 @@ final class CanvasView: NSView {
 
     /// Drawings in creation order, with `transient` in place of its document copy and drawn last
     /// (spec 2.6: the shape in progress is drawn after the drawings). Drawings always sit above
-    /// effects, so their order cannot expose a redaction.
+    /// effects, so their order cannot expose a redaction. A text being re-edited is left out: the
+    /// text view shows it instead.
     private var displayedDrawings: [Annotation] {
         let transient = model.transient
-        var drawings = model.document.drawings.filter { $0.id != transient?.id }
+        let editingID = model.textEditing?.box.id
+        var drawings = model.document.drawings.filter { $0.id != transient?.id && $0.id != editingID }
         if let transient, !transient.isEffect { drawings.append(transient) }
         return drawings
     }
@@ -374,10 +633,200 @@ final class CanvasView: NSView {
         return model.document.annotation(id: id)
     }
 
+    // MARK: Text editing
+
+    /// The text view for `model.textEditing`: a subview placed by the transform, nil when nothing is typed.
+    private var textView: NSTextView?
+    /// The id of the box the text view edits, so a new edit gets a new view.
+    private var textViewID: UUID?
+    /// The edit's UndoManager, held from install to removal. `undoManager(for:)` must never return
+    /// nil while the view lives: NSTextView would then fall back to the next responder's manager,
+    /// the model's groupsByEvent = false one.
+    private var textViewUndoManager: UndoManager?
+    /// The colour the text view shows, so a palette change restyles it once.
+    private var textViewColor: RGBA?
+
+    /// For EditorWindowController's Save, Upload, Close and Zoom actions: commits the text and
+    /// removes the text view at once, so the export and the close sheet see the committed text.
+    func commitTextEditing() {
+        endTextEditing(commit: true)
+    }
+
+    private func endTextEditing(commit: Bool) {
+        guard model.isEditingText else { return }
+        if let textView {
+            // An input-method composition still open becomes part of the text.
+            if textView.hasMarkedText() { textView.unmarkText() }
+            model.updateEditingText(textView.string)
+        }
+        if commit {
+            model.commitTextEditing()
+        } else {
+            model.cancelTextEditing()
+        }
+        refresh()
+    }
+
+    /// Brings the text view in line with `model.textEditing`: installs one for a new edit, removes
+    /// it when the edit ended (also when the model ended it, as a tool change does), and otherwise
+    /// re-applies the colour and the frame.
+    private func syncTextView() {
+        guard let editing = model.textEditing else {
+            removeTextView()
+            return
+        }
+        guard let view = textView, textViewID == editing.box.id else {
+            removeTextView()
+            installTextView(for: editing)
+            return
+        }
+        if textViewColor != editing.box.color {
+            textViewColor = editing.box.color
+            let attributes = textAttributes(for: editing.box)
+            if let storage = view.textStorage, let colour = attributes[.foregroundColor] {
+                storage.addAttribute(.foregroundColor, value: colour, range: NSRange(location: 0, length: storage.length))
+            }
+            view.typingAttributes = attributes
+            view.insertionPointColor = attributes[.foregroundColor] as? NSColor ?? .labelColor
+        }
+        layoutTextView(view, for: editing.box)
+    }
+
+    /// TextKit 2 only: reading `view.layoutManager` would switch the view to TextKit 1, whose
+    /// baselines differ from TextLayout's. Plain text, no substitutions or spelling marks, so the
+    /// string typed is the string committed.
+    private func installTextView(for editing: TextEditing) {
+        let view = NSTextView(usingTextLayoutManager: true)
+        view.delegate = self
+        view.isRichText = false
+        view.importsGraphics = false
+        view.allowsUndo = true
+        view.drawsBackground = false
+        view.isHorizontallyResizable = false
+        view.isVerticallyResizable = false
+        view.isAutomaticQuoteSubstitutionEnabled = false
+        view.isAutomaticDashSubstitutionEnabled = false
+        view.isAutomaticTextReplacementEnabled = false
+        view.isAutomaticSpellingCorrectionEnabled = false
+        view.isContinuousSpellCheckingEnabled = false
+        view.isGrammarCheckingEnabled = false
+        view.usesFontPanel = false
+        view.usesFindBar = false
+        let padding = TextLayout.padding(fontSize: editing.box.fontSize)
+        view.textContainerInset = NSSize(width: padding, height: padding)
+        if let container = view.textContainer {
+            container.lineFragmentPadding = 0
+            container.widthTracksTextView = false
+            container.heightTracksTextView = false
+            container.size = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        }
+        let attributes = textAttributes(for: editing.box)
+        view.defaultParagraphStyle = attributes[.paragraphStyle] as? NSParagraphStyle
+        view.typingAttributes = attributes
+        view.insertionPointColor = attributes[.foregroundColor] as? NSColor ?? .labelColor
+        view.textStorage?.setAttributedString(NSAttributedString(string: editing.box.string, attributes: attributes))
+        textView = view
+        textViewID = editing.box.id
+        textViewUndoManager = model.textUndoManager
+        textViewColor = editing.box.color
+        addSubview(view)
+        layoutTextView(view, for: editing.box)
+        window?.makeFirstResponder(view)
+        view.setSelectedRange(NSRange(location: (view.string as NSString).length, length: 0))
+    }
+
+    /// TextLayout's font, colour and fixed line height, in image pixels.
+    private func textAttributes(for box: TextBox) -> [NSAttributedString.Key: Any] {
+        let lineHeight = TextLayout.lineHeight(fontSize: box.fontSize)
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.minimumLineHeight = lineHeight
+        paragraph.maximumLineHeight = lineHeight
+        return [.font: TextLayout.font(size: box.fontSize) as NSFont,
+                .foregroundColor: NSColor(cgColor: box.color.cgColor) ?? NSColor.systemRed,
+                .paragraphStyle: paragraph]
+    }
+
+    /// The frame is `TextLayout.frame` in view points; the bounds stay that frame's size in image
+    /// pixels. AppKit scales the drawing by the zoom and TextKit lays the text out at the model's
+    /// font size, exactly where CoreText will draw it. The bounds are set after the frame, which
+    /// resets them.
+    private func layoutTextView(_ view: NSTextView, for box: TextBox) {
+        let frame = TextLayout.frame(for: box)
+        let zoom = model.transform.zoom
+        view.setFrameOrigin(model.transform.viewPoint(frame.origin))
+        view.setFrameSize(NSSize(width: frame.width * zoom, height: frame.height * zoom))
+        view.setBoundsSize(frame.size)
+    }
+
+    /// In this order, so nothing typed from here on registers undo anywhere.
+    private func removeTextView() {
+        guard let view = textView else { return }
+        let wasFirstResponder = window?.firstResponder === view
+        textView = nil
+        textViewID = nil
+        textViewColor = nil
+        view.allowsUndo = false
+        view.isEditable = false
+        view.delegate = nil
+        textViewUndoManager = nil
+        view.removeFromSuperview()
+        if wasFirstResponder {
+            window?.makeFirstResponder(self)
+        }
+    }
+
     // MARK: Drawing
+
+    /// For each highlighter meeting `visible` (including the one in progress): clip to its stroked
+    /// outline, then draw the capture and the shown effect tiles into that clip. The copy equals
+    /// what `baseView` shows there, so the picture does not change, and the multiply that follows
+    /// in `AnnotationDrawing.draw` has real pixels to multiply. Runs before every other drawing, so
+    /// shapes made before the highlighter lie under it and shapes made after lie over it, as in the
+    /// export. The CTM is image pixels, top-left origin. The clip is stroked 1 view point wider on
+    /// each side so anti-aliased edge pixels get a whole backdrop, as in the export. Interpolation
+    /// follows `BaseImageView`: nearest from 2 device pixels per image pixel up, bilinear from 1,
+    /// and the highest quality below.
+    private func drawHighlighterBackdrops(in context: CGContext, visible: CGRect) {
+        var strokes: [Stroke] = []
+        for drawing in displayedDrawings {
+            if case .highlighter(let stroke) = drawing, AnnotationGeometry.strokeBounds(of: stroke).intersects(visible) {
+                strokes.append(stroke)
+            }
+        }
+        guard !strokes.isEmpty else { return }
+        let devicePixelsPerImagePixel = model.transform.zoom * backingScale
+        let quality: CGInterpolationQuality = devicePixelsPerImagePixel >= 2 ? .none
+            : devicePixelsPerImagePixel >= 1 ? .low : .high
+        for stroke in strokes {
+            context.saveGState()
+            context.addPath(StrokeSmoothing.path(for: stroke.points))
+            context.setLineWidth(stroke.lineWidth + 2 / model.transform.zoom)
+            context.setLineCap(.round)
+            context.setLineJoin(.round)
+            context.replacePathWithStrokedPath()
+            context.clip()
+            context.interpolationQuality = quality
+            drawFlipped(model.base, in: CGRect(origin: .zero, size: imagePixelSize), context: context)
+            for effect in displayedEffects {
+                if let tile = shownTile(for: effect) { drawFlipped(tile.image, in: tile.rect, context: context) }
+            }
+            context.restoreGState()
+        }
+    }
+
+    /// `CGContext.draw` assumes a y-up space and the CTM here is y-down, so the image is drawn
+    /// through a local flip about `rect`; without it the copy would be upside down.
+    private func drawFlipped(_ image: CGImage, in rect: CGRect, context: CGContext) {
+        context.saveGState()
+        context.translateBy(x: rect.minX, y: rect.maxY)
+        context.scaleBy(x: 1, y: -1)
+        context.draw(image, in: CGRect(x: 0, y: 0, width: rect.width, height: rect.height))
+        context.restoreGState()
+    }
 
     /// Spec 2.6 Rendering: (1) image-pixel CTM; (2) placeholders for effects with no tile yet;
     /// (3) drawings meeting the dirty rect, then the transient shape; (4) back in view space, the
+    /// crop chrome and readout while cropping, else the cover outside an applied crop and the
     /// selection handles or dashed outline. No Core Image or GPU work happens here.
     override func draw(_ dirtyRect: NSRect) {
         guard let context = NSGraphicsContext.current?.cgContext else { return }
@@ -385,6 +834,7 @@ final class CanvasView: NSView {
         let visible = transform.imageRect(dirtyRect)
         context.saveGState()
         context.concatenate(transform.affine)
+        drawHighlighterBackdrops(in: context, visible: visible)
         for effect in displayedEffects where pendingIDs.contains(effect.id) {
             guard let rect = effect.effectRect, rect.intersects(visible) else { continue }
             AnnotationDrawing.drawPlaceholder(for: effect, in: context)
@@ -393,10 +843,79 @@ final class CanvasView: NSView {
             AnnotationDrawing.draw(drawing, in: context, scale: model.scale)
         }
         context.restoreGState()
+        if let draft = model.cropDraft {
+            // Cropping: dim, edge, handles and readout; no selection is shown.
+            AnnotationDrawing.drawCropChrome(crop: draft, imageSize: imagePixelSize, transform: transform,
+                                             scale: backingScale, in: context)
+            drawCropReadout(for: draft)
+            return
+        }
+        if let crop = model.document.crop {
+            // Resolved under the view's appearance, which AppKit makes current inside draw(_:).
+            AnnotationDrawing.drawCropCover(keeping: crop, bounds: bounds, transform: transform,
+                                            color: NSColor.windowBackgroundColor.cgColor, scale: backingScale, in: context)
+        }
         if let selected = selectedAnnotation {
             // The view's backing scale snaps the outline and handles to device pixels; the drawings
             // above take the capture scale (`model.scale`).
             AnnotationDrawing.drawSelection(for: selected, transform: transform, scale: backingScale, in: context)
+        }
+    }
+
+    /// "W × H" in image pixels, the size export will write, in a dark pill 6 pt under the crop's
+    /// bottom-left corner, or inside the crop's bottom edge when the pill would leave the view.
+    private func drawCropReadout(for draft: CGRect) {
+        let label = NSAttributedString(
+            string: CropGeometry.readout(for: CropGeometry.snapped(draft, in: imagePixelSize)),
+            attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium),
+                         .foregroundColor: NSColor.white])
+        let text = label.size()
+        let pill = CGSize(width: ceil(text.width) + 12, height: ceil(text.height) + 6)
+        let crop = model.transform.viewRect(draft)
+        var origin = CGPoint(x: crop.minX, y: crop.maxY + 6)
+        if origin.y + pill.height > bounds.maxY { origin.y = crop.maxY - pill.height - 6 }
+        origin.x = min(max(origin.x, bounds.minX + 4), bounds.maxX - pill.width - 4)
+        let frame = CGRect(origin: origin, size: pill)
+        NSColor.black.withAlphaComponent(0.7).setFill()
+        NSBezierPath(roundedRect: frame, xRadius: 4, yRadius: 4).fill()
+        label.draw(at: CGPoint(x: frame.minX + 6, y: frame.minY + 3))
+    }
+}
+
+extension CanvasView: NSTextViewDelegate {
+    /// Typing registers in the edit's own manager, never in the model's (spec 2.6, Phase 4b).
+    func undoManager(for view: NSTextView) -> UndoManager? {
+        textViewUndoManager
+    }
+
+    func textDidChange(_ notification: Notification) {
+        guard let textView, notification.object as? NSTextView === textView else { return }
+        model.updateEditingText(textView.string)
+        if let box = model.textEditing?.box {
+            layoutTextView(textView, for: box)
+        }
+    }
+
+    /// Return, Enter and Tab commit, Escape and ⌘. cancel. Shift-Return arrives as the same
+    /// `insertNewline:` as Return, so the current event tells them apart; ⌥Return arrives as
+    /// `insertNewlineIgnoringFieldEditor:` and inserts a newline as usual.
+    func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        switch commandSelector {
+        case #selector(NSResponder.insertNewline(_:)):
+            if NSApp.currentEvent?.modifierFlags.contains(.shift) == true {
+                textView.insertNewlineIgnoringFieldEditor(nil)
+            } else {
+                endTextEditing(commit: true)
+            }
+            return true
+        case #selector(NSResponder.insertTab(_:)), #selector(NSResponder.insertBacktab(_:)):
+            endTextEditing(commit: true)
+            return true
+        case #selector(NSResponder.cancelOperation(_:)):
+            endTextEditing(commit: false)
+            return true
+        default:
+            return false
         }
     }
 }

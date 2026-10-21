@@ -86,6 +86,26 @@ struct EditorWindowGeometryTests {
         #expect(EditorWindowGeometry.minimumContentWidth(toolbarWidth: 500) == 640)
     }
 
+    /// Every tool in `EditorTool.toolbarOrder` is one more segment, so each new tool widens the
+    /// toolbar by `ToolbarMetrics.segment`. With the widest title, the toolbar for the tools the
+    /// editor has must still fit 90 % of a 1280 pt wide display, or the 90 % cap would win over
+    /// the minimum and the toolbar would overflow.
+    @Test func toolbarWithEveryToolFitsASmallDisplay() {
+        func width(segments: Int) -> CGFloat {
+            EditorWindowGeometry.toolbarWidth(windowButtonsMaxX: EditorWindowGeometry.ToolbarMetrics.windowButtons,
+                                              titleWidth: 230, toolSegments: segments, buttons: 4,
+                                              prominentButtons: 1, viewWidths: [84], fixedSpaces: 1)
+        }
+        #expect(width(segments: 8) - width(segments: 6) == 2 * EditorWindowGeometry.ToolbarMetrics.segment)
+        // The 4a toolbar is 800 pt wide. Each 4b task that adds a tool updates these two lines:
+        // 8 tools and 872 pt (Task 1), 10 and 944 (Task 2), 11 and 980 (Task 3), 12 and 1016 (Task 4).
+        #expect(EditorTool.toolbarOrder.count == 12)
+        #expect(width(segments: EditorTool.toolbarOrder.count) == 1016)
+        let widest = EditorWindowGeometry.minimumContentWidth(toolbarWidth: width(segments: EditorTool.toolbarOrder.count))
+        let ninetyPercent = (1280 * EditorWindowGeometry.screenFraction).rounded(.down)
+        #expect(widest <= ninetyPercent)
+    }
+
     /// A small capture opens at the toolbar's width, not at 640 pt.
     @Test func initialSizeUsesTheToolbarMinimum() {
         #expect(EditorWindowGeometry.initialContentSize(imagePixels: CGSize(width: 200, height: 100), scale: 2,

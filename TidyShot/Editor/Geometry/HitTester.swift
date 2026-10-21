@@ -19,18 +19,23 @@ nonisolated enum HitTester {
         tolerancePoints / zoom
     }
 
-    /// Boxes (the rectangle and every effect) have eight handles, clockwise from the top-left
-    /// corner: 0 top-left, 1 top-middle, 2 top-right, 3 middle-right, 4 bottom-right,
-    /// 5 bottom-middle, 6 bottom-left, 7 middle-left. Top is minY. An arrow has two: 0 the tail
-    /// (`from`) and 1 the head (`to`).
+    /// Boxes (the rectangle, the ellipse and every effect) have eight handles, clockwise from the
+    /// top-left corner: 0 top-left, 1 top-middle, 2 top-right, 3 middle-right, 4 bottom-right,
+    /// 5 bottom-middle, 6 bottom-left, 7 middle-left. Top is minY. A segment (arrow or line) has
+    /// two: 0 the tail (`from`) and 1 the head (`to`). A stroke has none: it moves and does not
+    /// resize. Text has none: its size comes from the size keys.
     static func handles(for annotation: Annotation) -> [CGPoint] {
         switch annotation {
-        case .rectangle(let shape):
+        case .rectangle(let shape), .ellipse(let shape):
             boxHandles(shape.rect)
         case .redact(let region, _), .blur(let region, _), .pixelate(let region, _):
             boxHandles(region.rect)
-        case .arrow(let segment):
+        case .arrow(let segment), .line(let segment):
             [segment.from, segment.to]
+        case .pencil, .highlighter:
+            []
+        case .text:
+            []
         }
     }
 
@@ -73,6 +78,18 @@ nonisolated enum HitTester {
             default: break
             }
             return .arrow(segment)
+        case .ellipse(var shape):
+            shape.rect = resizedRect(shape.rect, handle: handle, to: point, square: square)
+            return .ellipse(shape)
+        case .line(var segment):
+            switch handle {
+            case 0: segment.from = DragGeometry.segmentEnd(from: segment.to, to: point, snap45: square)
+            case 1: segment.to = DragGeometry.segmentEnd(from: segment.from, to: point, snap45: square)
+            default: break
+            }
+            return .line(segment)
+        case .pencil, .highlighter, .text:
+            return annotation
         case .redact(var region, let fill):
             region.rect = resizedRect(region.rect, handle: handle, to: point, square: square)
             return .redact(region, fill: fill)
@@ -106,6 +123,16 @@ nonisolated enum HitTester {
         }
     }
 
+    /// Whether `point` is inside or on the ellipse inscribed in `rect`. An empty or null rect
+    /// holds nothing, so a rect inset past its own size has no hollow and the ring is a disc,
+    /// as `AnnotationDrawing` fills an ellipse that small.
+    private static func ellipseContains(_ rect: CGRect, _ point: CGPoint) -> Bool {
+        guard !rect.isNull, rect.width > 0, rect.height > 0 else { return false }
+        let dx = (point.x - rect.midX) / (rect.width / 2)
+        let dy = (point.y - rect.midY) / (rect.height / 2)
+        return dx * dx + dy * dy <= 1
+    }
+
     /// The distance from `point` to the segment from `a` to `b`; to `a` when they are equal.
     static func distance(from point: CGPoint, toSegment a: CGPoint, _ b: CGPoint) -> CGFloat {
         let abx = b.x - a.x
@@ -116,7 +143,21 @@ nonisolated enum HitTester {
         return hypot(point.x - (a.x + t * abx), point.y - (a.y + t * aby))
     }
 
-    private static func boxHandles(_ rect: CGRect) -> [CGPoint] {
+    /// Whether `point` lies on `stroke`: the smoothed path stroked at the line width plus the
+    /// tolerance on each side, with round caps and joins, tested for containment. The path and its
+    /// outline are built here and dropped. A point outside the path's bounds grown by the same
+    /// reach is refused before the outline is made.
+    static func strokeContains(_ stroke: Stroke, _ point: CGPoint, tolerance: CGFloat) -> Bool {
+        guard !stroke.points.isEmpty else { return false }
+        let reach = stroke.lineWidth / 2 + tolerance
+        let path = StrokeSmoothing.path(for: stroke.points)
+        guard path.boundingBoxOfPath.insetBy(dx: -reach, dy: -reach).contains(point) else { return false }
+        let outline = path.copy(strokingWithWidth: 2 * reach, lineCap: .round, lineJoin: .round, miterLimit: 1)
+        return outline.contains(point)
+    }
+
+    /// The eight box handles of `rect`, in the order `handles(for:)` documents.
+    static func boxHandles(_ rect: CGRect) -> [CGPoint] {
         let r = rect.standardized
         return [
             CGPoint(x: r.minX, y: r.minY), CGPoint(x: r.midX, y: r.minY),
@@ -139,9 +180,12 @@ nonisolated enum HitTester {
     }
 
     /// A rectangle is hollow: its body is the stroke band, from `tolerance` outside the rect to
-    /// `lineWidth + tolerance` inside it (the stroke sits inside the rect). An arrow's body is its
-    /// shaft line within `lineWidth / 2 + tolerance`. An effect is filled: its rect grown by
-    /// `tolerance`.
+    /// `lineWidth + tolerance` inside it (the stroke sits inside the rect). An ellipse is hollow
+    /// likewise: its body is the ring between the ellipse grown by `tolerance` and the ellipse of
+    /// the rect inset by `lineWidth + tolerance`. An arrow's body is its shaft line, and a line's
+    /// the whole segment, within `lineWidth / 2 + tolerance`. A stroke's body is its smoothed path
+    /// stroked at its width plus the tolerance on each side. An effect is filled: its rect grown
+    /// by `tolerance`.
     private static func bodyContains(_ annotation: Annotation, _ point: CGPoint, tolerance: CGFloat) -> Bool {
         switch annotation {
         case .rectangle(let shape):
@@ -149,8 +193,17 @@ nonisolated enum HitTester {
             let outer = rect.insetBy(dx: -tolerance, dy: -tolerance)
             let inner = rect.insetBy(dx: shape.lineWidth + tolerance, dy: shape.lineWidth + tolerance)
             return outer.contains(point) && !inner.contains(point)
-        case .arrow(let segment):
+        case .ellipse(let shape):
+            let rect = shape.rect.standardized
+            let outer = rect.insetBy(dx: -tolerance, dy: -tolerance)
+            let inner = rect.insetBy(dx: shape.lineWidth + tolerance, dy: shape.lineWidth + tolerance)
+            return ellipseContains(outer, point) && !ellipseContains(inner, point)
+        case .arrow(let segment), .line(let segment):
             return distance(from: point, toSegment: segment.from, segment.to) <= segment.lineWidth / 2 + tolerance
+        case .pencil(let stroke), .highlighter(let stroke):
+            return strokeContains(stroke, point, tolerance: tolerance)
+        case .text(let box):
+            return TextLayout.frame(for: box).insetBy(dx: -tolerance, dy: -tolerance).contains(point)
         case .redact(let region, _), .blur(let region, _), .pixelate(let region, _):
             return region.rect.standardized.insetBy(dx: -tolerance, dy: -tolerance).contains(point)
         }

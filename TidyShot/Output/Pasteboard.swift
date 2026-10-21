@@ -62,6 +62,28 @@ enum Pasteboard {
         return write([item])
     }
 
+    /// The private type of an object copy (`AnnotationClip`).
+    static let annotationClipType = NSPasteboard.PasteboardType(AnnotationClip.pasteboardTypeName)
+
+    /// Replaces the pasteboard contents with one copied annotation, under the private type only:
+    /// pasting into another app pastes nothing.
+    @discardableResult
+    static func copy(annotationClip data: Data) -> Int {
+        let item = NSPasteboardItem()
+        item.setData(data, forType: annotationClipType)
+        return write([item])
+    }
+
+    /// The copied annotation's data, or nil.
+    static func annotationClipData() -> Data? {
+        NSPasteboard.general.data(forType: annotationClipType)
+    }
+
+    /// Whether an object copy is on the pasteboard. Checks the types only, so no data is read.
+    static var hasAnnotationClip: Bool {
+        NSPasteboard.general.availableType(from: [annotationClipType]) != nil
+    }
+
     /// Replaces the general pasteboard's contents with `objects` and returns its `changeCount`,
     /// read after the write.
     private static func write(_ objects: [any NSPasteboardWriting]) -> Int {

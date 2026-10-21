@@ -91,4 +91,17 @@ struct ArrowGeometryTests {
         #expect(AnnotationGeometry.bounds(of: .blur(Region(id: UUID(), rect: rect), radius: 16), scale: 2)
                 == rect.insetBy(dx: -margin, dy: -margin))
     }
+
+    /// A stroke's bounds hold its path grown by half the width, plus the anti-alias margin; the
+    /// selection outline is the same box without the margin.
+    @Test func strokeBoundsIncludeWidthAndMargin() {
+        let stroke = Stroke(id: UUID(), points: [CGPoint(x: 100, y: 100), CGPoint(x: 150, y: 100), CGPoint(x: 200, y: 100)],
+                            color: EditorPalette.defaultStroke, lineWidth: 8)
+        let outline = CGRect(x: 96, y: 96, width: 108, height: 8)
+        #expect(AnnotationGeometry.strokeBounds(of: stroke) == outline)
+        #expect(AnnotationGeometry.strokeOutline(of: .pencil(stroke)) == outline)
+        #expect(AnnotationGeometry.bounds(of: .highlighter(stroke), scale: 2)
+                == outline.insetBy(dx: -AnnotationGeometry.antialiasMargin, dy: -AnnotationGeometry.antialiasMargin))
+        #expect(AnnotationGeometry.strokeOutline(of: .blur(Region(id: UUID(), rect: outline), radius: 16)) == nil)
+    }
 }

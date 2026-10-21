@@ -1,4 +1,5 @@
 import CoreGraphics
+import CoreText
 import Foundation
 import Testing
 @testable import TidyShot
@@ -92,6 +93,14 @@ struct EditorFlattenerTests {
 
     func arrow(from: CGPoint, to: CGPoint, lineWidth: CGFloat = 4) -> Annotation {
         .arrow(Segment(id: UUID(), from: from, to: to, color: blue, lineWidth: lineWidth))
+    }
+
+    func ellipse(_ rect: CGRect, lineWidth: CGFloat = 4) -> Annotation {
+        .ellipse(ShapeBox(id: UUID(), rect: rect, color: red, lineWidth: lineWidth))
+    }
+
+    func line(from: CGPoint, to: CGPoint, lineWidth: CGFloat = 4) -> Annotation {
+        .line(Segment(id: UUID(), from: from, to: to, color: blue, lineWidth: lineWidth))
     }
 
     /// A tile whose rows tell top from bottom: magenta on top, a clear bottom row, green between.
@@ -191,6 +200,93 @@ struct EditorFlattenerTests {
         #expect(output[61, 12] == original[61, 12])
     }
 
+    /// A level pencil stroke along row 12 (width 4) covers rows 10 to 13 and nothing else. Row 12
+    /// is far from the middle row, so a missing or doubled flip would move it to row 35.
+    @Test func pencilStrokePixels() throws {
+        let base = makeImage()
+        let original = try Bitmap(base)
+        let line = [CGPoint(x: 8, y: 12), CGPoint(x: 32, y: 12), CGPoint(x: 56, y: 12)]
+        let pencil = Annotation.pencil(Stroke(id: UUID(), points: line, color: red, lineWidth: 4))
+        let output = try Bitmap(flatten(base, [pencil]))
+        for (x, y) in [(30, 10), (30, 11), (30, 12), (30, 13), (9, 11), (55, 12)] {
+            #expect(output[x, y] == Self.redPixel, "stroke at \(x), \(y)")
+        }
+        for (x, y) in [(30, 9), (30, 14), (30, 35), (3, 12), (60, 12)] {
+            #expect(output[x, y] == original[x, y], "untouched at \(x), \(y)")
+        }
+    }
+
+    /// Multiply never lightens. The left half is black and the right half white: a normal blend of
+    /// translucent yellow would lift the black to (115, 92, 0); multiply leaves it black and tints
+    /// the white to yellow x 0.45 + white x 0.55, about (255, 232, 140). Outside the band nothing
+    /// changes, and the tint is the same along the whole band.
+    @Test func highlighterDarkensNeverLightens() throws {
+        let base = makeImage { x, _ in x < 32 ? Self.blackPixel : [255, 255, 255, 255] }
+        let original = try Bitmap(base)
+        let line = [CGPoint(x: 8, y: 24), CGPoint(x: 32, y: 24), CGPoint(x: 56, y: 24)]
+        let marker = Annotation.highlighter(Stroke(id: UUID(), points: line, color: EditorPalette.defaultHighlight,
+                                                   lineWidth: 12))
+        let output = try Bitmap(flatten(base, [marker]))
+
+        var lighter: [String] = []
+        for y in 0..<output.height {
+            for x in 0..<output.width {
+                for channel in 0..<4 where output[x, y][channel] > original[x, y][channel] {
+                    lighter.append("\(x),\(y),\(channel)")
+                }
+            }
+        }
+        #expect(lighter.isEmpty, "lightened: \(lighter.prefix(5))")
+
+        #expect(output[16, 24] == Self.blackPixel)
+        let tinted = output[48, 24]
+        #expect(tinted[0] == 255)
+        #expect((230...234).contains(Int(tinted[1])), "green \(tinted[1])")
+        #expect((138...142).contains(Int(tinted[2])), "blue \(tinted[2])")
+        #expect(tinted[3] == 255)
+        // The band is rows 18 to 29.
+        #expect(output[48, 17] == original[48, 17])
+        #expect(output[48, 30] == original[48, 30])
+        #expect(output[48, 24] == output[48, 19])
+    }
+
+    /// A 4 px stroke on the ellipse in (10, 8, 40, 24) sits inside the rect: the centre line is the
+    /// ellipse in (12, 10, 36, 20), centre (30, 20) with radii 18 and 10, so the band runs from radii
+    /// (16, 8) to (20, 12). The bounding box's corners and the hollow are untouched, which tells an
+    /// ellipse from a rectangle, and the off-centre rows tell a flip.
+    @Test func ellipseStrokePixels() throws {
+        let base = makeImage()
+        let original = try Bitmap(base)
+        let output = try Bitmap(flatten(base, [ellipse(CGRect(x: 10, y: 8, width: 40, height: 24))]))
+        let stroked = [(11, 19), (11, 20), (47, 19), (47, 20), (30, 9), (29, 9), (30, 30), (29, 30), (42, 26)]
+        for (x, y) in stroked {
+            #expect(output[x, y] == Self.redPixel, "stroke at \(x), \(y)")
+        }
+        let untouched = [(30, 20), (20, 20), (10, 8), (49, 8), (10, 31), (49, 31), (8, 20), (30, 6)]
+        for (x, y) in untouched {
+            #expect(output[x, y] == original[x, y], "untouched at \(x), \(y)")
+        }
+    }
+
+    /// A level line along row 12 (rows 10 to 13 at 4 px) with round caps: the pixels just beyond
+    /// each end, which a butt cap would leave alone, are painted. A diagonal from (10, 30) to
+    /// (40, 40) crosses (25, 35). Neither line is near the middle row, so a flip would move them.
+    @Test func lineStrokePixels() throws {
+        let base = makeImage()
+        let original = try Bitmap(base)
+        let level = line(from: CGPoint(x: 8, y: 12), to: CGPoint(x: 56, y: 12))
+        let slanted = line(from: CGPoint(x: 10, y: 30), to: CGPoint(x: 40, y: 40))
+        let output = try Bitmap(flatten(base, [level, slanted]))
+        let stroked = [(30, 10), (30, 13), (8, 11), (7, 11), (7, 12), (56, 11), (56, 12), (25, 35)]
+        for (x, y) in stroked {
+            #expect(output[x, y] == Self.bluePixel, "stroke at \(x), \(y)")
+        }
+        let untouched = [(30, 8), (30, 15), (4, 12), (60, 12), (25, 40), (25, 30)]
+        for (x, y) in untouched {
+            #expect(output[x, y] == original[x, y], "untouched at \(x), \(y)")
+        }
+    }
+
     /// The rectangle was created before the redaction, yet its stroke covers the tile: effects
     /// belong to the base layer.
     @Test func drawingsRenderAboveTiles() throws {
@@ -273,5 +369,34 @@ struct EditorFlattenerTests {
         let outside = redact(CGRect(x: 100, y: 100, width: 10, height: 10))
         #expect(EditorFlattener.flatten(base: base, tiles: [], document: AnnotationDocument(annotations: [outside]),
                                         scale: 1) != nil)
+    }
+
+    /// Text burns in with CoreText under a flipped text matrix: upright, a line height apart, and
+    /// only inside its frame. "HI" has no descenders, so on each line the fully red pixels lie
+    /// between the cap height and the baseline. Text drawn upside down would hang below the
+    /// baseline instead, and a missing flip of the bitmap would put it near the bottom rows.
+    @Test func flattenedTextInkInsideFrameOnly() throws {
+        let base = makeImage()
+        let original = try Bitmap(base)
+        let box = TextBox(id: UUID(), string: "HI\nHI", origin: CGPoint(x: 6, y: 4), fontSize: 14, color: red)
+        let frame = TextLayout.frame(for: box)
+        try #require(frame.maxX < 64 && frame.maxY < 48)
+        let output = try Bitmap(flatten(base, [.text(box)]))
+        #expect(output.differences(from: original, excluding: [frame]) == 0)
+
+        let capHeight = CTFontGetCapHeight(TextLayout.font(size: 14))
+        let baselines = TextLayout.baselineOrigins(for: box).map(\.y)
+        try #require(baselines.count == 2)
+        var rowsPerLine: [Set<Int>] = [[], []]
+        for y in 0..<48 {
+            for x in 0..<64 where output[x, y] == Self.redPixel {
+                let centre = CGFloat(y) + 0.5
+                let line = baselines.firstIndex { centre > $0 - capHeight - 1 && centre < $0 + 1 }
+                #expect(line != nil, "red at \(x), \(y) is on neither line")
+                if let line { rowsPerLine[line].insert(y) }
+            }
+        }
+        #expect(rowsPerLine[0].count >= 5)
+        #expect(rowsPerLine[1].count >= 5)
     }
 }

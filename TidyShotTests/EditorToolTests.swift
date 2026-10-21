@@ -11,6 +11,7 @@ struct EditorToolTests {
         #expect(Set(letters).count == letters.count)
         #expect(letters.allSatisfy { $0.isASCII && $0.isUppercase })
         #expect(phase4a.map(\.letter) == ["V", "D", "X", "B", "R", "A"])
+        #expect([EditorTool.ellipse, .line].map(\.letter) == ["E", "L"])
     }
 
     @Test func toolForKeyIsCaseInsensitive() {
@@ -36,6 +37,8 @@ struct EditorToolTests {
             #expect(tool.tooltip == "\(tool.title) (\(tool.letter))")
         }
         #expect(EditorTool.redact.tooltip == "Redact (D)")
+        #expect(EditorTool.ellipse.tooltip == "Ellipse (E)")
+        #expect(EditorTool.line.tooltip == "Line (L)")
         #expect(phase4a.map(\.title) == ["Select", "Redact", "Pixelate", "Blur", "Rectangle", "Arrow"])
     }
 
@@ -51,5 +54,7 @@ struct EditorToolTests {
         // Redact leads the drawing tools because it is the only safe redaction. 4b inserts its
         // tools without reordering these.
         #expect(order.filter { phase4a.contains($0) } == phase4a)
+        // Ellipse and Line follow the 4a tools. Later 4b tools go after them.
+        #expect(Array(order.dropFirst(phase4a.count).prefix(2)) == [.ellipse, .line])
     }
 }

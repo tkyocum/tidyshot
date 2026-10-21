@@ -17,6 +17,18 @@ struct HitTesterTests {
         .arrow(Segment(id: id, from: from, to: to, color: red, lineWidth: lineWidth))
     }
 
+    func ellipse(_ rect: CGRect, lineWidth: CGFloat = 4, id: UUID = UUID()) -> Annotation {
+        .ellipse(ShapeBox(id: id, rect: rect, color: red, lineWidth: lineWidth))
+    }
+
+    func line(_ from: CGPoint, _ to: CGPoint, lineWidth: CGFloat = 4, id: UUID = UUID()) -> Annotation {
+        .line(Segment(id: id, from: from, to: to, color: red, lineWidth: lineWidth))
+    }
+
+    func pencil(_ points: [CGPoint], width: CGFloat = 8, id: UUID = UUID()) -> Annotation {
+        .pencil(Stroke(id: id, points: points, color: red, lineWidth: width))
+    }
+
     func blur(_ rect: CGRect, id: UUID = UUID()) -> Annotation {
         .blur(Region(id: id, rect: rect), radius: 16)
     }
@@ -72,6 +84,32 @@ struct HitTesterTests {
         #expect(HitTester.distance(from: CGPoint(x: 50, y: 6), toSegment: CGPoint(x: 0, y: 0), CGPoint(x: 100, y: 0)) == 6)
         #expect(HitTester.distance(from: CGPoint(x: 103, y: 4), toSegment: CGPoint(x: 0, y: 0), CGPoint(x: 100, y: 0)) == 5)
         #expect(HitTester.distance(from: CGPoint(x: 8, y: 9), toSegment: CGPoint(x: 5, y: 5), CGPoint(x: 5, y: 5)) == 5)
+    }
+
+    /// A stroke is hit within half its width plus the tolerance of its smoothed path, with round
+    /// caps, and not in the hollow of a curve. It has no handles, so a drag can only move it.
+    @Test func strokeHitWithinWidth() {
+        let level = pencil([CGPoint(x: 100, y: 100), CGPoint(x: 150, y: 100), CGPoint(x: 200, y: 100)])
+        #expect(HitTester.handles(for: level).isEmpty)
+        // Width 8: 3 px off the path is inside, 5 px is not until the tolerance reaches it.
+        #expect(HitTester.hit(level, at: CGPoint(x: 150, y: 103), tolerance: 0) == .body)
+        #expect(HitTester.hit(level, at: CGPoint(x: 150, y: 105), tolerance: 0) == nil)
+        #expect(HitTester.hit(level, at: CGPoint(x: 150, y: 105), tolerance: 4) == .body)
+        #expect(HitTester.hit(level, at: CGPoint(x: 150, y: 109), tolerance: 4) == nil)
+        // The round cap reaches 4 px past the last point along the path.
+        #expect(HitTester.hit(level, at: CGPoint(x: 203, y: 100), tolerance: 0) == .body)
+        #expect(HitTester.hit(level, at: CGPoint(x: 206, y: 100), tolerance: 0) == nil)
+
+        // The smoothed curve passes through its points; the space under the arch is not the body.
+        let arch = pencil([CGPoint(x: 0, y: 0), CGPoint(x: 50, y: 50), CGPoint(x: 100, y: 0)])
+        #expect(HitTester.hit(arch, at: CGPoint(x: 50, y: 50), tolerance: 0) == .body)
+        #expect(HitTester.hit(arch, at: CGPoint(x: 50, y: 10), tolerance: 4) == nil)
+
+        // A highlighter is hit the same way.
+        let marker = Annotation.highlighter(Stroke(id: UUID(), points: [CGPoint(x: 0, y: 0), CGPoint(x: 40, y: 0), CGPoint(x: 80, y: 0)],
+                                                   color: EditorPalette.defaultHighlight, lineWidth: 24))
+        #expect(HitTester.hit(marker, at: CGPoint(x: 40, y: 11), tolerance: 0) == .body)
+        #expect(HitTester.hit(marker, at: CGPoint(x: 40, y: 13), tolerance: 0) == nil)
     }
 
     /// Effects render beneath every drawing, so a drawing wins even over a later effect.
@@ -153,5 +191,63 @@ struct HitTesterTests {
                 == arrow(CGPoint(x: 10, y: 10), CGPoint(x: 200, y: 10), lineWidth: 6, id: id))
         #expect(HitTester.resized(original, handle: 0, to: CGPoint(x: 40, y: -45), square: true)
                 == arrow(CGPoint(x: 42.5, y: -47.5), CGPoint(x: 100, y: 10), lineWidth: 6, id: id))
+    }
+
+    /// `box` is 200 by 100 with its centre at (200, 100), so the outline's radii are 100 and 50.
+    /// With a 4 px stroke and a tolerance of 2, the ring runs from radii (102, 52) down to (94, 44).
+    @Test func ellipseHitOnRingNotCentre() {
+        let shape = ellipse(box, id: id)
+        let tolerance: CGFloat = 2
+        // The handles are the bounding box's, as for a rectangle.
+        #expect(HitTester.handles(for: shape) == HitTester.handles(for: rectangle(box)))
+        #expect(HitTester.hit(shape, at: CGPoint(x: 201, y: 51), tolerance: tolerance) == .handle(1))
+        // On the stroke, just outside it (within the tolerance) and just inside it.
+        #expect(HitTester.hit(shape, at: CGPoint(x: 230, y: 54), tolerance: tolerance) == .body)
+        #expect(HitTester.hit(shape, at: CGPoint(x: 230, y: 51), tolerance: tolerance) == .body)
+        #expect(HitTester.hit(shape, at: CGPoint(x: 230, y: 57), tolerance: tolerance) == .body)
+        // Beyond the tolerance outside, and inside the hollow: no hit.
+        #expect(HitTester.hit(shape, at: CGPoint(x: 230, y: 48), tolerance: tolerance) == nil)
+        #expect(HitTester.hit(shape, at: CGPoint(x: 230, y: 62), tolerance: tolerance) == nil)
+        #expect(HitTester.hit(shape, at: CGPoint(x: 200, y: 100), tolerance: tolerance) == nil)
+        // The bounding box's corner region is outside an ellipse and on a rectangle.
+        let corner = CGPoint(x: 296, y: 146)
+        #expect(HitTester.hit(shape, at: corner, tolerance: tolerance) == nil)
+        #expect(HitTester.hit(rectangle(box), at: corner, tolerance: tolerance) == .body)
+        // Too small to have a hollow, it is filled, as it is drawn.
+        let dot = ellipse(CGRect(x: 0, y: 0, width: 10, height: 10))
+        #expect(HitTester.hit(dot, at: CGPoint(x: 5, y: 5), tolerance: tolerance) == .body)
+        // Handles resize it like a rectangle, keeping id and stroke.
+        #expect(HitTester.resized(shape, handle: 4, to: CGPoint(x: 320, y: 170), square: false)
+                == ellipse(CGRect(x: 100, y: 50, width: 220, height: 120), id: id))
+        #expect(HitTester.resized(shape, handle: 4, to: CGPoint(x: 400, y: 100), square: true)
+                == ellipse(CGRect(x: 100, y: 50, width: 300, height: 300), id: id))
+        // Moving shifts the rect.
+        #expect(shape.moved(by: CGVector(dx: 5, dy: -3)) == ellipse(box.offsetBy(dx: 5, dy: -3), id: id))
+    }
+
+    @Test func lineHitWithinWidth() {
+        let level = line(CGPoint(x: 0, y: 0), CGPoint(x: 100, y: 0), lineWidth: 10, id: id)
+        // Within lineWidth / 2 + tolerance = 7 of the segment, which includes a round cap past each end.
+        #expect(HitTester.hit(level, at: CGPoint(x: 50, y: 6), tolerance: 2) == .body)
+        #expect(HitTester.hit(level, at: CGPoint(x: 50, y: 8), tolerance: 2) == nil)
+        #expect(HitTester.hit(level, at: CGPoint(x: 106, y: 0), tolerance: 2) == .body)
+        #expect(HitTester.hit(level, at: CGPoint(x: -8, y: 0), tolerance: 2) == nil)
+        // A diagonal measures the perpendicular distance: 7 / sqrt(2) = 4.95 in, 10 / sqrt(2) = 7.07 out.
+        let diagonal = line(CGPoint(x: 0, y: 0), CGPoint(x: 100, y: 100), lineWidth: 10)
+        #expect(HitTester.hit(diagonal, at: CGPoint(x: 50, y: 57), tolerance: 2) == .body)
+        #expect(HitTester.hit(diagonal, at: CGPoint(x: 50, y: 60), tolerance: 2) == nil)
+        // Two endpoint handles, tail then head, which beat the body.
+        #expect(HitTester.handles(for: level) == [CGPoint(x: 0, y: 0), CGPoint(x: 100, y: 0)])
+        #expect(HitTester.hit(level, at: CGPoint(x: 99, y: 1), tolerance: 8) == .handle(1))
+        #expect(HitTester.hit(level, at: CGPoint(x: 1, y: 1), tolerance: 8) == .handle(0))
+        // A moved end keeps id, colour and width; Shift snaps it to 45 degrees around the other end.
+        let original = line(CGPoint(x: 10, y: 10), CGPoint(x: 100, y: 10), lineWidth: 6, id: id)
+        #expect(HitTester.resized(original, handle: 1, to: CGPoint(x: 120, y: 40), square: false)
+                == line(CGPoint(x: 10, y: 10), CGPoint(x: 120, y: 40), lineWidth: 6, id: id))
+        #expect(HitTester.resized(original, handle: 1, to: CGPoint(x: 200, y: 15), square: true)
+                == line(CGPoint(x: 10, y: 10), CGPoint(x: 200, y: 10), lineWidth: 6, id: id))
+        // Moving shifts both ends.
+        #expect(original.moved(by: CGVector(dx: 5, dy: -3))
+                == line(CGPoint(x: 15, y: 7), CGPoint(x: 105, y: 7), lineWidth: 6, id: id))
     }
 }

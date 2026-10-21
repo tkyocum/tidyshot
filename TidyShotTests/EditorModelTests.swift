@@ -14,14 +14,15 @@ struct EditorModelTests {
     let black = RGBA(red: 0, green: 0, blue: 0, alpha: 1)
     let white = RGBA(red: 1, green: 1, blue: 1, alpha: 1)
 
-    /// A model over a 16x16 opaque grey capture at scale 2, with the standard defaults.
-    func makeModel(renderer: any TileRendering = FakeTileRenderer()) -> EditorModel {
-        let context = CGContext(data: nil, width: 16, height: 16, bitsPerComponent: 8, bytesPerRow: 0,
+    /// A model over a `side` x `side` opaque grey capture at `scale` (16 px at 2x unless a test
+    /// needs room or another scale), with the standard defaults.
+    func makeModel(renderer: any TileRendering = FakeTileRenderer(), scale: CGFloat = 2, side: Int = 16) -> EditorModel {
+        let context = CGContext(data: nil, width: side, height: side, bitsPerComponent: 8, bytesPerRow: 0,
                                 space: CGColorSpace(name: CGColorSpace.sRGB)!,
                                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
         context.setFillColor(CGColor(srgbRed: 0.5, green: 0.5, blue: 0.5, alpha: 1))
-        context.fill(CGRect(x: 0, y: 0, width: 16, height: 16))
-        return EditorModel(recordID: UUID(), image: ScaledImage(image: context.makeImage()!, scale: 2),
+        context.fill(CGRect(x: 0, y: 0, width: side, height: side))
+        return EditorModel(recordID: UUID(), image: ScaledImage(image: context.makeImage()!, scale: scale),
                            renderer: renderer, defaults: .standard)
     }
 
@@ -298,6 +299,21 @@ struct EditorModelTests {
         } else {
             Issue.record("no arrow")
         }
+        if case .ellipse(let shape)? = model.makeAnnotation(.ellipse, from: from, to: to) {
+            #expect(shape.rect == rect)
+            #expect(shape.color == model.strokeColor)
+            #expect(shape.lineWidth == model.lineWidthPoints * 2)
+        } else {
+            Issue.record("no ellipse")
+        }
+        if case .line(let segment)? = model.makeAnnotation(.line, from: from, to: to) {
+            #expect(segment.from == from)
+            #expect(segment.to == to)
+            #expect(segment.color == model.strokeColor)
+            #expect(segment.lineWidth == model.lineWidthPoints * 2)
+        } else {
+            Issue.record("no line")
+        }
         if case .redact(let region, let fill)? = model.makeAnnotation(.redact, from: from, to: to) {
             #expect(region.rect == rect)
             #expect(fill == model.redactColor)
@@ -317,6 +333,8 @@ struct EditorModelTests {
         #expect(model.makeAnnotation(.select, from: from, to: to) == nil)
         #expect(model.makeAnnotation(.redact, from: from, to: CGPoint(x: 12, y: 20)) == nil)
         #expect(model.makeAnnotation(.arrow, from: from, to: from) == nil)
+        #expect(model.makeAnnotation(.ellipse, from: from, to: CGPoint(x: 12, y: 20)) == nil)
+        #expect(model.makeAnnotation(.line, from: from, to: from) == nil)
 
         // One drag keeps one id, so the transient's tile carries over on commit.
         model.transient = model.makeAnnotation(.redact, from: from, to: to)
@@ -325,6 +343,55 @@ struct EditorModelTests {
         #expect(model.makeAnnotation(.redact, from: from, to: .zero)?.id == id)
         model.transient = nil
         #expect(model.makeAnnotation(.redact, from: from, to: to)?.id != id)
+    }
+
+    /// The Pencil follows the stroke colour and line width; the Highlighter has its own colour at
+    /// alpha 0.45 and its own 12 pt width, and the model's scale 2 turns points into pixels.
+    @Test func strokeToolsKeepTheirOwnColourAndWidth() {
+        let model = makeModel()
+        let points = [CGPoint(x: 1, y: 1), CGPoint(x: 8, y: 5), CGPoint(x: 12, y: 9)]
+
+        if case .pencil(let stroke)? = model.makeStroke(.pencil, points: points) {
+            #expect(stroke.points == points)
+            #expect(stroke.color == model.strokeColor)
+            #expect(stroke.lineWidth == model.lineWidthPoints * 2)
+        } else {
+            Issue.record("no pencil stroke")
+        }
+        if case .highlighter(let stroke)? = model.makeStroke(.highlighter, points: points) {
+            #expect(stroke.color == EditorPalette.defaultHighlight)
+            #expect(stroke.color.alpha == 0.45)
+            #expect(stroke.lineWidth == CGFloat(12) * 2)
+        } else {
+            Issue.record("no highlighter stroke")
+        }
+        #expect(model.makeStroke(.pencil, points: [points[0]]) == nil)
+        #expect(model.makeStroke(.rectangle, points: points) == nil)
+        #expect(model.makeAnnotation(.pencil, from: points[0], to: points[2]) == nil)
+        #expect(model.makeAnnotation(.highlighter, from: points[0], to: points[2]) == nil)
+
+        // With the Highlighter active, colour and width go to the highlighter's own settings.
+        model.tool = .highlighter
+        model.applyColor(blue)
+        #expect(model.highlightColor == RGBA(red: 0, green: 0, blue: 1, alpha: EditorPalette.highlighterAlpha))
+        #expect(model.strokeColor == EditorPalette.defaultStroke)
+        model.applyLineWidth(points: 8)
+        #expect(model.highlightWidthPoints == 8)
+        #expect(model.lineWidthPoints == EditorDefaults.standard.lineWidthPoints)
+        #expect(model.activeLineWidthPoints == 8)
+        model.tool = .pencil
+        #expect(model.activeLineWidthPoints == EditorDefaults.standard.lineWidthPoints)
+
+        // Select with a highlighter selected recolours it and keeps alpha 0.45.
+        let marked = Annotation.highlighter(Stroke(id: UUID(), points: points, color: EditorPalette.defaultHighlight, lineWidth: 24))
+        model.commit(model.document.appending(marked), actionName: "Add Highlighter")
+        model.tool = .select
+        model.selection = marked.id
+        model.applyColor(red)
+        #expect(model.document.annotation(id: marked.id)
+                == Annotation.highlighter(Stroke(id: marked.id, points: points,
+                                                 color: RGBA(red: 1, green: 0, blue: 0, alpha: 0.45), lineWidth: 24)))
+        #expect(model.activeColor.alpha == 0.45)
     }
 
     @Test func renderExportReturnsCaptureScale() async throws {
@@ -344,5 +411,293 @@ struct EditorModelTests {
         // A redaction over the image without its tile would export the secret: no export.
         add(redaction(), to: model)
         #expect(await model.renderExport() == nil)
+    }
+
+    @Test func undoRestoresUncropped() async throws {
+        let model = makeModel()
+        let shape = add(box(), to: model)
+        model.selection = shape.id
+        model.tool = .crop
+        // Cropping starts at the whole capture, with nothing selected, and ⌘A selects nothing.
+        #expect(model.cropDraft == CGRect(x: 0, y: 0, width: 16, height: 16))
+        #expect(model.selection == nil)
+        model.selectAll()
+        #expect(model.selection == nil)
+
+        model.cropDraft = CGRect(x: 2.4, y: 1.6, width: 9.8, height: 8.1)
+        model.applyCrop()
+        let crop = CGRect(x: 2, y: 2, width: 10, height: 8)
+        #expect(model.document.crop == crop)
+        #expect(model.document.annotations == [shape])
+        #expect(model.cropDraft == nil)
+        #expect(model.tool == .redact)
+        #expect(model.undoManager.undoActionName == EditorModel.ActionName.crop)
+        let cropped = try #require(await model.renderExport())
+        #expect(cropped.image.width == 10)
+        #expect(cropped.image.height == 8)
+        #expect(cropped.scale == 2)
+
+        model.undoManager.undo()
+        #expect(model.document.crop == nil)
+        #expect(model.document.annotations == [shape])
+        let uncropped = try #require(await model.renderExport())
+        #expect(uncropped.image.width == 16)
+        model.undoManager.redo()
+        #expect(model.document.crop == crop)
+        // Cropping again starts at the applied crop.
+        model.tool = .crop
+        #expect(model.cropDraft == crop)
+
+        // Undo and redo while Crop is open move the draft too, so Return cannot re-apply the undone crop.
+        model.undoManager.undo()
+        #expect(model.document.crop == nil)
+        #expect(model.cropDraft == CGRect(x: 0, y: 0, width: 16, height: 16))
+        model.undoManager.redo()
+        #expect(model.cropDraft == crop)
+        model.undoManager.undo()
+        model.applyCrop()
+        #expect(model.document.crop == nil)
+        #expect(model.undoManager.canRedo)
+    }
+
+    /// Undoing a step that leaves the crop alone must not throw away the draft being dragged.
+    @Test func undoOfAnUnrelatedStepKeepsTheCropDraft() {
+        let model = makeModel()
+        let shape = add(box(), to: model)
+        model.tool = .crop
+        let draft = CGRect(x: 3, y: 3, width: 8, height: 8)
+        model.cropDraft = draft
+        model.undoManager.undo()
+        #expect(model.document.annotation(id: shape.id) == nil)
+        #expect(model.cropDraft == draft)
+        model.undoManager.redo()
+        #expect(model.document.annotation(id: shape.id) != nil)
+        #expect(model.cropDraft == draft)
+    }
+
+    @Test func selectAllSkipsAnnotationsOutsideTheCrop() {
+        let model = makeModel()
+        let inside = add(box(x: 2), to: model)
+        _ = add(box(x: 10), to: model)
+        model.tool = .crop
+        model.cropDraft = CGRect(x: 0, y: 0, width: 9, height: 16)
+        model.applyCrop()
+        #expect(model.document.crop == CGRect(x: 0, y: 0, width: 9, height: 16))
+        model.selectAll()
+        #expect(model.selection == inside.id)
+    }
+
+    @Test func escapeCancelsCropAndAnotherToolApplies() {
+        let model = makeModel()
+        model.tool = .select
+        model.tool = .crop
+        model.cropDraft = CGRect(x: 4, y: 4, width: 8, height: 8)
+        // A draft that would change the crop is an unsaved change, so closing asks.
+        #expect(model.hasUnsavedChanges)
+        model.cancelCurrentOperation()
+        #expect(model.cropDraft == nil)
+        #expect(model.document.crop == nil)
+        #expect(model.tool == .select)
+        #expect(!model.hasUnsavedChanges)
+        #expect(!model.undoManager.canUndo)
+
+        // Another tool keeps the draft as one step; a draft left at the whole capture adds none.
+        model.tool = .crop
+        model.tool = .arrow
+        #expect(!model.undoManager.canUndo)
+        model.tool = .crop
+        model.cropDraft = CGRect(x: 4, y: 4, width: 8, height: 8)
+        model.tool = .arrow
+        #expect(model.cropDraft == nil)
+        #expect(model.document.crop == CGRect(x: 4, y: 4, width: 8, height: 8))
+        #expect(model.undoManager.undoActionName == EditorModel.ActionName.crop)
+        // Return outside Crop does nothing.
+        model.applyCrop()
+        #expect(model.tool == .arrow)
+        #expect(undoAll(model).count == 1)
+    }
+
+    /// Typing lives in the edit's own UndoManager. The editor's manager sees one step, on commit.
+    @Test func textEditCommitsOnceWithoutEditorUndo() throws {
+        let model = makeModel()
+        model.tool = .text
+        let click = CGPoint(x: 6, y: 5)
+        model.beginTextEditing(at: click, existing: nil)
+        #expect(model.isEditingText)
+        let typing = try #require(model.textUndoManager)
+        #expect(typing !== model.undoManager)
+        #expect(typing.groupsByEvent)
+        let editing = try #require(model.textEditing)
+        #expect(editing.original == nil)
+        #expect(editing.box.string.isEmpty)
+        #expect(editing.box.fontSize == EditorPalette.defaultTextSizePoints * 2)
+        #expect(editing.box.color == model.strokeColor)
+        #expect(editing.box.origin == TextLayout.origin(forClickAt: click, fontSize: editing.box.fontSize))
+        #expect(!model.hasUnsavedChanges)
+
+        model.updateEditingText("Hi")
+        model.updateEditingText("Hi\nthere\n")
+        #expect(model.document.annotations.isEmpty)
+        #expect(!model.undoManager.canUndo)
+        // Typed text counts as unsaved, so ⌘W and Quit ask before it is lost.
+        #expect(model.hasUnsavedChanges)
+
+        model.commitTextEditing()
+        #expect(!model.isEditingText)
+        #expect(model.textUndoManager == nil)
+        guard case .text(let box)? = model.document.annotations.first else {
+            Issue.record("no text")
+            return
+        }
+        #expect(model.document.annotations.count == 1)
+        #expect(box.id == editing.box.id)
+        #expect(box.string == "Hi\nthere")
+        #expect(box.origin == editing.box.origin)
+        #expect(model.selection == box.id)
+        #expect(model.undoManager.undoActionName == "Add Text")
+        // Committing again does nothing, and one undo removes the whole edit.
+        model.commitTextEditing()
+        #expect(undoAll(model) == [AnnotationDocument(annotations: [])])
+    }
+
+    @Test func reEditReplacesInPlaceAndBlankDeletes() throws {
+        let model = makeModel()
+        let shape = add(box(), to: model)
+        let text = add(.text(TextBox(id: UUID(), string: "Old", origin: CGPoint(x: 2, y: 2), fontSize: 24, color: red)),
+                       to: model)
+
+        model.beginTextEditing(at: .zero, existing: text.id)
+        #expect(model.textEditing?.box.string == "Old")
+        #expect(model.textEditing?.original?.id == text.id)
+        model.updateEditingText("New")
+        model.commitTextEditing()
+        #expect(model.document.annotations.map(\.id) == [shape.id, text.id])
+        #expect(model.undoManager.undoActionName == "Edit Text")
+        guard case .text(let edited)? = model.document.annotation(id: text.id) else {
+            Issue.record("no text")
+            return
+        }
+        #expect(edited.string == "New")
+        #expect(edited.origin == CGPoint(x: 2, y: 2))
+        #expect(edited.fontSize == 24)
+        let afterEdit = model.document
+
+        // Escape keeps what was committed and adds no step.
+        model.beginTextEditing(at: .zero, existing: text.id)
+        model.updateEditingText("Discarded")
+        model.cancelTextEditing()
+        #expect(model.document == afterEdit)
+        #expect(model.undoManager.undoActionName == "Edit Text")
+        #expect(model.selection == text.id)
+        #expect(model.textUndoManager == nil)
+
+        // The size keys resize the selected text as one step, in image pixels.
+        model.applyTextSize(points: 28)
+        model.applyTextSize(points: 40)
+        #expect(model.textSizePoints == 40)
+        guard case .text(let resized)? = model.document.annotation(id: text.id) else {
+            Issue.record("no text")
+            return
+        }
+        #expect(resized.fontSize == 80)
+        #expect(model.undoManager.undoActionName == "Text Size")
+        model.undoManager.undo()
+        #expect(model.document == afterEdit)
+
+        // Clearing the text deletes it in one step, and undo brings it back.
+        model.beginTextEditing(at: .zero, existing: text.id)
+        model.updateEditingText(" \n ")
+        model.commitTextEditing()
+        #expect(model.document.annotation(id: text.id) == nil)
+        #expect(model.undoManager.undoActionName == "Delete")
+        model.undoManager.undo()
+        #expect(model.document == afterEdit)
+
+        // A new box left blank adds nothing.
+        model.beginTextEditing(at: CGPoint(x: 8, y: 8), existing: nil)
+        model.commitTextEditing()
+        #expect(model.document == afterEdit)
+        #expect(!model.isEditingText)
+    }
+
+    @Test func duplicateOffsetsAndSelects() throws {
+        let model = makeModel(side: 64)
+        let shape = add(box(x: 2), to: model)
+        // Nothing selected: nothing to duplicate, and no step.
+        model.duplicateSelection()
+        #expect(model.document.annotations == [shape])
+        #expect(model.undoManager.undoActionName == "Add")
+
+        model.selection = shape.id
+        model.duplicateSelection()
+        // 10 pt down and to the right at scale 2.
+        #expect(model.duplicateOffset == CGVector(dx: 20, dy: 20))
+        let copy = try #require(model.document.annotations.last)
+        #expect(model.document.annotations.count == 2)
+        #expect(copy.id != shape.id)
+        #expect(copy == shape.moved(by: CGVector(dx: 20, dy: 20)).withID(copy.id))
+        #expect(model.selection == copy.id)
+        #expect(model.undoManager.undoActionName == "Duplicate Rectangle")
+
+        // ⌘D again duplicates the copy, one more step down and to the right.
+        model.duplicateSelection()
+        let third = try #require(model.document.annotations.last)
+        #expect(third == shape.moved(by: CGVector(dx: 40, dy: 40)).withID(third.id))
+        #expect(model.selection == third.id)
+        #expect(Set(model.document.annotations.map(\.id)).count == 3)
+    }
+
+    @Test func duplicateIsOneUndoStep() {
+        let model = makeModel(side: 64)
+        let effect = add(redaction(), to: model)
+        model.selection = effect.id
+        model.duplicateSelection()
+        #expect(model.document.effects.count == 2)
+        model.undoManager.undo()
+        #expect(model.document.annotations == [effect])
+        // The copy is gone, so the selection is too.
+        #expect(model.selection == nil)
+        model.undoManager.redo()
+        #expect(model.document.effects.count == 2)
+        #expect(undoAll(model).count == 2)
+    }
+
+    /// A copy from a 2x editor pasted into a 1x editor keeps its size in points.
+    @Test func pasteIntoAnotherEditorKeepsPointSize() throws {
+        let source = makeModel()
+        let shape = add(box(x: 2), to: source)
+        #expect(source.objectClip() == nil)
+        source.selection = shape.id
+        let data = try #require(source.objectClip()?.encoded())
+        let clip = try #require(AnnotationClip.decoded(from: data))
+        #expect(clip.scale == 2)
+
+        let target = makeModel(scale: 1)
+        target.paste(clip)
+        let pasted = try #require(target.document.annotations.first)
+        #expect(pasted.id != shape.id)
+        #expect(pasted == .rectangle(ShapeBox(id: pasted.id, rect: CGRect(x: 1, y: 1, width: 3, height: 2),
+                                              color: red, lineWidth: 2)))
+        #expect(target.selection == pasted.id)
+        #expect(target.undoManager.undoActionName == "Paste Rectangle")
+        target.undoManager.undo()
+        #expect(target.document.annotations.isEmpty)
+        #expect(source.document.annotations == [shape])
+    }
+
+    /// Pasting back into the same editor steps aside from the original, like ⌘D.
+    @Test func pasteOntoItsOriginalCascades() throws {
+        let model = makeModel(side: 200)
+        let shape = add(box(x: 2), to: model)
+        model.selection = shape.id
+        let clip = try #require(model.objectClip())
+        model.paste(clip)
+        let first = try #require(model.document.annotations.last)
+        #expect(first == shape.moved(by: CGVector(dx: 20, dy: 20)).withID(first.id))
+        model.paste(clip)
+        let second = try #require(model.document.annotations.last)
+        #expect(second == shape.moved(by: CGVector(dx: 40, dy: 40)).withID(second.id))
+        #expect(model.selection == second.id)
+        #expect(undoAll(model).count == 3)
     }
 }

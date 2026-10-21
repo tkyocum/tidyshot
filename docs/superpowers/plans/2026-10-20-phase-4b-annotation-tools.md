@@ -66,6 +66,8 @@ Each task gives the exact Swift interfaces it produces, complete Swift Testing t
 
 The totals come from each task's declared tests. Task 6 checks them against a real run and corrects any row that differs.
 
+Task 6 correction: the rows above are the plan's declared counts and stay as written. Two review fixes added tests beyond them. ee9c689 (the highlighter preview follows tile changes, a fix to Task 2's highlighter committed after Task 3) added `TileRepaintTests`, 5 tests in 1 suite. 5bacbe9 (crop undo keeps the draft in step, a fix to Task 4) added 1 test. The real count by commit was 420 tests in 52 suites (Task 1), 430 in 53 (Task 2), 437 in 54 (Task 3), 442 in 55 (ee9c689), 451 in 56 (Task 4), 452 in 56 (5bacbe9) and 464 in 58 (Task 5, 12 tests in 2 suites as declared). Task 6 adds none, and the real run reads `Test run with 464 tests in 58 suites passed`.
+
 ---
 
 ### Task 1: Ellipse and Line tools

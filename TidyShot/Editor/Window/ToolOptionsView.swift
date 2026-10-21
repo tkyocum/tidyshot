@@ -5,7 +5,8 @@ import SwiftUI
 /// coalescing key, so one slider drag is one undo step. Only the slider for the effect in play is
 /// enabled: the selected blur or pixelate, else the active Blur or Pixelate tool. A selected
 /// annotation of another kind does not decide it, so with a rectangle selected the active effect
-/// tool's slider still works and sets only the default.
+/// tool's slider still works and sets only the default. While the Highlighter is in play the width
+/// control edits the highlighter's width.
 struct ToolOptionsView: View {
     let model: EditorModel
 
@@ -57,7 +58,7 @@ struct ToolOptionsView: View {
     }
 
     private var lineWidth: Binding<CGFloat> {
-        Binding(get: { model.lineWidthPoints }, set: { model.applyLineWidth(points: $0) })
+        Binding(get: { model.activeLineWidthPoints }, set: { model.applyLineWidth(points: $0) })
     }
 
     private var blurRadius: Binding<CGFloat> {

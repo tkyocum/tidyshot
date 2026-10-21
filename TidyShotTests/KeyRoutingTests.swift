@@ -8,8 +8,9 @@ struct KeyRoutingTests {
     let ignored = KeyRouting.Action.none
 
     func action(_ characters: String?, command: Bool = false, control: Bool = false, option: Bool = false,
-                editing: Bool = false) -> KeyRouting.Action {
-        KeyRouting.action(characters: characters, command: command, control: control, option: option, isEditingText: editing)
+                editing: Bool = false, tool: EditorTool = .select) -> KeyRouting.Action {
+        KeyRouting.action(characters: characters, command: command, control: control, option: option,
+                          isEditingText: editing, tool: tool)
     }
 
     func matched(_ characters: String, shift: Bool = false, option: Bool = false, command: Bool = true,
@@ -77,13 +78,15 @@ struct KeyRoutingTests {
         #expect(KeyRouting.nudge(dx: -1, dy: 0, shift: true) == CGVector(dx: -10, dy: 0))
     }
 
-    /// The 4a table from spec 2.6. Characters are as charactersIgnoringModifiers gives them.
+    /// The 4a table from spec 2.6 plus 4b's ⌘V and ⌘D. Characters are as charactersIgnoringModifiers gives them.
     @Test func shortcutTableMatchesExpectedChords() {
         let expected: [(characters: String, shift: Bool, option: Bool, shortcut: EditorShortcut, selector: String)] = [
             ("s", false, false, .save, "saveDocument:"),
             ("S", true, false, .saveAs, "saveDocumentAs:"),
             ("c", false, false, .copy, "copy:"),
             ("C", true, false, .copyImage, "copyImage:"),
+            ("v", false, false, .paste, "paste:"),
+            ("d", false, false, .duplicate, "duplicate:"),
             ("u", false, false, .upload, "uploadDocument:"),
             ("u", false, true, .uploadAsNew, "uploadDocumentAsNew:"),
             ("z", false, false, .undo, "undo:"),
@@ -109,6 +112,9 @@ struct KeyRoutingTests {
         #expect(matched("s", option: true) == nil)
         #expect(matched("w", shift: true) == nil)
         #expect(matched("U", shift: true, option: true) == nil)
+        // ⇧⌘V and ⌥⌘D are other chords.
+        #expect(matched("V", shift: true) == nil)
+        #expect(matched("d", option: true) == nil)
     }
 
     @Test func shortcutTableHasNoDuplicateChords() {
@@ -123,15 +129,17 @@ struct KeyRoutingTests {
         }
     }
 
-    /// While a text annotation is edited (4b), ⌘C, ⌘A, ⌘Z and ⇧⌘Z go to the NSTextView.
+    /// While a text annotation is edited (4b), ⌘C, ⌘V, ⌘D, ⌘A, ⌘Z and ⇧⌘Z go to the NSTextView.
     @Test func editingTextPassesClipboardAndUndoChordsThrough() {
-        #expect(Set(EditorShortcut.allCases.filter(\.passesThroughWhileEditingText)) == [.copy, .selectAll, .undo, .redo])
+        #expect(Set(EditorShortcut.allCases.filter(\.passesThroughWhileEditingText)) == [.copy, .paste, .duplicate, .selectAll, .undo, .redo])
         for shortcut in EditorShortcut.allCases {
             let expected: EditorShortcut? = shortcut.passesThroughWhileEditingText ? nil : shortcut
             #expect(EditorShortcut.match(characters: shortcut.chord.key, command: true, shift: shortcut.chord.shift,
                                          option: shortcut.chord.option, control: false, isEditingText: true) == expected)
         }
         #expect(matched("c", editing: true) == nil)
+        #expect(matched("v", editing: true) == nil)
+        #expect(matched("d", editing: true) == nil)
         #expect(matched("a", editing: true) == nil)
         #expect(matched("z", editing: true) == nil)
         #expect(matched("Z", shift: true, editing: true) == nil)
@@ -143,5 +151,69 @@ struct KeyRoutingTests {
         #expect(matched("0", editing: true) == .zoomToFit)
         // ⌘X has no row, so it reaches the text view as well.
         #expect(matched("x", editing: true) == nil)
+    }
+
+    /// With the Text tool active the digits pick text sizes instead of line widths.
+    @Test func digitsPickTextSizesForTextTool() {
+        #expect(EditorPalette.textSizesPoints == [12, 16, 20, 28, 40, 56])
+        #expect(EditorPalette.textSizesPoints.count == EditorPalette.lineWidthsPoints.count)
+        #expect(EditorPalette.defaultTextSizePoints == 20)
+        for digit in 1...6 {
+            #expect(action(String(digit), tool: .text) == .textSize(index: digit - 1))
+            #expect(action(String(digit), tool: .rectangle) == .lineWidth(index: digit - 1))
+            #expect(action(String(digit), tool: .select) == .lineWidth(index: digit - 1))
+        }
+        #expect(EditorPalette.textSizesPoints[3] == 28)
+        // Letters still pick tools, T among them, and other keys stay ignored.
+        #expect(action("v", tool: .text) == .selectTool(.select))
+        #expect(action("t") == .selectTool(.text))
+        for key in ["0", "7", "!"] {
+            #expect(action(key, tool: .text) == ignored)
+        }
+        #expect(action("1", command: true, tool: .text) == ignored)
+        // While typing, every key belongs to the text view.
+        #expect(action("3", editing: true, tool: .text) == ignored)
+        #expect(action("t", editing: true, tool: .text) == ignored)
+    }
+
+    /// While typing, EditorWindow sends these to the text view itself, so they work whether or not
+    /// the never-drawn main menu has an Edit menu. The table leaves every one of them alone.
+    @Test func textEditingChordsGoToTheTextView() {
+        let expected: [(characters: String, shift: Bool, selector: String)] = [
+            ("c", false, "copy:"), ("x", false, "cut:"), ("v", false, "paste:"),
+            ("a", false, "selectAll:"), ("z", false, "undo:"), ("Z", true, "redo:"),
+        ]
+        for row in expected {
+            #expect(TextEditingChord.selectorName(characters: row.characters, command: true, shift: row.shift,
+                                                  option: false, control: false) == row.selector)
+            #expect(matched(row.characters, shift: row.shift, editing: true) == nil)
+        }
+        // Command is required; Option, Control or another key is something else.
+        #expect(TextEditingChord.selectorName(characters: "c", command: false, shift: false, option: false, control: false) == nil)
+        #expect(TextEditingChord.selectorName(characters: "c", command: true, shift: false, option: true, control: false) == nil)
+        #expect(TextEditingChord.selectorName(characters: "c", command: true, shift: false, option: false, control: true) == nil)
+        #expect(TextEditingChord.selectorName(characters: "s", command: true, shift: false, option: false, control: false) == nil)
+        // ⇧⌘C stays Copy Image, which commits the text and copies the picture.
+        #expect(TextEditingChord.selectorName(characters: "C", command: true, shift: true, option: false, control: false) == nil)
+        #expect(matched("C", shift: true, editing: true) == .copyImage)
+    }
+
+    /// Space alone pans; it is never a tool letter or a width, so `action` leaves it alone too.
+    @Test func spaceIsThePanKey() {
+        func pan(_ characters: String?, command: Bool = false, control: Bool = false, option: Bool = false,
+                 editing: Bool = false) -> Bool {
+            KeyRouting.isPanKey(characters: characters, command: command, control: control, option: option,
+                                isEditingText: editing)
+        }
+        #expect(pan(" "))
+        #expect(!pan(" ", command: true))
+        #expect(!pan(" ", control: true))
+        #expect(!pan(" ", option: true))
+        #expect(!pan(" ", editing: true))
+        #expect(!pan("v"))
+        #expect(!pan(nil))
+        #expect(!pan("  "))
+        #expect(action(" ") == ignored)
+        #expect(action(" ", tool: .text) == ignored)
     }
 }
