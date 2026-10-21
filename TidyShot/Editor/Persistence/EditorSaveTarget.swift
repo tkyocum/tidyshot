@@ -9,7 +9,7 @@ nonisolated enum EditorSaveTarget {
         case saveFolderFile(URL, folder: URL)
         /// Overwrite `pending/<id>.png` in place, so a later retry uploads the edit.
         case pendingFile(URL)
-        /// Save is off, for this reason (the window subtitle, and the body of `Not saved`).
+        /// Nothing to write over, for this reason (the window subtitle). ⌘S then runs Save As….
         case unavailable(String)
     }
 
@@ -53,14 +53,51 @@ nonisolated enum EditorSaveTarget {
 
 /// The editor's commands as the availability table and the shortcut gate see them.
 nonisolated enum EditorAction: CaseIterable, Sendable {
-    case save, saveCopy, copy, upload, uploadAsNew
+    case save, saveAs, copy, upload, uploadAsNew
+}
+
+/// What ⌘S does (spec 2.6, Save), decided from the record and the save folder the editor last
+/// heard of. The coordinator plans again at write time.
+nonisolated enum EditorSaveCommand: Equatable, Sendable {
+    /// Write over the Save target (`EditorSaveTarget.plan`) through the coordinator.
+    case writeOver
+    /// Nothing local to write over (no file, a file outside the current folder, no folder, or no
+    /// record): run Save As….
+    case saveAs
+
+    static func forSave(record: CaptureRecord?, saveFolder: URL?) -> EditorSaveCommand {
+        guard let record else { return .saveAs }
+        switch EditorSaveTarget.plan(for: record, saveFolder: saveFolder) {
+        case .saveFolderFile, .pendingFile: return .writeOver
+        case .unavailable: return .saveAs
+        }
+    }
+
+    /// The unsaved-changes sheet's first button.
+    enum CloseSheetButton: Equatable, Sendable {
+        /// Runs ⌘S, which opens the save panel itself when there is nothing to write over.
+        case save
+        /// Save is unavailable (uploading, deleting or deleted): runs Save As….
+        case saveAs
+
+        var title: String {
+            switch self {
+            case .save: "Save"
+            case .saveAs: "Save As…"
+            }
+        }
+    }
+
+    static func closeSheetButton(available: Set<EditorAction>) -> CloseSheetButton {
+        available.contains(.save) ? .save : .saveAs
+    }
 }
 
 /// What the editor may do for its record now, why not, and the window subtitle. One table feeds
 /// the toolbar validation, the shortcut gate, the action methods' guard and the coordinator's
 /// write-time check. A nil record was deleted or pruned.
 nonisolated enum EditorAvailability {
-    static let deletedStatus = "This capture was deleted. Copy and Save Copy still work."
+    static let deletedStatus = "This capture was deleted. Copy and Save As still work."
     static let deletingStatus = "Deleting…"
     static let uploadingStatus = "Uploading…"
     static let deletedRefusal = "This capture was deleted."
@@ -75,26 +112,24 @@ nonisolated enum EditorAvailability {
     }
 
     /// Nil when `action` may run; otherwise the reason, posted as the body of `Not saved` or
-    /// `Not uploaded`. Copy and Save Copy are never refused: they work on the editor's own image,
-    /// also for a deleted, deleting or uploading record.
+    /// `Not uploaded`. Copy and Save As… are never refused: they work on the editor's own image,
+    /// also for a deleted, deleting or uploading record. Save is not refused for want of a file
+    /// to write over: `EditorSaveCommand` sends it to Save As… then.
     static func refusal(for action: EditorAction, record: CaptureRecord?, saveFolder: URL?, isDeleting: Bool) -> String? {
         switch action {
-        case .copy, .saveCopy:
+        case .copy, .saveAs:
             return nil
         case .save, .upload, .uploadAsNew:
             guard let record else { return deletedRefusal }
             if isDeleting { return deletingRefusal }
             if record.isUploading { return uploadingRefusal }
-            if action == .save, case .unavailable(let reason) = EditorSaveTarget.plan(for: record, saveFolder: saveFolder) {
-                return reason
-            }
             if action == .uploadAsNew, record.linkURL == nil { return notUploadedRefusal }
             return nil
         }
     }
 
     /// The window subtitle, or nil for none. In order: deleted, deleting, uploading, the stale-link
-    /// note, then why Save is off.
+    /// note, then why Save has nothing to write over.
     static func status(record: CaptureRecord?, saveFolder: URL?, isDeleting: Bool) -> String? {
         guard let record else { return deletedStatus }
         if isDeleting { return deletingStatus }

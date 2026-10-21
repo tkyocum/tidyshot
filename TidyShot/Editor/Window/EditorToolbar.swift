@@ -21,13 +21,33 @@ extension EditorModel {
 }
 
 /// The editor toolbar (spec 2.6, Window): `NSToolbar(identifier: "AnnotationEditor")`, icon only,
-/// not customisable. Its state follows the model through Observation, so letter keys, digit keys
-/// and pinch zoom show here without the canvas knowing about the toolbar. Liquid Glass comes free:
-/// no custom backgrounds.
+/// not customisable. Copy, Save and Upload are plain buttons with no menus, and the window is never
+/// narrower than the toolbar (`minimumToolbarContentWidth()`), so nothing overflows. Its state
+/// follows the model through Observation, so letter keys, digit keys and pinch zoom show here
+/// without the canvas knowing about the toolbar. Liquid Glass comes free: no custom backgrounds.
 extension EditorWindowController: NSToolbarDelegate, NSToolbarItemValidation {
     private static let itemIdentifiers: [NSToolbarItem.Identifier] = [
         .tools, .space, .color, .toolOptions, .flexibleSpace, .zoom, .copyImage, .save, .upload,
     ]
+    private static let zoomPopUpWidth: CGFloat = 84
+
+    /// The narrowest content width that shows every item of `itemIdentifiers`: the window buttons
+    /// and the title measured from the window, the zoom pop-up at its fixed width, and the items
+    /// AppKit draws itself (the six tool segments; Colour, Options, Copy and Save; the prominent
+    /// Upload; the fixed space) from `EditorWindowGeometry.ToolbarMetrics`.
+    func minimumToolbarContentWidth() -> CGFloat {
+        guard let window else { return EditorWindowGeometry.minimumContentSize.width }
+        let measured = [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton]
+            .compactMap { window.standardWindowButton($0)?.frame.maxX }.max() ?? 0
+        let windowButtonsMaxX = measured > 0 ? measured : EditorWindowGeometry.ToolbarMetrics.windowButtons
+        let titleWidth = (window.title as NSString).size(withAttributes: [.font: NSFont.titleBarFont(ofSize: 0)]).width
+        let width = EditorWindowGeometry.toolbarWidth(
+            windowButtonsMaxX: windowButtonsMaxX, titleWidth: titleWidth, toolSegments: EditorTool.toolbarOrder.count,
+            buttons: [NSToolbarItem.Identifier.color, .toolOptions, .copyImage, .save].count, prominentButtons: 1,
+            viewWidths: [Self.zoomPopUpWidth],
+            fixedSpaces: Self.itemIdentifiers.filter { $0 == .space }.count)
+        return EditorWindowGeometry.minimumContentWidth(toolbarWidth: width)
+    }
 
     /// Called once from `init`, after `super.init(window:)` and before the window is placed.
     func installToolbar() {
@@ -66,14 +86,11 @@ extension EditorWindowController: NSToolbarDelegate, NSToolbarItemValidation {
             return makeButtonItem(.copyImage, label: "Copy", toolTip: "Copy the image (⌘C)",
                                   image: symbol("doc.on.doc", "Copy"), action: #selector(copyImage(_:)))
         case .save:
-            return makeMenuItem(.save, label: "Save", toolTip: "Save (⌘S)",
-                                image: symbol("square.and.arrow.down", "Save"), action: #selector(saveDocument(_:)),
-                                entries: [("Save Copy…", #selector(saveDocumentCopy(_:)))])
+            return makeButtonItem(.save, label: "Save", toolTip: "Save (⌘S)",
+                                  image: symbol("square.and.arrow.down", "Save"), action: #selector(saveDocument(_:)))
         case .upload:
-            let item = makeMenuItem(.upload, label: "Upload", toolTip: "Upload (⌘U)",
-                                    image: symbol("icloud.and.arrow.up", "Upload"), action: #selector(uploadDocument(_:)),
-                                    entries: [("Upload", #selector(uploadDocument(_:))),
-                                              ("Upload as New", #selector(uploadDocumentAsNew(_:)))])
+            let item = makeButtonItem(.upload, label: "Upload", toolTip: "Upload and copy the link (⌘U)",
+                                      image: symbol("icloud.and.arrow.up", "Upload"), action: #selector(uploadDocument(_:)))
             item.style = .prominent
             return item
         default:
@@ -119,17 +136,6 @@ extension EditorWindowController: NSToolbarDelegate, NSToolbarItemValidation {
         guard let group = toolbarItem(.tools) as? NSToolbarItemGroup,
               let index = EditorTool.toolbarOrder.firstIndex(of: tool), group.selectedIndex != index else { return }
         group.selectedIndex = index
-    }
-
-    /// Disabling the `.save` menu item would also disable its Save Copy… entry, which must stay. So
-    /// while Save is unavailable the item's button runs Save Copy… instead, and is named for it;
-    /// `saveDocumentCopy:` is always permitted, so validation keeps it enabled.
-    func reflectSaveAvailability() {
-        guard let item = toolbarItem(.save) as? NSMenuToolbarItem else { return }
-        let canSave = available.contains(.save)
-        item.action = canSave ? #selector(saveDocument(_:)) : #selector(saveDocumentCopy(_:))
-        item.label = canSave ? "Save" : "Save Copy…"
-        item.toolTip = canSave ? "Save (⌘S)" : "Save Copy… (⇧⌘S)"
     }
 
     private func reflectColor(_ color: RGBA) {
@@ -218,30 +224,11 @@ extension EditorWindowController: NSToolbarDelegate, NSToolbarItemValidation {
         return item
     }
 
-    /// The button runs `action`; the indicator opens `entries`, which autovalidate through
-    /// `validateUserInterfaceItem(_:)`.
-    private func makeMenuItem(_ identifier: NSToolbarItem.Identifier, label: String, toolTip: String, image: NSImage?,
-                              action: Selector, entries: [(String, Selector)]) -> NSMenuToolbarItem {
-        let item = NSMenuToolbarItem(itemIdentifier: identifier)
-        item.label = label
-        item.toolTip = toolTip
-        item.image = image
-        item.target = self
-        item.action = action
-        let menu = NSMenu(title: label)
-        for (title, selector) in entries {
-            let entry = NSMenuItem(title: title, action: selector, keyEquivalent: "")
-            entry.target = self
-            menu.addItem(entry)
-        }
-        item.menu = menu
-        return item
-    }
-
     private func makeZoomItem() -> NSToolbarItem {
         let popUp = NSPopUpButton(frame: .zero, pullsDown: true)
         popUp.menu = zoomMenu(withTitleItem: true)
-        popUp.widthAnchor.constraint(equalToConstant: 84).isActive = true  // the title changes; the width does not
+        // The title changes; the width does not.
+        popUp.widthAnchor.constraint(equalToConstant: Self.zoomPopUpWidth).isActive = true
         let item = NSToolbarItem(itemIdentifier: .zoom)
         item.label = "Zoom"
         item.toolTip = "Zoom"

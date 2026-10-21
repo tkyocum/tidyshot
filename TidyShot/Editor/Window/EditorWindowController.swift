@@ -1,13 +1,19 @@
 import AppKit
 import Observation
+import UniformTypeIdentifiers
 
 /// What the editor's document actions do, provided by AppCoordinator: the editor never writes
-/// files, never touches the pasteboard and never enqueues uploads. For Save, Save Copy and Upload
-/// the Bool says whether the edit was written, which is when the editor marks itself saved.
+/// files, never touches the pasteboard and never enqueues uploads. For Save and Save As… the Bool
+/// says whether the edit was written, which is when the editor marks itself saved; Upload reports
+/// an `EditorUploadOutcome`, which also says whether the window closes.
 struct EditorActions {
-    var save, saveCopy: (ScaledImage) async -> Bool
+    var save: (ScaledImage) async -> Bool
+    /// Writes the edit to the URL the save panel returned.
+    var saveAs: (ScaledImage, URL) async -> Bool
+    /// The save panel's suggested name and folder, read when the panel opens.
+    var saveAsSuggestion: () -> EditorNaming.SaveAsSuggestion
     var copy: (ScaledImage) async -> Void
-    var upload: (ScaledImage, _ asNew: Bool) async -> Bool
+    var upload: (ScaledImage, _ asNew: Bool) async -> EditorUploadOutcome
 }
 
 /// One annotation editor window for one capture record: the window, the two stacked views, the
@@ -27,6 +33,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
     /// What the editor may do now. Empty until the coordinator's first push, which presentEditor
     /// sends before the window shows.
     private(set) var available: Set<EditorAction> = []
+    /// What ⌘S does now: write over the record's file, or open the save panel.
+    private(set) var saveCommand: EditorSaveCommand = .saveAs
 
     #if DEBUG
     private static var loggedMainMenu = false
@@ -72,19 +80,22 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
         fatalError("init(coder:) is not used")
     }
 
-    /// Sizes the window to the capture's natural point size plus chrome, within 640x420 and 90%
-    /// of the visible frame of the screen under the mouse, and cascades it 22 pt from
-    /// `previous`. No frame autosave. The chrome is measured from the window, so a toolbar
-    /// attached before this call is included.
+    /// Sizes the window to the capture's natural point size plus chrome, at least the toolbar's
+    /// width (and 640x420) and within 90% of the visible frame of the screen under the mouse, and
+    /// cascades it 22 pt from `previous`. The content never gets narrower than the toolbar, so no
+    /// item moves into the overflow menu. No frame autosave. The chrome is measured from the
+    /// window, so a toolbar attached before this call is included.
     private func placeWindow(cascadeFrom previous: NSWindow?) {
         guard let window, let content = window.contentView else { return }
+        let minimumWidth = minimumToolbarContentWidth()
+        window.contentMinSize.width = minimumWidth
         let screen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main ?? NSScreen.screens[0]
         let visible = screen.visibleFrame
         let chrome = CGSize(width: window.frame.width - content.frame.width,
                             height: window.frame.height - content.frame.height)
         let contentSize = EditorWindowGeometry.initialContentSize(
             imagePixels: CGSize(width: model.base.width, height: model.base.height), scale: model.scale,
-            chrome: chrome, visibleFrame: visible)
+            chrome: chrome, visibleFrame: visible, minimumWidth: minimumWidth)
         let size = CGSize(width: contentSize.width + chrome.width, height: contentSize.height + chrome.height)
         window.setFrame(EditorWindowGeometry.cascaded(from: previous?.frame, size: size, visibleFrame: visible),
                         display: false)
@@ -122,9 +133,9 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
     /// pruned), the save folder, and whether a delete is running.
     func recordDidChange(_ record: CaptureRecord?, saveFolder: URL?, isDeleting: Bool) {
         let allowed = EditorAvailability.actions(record: record, saveFolder: saveFolder, isDeleting: isDeleting)
+        saveCommand = EditorSaveCommand.forSave(record: record, saveFolder: saveFolder)
         if allowed != available {
             available = allowed
-            reflectSaveAvailability()
             window?.toolbar?.validateVisibleItems()
         }
         let status = EditorAvailability.status(record: record, saveFolder: saveFolder, isDeleting: isDeleting) ?? ""
@@ -141,14 +152,16 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
 
     // MARK: Document actions
 
+    /// ⌘S: writes over the record's file, or runs Save As… when there is none to write over.
     @objc func saveDocument(_ sender: Any?) {
         guard permits(#selector(saveDocument(_:))) else { return }
-        runDocumentAction(marksSaved: true) { await self.actions.save($0) }
+        runDocumentTask { await self.performSave() }
     }
 
-    @objc func saveDocumentCopy(_ sender: Any?) {
-        guard permits(#selector(saveDocumentCopy(_:))) else { return }
-        runDocumentAction(marksSaved: true) { await self.actions.saveCopy($0) }
+    /// ⇧⌘S: always available, also while the record uploads or is deleted.
+    @objc func saveDocumentAs(_ sender: Any?) {
+        guard permits(#selector(saveDocumentAs(_:))) else { return }
+        runDocumentTask { await self.performSaveAs() }
     }
 
     /// ⌘C. In 4a it copies the flattened image, like ⇧⌘C; 4b gives CanvasView an object copy that
@@ -160,23 +173,29 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
 
     @objc func copyImage(_ sender: Any?) {
         guard permits(#selector(copyImage(_:))) else { return }
-        runDocumentAction(marksSaved: false) { image in
-            await self.actions.copy(image)
-            return true
+        runDocumentTask {
+            await self.exportAndDeliver(marksSaved: false) { image in
+                await self.actions.copy(image)
+                return true
+            }
         }
     }
 
+    /// ⌘U: uploads the edit at once. Once it is saved locally and uploading, the window closes;
+    /// the link reaches the clipboard when the upload finishes.
     @objc func uploadDocument(_ sender: Any?) {
         guard permits(#selector(uploadDocument(_:))) else { return }
-        runDocumentAction(marksSaved: true) { await self.actions.upload($0, false) }
+        runDocumentTask { await self.performUpload(asNew: false) }
     }
 
+    /// ⌥⌘U, a shortcut only: as ⌘U, under a new link.
     @objc func uploadDocumentAsNew(_ sender: Any?) {
         guard permits(#selector(uploadDocumentAsNew(_:))) else { return }
-        runDocumentAction(marksSaved: true) { await self.actions.upload($0, true) }
+        runDocumentTask { await self.performUpload(asNew: true) }
     }
 
-    private func runDocumentAction(marksSaved: Bool, _ deliver: @escaping (ScaledImage) async -> Bool) {
+    /// One document action at a time: another one beeps until `work` finishes.
+    private func runDocumentTask(_ work: @escaping () async -> Bool) {
         guard !isPerformingAction else {
             NSSound.beep()
             return
@@ -184,25 +203,73 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
         isPerformingAction = true
         Task {
             defer { isPerformingAction = false }
-            _ = await exportAndDeliver(marksSaved: marksSaved, deliver)
+            _ = await work()
         }
+    }
+
+    /// ⌘S as `saveCommand` decides. True when the edit was written.
+    private func performSave() async -> Bool {
+        switch saveCommand {
+        case .writeOver:
+            await exportAndDeliver(marksSaved: true) { await self.actions.save($0) }
+        case .saveAs:
+            await performSaveAs()
+        }
+    }
+
+    /// Save As…: an `NSSavePanel` sheet for a PNG, named and placed by the coordinator's
+    /// suggestion. The document is flattened after the panel closes, so it is what was confirmed.
+    /// False for Cancel or a failed write; the editor then stays as it was.
+    private func performSaveAs() async -> Bool {
+        guard let window else { return false }
+        let suggestion = actions.saveAsSuggestion()
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.png]
+        panel.nameFieldStringValue = suggestion.fileName
+        if let directory = suggestion.directory {
+            panel.directoryURL = directory
+        }
+        guard await panel.beginSheetModal(for: window) == .OK, let url = panel.url else { return false }
+        return await exportAndDeliver(marksSaved: true) { await self.actions.saveAs($0, url) }
+    }
+
+    /// Upload and Upload as New. The window closes without the unsaved-changes sheet when the
+    /// outcome says so; a refusal keeps it open, and the coordinator's notification says why.
+    private func performUpload(asNew: Bool) async -> Bool {
+        guard let (image, exported) = await export() else { return false }
+        let outcome = await actions.upload(image, asNew)
+        let unchanged = model.document == exported
+        if outcome.marksSaved, unchanged {
+            model.markSaved()
+        }
+        if outcome.closesWindow(documentUnchanged: unchanged) {
+            window?.close()
+        }
+        return outcome.enqueued
     }
 
     /// Flattens the document as it is now and hands the image over. It is marked saved only when
     /// `deliver` succeeds and nothing was edited meanwhile; an edit made during the save stays
     /// unsaved.
     private func exportAndDeliver(marksSaved: Bool, _ deliver: (ScaledImage) async -> Bool) async -> Bool {
-        let exported = model.document
-        guard let image = await model.renderExport() else {
-            NSLog("Editor: the export of \(model.recordID) failed")
-            NSSound.beep()
-            return false
-        }
+        guard let (image, exported) = await export() else { return false }
         guard await deliver(image) else { return false }
         if marksSaved, model.document == exported {
             model.markSaved()
         }
         return true
+    }
+
+    /// The flattened image and the document it was made from, or nil (with a beep) when the
+    /// export failed.
+    private func export() async -> (ScaledImage, AnnotationDocument)? {
+        let exported = model.document
+        guard let image = await model.renderExport() else {
+            NSLog("Editor: the export of \(model.recordID) failed")
+            NSSound.beep()
+            return nil
+        }
+        return (image, exported)
     }
 
     // MARK: Zoom
@@ -218,7 +285,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
         if let action = item.action, !permits(action) { return false }
         let limits = CanvasTransform.zoomLimits(captureScale: model.scale)
         switch item.action {
-        case #selector(saveDocument(_:)), #selector(saveDocumentCopy(_:)), #selector(copy(_:)),
+        case #selector(saveDocument(_:)), #selector(saveDocumentAs(_:)), #selector(copy(_:)),
              #selector(copyImage(_:)), #selector(uploadDocument(_:)), #selector(uploadDocumentAsNew(_:)):
             return !isPerformingAction
         case #selector(zoomIn(_:)):
@@ -243,9 +310,10 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
     }
 
     /// The unsaved-changes sheet. True when the window may close: nothing to save, Don’t Save, or a
-    /// Save that wrote the edit. False for Cancel, a failed save, a sheet already showing or an
-    /// action still running. Save becomes Save Copy… when this controller's own validation refuses
-    /// Save.
+    /// Save that wrote the edit. False for Cancel, a failed save, a cancelled save panel, a sheet
+    /// already showing or an action still running. Save runs ⌘S (which opens the save panel when
+    /// there is nothing to write over); it becomes Save As… when this controller's own validation
+    /// refuses Save.
     func askToSaveBeforeClosing() async -> Bool {
         guard model.hasUnsavedChanges else { return true }
         guard let window, window.attachedSheet == nil, !isPerformingAction else {
@@ -253,10 +321,11 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
             return false
         }
         let canSave = validateUserInterfaceItem(ShortcutItem(action: #selector(saveDocument(_:))))
+        let saveButton = EditorSaveCommand.closeSheetButton(available: canSave ? [.save] : [])
         let alert = NSAlert()
         alert.messageText = "Do you want to save the changes made to “\(window.title)”?"
         alert.informativeText = "Your changes will be lost if you don’t save them."
-        alert.addButton(withTitle: canSave ? "Save" : "Save Copy…")
+        alert.addButton(withTitle: saveButton.title)
         alert.addButton(withTitle: "Cancel")
         let dontSave = alert.addButton(withTitle: "Don’t Save")
         dontSave.keyEquivalent = "d"
@@ -267,8 +336,9 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
         defer { isPerformingAction = false }
         switch await alert.beginSheetModal(for: window) {
         case .alertFirstButtonReturn:
-            return await exportAndDeliver(marksSaved: true) { image in
-                canSave ? await self.actions.save(image) : await self.actions.saveCopy(image)
+            switch saveButton {
+            case .save: return await performSave()
+            case .saveAs: return await performSaveAs()
             }
         case .alertThirdButtonReturn:
             return true

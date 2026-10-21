@@ -46,7 +46,7 @@ nonisolated enum KeyRouting {
 /// before the main menu. ⌘X has no case: Phase 4 has no object cut, so ⌘X always reaches the
 /// responder chain.
 nonisolated enum EditorShortcut: CaseIterable, Sendable {
-    case save, saveCopy, copy, copyImage, upload, uploadAsNew, undo, redo, close, zoomToFit, actualSize, zoomIn, zoomOut, selectAll
+    case save, saveAs, copy, copyImage, upload, uploadAsNew, undo, redo, close, zoomToFit, actualSize, zoomIn, zoomOut, selectAll
 
     /// A key with Command held. Control is never part of a chord.
     struct Chord: Hashable, Sendable {
@@ -59,7 +59,7 @@ nonisolated enum EditorShortcut: CaseIterable, Sendable {
     var chord: Chord {
         switch self {
         case .save: Chord(key: "s")
-        case .saveCopy: Chord(key: "s", shift: true)
+        case .saveAs: Chord(key: "s", shift: true)
         case .copy: Chord(key: "c")
         case .copyImage: Chord(key: "c", shift: true)
         case .upload: Chord(key: "u")
@@ -79,7 +79,7 @@ nonisolated enum EditorShortcut: CaseIterable, Sendable {
     var selectorName: String {
         switch self {
         case .save: "saveDocument:"
-        case .saveCopy: "saveDocumentCopy:"
+        case .saveAs: "saveDocumentAs:"
         case .copy: "copy:"
         case .copyImage: "copyImage:"
         case .upload: "uploadDocument:"
@@ -99,7 +99,7 @@ nonisolated enum EditorShortcut: CaseIterable, Sendable {
     var passesThroughWhileEditingText: Bool {
         switch self {
         case .copy, .selectAll, .undo, .redo: true
-        case .save, .saveCopy, .copyImage, .upload, .uploadAsNew, .close, .zoomToFit, .actualSize, .zoomIn, .zoomOut: false
+        case .save, .saveAs, .copyImage, .upload, .uploadAsNew, .close, .zoomToFit, .actualSize, .zoomIn, .zoomOut: false
         }
     }
 

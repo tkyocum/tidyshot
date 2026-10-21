@@ -30,8 +30,9 @@ struct EditorSaveTargetTests {
         let record = saved(in: URL(filePath: "/Users/tim/Desktop", directoryHint: .isDirectory))
         #expect(EditorSaveTarget.plan(for: record, saveFolder: folder)
                 == .unavailable("The file is outside the current save folder, so it is not saved over."))
-        #expect(!actions(record).contains(.save))
-        #expect(actions(record).isSuperset(of: [.saveCopy, .copy, .upload]))
+        // Save stays on: with nothing to write over it opens the save panel (Save As…).
+        #expect(actions(record) == [.save, .saveAs, .copy, .upload])
+        #expect(EditorSaveCommand.forSave(record: record, saveFolder: folder) == .saveAs)
     }
 
     @Test func noFolderUnavailable() {
@@ -39,6 +40,7 @@ struct EditorSaveTargetTests {
                 == .unavailable("No save folder is set, so the file is not saved over."))
         #expect(EditorAvailability.status(record: saved(), saveFolder: nil, isDeleting: false)
                 == "No save folder is set, so the file is not saved over.")
+        #expect(EditorSaveCommand.forSave(record: saved(), saveFolder: nil) == .saveAs)
     }
 
     /// An upload-only capture's file in `pending` needs no save folder.
@@ -47,7 +49,8 @@ struct EditorSaveTargetTests {
                                    appName: nil, uploadState: .failed(message: "offline"))
         #expect(EditorSaveTarget.plan(for: record, saveFolder: folder) == .pendingFile(pendingURL))
         #expect(EditorSaveTarget.plan(for: record, saveFolder: nil) == .pendingFile(pendingURL))
-        #expect(actions(record) == [.save, .saveCopy, .copy, .upload])
+        #expect(actions(record) == [.save, .saveAs, .copy, .upload])
+        #expect(EditorSaveCommand.forSave(record: record, saveFolder: nil) == .writeOver)
     }
 
     @Test func uploadedUploadOnlyWithoutFileUnavailable() {
@@ -55,8 +58,11 @@ struct EditorSaveTargetTests {
                                    uploadState: .uploaded(url: link, key: "a.png"), objectLocation: location)
         #expect(EditorSaveTarget.plan(for: record, saveFolder: folder)
                 == .unavailable("This capture has no local file to save over."))
-        #expect(actions(record) == [.saveCopy, .copy, .upload, .uploadAsNew])
-        #expect(EditorAvailability.refusal(for: .save, record: record, saveFolder: folder, isDeleting: false)
+        // Save opens the save panel instead of writing over a file; the subtitle says why.
+        #expect(actions(record) == Set(EditorAction.allCases))
+        #expect(EditorAvailability.refusal(for: .save, record: record, saveFolder: folder, isDeleting: false) == nil)
+        #expect(EditorSaveCommand.forSave(record: record, saveFolder: folder) == .saveAs)
+        #expect(EditorAvailability.status(record: record, saveFolder: folder, isDeleting: false)
                 == "This capture has no local file to save over.")
     }
 
@@ -67,6 +73,7 @@ struct EditorSaveTargetTests {
         let fileURL = try #require(record.fileURL)
         #expect(EditorSaveTarget.plan(for: record, saveFolder: folder) == .saveFolderFile(fileURL, folder: folder))
         #expect(actions(record) == Set(EditorAction.allCases))
+        #expect(EditorSaveCommand.forSave(record: record, saveFolder: folder) == .writeOver)
     }
 
     /// Upload saves over the Save target first, and gives an uploaded upload-only capture a pending file.
@@ -100,9 +107,9 @@ struct EditorSaveTargetTests {
                 == "The uploaded copy still shows the original. Upload to replace it.")
     }
 
-    @Test func availabilityWhileUploadingIsCopyAndSaveCopy() {
+    @Test func availabilityWhileUploadingIsCopyAndSaveAs() {
         let uploading = saved(state: .uploading(fraction: 0.3))
-        #expect(actions(uploading) == [.copy, .saveCopy])
+        #expect(actions(uploading) == [.copy, .saveAs])
         #expect(EditorAvailability.status(record: uploading, saveFolder: folder, isDeleting: false) == "Uploading…")
         #expect(EditorAvailability.refusal(for: .save, record: uploading, saveFolder: folder, isDeleting: false)
                 == "This capture is still uploading.")
@@ -111,26 +118,26 @@ struct EditorSaveTargetTests {
     }
 
     /// A nil record was deleted or pruned.
-    @Test func availabilityWhenDeletedIsCopyAndSaveCopy() {
-        #expect(actions(nil) == [.copy, .saveCopy])
-        #expect(actions(nil, deleting: true) == [.copy, .saveCopy])
+    @Test func availabilityWhenDeletedIsCopyAndSaveAs() {
+        #expect(actions(nil) == [.copy, .saveAs])
+        #expect(actions(nil, deleting: true) == [.copy, .saveAs])
         #expect(EditorAvailability.status(record: nil, saveFolder: folder, isDeleting: false)
-                == "This capture was deleted. Copy and Save Copy still work.")
+                == "This capture was deleted. Copy and Save As still work.")
         #expect(EditorAvailability.refusal(for: .save, record: nil, saveFolder: folder, isDeleting: false)
                 == "This capture was deleted.")
-        #expect(EditorAvailability.refusal(for: .saveCopy, record: nil, saveFolder: folder, isDeleting: false) == nil)
+        #expect(EditorAvailability.refusal(for: .saveAs, record: nil, saveFolder: folder, isDeleting: false) == nil)
     }
 
-    @Test func availabilityWhileDeletingIsCopyAndSaveCopy() {
+    @Test func availabilityWhileDeletingIsCopyAndSaveAs() {
         let record = saved(state: .uploaded(url: link, key: "a.png"))
         #expect(actions(record) == Set(EditorAction.allCases))
-        #expect(actions(record, deleting: true) == [.copy, .saveCopy])
+        #expect(actions(record, deleting: true) == [.copy, .saveAs])
     }
 
     /// Keyed on `linkURL`; `uploadAsNewKeepsInterruptedReplace` covers a link held only in `priorUpload`.
     @Test func uploadAsNewNeedsALink() {
         let never = saved()
-        #expect(actions(never) == [.save, .saveCopy, .copy, .upload])
+        #expect(actions(never) == [.save, .saveAs, .copy, .upload])
         #expect(EditorAvailability.refusal(for: .uploadAsNew, record: never, saveFolder: folder, isDeleting: false)
                 == "This capture has no link yet. Use Upload.")
         #expect(!actions(saved(state: .failed(message: "offline"))).contains(.uploadAsNew))
@@ -161,7 +168,7 @@ struct EditorSaveTargetTests {
 
     @Test func everyActionShortcutMapsToAnAvailabilityAction() {
         let expected: [EditorShortcut: EditorAction] = [
-            .save: .save, .saveCopy: .saveCopy, .copy: .copy, .copyImage: .copy,
+            .save: .save, .saveAs: .saveAs, .copy: .copy, .copyImage: .copy,
             .upload: .upload, .uploadAsNew: .uploadAsNew,
         ]
         for shortcut in EditorShortcut.allCases {
@@ -175,7 +182,7 @@ struct EditorSaveTargetTests {
         for selector in ["saveDocument:", "uploadDocument:", "uploadDocumentAsNew:"] {
             #expect(!EditorCommandGate.permits(selector, available: available), "\(selector)")
         }
-        for selector in ["saveDocumentCopy:", "copy:", "copyImage:"] {
+        for selector in ["saveDocumentAs:", "copy:", "copyImage:"] {
             #expect(EditorCommandGate.permits(selector, available: available), "\(selector)")
         }
         // Not an editor action: always let through, whatever is available.
@@ -190,7 +197,7 @@ struct EditorSaveTargetTests {
             #expect(EditorAvailability.refusal(for: action, record: record, saveFolder: folder, isDeleting: true)
                     == "This capture is being deleted.", "\(action)")
         }
-        #expect(EditorAvailability.refusal(for: .saveCopy, record: record, saveFolder: folder, isDeleting: true) == nil)
+        #expect(EditorAvailability.refusal(for: .saveAs, record: record, saveFolder: folder, isDeleting: true) == nil)
         #expect(EditorAvailability.refusal(for: .copy, record: record, saveFolder: folder, isDeleting: true) == nil)
         #expect(EditorAvailability.refusal(for: .save, record: record, saveFolder: folder, isDeleting: false) == nil)
     }
@@ -200,7 +207,10 @@ struct EditorSaveTargetTests {
         let folderB = URL(filePath: "/Users/tim/Pictures/B", directoryHint: .isDirectory)
         let record = saved(in: folderA)
         #expect(actions(record, folder: folderA).contains(.save))
-        #expect(!actions(record, folder: folderB).contains(.save))
+        #expect(EditorSaveCommand.forSave(record: record, saveFolder: folderA) == .writeOver)
+        // Outside the new folder, ⌘S opens the save panel instead of writing over the old file.
+        #expect(actions(record, folder: folderB).contains(.save))
+        #expect(EditorSaveCommand.forSave(record: record, saveFolder: folderB) == .saveAs)
         #expect(actions(record, folder: folderB).contains(.upload))
         #expect(EditorAvailability.status(record: record, saveFolder: folderA, isDeleting: false) == nil)
         #expect(EditorAvailability.status(record: record, saveFolder: folderB, isDeleting: false)
@@ -214,6 +224,39 @@ struct EditorSaveTargetTests {
         #expect(EditorAvailability.status(record: stale, saveFolder: folder, isDeleting: true) == "Deleting…")
         // removeRecord has run: the record is gone, and the deleted text wins.
         #expect(EditorAvailability.status(record: nil, saveFolder: folder, isDeleting: true)
-                == "This capture was deleted. Copy and Save Copy still work.")
+                == "This capture was deleted. Copy and Save As still work.")
+    }
+
+    /// ⌘S writes over the Save target when there is one, and otherwise opens the save panel. A
+    /// deleted or pruned record has nothing to write over.
+    @Test func saveCommandWritesOverOrOpensThePanel() {
+        let pending = CaptureRecord(fileURL: pendingURL, fileIsTemporary: true, pixelWidth: 200, pixelHeight: 100,
+                                    appName: nil, uploadState: .failed(message: "offline"))
+        let uploadOnly = CaptureRecord(fileURL: nil, pixelWidth: 200, pixelHeight: 100, appName: nil,
+                                       uploadState: .uploaded(url: link, key: "a.png"), objectLocation: location)
+        #expect(EditorSaveCommand.forSave(record: saved(), saveFolder: folder) == .writeOver)
+        #expect(EditorSaveCommand.forSave(record: pending, saveFolder: folder) == .writeOver)
+        #expect(EditorSaveCommand.forSave(record: uploadOnly, saveFolder: folder) == .saveAs)
+        #expect(EditorSaveCommand.forSave(record: nil, saveFolder: folder) == .saveAs)
+    }
+
+    /// Save As… is never refused, so the panel is there whenever ⌘S is not.
+    @Test func saveAsIsAlwaysAvailable() {
+        let uploading = saved(state: .uploading(fraction: 0.4))
+        for (record, deleting) in [(saved(), false), (saved(), true), (uploading, false), (nil, false)] as [(CaptureRecord?, Bool)] {
+            #expect(EditorAvailability.refusal(for: .saveAs, record: record, saveFolder: folder, isDeleting: deleting) == nil)
+            #expect(actions(record, deleting: deleting).contains(.saveAs))
+        }
+    }
+
+    /// The close sheet's first button runs Save (which may open the panel itself), or Save As…
+    /// when Save is unavailable: uploading, deleting or deleted.
+    @Test func closeSheetSaveButton() {
+        #expect(EditorSaveCommand.closeSheetButton(available: actions(saved())) == .save)
+        #expect(EditorSaveCommand.closeSheetButton(available: actions(saved(state: .uploading(fraction: 0)))) == .saveAs)
+        #expect(EditorSaveCommand.closeSheetButton(available: actions(saved(), deleting: true)) == .saveAs)
+        #expect(EditorSaveCommand.closeSheetButton(available: actions(nil)) == .saveAs)
+        #expect(EditorSaveCommand.CloseSheetButton.save.title == "Save")
+        #expect(EditorSaveCommand.CloseSheetButton.saveAs.title == "Save As…")
     }
 }

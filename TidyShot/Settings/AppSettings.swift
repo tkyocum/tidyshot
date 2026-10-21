@@ -171,6 +171,12 @@ final class AppSettings {
         }
     }
 
+    /// The persistent capture counter as it stands, without drawing the next one. The editor's
+    /// Save As… suggestion uses it.
+    var currentCounter: Int {
+        defaults.integer(forKey: Keys.counter)
+    }
+
     /// Increments and returns the persistent capture counter used by the {counter} token.
     func nextCounter() -> Int {
         let next = defaults.integer(forKey: Keys.counter) + 1

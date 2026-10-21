@@ -81,7 +81,7 @@ struct KeyRoutingTests {
     @Test func shortcutTableMatchesExpectedChords() {
         let expected: [(characters: String, shift: Bool, option: Bool, shortcut: EditorShortcut, selector: String)] = [
             ("s", false, false, .save, "saveDocument:"),
-            ("S", true, false, .saveCopy, "saveDocumentCopy:"),
+            ("S", true, false, .saveAs, "saveDocumentAs:"),
             ("c", false, false, .copy, "copy:"),
             ("C", true, false, .copyImage, "copyImage:"),
             ("u", false, false, .upload, "uploadDocument:"),

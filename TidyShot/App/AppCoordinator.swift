@@ -14,17 +14,6 @@ final class AppCoordinator {
         let keyTemplate: String
     }
 
-    /// What differs between a capture and the editor's Save Copy on the one save path.
-    private struct PersistOptions {
-        /// The file name in the save folder, without extension, made unique on write. Nil draws it
-        /// from the file name template, `{counter}` included. Upload-only files are `<id>.png`.
-        var baseName: String?
-        /// The image is on the clipboard already, so a failed write need not put it there.
-        var alreadyOnClipboard: Bool
-        /// Plays the shutter when the Play sound setting is on. False for Save Copy.
-        var playsSound: Bool
-    }
-
     static let shared = AppCoordinator()
 
     let engine = CaptureEngine()
@@ -210,32 +199,30 @@ final class AppCoordinator {
         let copiedChangeCount: Int? = copyImageNow
             ? Pasteboard.copy(image: image.image, pngData: png, scale: image.scale) : nil
 
-        let options = PersistOptions(baseName: nil, alreadyOnClipboard: copyImageNow, playsSound: true)
         guard let record = await persist(png: png, image: image, action: action, destination: destination,
-                                         options: options) else { return }
+                                         alreadyOnClipboard: copyImageNow) else { return }
         if let copiedChangeCount {
             clipboardOwner = EditorClipboard.Owner(recordID: record.id, changeCount: copiedChangeCount)
         }
     }
 
-    /// The one save path, shared by `save(_:)` and the editor's Save Copy. Writes the file (save
-    /// folder, or the container's `pending` folder in upload-only mode), warns once when upload
-    /// is not configured, plays the sound, records the capture, starts the thumbnail, shows the
-    /// overlay, and starts the upload or posts "saved". Returns nil when the file could not be
-    /// written; the writer has then notified and left the image on the clipboard. Any other
-    /// clipboard write is the caller's.
+    /// The capture save path behind `save(_:)`. Writes the file (save folder, or the container's
+    /// `pending` folder in upload-only mode), warns once when upload is not configured, plays the
+    /// sound, records the capture, starts the thumbnail, shows the overlay, and starts the upload
+    /// or posts "saved". Returns nil when the file could not be written; the writer has then
+    /// notified and left the image on the clipboard (`alreadyOnClipboard` says it is there
+    /// already). Any other clipboard write is the caller's.
     private func persist(png: Data, image: ScaledImage, action: AfterCaptureAction, destination: S3Destination?,
-                         options: PersistOptions) async -> CaptureRecord? {
+                         alreadyOnClipboard: Bool) async -> CaptureRecord? {
         // The object key is not named here: `startUpload` names it when the upload starts.
         let id = UUID()
         let fileURL: URL
         if action == .uploadOnly {
             guard let url = writePendingFile(png, id: id, image: image,
-                                             alreadyOnClipboard: options.alreadyOnClipboard) else { return nil }
+                                             alreadyOnClipboard: alreadyOnClipboard) else { return nil }
             fileURL = url
         } else {
-            guard let url = await writeFile(png, image: image, baseName: options.baseName,
-                                            alreadyOnClipboard: options.alreadyOnClipboard) else { return nil }
+            guard let url = await writeFile(png, image: image, alreadyOnClipboard: alreadyOnClipboard) else { return nil }
             fileURL = url
             lastCaptureURL = url
         }
@@ -244,7 +231,7 @@ final class AppCoordinator {
                 ? "Set up a destination in Settings > Upload, then retry from Recent Captures. The image is on the clipboard."
                 : "Set up a destination in Settings > Upload. The capture was saved and the image is on the clipboard.")
         }
-        if options.playsSound, settings.playSound {
+        if settings.playSound {
             SoundPlayer.playShutter()
         }
 
@@ -283,24 +270,18 @@ final class AppCoordinator {
         notifier.notifyError(message, title: "Upload not configured")
     }
 
-    /// Writes the PNG into the save folder as `baseName` (`baseName 2`, … when taken), or, when
-    /// `baseName` is nil, under a name from the file name template with `{counter}` drawn as
-    /// Phase 1 did. Returns nil after notifying, with the image left on the clipboard, when there
-    /// is no folder or the write fails.
-    private func writeFile(_ png: Data, image: ScaledImage, baseName: String?, alreadyOnClipboard: Bool) async -> URL? {
+    /// Writes the PNG into the save folder under a name from the file name template, with
+    /// `{counter}` drawn as Phase 1 did. Returns nil after notifying, with the image left on the
+    /// clipboard, when there is no folder or the write fails.
+    private func writeFile(_ png: Data, image: ScaledImage, alreadyOnClipboard: Bool) async -> URL? {
         guard let folder = await saveLocation.ensureFolder() else {
             keepOnClipboard(image, png: png, alreadyOnClipboard: alreadyOnClipboard)
             notifier.notifyError("No folder was chosen. The image is on the clipboard.", title: "Not saved")
             return nil
         }
         do {
-            let name: String
-            if let baseName {
-                name = baseName
-            } else {
-                let counter = settings.fileNameTemplate.contains("{counter}") ? settings.nextCounter() : 0
-                name = FileNamer(template: settings.fileNameTemplate).name(counter: counter)
-            }
+            let counter = settings.fileNameTemplate.contains("{counter}") ? settings.nextCounter() : 0
+            let name = FileNamer(template: settings.fileNameTemplate).name(counter: counter)
             return try saveLocation.write(png, baseName: name, ext: "png", in: folder)
         } catch {
             NSLog("Save failed: \(error.localizedDescription)")
@@ -1051,19 +1032,21 @@ final class AppCoordinator {
         overlay.close(recordID: record.id)
     }
 
-    /// The editor's actions for `recordID`. Save, Save Copy, Copy, Upload and Upload as New all go
-    /// through the coordinator's one save and upload paths.
+    /// The editor's actions for `recordID`. Save, Save As…, Copy, Upload and Upload as New all go
+    /// through the coordinator.
     private func editorActions(for recordID: UUID) -> EditorActions {
         EditorActions(
             save: { [weak self] image in await self?.editorSave(recordID: recordID, image: image) ?? false },
-            saveCopy: { [weak self] image in
-                await self?.editorSaveCopy(of: recordID, image: image) ?? false
+            saveAs: { [weak self] image, url in await self?.editorSaveAs(image: image, to: url) ?? false },
+            saveAsSuggestion: { [weak self] in
+                self?.editorSaveAsSuggestion(recordID: recordID)
+                    ?? EditorNaming.SaveAsSuggestion(fileName: "Screenshot.png", directory: nil)
             },
             copy: { [weak self] image in
                 await self?.editorCopy(recordID: recordID, image: image)
             },
             upload: { [weak self] image, asNew in
-                await self?.editorUpload(recordID: recordID, image: image, asNew: asNew) ?? false
+                await self?.editorUpload(recordID: recordID, image: image, asNew: asNew) ?? .refused
             })
     }
 
@@ -1097,8 +1080,9 @@ final class AppCoordinator {
         }
     }
 
-    /// ⌘S: encodes the edit off the main actor and saves it over the capture's own file through
-    /// `applyLocalEdit`. Never touches the network.
+    /// ⌘S with a file to write over (the editor runs Save As… otherwise): encodes the edit off the
+    /// main actor and saves it over the capture's own file through `applyLocalEdit`. Never touches
+    /// the network.
     private func editorSave(recordID: UUID, image: ScaledImage) async -> Bool {
         if let reason = EditorAvailability.refusal(for: .save, record: history.record(id: recordID),
                                                    saveFolder: saveLocation.currentURL,
@@ -1142,7 +1126,7 @@ final class AppCoordinator {
                 // Always `pending/<id>.png`, replaced in place, so a retry uploads the edit.
                 _ = try pendingFiles.write(png, id: recordID, ext: "png")
             case .unavailable(let reason):
-                // The refusal above already covers this; kept so the switch stays total.
+                // The folder changed, or the file went, after the editor chose to write over it.
                 notifier.notifyError(reason, title: "Not saved")
                 return false
             }
@@ -1208,55 +1192,49 @@ final class AppCoordinator {
         }
     }
 
-    /// Save Copy (⇧⌘S): the edited image becomes a new capture through `persist`, as if just taken
-    /// with the current after-capture action. It gets a file in the save folder named by
-    /// `EditorNaming.copyBaseName(for:)` (or by the template), or a pending file that uploads, plus
-    /// a thumbnail, a Recent Captures row and the overlay. There is no shutter sound. A deleted or
-    /// pruned original does not block it, and the editor stays on the original record. Then the
-    /// clipboard gets the edited image only if it still holds what TidyShot put there for the
-    /// original. Returns false when nothing was written; the edited image is then on the clipboard.
-    private func editorSaveCopy(of recordID: UUID, image: ScaledImage) async -> Bool {
-        if let reason = EditorAvailability.refusal(for: .saveCopy, record: history.record(id: recordID),
-                                                   saveFolder: saveLocation.currentURL,
-                                                   isDeleting: deletingIDs.contains(recordID)) {
-            notifier.notifyError(reason, title: "Not saved")
-            return false
-        }
-        let png: Data
+    /// Save As… (⇧⌘S, and ⌘S with no file to write over): writes the flattened PNG to the URL the
+    /// save panel returned, atomically. The panel's URL is user-selected, so the sandbox grants
+    /// access, and no bookmark is kept. No record is made, nothing uploads, the record, its
+    /// thumbnail and the clipboard are left alone. Never refused, like Copy.
+    private func editorSaveAs(image: ScaledImage, to url: URL) async -> Bool {
         do {
-            png = try await Task.detached(priority: .userInitiated) {
-                try ImageEncoder.pngData(from: image.image, scale: image.scale)
+            try await Task.detached(priority: .userInitiated) {
+                let png = try ImageEncoder.pngData(from: image.image, scale: image.scale)
+                try png.write(to: url, options: .atomic)
             }.value
         } catch {
-            NSLog("Encode failed: \(error.localizedDescription)")
-            // Never drop an edit: without PNG data the clipboard still gets the image as TIFF.
-            Pasteboard.copy(image: image.image, scale: image.scale)
-            notifier.notifyError("\(error.localizedDescription) The image is on the clipboard.", title: "Not saved")
+            NSLog("Save As failed: \(error.localizedDescription)")
+            notifier.notifyError(error.localizedDescription, title: "Not saved")
             return false
         }
-        let action = settings.afterCaptureAction
-        let destination = action.uploads ? makeDestination() : nil
-        let options = PersistOptions(baseName: EditorNaming.copyBaseName(for: history.record(id: recordID)),
-                                     alreadyOnClipboard: false, playsSound: false)
-        guard await persist(png: png, image: image, action: action, destination: destination,
-                            options: options) != nil else { return false }
-        await replaceClipboardIfStillOriginal(recordID: recordID, png: png, image: image)
+        if settings.showNotification {
+            notifier.notifySaved(fileURL: url, title: "Saved")
+        }
         return true
+    }
+
+    /// The save panel's suggestion for `recordID`: its file name in the save folder, or the file
+    /// name template's name with the current `{counter}` (none is drawn).
+    private func editorSaveAsSuggestion(recordID: UUID) -> EditorNaming.SaveAsSuggestion {
+        EditorNaming.saveAsSuggestion(for: history.record(id: recordID), saveFolder: saveLocation.currentURL,
+                                      namer: FileNamer(template: settings.fileNameTemplate),
+                                      currentCounter: settings.currentCounter)
     }
 
     /// Upload (⌘U) and Upload as New (⌥⌘U). The edit is written locally first, so the file equals
     /// the object; then it goes through the live lane like any upload, over the link's own key for
-    /// a replace or under a new template key. Returns true once the edit has been written locally,
-    /// which tells the editor to mark the document saved; an upload with no local write leaves the
-    /// document unsaved.
-    private func editorUpload(recordID: UUID, image: ScaledImage, asNew: Bool) async -> Bool {
+    /// a replace or under a new template key. The outcome says whether the edit was written
+    /// locally (the editor marks itself saved) and whether the job was enqueued (with both, the
+    /// editor closes; the link reaches the clipboard through `.uploaded`). An upload with no local
+    /// write leaves the document unsaved and the window open.
+    private func editorUpload(recordID: UUID, image: ScaledImage, asNew: Bool) async -> EditorUploadOutcome {
         let action: EditorAction = asNew ? .uploadAsNew : .upload
         // 1. The editor's available set can lag behind the record.
-        if refuseUpload(action, recordID: recordID) { return false }
+        if refuseUpload(action, recordID: recordID) { return .refused }
         // 2. Nothing is written, and the record stays as it is, without a destination.
         guard let destination = makeDestination() else {
             notifier.notifyError("Set up a destination in Settings > Upload, then upload again.", title: "Upload not configured")
-            return false
+            return .refused
         }
         let png: Data
         do {
@@ -1265,15 +1243,15 @@ final class AppCoordinator {
             }.value
         } catch {
             notifier.notifyError(error.localizedDescription, title: "Not uploaded")
-            return false
+            return .refused
         }
         // 3. The local write, on the record as it is after the encode.
-        if refuseUpload(action, recordID: recordID) { return false }
-        guard let record = history.record(id: recordID) else { return false }
+        if refuseUpload(action, recordID: recordID) { return .refused }
+        guard let record = history.record(id: recordID) else { return .refused }
         var wroteLocally = false
         switch EditorSaveTarget.uploadWrite(for: record, saveFolder: saveLocation.currentURL) {
         case .saveTarget:
-            guard await applyLocalEdit(recordID: recordID, png: png, image: image) else { return false }
+            guard await applyLocalEdit(recordID: recordID, png: png, image: image) else { return .refused }
             wroteLocally = true
         case .newPendingFile:
             // An uploaded upload-only capture: its pending file went after its upload. The edit gets
@@ -1288,11 +1266,11 @@ final class AppCoordinator {
                 NSLog("Pending write failed: \(error.localizedDescription)")
                 keepOnClipboard(image, png: png, alreadyOnClipboard: false)
                 notifier.notifyError("\(error.localizedDescription) The image is on the clipboard.", title: "Not saved")
-                return false
+                return .refused
             }
             // Now a pending-file target: applyLocalEdit rewrites the same bytes and does the
             // bookkeeping (pixel size, editedAt, uploadIsStale, thumbnail, clipboard, editor state).
-            guard await applyLocalEdit(recordID: recordID, png: png, image: image) else { return false }
+            guard await applyLocalEdit(recordID: recordID, png: png, image: image) else { return .refused }
             wroteLocally = true
         case .noLocalWrite:
             // A save-folder file outside the current folder, or no folder: the file is not
@@ -1301,15 +1279,16 @@ final class AppCoordinator {
             await replaceClipboardIfStillOriginal(recordID: recordID, png: png, image: image)
         }
         // 4. Plan on the live record, against where the lane writes (as in startUpload).
-        if refuseUpload(action, recordID: recordID) { return wroteLocally }
-        guard let current = history.record(id: recordID) else { return wroteLocally }
+        let notEnqueued = EditorUploadOutcome(wroteLocally: wroteLocally, enqueued: false)
+        if refuseUpload(action, recordID: recordID) { return notEnqueued }
+        guard let current = history.record(id: recordID) else { return notEnqueued }
         let location = queue?.location ?? ObjectLocation(config: destination.config)
         let plan = EditorUploadPlan.plan(record: current, currentLocation: location,
                                          others: history.records.filter { $0.id != recordID }, asNew: asNew)
         switch plan {
         case .refuse(let reason):
             notifier.notifyError(reason, title: "Not uploaded")
-            return wroteLocally
+            return notEnqueued
         case .newObject(_, let notice?):
             notifier.notify(title: "New link", body: notice)
         case .newObject, .replace:
@@ -1326,7 +1305,7 @@ final class AppCoordinator {
         } else {
             startUpload(recordID: recordID, data: png, destination: destination)
         }
-        return wroteLocally
+        return EditorUploadOutcome(wroteLocally: wroteLocally, enqueued: true)
     }
 
     /// Posts the live refusal for `action` as "Not uploaded". True when the upload must stop.
@@ -1377,7 +1356,7 @@ final class AppCoordinator {
         }
     }
 
-    /// The clipboard rule (spec 2.6), after a Save Copy or (from Task 13) a local edit. Puts the
+    /// The clipboard rule (spec 2.6), after a local edit (Save, or the write before Upload). Puts the
     /// edited PNG and TIFF on the clipboard only while it still holds exactly what TidyShot put
     /// there for `recordID`, and leaves anything copied since alone. The TIFF is made in a detached
     /// task. Ownership is checked again after that await, right before the write, so a URL that a
@@ -1397,7 +1376,7 @@ final class AppCoordinator {
 
     /// Copy (⌘C, ⇧⌘C): the edited image as PNG and TIFF, both encoded in a detached task and
     /// written here on the main actor. TidyShot then owns the clipboard for this record, so a later
-    /// Save Copy or Save puts the newer edit there. The window stays open.
+    /// Save puts the newer edit there. The window stays open.
     private func editorCopy(recordID: UUID, image: ScaledImage) async {
         do {
             let encoded = try await Task.detached(priority: .userInitiated) { () throws -> (png: Data, tiff: Data?) in

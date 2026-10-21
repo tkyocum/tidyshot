@@ -3,7 +3,7 @@ import Foundation
 import Synchronization
 
 /// Burns the effect tiles and the drawings into a copy of the capture, at the capture's own pixel
-/// size, for Save, Save Copy, Copy and Upload. `EditorModel.renderExport` calls it inside
+/// size, for Save, Save As…, Copy and Upload. `EditorModel.renderExport` calls it inside
 /// `Task.detached(priority: .userInitiated)`. It uses no NSGraphicsContext, which is MainActor.
 ///
 /// For an 8-bit RGB base, every pixel outside the effects and drawings equals the base byte for

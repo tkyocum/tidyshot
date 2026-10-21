@@ -63,4 +63,37 @@ struct EditorWindowGeometryTests {
         #expect(EditorWindowGeometry.cascaded(from: nil, size: CGSize(width: 1600, height: 1000), visibleFrame: laptop)
                 == CGRect(x: 0, y: -100, width: 1600, height: 1000))
     }
+
+    /// The editor toolbar at its widest point: window buttons ending at 76 pt, a 230 pt title
+    /// (counted up to 96 pt, since the title truncates first), six tool segments, four plain
+    /// buttons, the prominent Upload, the 84 pt zoom pop-up and one fixed space. Seven items, so
+    /// six gaps.
+    @Test func toolbarWidthCountsEveryItem() {
+        let width = EditorWindowGeometry.toolbarWidth(windowButtonsMaxX: 76, titleWidth: 230, toolSegments: 6,
+                                                      buttons: 4, prominentButtons: 1, viewWidths: [84], fixedSpaces: 1)
+        // 76 + 12 + 96 + 12 (leading and title), 6 * 36 + 8 (tools), 4 * 36, 44, 84 + 16 (zoom),
+        // 6 * 10 (gaps), 16 (space), 16 (trailing).
+        #expect(width == 800)
+        // A short title counts at its own width.
+        #expect(EditorWindowGeometry.toolbarWidth(windowButtonsMaxX: 76, titleWidth: 40, toolSegments: 6, buttons: 4,
+                                                  prominentButtons: 1, viewWidths: [84], fixedSpaces: 1) == 744)
+    }
+
+    /// The window never gets narrower than its toolbar, nor than the 640 pt floor.
+    @Test func minimumContentWidthCoversTheToolbar() {
+        #expect(EditorWindowGeometry.minimumContentWidth(toolbarWidth: 800) == 800)
+        #expect(EditorWindowGeometry.minimumContentWidth(toolbarWidth: 700.2) == 701)
+        #expect(EditorWindowGeometry.minimumContentWidth(toolbarWidth: 500) == 640)
+    }
+
+    /// A small capture opens at the toolbar's width, not at 640 pt.
+    @Test func initialSizeUsesTheToolbarMinimum() {
+        #expect(EditorWindowGeometry.initialContentSize(imagePixels: CGSize(width: 200, height: 100), scale: 2,
+                                                        chrome: chrome, visibleFrame: screen, minimumWidth: 800)
+                == CGSize(width: 800, height: 420))
+        // A wide capture is wider than the minimum anyway.
+        #expect(EditorWindowGeometry.initialContentSize(imagePixels: CGSize(width: 1000, height: 700), scale: 1,
+                                                        chrome: chrome, visibleFrame: screen, minimumWidth: 800)
+                == CGSize(width: 1048, height: 748))
+    }
 }

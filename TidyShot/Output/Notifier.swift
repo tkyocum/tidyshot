@@ -16,9 +16,10 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
-    func notifySaved(fileURL: URL) {
+    /// Clicking it reveals the file. The editor's Save As… posts it with the title `Saved`.
+    func notifySaved(fileURL: URL, title: String = "Screenshot saved") {
         let content = UNMutableNotificationContent()
-        content.title = "Screenshot saved"
+        content.title = title
         content.body = fileURL.lastPathComponent
         content.userInfo = [Self.pathKey: fileURL.path]
         post(content)

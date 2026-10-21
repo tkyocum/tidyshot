@@ -7,7 +7,7 @@ nonisolated enum EditorCommandGate {
     static func action(for selectorName: String) -> EditorAction? {
         switch selectorName {
         case "saveDocument:": .save
-        case "saveDocumentCopy:": .saveCopy
+        case "saveDocumentAs:": .saveAs
         case "copy:", "copyImage:": .copy
         case "uploadDocument:": .upload
         case "uploadDocumentAsNew:": .uploadAsNew

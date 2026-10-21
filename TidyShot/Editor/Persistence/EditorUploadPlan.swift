@@ -205,3 +205,23 @@ nonisolated enum EditorUploadPlan {
         return prior.key == uploadedKey && prior.location == location
     }
 }
+
+/// What an editor Upload (⌘U, ⌥⌘U) did, as the coordinator reports it to the editor.
+nonisolated struct EditorUploadOutcome: Equatable, Sendable {
+    /// The edit was written to the record's file (or a new pending file) before the upload.
+    var wroteLocally: Bool
+    /// The upload job was handed to the queue; its link reaches the clipboard on `.uploaded`.
+    var enqueued: Bool
+
+    /// Refused before anything was written (not configured, busy, deleted, encode failed).
+    static let refused = EditorUploadOutcome(wroteLocally: false, enqueued: false)
+
+    /// A local write is what makes the document saved; an upload alone can still fail.
+    var marksSaved: Bool { wroteLocally }
+
+    /// The window closes once the edit is saved locally and uploading, unless it was edited
+    /// meanwhile. A refused upload leaves it open with its notification.
+    func closesWindow(documentUnchanged: Bool) -> Bool {
+        wroteLocally && enqueued && documentUnchanged
+    }
+}
