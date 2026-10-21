@@ -8,9 +8,12 @@ extension KeyboardShortcuts.Name {
     static let captureFullscreen = Self("captureFullscreen", initial: .init(.three, modifiers: [.control, .shift]))
     static let captureScrolling = Self("captureScrolling", initial: .init(.five, modifiers: [.control, .shift]))
     static let capturePreviousArea = Self("capturePreviousArea", initial: .init(.six, modifiers: [.control, .shift]))
+    /// Self-Timer. No default; the Shortcuts tab records one.
+    static let selfTimer = Self("selfTimer")
     /// Restore Closed Overlay. No default; the Shortcuts tab records one.
     static let restoreOverlay = Self("restoreOverlay")
-    /// Escape, live only while a scrolling capture runs (disabled at launch). It has no recorder
-    /// row: the recorder refuses keys without modifiers, the hotkey itself does not.
-    static let cancelScrollingCapture = Self("cancelScrollingCapture", initial: .init(.escape))
+    /// Escape, live only while a scrolling capture or a self-timer countdown runs (disabled at
+    /// launch). It has no recorder row: the recorder refuses keys without modifiers, the hotkey
+    /// itself does not. The stored name is the one Phase 5 shipped, so nothing migrates.
+    static let cancelCapture = Self("cancelScrollingCapture", initial: .init(.escape))
 }

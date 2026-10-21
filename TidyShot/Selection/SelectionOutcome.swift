@@ -12,7 +12,7 @@ enum SelectionOutcome: Equatable {
     /// A drag smaller than this in either side is a click.
     static let minimumDragSide: CGFloat = 2
 
-    /// `.area`, `.scrolling` and `.allInOne` take a dragged rect of at least 2 by 2; a click (no
+    /// `.area`, `.scrolling`, `.allInOne` and `.selfTimer` take a dragged rect of at least 2 by 2; a click (no
     /// drag, or a tiny one) picks the highlighted window when there is one; `.window` ignores drags
     /// and only picks the highlight. With neither, the selection is cancelled. All-in-One asks
     /// only for a press that does not start on its rect.

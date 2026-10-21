@@ -55,7 +55,7 @@ final class SelectionController {
                          preselect: CGRect?) async {
         displays = content.displays
         self.mode = mode
-        // Window picking is offered in window, scrolling and All-in-One mode; area mode shows just the crosshair.
+        // Window picking is offered in every mode but area; area mode shows just the crosshair.
         picker = mode == .area ? nil : WindowPicker(content: content)
 
         // Freeze (area and All-in-One): every display is captured before any overlay window
@@ -108,8 +108,8 @@ final class SelectionController {
 
     private func configureAllInOne(_ view: SelectionView) {
         view.isAspectLocked = settings.allInOneAspectLock
-        // Task 3 (Self-Timer) sets `settings.selfTimerSeconds` here; nil leaves the Timer button out.
-        view.timerSeconds = nil
+        // The Timer button's tooltip, `Capture this area after <n> seconds`, read when the overlay opens.
+        view.timerSeconds = settings.selfTimerSeconds
         view.onAdjustRectSet = { [weak self, weak view] fromWindow in
             guard let self, let view else { return }
             allInOneRectSet(on: view, fromWindow: fromWindow)
@@ -301,8 +301,8 @@ final class SelectionController {
         }
     }
 
-    /// A picked window: itself in window mode; in scrolling mode its frame, as an area of the
-    /// display under its centre. Nil cancels.
+    /// A picked window: itself in window mode (and, as in window mode, in self-timer mode); in
+    /// scrolling mode its frame, as an area of the display under its centre. Nil cancels.
     private func finishPick(_ window: SCWindow?) {
         guard let window else {
             finish(nil)

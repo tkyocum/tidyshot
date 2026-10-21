@@ -201,4 +201,26 @@ struct AppSettingsTests {
         #expect(defaults.object(forKey: "allInOneAspectLock") as? Bool == true)
         #expect(AppSettings(defaults: defaults).allInOneAspectLock)
     }
+
+    /// Phase 6b: Self-timer counts 5 seconds unless the Capture tab says 3 or 10 (spec 2.9).
+    @Test func selfTimerSecondsDefaultsToFiveAndPersists() {
+        let defaults = freshDefaults()
+        let first = AppSettings(defaults: defaults)
+        #expect(first.selfTimerSeconds == 5)
+        #expect(AppSettings.selfTimerChoices == [3, 5, 10])
+        first.selfTimerSeconds = 10
+        #expect(defaults.integer(forKey: "selfTimerSeconds") == 10)
+        #expect(AppSettings(defaults: defaults).selfTimerSeconds == 10)
+    }
+
+    /// A stored value the picker does not offer reads as the default.
+    @Test func selfTimerSecondsOutsideTheChoicesReadAsFive() {
+        let defaults = freshDefaults()
+        for stored in [0, 1, 4, 7, 60, -3] {
+            defaults.set(stored, forKey: "selfTimerSeconds")
+            #expect(AppSettings(defaults: defaults).selfTimerSeconds == 5)
+        }
+        defaults.set(3, forKey: "selfTimerSeconds")
+        #expect(AppSettings(defaults: defaults).selfTimerSeconds == 3)
+    }
 }

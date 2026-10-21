@@ -54,6 +54,7 @@ final class AppSettings {
         static let lastAreaRect = "lastAreaRect"
         static let windowShadow = "windowShadow"
         static let freezeScreen = "freezeScreen"
+        static let selfTimerSeconds = "selfTimerSeconds"
         static let allInOneAspectLock = "allInOneAspectLock"
     }
 
@@ -97,6 +98,9 @@ final class AppSettings {
     var windowShadow: Bool { didSet { defaults.set(windowShadow, forKey: Keys.windowShadow) } }
     /// The Capture tab's Freeze screen while selecting (spec 2.9). Area selections then show a still image.
     var freezeScreen: Bool { didSet { defaults.set(freezeScreen, forKey: Keys.freezeScreen) } }
+    /// The Capture tab's Self-timer: seconds counted down before the capture. One of `selfTimerChoices`.
+    var selfTimerSeconds: Int { didSet { defaults.set(selfTimerSeconds, forKey: Keys.selfTimerSeconds) } }
+    static let selfTimerChoices = [3, 5, 10]
     /// All-in-One's aspect-ratio lock, as the toolbar last left it (spec 2.9).
     var allInOneAspectLock: Bool { didSet { defaults.set(allInOneAspectLock, forKey: Keys.allInOneAspectLock) } }
 
@@ -140,6 +144,7 @@ final class AppSettings {
             Keys.scrollingAutoScroll: true,
             Keys.windowShadow: false,
             Keys.freezeScreen: false,
+            Keys.selfTimerSeconds: 5,
             Keys.allInOneAspectLock: false,
         ])
         showsCursor = defaults.bool(forKey: Keys.showsCursor)
@@ -172,6 +177,8 @@ final class AppSettings {
         lastAreaRect = defaults.data(forKey: Keys.lastAreaRect).flatMap { try? JSONDecoder().decode(StoredRect.self, from: $0) }
         windowShadow = defaults.bool(forKey: Keys.windowShadow)
         freezeScreen = defaults.bool(forKey: Keys.freezeScreen)
+        let storedSelfTimer = defaults.integer(forKey: Keys.selfTimerSeconds)
+        selfTimerSeconds = Self.selfTimerChoices.contains(storedSelfTimer) ? storedSelfTimer : 5
         allInOneAspectLock = defaults.bool(forKey: Keys.allInOneAspectLock)
 
         // Property observers do not run during init, so templates rewritten by

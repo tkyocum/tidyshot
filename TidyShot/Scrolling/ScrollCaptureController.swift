@@ -67,7 +67,7 @@ final class ScrollCaptureController {
         // TidyShot is already active after the selection overlay: no activation here.
         panel.makeKeyAndOrderFront(nil)
 
-        KeyboardShortcuts.enable(.cancelScrollingCapture)
+        KeyboardShortcuts.enable(.cancelCapture)
         return await withCheckedContinuation { continuation = $0 }
     }
 
@@ -84,7 +84,7 @@ final class ScrollCaptureController {
     }
 
     private func close(with outcome: ScrollCaptureOutcome) {
-        KeyboardShortcuts.disable(.cancelScrollingCapture)
+        KeyboardShortcuts.disable(.cancelCapture)
         panel?.orderOut(nil)
         frameWindow?.orderOut(nil)
         panel = nil

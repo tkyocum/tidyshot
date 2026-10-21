@@ -31,6 +31,7 @@ final class AppCoordinator {
     private let overlay = QuickAccessController(settings: AppSettings.shared)
     @ObservationIgnored private lazy var selector = SelectionController(engine: engine, settings: settings, cardWindowNumbers: { [weak self] in self?.overlay.windowNumbers ?? [] })
     @ObservationIgnored private lazy var scrollCapture = ScrollCaptureController(engine: engine, settings: settings)
+    @ObservationIgnored private lazy var selfTimer = SelfTimerController()
     /// Thumbnails and previews for Recent Captures.
     @ObservationIgnored private(set) lazy var thumbnailProvider = ThumbnailProvider(
         store: thumbnails, history: history, saveFolder: { [unowned self] in self.saveLocation.currentURL },
@@ -137,13 +138,18 @@ final class AppCoordinator {
         KeyboardShortcuts.onKeyUp(for: .capturePreviousArea) { [weak self] in
             Task { await self?.capturePreviousArea() }
         }
+        KeyboardShortcuts.onKeyUp(for: .selfTimer) { [weak self] in
+            Task { await self?.captureSelfTimer() }
+        }
         KeyboardShortcuts.onKeyUp(for: .restoreOverlay) { [weak self] in
             Task { await self?.restoreClosedOverlay() }
         }
-        // Escape must never be swallowed outside a scrolling capture; the session enables it.
-        KeyboardShortcuts.disable(.cancelScrollingCapture)
-        // Live only while a scrolling session runs: the controller enables and disables it.
-        KeyboardShortcuts.onKeyUp(for: .cancelScrollingCapture) { [weak self] in
+        // Escape must never be swallowed outside a scrolling capture or a self-timer countdown;
+        // each enables it while it runs.
+        KeyboardShortcuts.disable(.cancelCapture)
+        KeyboardShortcuts.onKeyUp(for: .cancelCapture) { [weak self] in
+            // Both are no-ops unless theirs is the one running; the capture lock allows one.
+            self?.selfTimer.cancel()
             self?.scrollCapture.cancel()
         }
     }
@@ -197,9 +203,11 @@ final class AppCoordinator {
             case .scrolling(let rect, let display):
                 await runScrolling(rect: rect, display: display)
                 return
-            case .timer:
-                // Task 3 (Self-Timer) runs the countdown here; until then the Timer button is not shown.
-                selector.dismiss()
+            case .timer(let rect, let display):
+                // Every All-in-One area kind stores the previous area (spec 2.9). `runSelfTimer`
+                // dismisses the overlay; the countdown ends in its own `save(_:)`.
+                settings.lastAreaRect = StoredRect(rect)
+                await runSelfTimer(.area(rect: rect, display: display))
                 return
             }
             selector.dismiss()
@@ -271,6 +279,22 @@ final class AppCoordinator {
         }
     }
 
+    /// Self-Timer: select an area or click a window, then count down and capture it live. The
+    /// lock is held for the selection, the countdown and the capture.
+    func captureSelfTimer() async {
+        await withCaptureLock {
+            guard let content = await loadContent() else { return }
+            guard let selection = await selector.select(mode: .selfTimer, content: content) else { return }
+            switch selection {
+            case .area(let rect, let display):
+                settings.lastAreaRect = StoredRect(rect)
+                await runSelfTimer(.area(rect: rect, display: display))
+            case .window(let window):
+                await runSelfTimer(.window(window))
+            }
+        }
+    }
+
     /// Show the overlay, capture with the overlay excluded (or cut the frozen snapshot), dismiss, then save.
     private func runSelection(mode: SelectionMode) async {
         await withCaptureLock {
@@ -294,6 +318,53 @@ final class AppCoordinator {
                 await save(result)
             }
         }
+    }
+
+    /// The countdown and the capture behind Self-Timer and All-in-One's Timer button. Call it with
+    /// the capture lock held. The selection overlay goes first, then TidyShot gives up activation
+    /// so the user's app is frontmost while the badge counts: its menus open and its keys work.
+    /// A countdown that is cancelled leaves nothing behind.
+    private func runSelfTimer(_ target: CaptureTarget) async {
+        selector.dismiss()
+        NSApplication.shared.deactivate()
+        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
+        guard let screenFrame = CaptureEngine.screen(forDisplayID: target.displayID)?.frame ?? NSScreen.main?.frame else { return }
+        let stage = SelfTimerScreenStage(subject: Geometry.appKitRect(fromCG: target.cgFrame, primaryHeight: primaryHeight),
+                                         screenFrame: screenFrame)
+        _ = await selfTimer.run(seconds: settings.selfTimerSeconds, stage: stage) { [self] in
+            await captureAfterCountdown(target)
+        }
+    }
+
+    /// The live capture once the panels are gone. The shareable content is read again, and the
+    /// display or window is found in it by id: a window may have moved or closed during the
+    /// countdown, and an `SCWindow` from before would size the image from its old frame. The
+    /// pointer follows Show cursor and the cards are left out, as for a fullscreen capture.
+    private func captureAfterCountdown(_ target: CaptureTarget) async {
+        guard let content = await loadContent() else { return }
+        let fresh: CaptureTarget
+        switch target {
+        case .display(let display):
+            guard let current = content.displays.first(where: { $0.displayID == display.displayID }) else {
+                notifier.notifyError("The display is no longer connected.", title: "Self-timer")
+                return
+            }
+            fresh = .display(current)
+        case .area(let rect, let display):
+            guard let current = content.displays.first(where: { $0.displayID == display.displayID }) else {
+                notifier.notifyError("The display is no longer connected.", title: "Self-timer")
+                return
+            }
+            fresh = .area(rect: rect, display: current)
+        case .window(let window):
+            guard let current = content.windows.first(where: { $0.windowID == window.windowID }) else {
+                notifier.notifyError("The window is no longer on screen.", title: "Self-timer")
+                return
+            }
+            fresh = .window(current)
+        }
+        guard let result = await capture(fresh, excludingWindows: await cardWindows()) else { return }
+        await save(result)
     }
 
     /// An area chosen in the overlay, which is still up: stores it as the previous area, then cuts
