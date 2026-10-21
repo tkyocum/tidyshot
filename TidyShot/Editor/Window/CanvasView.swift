@@ -450,10 +450,14 @@ final class CanvasView: NSView {
         return accessibilityElements[id].map { [$0] } ?? []
     }
 
-    /// The annotation's painted bounds on screen, at the current zoom and pan.
+    /// The annotation's painted bounds on screen, at the current zoom and pan, clipped to an applied crop.
     func accessibilityScreenFrame(of id: UUID) -> NSRect {
         guard let annotation = model.document.annotation(id: id) else { return .zero }
-        return NSAccessibility.screenRect(fromView: self, rect: model.transform.viewRect(imageBounds(of: annotation)))
+        // Only the part inside an applied crop is on screen; the rest is under the cover.
+        var bounds = imageBounds(of: annotation)
+        if let crop = appliedCrop { bounds = bounds.intersection(crop) }
+        guard !bounds.isNull else { return .zero }
+        return NSAccessibility.screenRect(fromView: self, rect: model.transform.viewRect(bounds))
     }
 
     func isAccessibilitySelected(_ id: UUID) -> Bool { model.selection == id }
@@ -524,7 +528,7 @@ final class CanvasView: NSView {
         }
         #endif
         if now.document == previous.document, now.selection == previous.selection, now.transform == previous.transform,
-           now.cropDraft == previous.cropDraft {
+           now.cropDraft == previous.cropDraft, now.editingID == previous.editingID {
             setNeedsDisplay(repaintRect(for: previous.transient, in: previous.document)
                 .union(repaintRect(for: now.transient, in: now.document)))
         } else {
