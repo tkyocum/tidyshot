@@ -272,6 +272,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
     /// The flattened image and the document it was made from, or nil (with a beep) when the
     /// export failed.
     private func export() async -> (ScaledImage, AnnotationDocument)? {
+        // A crop still being edited is what the window shows, so it is applied (one undo step) first.
+        model.applyCrop()
         let exported = model.document
         guard let image = await model.renderExport() else {
             NSLog("Editor: the export of \(model.recordID) failed")

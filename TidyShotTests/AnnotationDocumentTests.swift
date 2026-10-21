@@ -121,6 +121,25 @@ struct AnnotationDocumentTests {
         #expect(decoded.effects.map(\.id) == [redactID, blurID, pixelateID])
     }
 
+    /// A document written before 4b has no "crop" key and decodes with no crop; an uncropped
+    /// document writes none; a crop round-trips; edits keep it.
+    @Test func documentWithoutCropDecodes() throws {
+        let old = try JSONDecoder().decode(AnnotationDocument.self, from: Data(#"{"annotations":[]}"#.utf8))
+        #expect(old == AnnotationDocument(annotations: []))
+        #expect(old.crop == nil)
+        let json = try JSONEncoder().encode(mixed)
+        let written = try #require(try JSONSerialization.jsonObject(with: json) as? [String: Any])
+        #expect(!written.keys.contains("crop"))
+
+        let crop = CGRect(x: 4, y: 6, width: 30, height: 20)
+        let cropped = mixed.withCrop(crop)
+        #expect(cropped != mixed)
+        #expect(try JSONDecoder().decode(AnnotationDocument.self, from: JSONEncoder().encode(cropped)) == cropped)
+        #expect(cropped.removing(id: boxID).crop == crop)
+        #expect(cropped.moving(id: arrowID, by: CGVector(dx: 1, dy: 1)).crop == crop)
+        #expect(cropped.withCrop(nil) == mixed)
+    }
+
     @Test func equalityIsValueBased() {
         #expect(mixed == AnnotationDocument(annotations: [box(), redact(), arrow(), blur(), pixelate()]))
         #expect(mixed != mixed.replacing(box(color: blue)))

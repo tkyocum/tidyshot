@@ -15,6 +15,8 @@ final class CanvasView: NSView {
         /// The text being typed. A change repaints the whole view, which hides or shows the
         /// committed copy of a re-edited text.
         var editingID: UUID?
+        /// The Crop tool's rect. A change repaints the whole view, since the readout sits outside it.
+        var cropDraft: CGRect?
     }
 
     /// True while a text annotation is being typed. EditorWindow reads it to let the clipboard and
@@ -45,7 +47,7 @@ final class CanvasView: NSView {
         activeToolKind = model.tool
         activeTool = makeTool(for: model.tool)
         shown = Shown(document: model.document, transient: model.transient, selection: model.selection,
-                      transform: model.transform, editingID: model.textEditing?.box.id)
+                      transform: model.transform, editingID: model.textEditing?.box.id, cropDraft: model.cropDraft)
         super.init(frame: .zero)
         wantsLayer = true
         layerContentsRedrawPolicy = .onSetNeedsDisplay
@@ -70,11 +72,20 @@ final class CanvasView: NSView {
 
     // MARK: Zoom and pan
 
-    /// The whole capture inside the view with `EditorWindowGeometry.inset` on every side, never above natural size; kept on resize.
+    /// What Fit shows: the whole capture while cropping or with no crop, else the applied crop.
+    private func fitRect(document: AnnotationDocument, cropDraft: CGRect?) -> CGRect {
+        let whole = CGRect(origin: .zero, size: imagePixelSize)
+        return cropDraft == nil ? (document.crop ?? whole) : whole
+    }
+
+    /// `fitRect` inside the view with `EditorWindowGeometry.inset` on every side, never above
+    /// natural size; kept on resize.
     func fitToView() {
         guard bounds.width > 0, bounds.height > 0 else { return }
-        apply(CanvasTransform.fitting(imagePixelSize: imagePixelSize, in: bounds.size, inset: EditorWindowGeometry.inset,
-                                      captureScale: model.scale), fits: true)
+        let shown = fitRect(document: model.document, cropDraft: model.cropDraft)
+        let fit = CanvasTransform.fitting(imagePixelSize: shown.size, in: bounds.size, inset: EditorWindowGeometry.inset,
+                                          captureScale: model.scale)
+        apply(fit.panned(by: CGPoint(x: -shown.minX * fit.zoom, y: -shown.minY * fit.zoom)), fits: true)
     }
 
     /// Multiplies the zoom by `factor` around `viewPoint` (the view centre when nil), within
@@ -227,6 +238,18 @@ final class CanvasView: NSView {
         refresh()
     }
 
+    /// Return and Enter: apply the crop being edited and go back to the tool used before Crop.
+    /// NSResponder does not implement insertNewline:, so outside Crop this beeps as an unhandled
+    /// Return did before; super is not called.
+    override func insertNewline(_ sender: Any?) {
+        guard model.tool == .crop, !isTrackingMouse else {
+            NSSound.beep()
+            return
+        }
+        model.applyCrop()
+        refresh()
+    }
+
     override func deleteBackward(_ sender: Any?) { deleteSelection() }
     override func deleteForward(_ sender: Any?) { deleteSelection() }
     override func moveLeft(_ sender: Any?) { nudge(dx: -1, dy: 0, shift: false) }
@@ -270,6 +293,7 @@ final class CanvasView: NSView {
             _ = model.transform
             _ = model.tool
             _ = model.textEditing
+            _ = model.cropDraft
         } onChange: { [weak self] in
             Task { @MainActor in
                 self?.observeModel()
@@ -288,7 +312,7 @@ final class CanvasView: NSView {
         }
         syncTextView()
         let now = Shown(document: model.document, transient: model.transient, selection: model.selection,
-                        transform: model.transform, editingID: model.textEditing?.box.id)
+                        transform: model.transform, editingID: model.textEditing?.box.id, cropDraft: model.cropDraft)
         guard now != shown else { return }
         let previous = shown
         shown = now
@@ -305,11 +329,17 @@ final class CanvasView: NSView {
             NSLog("Editor: undo \"\(model.undoManager.undoActionName)\", redo \"\(model.undoManager.redoActionName)\"")
         }
         #endif
-        if now.document == previous.document, now.selection == previous.selection, now.transform == previous.transform {
+        if now.document == previous.document, now.selection == previous.selection, now.transform == previous.transform,
+           now.cropDraft == previous.cropDraft {
             setNeedsDisplay(repaintRect(for: previous.transient, in: previous.document)
                 .union(repaintRect(for: now.transient, in: now.document)))
         } else {
             needsDisplay = true
+        }
+        // Starting or ending cropping, and undo or redo of a crop, change what Fit shows.
+        if fitsOnResize, fitRect(document: now.document, cropDraft: now.cropDraft)
+            != fitRect(document: previous.document, cropDraft: previous.cropDraft) {
+            fitToView()
         }
     }
 
@@ -598,6 +628,7 @@ final class CanvasView: NSView {
 
     /// Spec 2.6 Rendering: (1) image-pixel CTM; (2) placeholders for effects with no tile yet;
     /// (3) drawings meeting the dirty rect, then the transient shape; (4) back in view space, the
+    /// crop chrome and readout while cropping, else the cover outside an applied crop and the
     /// selection handles or dashed outline. No Core Image or GPU work happens here.
     override func draw(_ dirtyRect: NSRect) {
         guard let context = NSGraphicsContext.current?.cgContext else { return }
@@ -614,11 +645,42 @@ final class CanvasView: NSView {
             AnnotationDrawing.draw(drawing, in: context, scale: model.scale)
         }
         context.restoreGState()
+        if let draft = model.cropDraft {
+            // Cropping: dim, edge, handles and readout; no selection is shown.
+            AnnotationDrawing.drawCropChrome(crop: draft, imageSize: imagePixelSize, transform: transform,
+                                             scale: backingScale, in: context)
+            drawCropReadout(for: draft)
+            return
+        }
+        if let crop = model.document.crop {
+            // Resolved under the view's appearance, which AppKit makes current inside draw(_:).
+            AnnotationDrawing.drawCropCover(keeping: crop, bounds: bounds, transform: transform,
+                                            color: NSColor.windowBackgroundColor.cgColor, scale: backingScale, in: context)
+        }
         if let selected = selectedAnnotation {
             // The view's backing scale snaps the outline and handles to device pixels; the drawings
             // above take the capture scale (`model.scale`).
             AnnotationDrawing.drawSelection(for: selected, transform: transform, scale: backingScale, in: context)
         }
+    }
+
+    /// "W × H" in image pixels, the size export will write, in a dark pill 6 pt under the crop's
+    /// bottom-left corner, or inside the crop's bottom edge when the pill would leave the view.
+    private func drawCropReadout(for draft: CGRect) {
+        let label = NSAttributedString(
+            string: CropGeometry.readout(for: CropGeometry.snapped(draft, in: imagePixelSize)),
+            attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium),
+                         .foregroundColor: NSColor.white])
+        let text = label.size()
+        let pill = CGSize(width: ceil(text.width) + 12, height: ceil(text.height) + 6)
+        let crop = model.transform.viewRect(draft)
+        var origin = CGPoint(x: crop.minX, y: crop.maxY + 6)
+        if origin.y + pill.height > bounds.maxY { origin.y = crop.maxY - pill.height - 6 }
+        origin.x = min(max(origin.x, bounds.minX + 4), bounds.maxX - pill.width - 4)
+        let frame = CGRect(origin: origin, size: pill)
+        NSColor.black.withAlphaComponent(0.7).setFill()
+        NSBezierPath(roundedRect: frame, xRadius: 4, yRadius: 4).fill()
+        label.draw(at: CGPoint(x: frame.minX + 6, y: frame.minY + 3))
     }
 }
 

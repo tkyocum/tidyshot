@@ -412,6 +412,72 @@ struct EditorModelTests {
         #expect(await model.renderExport() == nil)
     }
 
+    @Test func undoRestoresUncropped() async throws {
+        let model = makeModel()
+        let shape = add(box(), to: model)
+        model.selection = shape.id
+        model.tool = .crop
+        // Cropping starts at the whole capture, with nothing selected, and ⌘A selects nothing.
+        #expect(model.cropDraft == CGRect(x: 0, y: 0, width: 16, height: 16))
+        #expect(model.selection == nil)
+        model.selectAll()
+        #expect(model.selection == nil)
+
+        model.cropDraft = CGRect(x: 2.4, y: 1.6, width: 9.8, height: 8.1)
+        model.applyCrop()
+        let crop = CGRect(x: 2, y: 2, width: 10, height: 8)
+        #expect(model.document.crop == crop)
+        #expect(model.document.annotations == [shape])
+        #expect(model.cropDraft == nil)
+        #expect(model.tool == .redact)
+        #expect(model.undoManager.undoActionName == EditorModel.ActionName.crop)
+        let cropped = try #require(await model.renderExport())
+        #expect(cropped.image.width == 10)
+        #expect(cropped.image.height == 8)
+        #expect(cropped.scale == 2)
+
+        model.undoManager.undo()
+        #expect(model.document.crop == nil)
+        #expect(model.document.annotations == [shape])
+        let uncropped = try #require(await model.renderExport())
+        #expect(uncropped.image.width == 16)
+        model.undoManager.redo()
+        #expect(model.document.crop == crop)
+        // Cropping again starts at the applied crop.
+        model.tool = .crop
+        #expect(model.cropDraft == crop)
+    }
+
+    @Test func escapeCancelsCropAndAnotherToolApplies() {
+        let model = makeModel()
+        model.tool = .select
+        model.tool = .crop
+        model.cropDraft = CGRect(x: 4, y: 4, width: 8, height: 8)
+        // A draft that would change the crop is an unsaved change, so closing asks.
+        #expect(model.hasUnsavedChanges)
+        model.cancelCurrentOperation()
+        #expect(model.cropDraft == nil)
+        #expect(model.document.crop == nil)
+        #expect(model.tool == .select)
+        #expect(!model.hasUnsavedChanges)
+        #expect(!model.undoManager.canUndo)
+
+        // Another tool keeps the draft as one step; a draft left at the whole capture adds none.
+        model.tool = .crop
+        model.tool = .arrow
+        #expect(!model.undoManager.canUndo)
+        model.tool = .crop
+        model.cropDraft = CGRect(x: 4, y: 4, width: 8, height: 8)
+        model.tool = .arrow
+        #expect(model.cropDraft == nil)
+        #expect(model.document.crop == CGRect(x: 4, y: 4, width: 8, height: 8))
+        #expect(model.undoManager.undoActionName == EditorModel.ActionName.crop)
+        // Return outside Crop does nothing.
+        model.applyCrop()
+        #expect(model.tool == .arrow)
+        #expect(undoAll(model).count == 1)
+    }
+
     /// Typing lives in the edit's own UndoManager. The editor's manager sees one step, on commit.
     @Test func textEditCommitsOnceWithoutEditorUndo() throws {
         let model = makeModel()

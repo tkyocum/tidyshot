@@ -3,8 +3,9 @@ import Foundation
 import Synchronization
 
 /// Burns the effect tiles and the drawings into a copy of the capture, at the capture's own pixel
-/// size, for Save, Save As…, Copy and Upload. `EditorModel.renderExport` calls it inside
-/// `Task.detached(priority: .userInitiated)`. It uses no NSGraphicsContext, which is MainActor.
+/// size, or at the crop's when the document has one, for Save, Save As…, Copy and Upload.
+/// `EditorModel.renderExport` calls it inside `Task.detached(priority: .userInitiated)`. It uses
+/// no NSGraphicsContext, which is MainActor.
 ///
 /// For an 8-bit RGB base, every pixel outside the effects and drawings equals the base byte for
 /// byte, alpha included, so window captures keep their transparent corners. Each tile replaces
@@ -45,7 +46,12 @@ nonisolated enum EditorFlattener {
         for drawing in document.drawings {
             AnnotationDrawing.draw(drawing, in: context, scale: scale)
         }
-        return context.makeImage()
+        guard let flattened = context.makeImage() else { return nil }
+        // 4. The crop, last. Effects and drawings render on the whole capture first, so a blur or a
+        // redaction cut by the crop's edge has exactly the pixels it has uncropped. CGImage's
+        // `cropping(to:)` takes the model's top-left rect as it is.
+        guard let crop = CropGeometry.integralCrop(document.crop, in: size) else { return flattened }
+        return flattened.cropping(to: crop)
     }
 
     /// An 8-bit premultiplied RGBA bitmap in the base's colour space when that space is RGB and

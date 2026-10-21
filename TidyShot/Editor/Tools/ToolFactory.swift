@@ -10,6 +10,7 @@ func makeTool(for tool: EditorTool) -> any CanvasTool {
     case .arrow, .line: return TwoPointTool(tool: tool)
     case .pencil, .highlighter: return PencilTool(tool: tool)
     case .text: return TextTool()
+    case .crop: return CropTool()
     }
 }
 

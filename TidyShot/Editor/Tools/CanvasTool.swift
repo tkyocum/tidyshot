@@ -28,6 +28,11 @@ protocol CanvasEditing: AnyObject {
     /// The shape in progress. Never undoable.
     var transient: Annotation? { get set }
     var selection: UUID? { get set }
+    /// The Crop tool's rect while cropping (4b), in image pixels; nil otherwise. Never undoable:
+    /// Return applies it as one commit, Escape drops it.
+    var cropDraft: CGRect? { get set }
+    /// The capture's size in image pixels.
+    var imageSize: CGSize { get }
     func commit(_ new: AnnotationDocument, actionName: String, coalescingKey: String?)
     func makeAnnotation(_ tool: EditorTool, from: CGPoint, to: CGPoint) -> Annotation?
     /// Builds the freehand stroke for Pencil or Highlighter from the decimated points with the

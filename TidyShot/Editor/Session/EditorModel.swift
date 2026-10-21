@@ -36,6 +36,7 @@ final class EditorModel: CanvasEditing {
         static let block = "Block Size"
         static let editText = "Edit Text"
         static let textSize = "Text Size"
+        static let crop = "Crop"
     }
 
     let recordID: UUID
@@ -47,9 +48,14 @@ final class EditorModel: CanvasEditing {
     private(set) var document = AnnotationDocument(annotations: [])
     /// The document as last saved; empty when the editor opens.
     private var savedDocument = AnnotationDocument(annotations: [])
-    /// Also true while typed text would change the document, so ⌘W and Quit ask before it is lost
-    /// (`AppCoordinator.hasUnsavedEditors` reads this).
-    var hasUnsavedChanges: Bool { document != savedDocument || textEditChangesDocument }
+    /// Also true while typed text would change the document (Task 3) and while a crop draft would
+    /// change the crop, so the edited dot, the close sheet and the quit review see a text or a crop
+    /// that has not been committed yet (`AppCoordinator.hasUnsavedEditors` reads this).
+    var hasUnsavedChanges: Bool {
+        if document != savedDocument || textEditChangesDocument { return true }
+        guard let cropDraft else { return false }
+        return CropGeometry.integralCrop(cropDraft, in: imageSize) != document.crop
+    }
 
     var selection: UUID? {
         didSet { if selection != oldValue { coalescingKey = nil } }
@@ -62,13 +68,23 @@ final class EditorModel: CanvasEditing {
             tileCache.reconcile(document: document, transient: transient)
         }
     }
+    /// The Crop tool's rect while it is active; nil otherwise. Not part of the document or of undo.
+    var cropDraft: CGRect?
+    var imageSize: CGSize { CGSize(width: base.width, height: base.height) }
     /// Redaction is the reason the editor exists, so it opens with Redact. A tool change commits the
-    /// text being typed.
+    /// text being typed and applies a crop draft.
     var tool: EditorTool = .redact {
         didSet {
             guard tool != oldValue else { return }
             transient = nil
             commitTextEditing()
+            // Leaving Crop for another tool keeps the draft, as one step; Escape drops it.
+            if oldValue == .crop { applyCropDraft() }
+            if tool == .crop {
+                toolBeforeCrop = oldValue
+                selection = nil
+                cropDraft = document.crop ?? CGRect(origin: .zero, size: imageSize)
+            }
         }
     }
     var strokeColor: RGBA
@@ -96,6 +112,8 @@ final class EditorModel: CanvasEditing {
     @ObservationIgnored let tileCache: RedactionTileCache
     /// The last commit's key. Cleared by any other commit, by undo, by redo and by a selection change.
     @ObservationIgnored private var coalescingKey: String?
+    /// Where Return and Escape go back to when they end cropping.
+    @ObservationIgnored private var toolBeforeCrop: EditorTool = .select
     /// True while `apply` runs, so `transient`'s observer leaves the one reconcile to it.
     @ObservationIgnored private var isApplying = false
 
@@ -166,7 +184,7 @@ final class EditorModel: CanvasEditing {
                           width: abs(end.x - start.x), height: abs(end.y - start.y))
         // Exhaustive: every new tool must decide what it makes here.
         switch tool {
-        case .select:
+        case .select, .crop:
             return nil
         case .redact:
             guard !rect.isEmpty else { return nil }
@@ -226,9 +244,12 @@ final class EditorModel: CanvasEditing {
                coalescingKey: "Nudge-\(selected.id.uuidString)")
     }
 
-    /// Escape and ⌘.: abandon the shape being drawn, otherwise deselect. Never closes the window.
+    /// Escape and ⌘.: while cropping, drop the draft (`cancelCrop()`); otherwise abandon the shape
+    /// being drawn, else deselect. Never closes the window.
     func cancelCurrentOperation() {
-        if transient != nil {
+        if tool == .crop {
+            cancelCrop()
+        } else if transient != nil {
             transient = nil
         } else {
             selection = nil
@@ -236,8 +257,36 @@ final class EditorModel: CanvasEditing {
     }
 
     /// ⌘A with one selection: the frontmost annotation, drawings before effects as in HitTester.
+    /// Nothing while cropping, which shows no selection.
     func selectAll() {
+        guard tool != .crop else { return }
         selection = (document.drawings.last ?? document.effects.last)?.id
+    }
+
+    // MARK: Crop
+
+    /// Return while cropping: applies the draft as one step named `Crop`, then goes back to the tool
+    /// used before Crop. Does nothing outside Crop, so `export()` can call it unconditionally.
+    func applyCrop() {
+        guard tool == .crop else { return }
+        applyCropDraft()
+        tool = toolBeforeCrop
+    }
+
+    /// Escape while cropping: drops the draft, leaves the document unchanged, and goes back to the
+    /// tool used before Crop.
+    func cancelCrop() {
+        guard tool == .crop else { return }
+        cropDraft = nil
+        tool = toolBeforeCrop
+    }
+
+    /// Ends the draft. A draft that keeps the whole capture stores nil; `commit` adds no step when
+    /// the crop is unchanged.
+    private func applyCropDraft() {
+        guard let draft = cropDraft else { return }
+        cropDraft = nil
+        commit(document.withCrop(CropGeometry.integralCrop(draft, in: imageSize)), actionName: ActionName.crop)
     }
 
     // MARK: Text

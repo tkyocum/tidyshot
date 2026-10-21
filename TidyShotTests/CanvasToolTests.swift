@@ -18,6 +18,8 @@ final class FakeCanvasEditing: CanvasEditing {
     var scale: CGFloat = 2
     var transient: Annotation?
     var selection: UUID?
+    var cropDraft: CGRect?
+    var imageSize = CGSize(width: 64, height: 48)
     private(set) var commits: [Commit] = []
     private(set) var made: [(tool: EditorTool, from: CGPoint, to: CGPoint)] = []
     /// Each `beginTextEditing` call.
@@ -532,6 +534,42 @@ struct CanvasToolTests {
         select.mouseUp(ToolInput(point: inside, clickCount: 2), on: canvas)
         #expect(canvas.textBegun.count == 3)
         #expect(canvas.textBegun.last?.existing == box.id)
+        #expect(canvas.commits.isEmpty)
+    }
+
+    @Test func cropToolResizesMovesAndClamps() {
+        let canvas = FakeCanvasEditing()
+        canvas.cropDraft = CGRect(x: 10, y: 10, width: 20, height: 10)
+        let tool = makeTool(for: .crop)
+        #expect(tool is CropTool)
+
+        // The bottom-right handle dragged past the image's corner stops at it.
+        tool.mouseDown(at(30, 20), on: canvas)
+        tool.mouseDragged(at(90, 70), on: canvas)
+        tool.mouseUp(at(90, 70), on: canvas)
+        #expect(canvas.cropDraft == CGRect(x: 10, y: 10, width: 54, height: 38))
+
+        // A press inside moves it, size kept, held inside the image.
+        tool.mouseDown(at(20, 20), on: canvas)
+        tool.mouseDragged(at(-10, 20), on: canvas)
+        tool.mouseUp(at(-10, 20), on: canvas)
+        #expect(canvas.cropDraft == CGRect(x: 0, y: 10, width: 54, height: 38))
+
+        // A click outside changes nothing; a drag outside draws a new rect.
+        tool.mouseDown(at(62, 2), on: canvas)
+        tool.mouseUp(at(62, 2), on: canvas)
+        #expect(canvas.cropDraft == CGRect(x: 0, y: 10, width: 54, height: 38))
+        tool.mouseDown(at(62, 2), on: canvas)
+        tool.mouseDragged(at(40, 30), on: canvas)
+        tool.mouseUp(at(40, 30), on: canvas)
+        #expect(canvas.cropDraft == CGRect(x: 40, y: 2, width: 22, height: 28))
+
+        // Escape (the draft cleared mid-drag) ends the gesture; the tool never commits.
+        tool.mouseDown(at(50, 15), on: canvas)
+        canvas.cropDraft = nil
+        tool.mouseDragged(at(55, 20), on: canvas)
+        tool.mouseUp(at(55, 20), on: canvas)
+        #expect(canvas.cropDraft == nil)
         #expect(canvas.commits.isEmpty)
     }
 }

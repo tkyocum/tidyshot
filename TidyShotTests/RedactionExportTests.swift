@@ -70,8 +70,8 @@ struct RedactionExportTests {
         return bytes
     }
 
-    func pixel(_ bytes: [UInt8], _ x: Int, _ y: Int) -> [UInt8] {
-        let index = (y * Self.width + x) * 4
+    func pixel(_ bytes: [UInt8], _ x: Int, _ y: Int, width: Int = RedactionExportTests.width) -> [UInt8] {
+        let index = (y * width + x) * 4
         return Array(bytes[index..<index + 4])
     }
 
@@ -168,5 +168,37 @@ struct RedactionExportTests {
         #expect(outside.count > Self.width * Self.height / 2)
         let changed = outside.filter { pixel(exported.bytes, $0.x, $0.y) != pixel(source, $0.x, $0.y) }
         #expect(changed.isEmpty, "\(changed.count) pixels outside every effect changed")
+    }
+
+    /// The crop is applied after every effect, through the real renderer and a PNG round trip.
+    /// A redaction cut by the crop's edge holds only the fill, every other kept pixel is the
+    /// source at the crop's offset, and the PNG has the crop's size at scale 2: the size Save
+    /// records as pixelWidth and pixelHeight.
+    @Test func croppedExportKeepsRedactionAndHasCropSize() async throws {
+        let secret = try add(.redact, from: CGPoint(x: 8, y: 8), to: CGPoint(x: 40, y: 32))
+        let crop = CGRect(x: 20, y: 4, width: 36, height: 30)
+        model.commit(model.document.withCrop(crop), actionName: EditorModel.ActionName.crop)
+        let fill = model.redactColor
+        let expected = [fill.red, fill.green, fill.blue, fill.alpha].map { UInt8(($0 * 255).rounded()) }
+
+        let exported = try await exportedPixels()
+        #expect(exported.scale == 2)
+        #expect(exported.width == 36)
+        #expect(exported.height == 30)
+
+        let secretRect = try rect(of: secret)
+        var redacted = 0
+        var wrong = 0
+        for position in positions(in: CGRect(origin: .zero, size: crop.size)) {
+            let x = position.x + Int(crop.minX)
+            let y = position.y + Int(crop.minY)
+            let inside = secretRect.contains(CGPoint(x: CGFloat(x) + 0.5, y: CGFloat(y) + 0.5))
+            if inside { redacted += 1 }
+            let want = inside ? expected : pixel(source, x, y)
+            if pixel(exported.bytes, position.x, position.y, width: exported.width) != want { wrong += 1 }
+        }
+        // The crop keeps 20 of the redaction's 32 columns and all 24 of its rows.
+        #expect(redacted == 20 * 24)
+        #expect(wrong == 0, "\(wrong) kept pixels are neither the fill inside the redaction nor the source outside it")
     }
 }

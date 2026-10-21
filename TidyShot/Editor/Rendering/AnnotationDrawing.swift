@@ -79,8 +79,19 @@ nonisolated enum AnnotationDrawing {
             context.stroke(outline)
             context.setLineDash(phase: 0, lengths: [])
         }
+        drawHandles(HitTester.handles(for: annotation), transform: transform, scale: scale, in: context)
+    }
+
+    /// An 8 pt white square with a dark border at each of `points` (image pixels), in view space.
+    /// `scale` is the view's backing scale factor; edges snap to device pixels.
+    static func drawHandles(_ points: [CGPoint], transform: CanvasTransform, scale: CGFloat, in context: CGContext) {
+        let device = max(scale, 1)
+        func snap(_ value: CGFloat) -> CGFloat { (value * device).rounded() / device }
         let half = handleSide / 2
-        for point in HitTester.handles(for: annotation) {
+        context.saveGState()
+        defer { context.restoreGState() }
+        context.setLineWidth(1)
+        for point in points {
             let centre = transform.viewPoint(point)
             let square = CGRect(x: snap(centre.x - half), y: snap(centre.y - half), width: handleSide, height: handleSide)
             context.setFillColor(CGColor(gray: 1, alpha: 1))
@@ -88,6 +99,48 @@ nonisolated enum AnnotationDrawing {
             context.setStrokeColor(CGColor(gray: 0, alpha: 0.6))
             context.stroke(square.insetBy(dx: 0.5, dy: 0.5))
         }
+    }
+
+    /// How dark the image outside a crop being edited gets: black at this alpha.
+    static let cropDimAlpha: CGFloat = 0.5
+
+    /// The Crop tool's chrome, in view space: the image outside `crop` dimmed, a 1 pt white edge on
+    /// the crop, and its eight handles. `scale` is the view's backing scale factor.
+    static func drawCropChrome(crop: CGRect, imageSize: CGSize, transform: CanvasTransform, scale: CGFloat,
+                               in context: CGContext) {
+        let image = snapped(transform.viewRect(CGRect(origin: .zero, size: imageSize)), scale: scale)
+        let kept = snapped(transform.viewRect(crop), scale: scale)
+        context.saveGState()
+        defer { context.restoreGState() }
+        context.addRect(image)
+        context.addRect(kept)
+        context.setFillColor(CGColor(gray: 0, alpha: cropDimAlpha))
+        context.fillPath(using: .evenOdd)
+        context.setLineWidth(1)
+        context.setStrokeColor(CGColor(gray: 1, alpha: 1))
+        context.stroke(kept.insetBy(dx: 0.5, dy: 0.5))
+        drawHandles(HitTester.boxHandles(crop), transform: transform, scale: scale, in: context)
+    }
+
+    /// An applied crop, outside the Crop tool: everything in `bounds` (view space) outside `crop`
+    /// is painted `color`, the window's background, so the canvas shows what export keeps. Drawings
+    /// and tiles beneath are hidden, not removed.
+    static func drawCropCover(keeping crop: CGRect, bounds: CGRect, transform: CanvasTransform, color: CGColor,
+                              scale: CGFloat, in context: CGContext) {
+        context.saveGState()
+        defer { context.restoreGState() }
+        context.addRect(bounds)
+        context.addRect(snapped(transform.viewRect(crop), scale: scale))
+        context.setFillColor(color)
+        context.fillPath(using: .evenOdd)
+    }
+
+    /// `rect`'s edges on device pixels at `scale`.
+    private static func snapped(_ rect: CGRect, scale: CGFloat) -> CGRect {
+        let device = max(scale, 1)
+        func snap(_ value: CGFloat) -> CGFloat { (value * device).rounded() / device }
+        return CGRect(x: snap(rect.minX), y: snap(rect.minY),
+                      width: snap(rect.maxX) - snap(rect.minX), height: snap(rect.maxY) - snap(rect.minY))
     }
 
     /// A text annotation's frame, outlined when it is selected because text has no handles.

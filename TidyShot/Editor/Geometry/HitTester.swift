@@ -156,7 +156,8 @@ nonisolated enum HitTester {
         return outline.contains(point)
     }
 
-    private static func boxHandles(_ rect: CGRect) -> [CGPoint] {
+    /// The eight box handles of `rect`, in the order `handles(for:)` documents.
+    static func boxHandles(_ rect: CGRect) -> [CGPoint] {
         let r = rect.standardized
         return [
             CGPoint(x: r.minX, y: r.minY), CGPoint(x: r.midX, y: r.minY),
