@@ -913,6 +913,164 @@ Observations from the checklist run are still to be written down here by Tim: th
 
 Observations from the checklist run are still to be written down here by Tim: which bundle owns `tidyshot:` after the stale registrations are cleaned and which one a cold launch started (probe 4), the sender each source shows (Terminal's `open`, Raycast, Keyboard Maestro, Shortcuts, Safari, Chrome) and whether Chrome offers "Always allow", whether Return and Escape behave with All-in-One's fields, and the memory of the 65,536 px pin. None of the GUI checks had been run when this was written.
 
+### 2.10 Phase 7b design: Capture Text and hiding desktop icons (2026-10-21)
+
+**Scope and order.** Two P2 rows of the table in 2.1: text recognition with QR codes, as a new capture called Capture Text, and Hide desktop icons. They are independent and small, so they ship together as one PR on the branch `phase-7b-text-icons`. The Background tool and window-with-background share a compositing step and need their own UI; they are Phase 7c. Nothing in 7b adds an entitlement or a Swift package. The probe sources are in `docs/superpowers/research/phase-7b-probes/`.
+
+**Probes (2026-10-21, Tim's Mac, one 2560 x 1440 pt display at 2x).**
+- **Vision.** The Swift API (`RecognizeTextRequest`, `DetectBarcodesRequest`, macOS 15 and later) was run on a generated 1800 x 1000 px image at 2x.
+  - Speed: text took 0.1 to 0.2 s and barcodes 0.01 to 0.4 s. The very first text request after a restart took 24 s while the system loaded its model; later processes were fast again.
+  - Settings: accurate level, language correction on, automatic language detection.
+  - What it read: "Ünïcödé café naïve", "$1,284.50" and "QX-993" read correctly. An em dash came back as a hyphen, and runs of spaces collapsed to one.
+  - Same-line words: at 2x, two words on one line ("Column A" and "Column B") came back as two observations; at 1x they came back as one.
+  - QR: a QR code holding `https://snap.tky.io/2BkqQ.png` was read exactly at 1x and 2x.
+- **Window list.** The desktop is made of these windows, from the bottom up:
+  - The wallpaper: one window per display, owned by `com.apple.WindowManager`, titled `Wallpaper`, at layer -2147483624, covering the display's frame.
+  - Finder's icon window, at layer -2147483603 (`CGWindowLevelForKey(.desktopIconWindow)`).
+  - A transparent `underbelly` window along the top 122 pt, at -2147483602.
+  - Desktop widgets (`com.apple.notificationcenterui`), at -2147483601.
+- **Wallpaper capture.** `SCContentFilter(desktopIndependentWindow:)` on the wallpaper window took 97 ms and returned 5120 x 2880 px. `NSWorkspace.desktopImageURL(for:)` returns `/System/Library/CoreServices/DefaultDesktop.heic`, a dynamic picture whose file does not match what is on screen, so the window capture is the source.
+- **Cover.** A borderless window at `desktopIconWindow + 3`, showing the wallpaper capture, hid the icons and widgets in a ScreenCaptureKit display capture 16 ms after `orderFrontRegardless()`. The mean pixel difference to the wallpaper was 0.0, against 10.3 over the widgets without the cover.
+
+#### Capture Text
+
+**Entry points.**
+- Status menu: `Capture Text  ⌃⇧7`, after `Self-Timer`.
+- Shortcut recorder: `Capture text:` (⌃⇧7), last of the capture recorders, before `Restore closed overlay:`.
+- URL command: `tidyshot://capture-text`.
+
+**Selection.** It uses Capture Area's overlay (`selector.select(mode: .area, content:freeze:)`), and Freeze screen applies as it does there. The image is what Capture Area would have captured:
+- the frozen crop, or a live capture with the overlay excluded and no pointer (`duringSelection: true`);
+- or the clicked window, when the overlay returns `.window`.
+
+The overlay is dismissed after the capture. Capture Text does not write `lastAreaRect`, because the previous area is for image captures. The capture lock is held for the selection and the capture only and is released before recognition, so the 24 s first run never blocks other captures.
+
+**Recognition.** `TextRecognizer.recognize(_:)` is `@concurrent` and runs off the main actor.
+- Text: `RecognizeTextRequest` with `recognitionLevel = .accurate`, `usesLanguageCorrection = true` and `automaticallyDetectsLanguage = true`, keeping the top candidate of each observation.
+- Codes: `DetectBarcodesRequest` with `symbologies = [.qr, .microQR, .aztec, .dataMatrix, .pdf417]`. Two-dimensional codes only, because stripes in a screenshot can read as one-dimensional barcodes. Payloads that are nil or empty are dropped.
+- The result is a value type `TextScan { pieces: [TextPiece], codes: [CodePiece] }`. Each piece keeps its string, its symbology for codes, and its normalised bounding box (origin at the bottom left, as Vision gives it).
+
+**Joining text** (`TextJoiner.join(_:)`, pure). Vision's order is kept, because it already follows columns.
+- A piece continues the previous piece's line, joined by one space, when both of these hold:
+  - its vertical overlap with the previous piece is at least half the smaller of the two heights;
+  - its left edge is at or right of the previous piece's right edge, minus 0.01.
+- Otherwise it starts a new line, joined by `\n`.
+- Pieces that are empty after trimming are skipped, and the result is trimmed.
+
+**Outcome** (`TextCaptureOutcome.decide(_:)`, pure).
+- **Codes.** One or more codes win. The clipboard gets their payloads in Vision's order, exact duplicates once, joined by `\n`. The text is dropped, so selecting a QR code with "Scan me" under it gives a link that pastes cleanly. To get the text, select without the code.
+- **Text.** Otherwise, the joined text when it is not empty.
+- **Nothing.** Otherwise there is nothing to copy.
+
+**Clipboard.** `NSPasteboard.general.clearContents()`, then `setString(_:forType: .string)`. Capture Text makes no file, record, card or upload, ignores the after-capture action, `CaptureIntent` and Clop, and leaves the clipboard untouched when nothing was found. `clipboardOwner` is left alone: the clipboard's change count moved, so no editor save replaces the text.
+
+**Feedback.**
+- **Sound.** With Play sound on, the capture sound plays when something was copied.
+- **Notifications.** These follow Show notification:
+  - Text: title `Text copied`, body the text's first line, cut to 80 characters plus `…`.
+  - One QR or Micro QR code: title `QR code copied`; another single code: `Code copied`; several codes: `<n> codes copied`. The body is the first payload, cut the same way.
+  - A single payload that is an `http` or `https` URL with a host carries the URL, so clicking the notification opens it in the default browser, as the upload notification does. No other payload opens anything.
+- **Always posted.**
+  - Nothing found: title `No text found`, body `TidyShot found no text or QR code in the selection.`
+  - Vision throws: title `Text not recognized`, body the error's description.
+
+**URL command.** `capture-text` takes `x`, `y`, `width`, `height` and `display`, like `capture-area`, and no `action`.
+- Without a rect it opens the selection.
+- With a rect it reads that rect at once, live, with the cards excluded and no pointer. That counts as capturing without a selection, so it also needs Allow URL commands that capture without a selection.
+- The sending app can read the result from the clipboard, as the silent-capture caption already says.
+
+**Deferred.** Recognising text in an existing capture (card, Recent Captures, editor); a Text button in All-in-One's toolbar; a language setting; joining wrapped lines into paragraphs; opening payloads that are not web links.
+
+#### Hide desktop icons
+
+**Two ways to turn it on.**
+- **While capturing.** A Capture tab setting, `Hide desktop icons while capturing` (off). With it on, the desktop is covered for the whole run of Capture Area, Capture Window, Capture Fullscreen, All-in-One, Capture Previous Area and Self-Timer (countdown included), and of the URL commands that start them. That is from before the shareable content is read, so freeze snapshots and window lists see the covers, until the capture flow ends.
+  - Not Capture Scrolling: the covers would stay up for a whole session.
+  - Not Capture Text: covering adds about 100 ms per display for nothing visible.
+- **Until turned off.** A status menu item `Hide Desktop Icons`, with a checkmark while on. Its state is stored as `desktopIconsHidden` (false) and restored at launch. The URL commands `hide-desktop-icons`, `show-desktop-icons` and `toggle-desktop-icons` (CleanShot's names) set the same state. They capture nothing, so Allow URL commands alone is enough; they take no parameters.
+
+**Covers.** `DesktopCoverPanel` is an `NSPanel` subclass with `.borderless` and `.nonactivatingPanel`, one per display:
+- Frame: the display's `NSScreen` frame.
+- Level: `CGWindowLevelForKey(.desktopIconWindow) + 3`, above Finder's icons and the widgets and below every normal window.
+- Appearance: opaque, no shadow, `canBecomeKey` and `canBecomeMain` false.
+- Behaviour: `collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]`.
+- Content: a layer whose `contents` is the wallpaper image with `contentsGravity = .resize`.
+
+The covers take mouse events and do nothing with them, so the hidden icons cannot be opened or dragged by a click that lands on them. While the desktop is hidden, clicking the wallpaper does not reveal the desktop, and the desktop's context menu does not open. The covers are not excluded from captures: an area or fullscreen capture shows the wallpaper where the icons were. `WindowPicker` already ignores windows whose layer is not 0.
+
+**Wallpaper.** `WallpaperMatcher.match(_:displayFrame:)` is pure and works on value candidates (window id, bundle id, title, layer, frame). For each display it picks:
+1. the window owned by `com.apple.WindowManager`, titled `Wallpaper`, whose frame equals the display's frame;
+2. otherwise the lowest-layer `com.apple.WindowManager` window whose frame equals the display's frame;
+3. otherwise none.
+
+`WallpaperSource` captures each display's match with `SCContentFilter(desktopIndependentWindow:)`, at the frame times the display's scale and without the pointer. The displays are captured concurrently. A display with no match, or whose capture fails, gets no cover. One notification per app session reports it: title `Desktop icons still showing`, body `TidyShot could not read the desktop picture.`
+
+**Timing.** `DesktopCoverController.show(for:) async` captures the wallpapers, orders the panels front, flushes with `CATransaction.flush()`, then waits 50 ms before returning; the probe saw the cover in a capture after 16 ms. `hide(for:)` orders them out at once. The controller keeps a set of reasons (`.capture`, `.persistent`, in the pure `DesktopCoverReasons`), and the covers show while the set is not empty. A capture flow that ends removes `.capture` and leaves a persistent cover up.
+
+**Refresh while on.** The wallpaper is captured again, and each cover's contents swapped, on:
+- `NSWorkspace.activeSpaceDidChangeNotification` (each Space can have its own wallpaper);
+- `NSApplication.didChangeScreenParametersNotification` (panels are rebuilt for the current displays);
+- `NSWorkspace.didWakeNotification`;
+- every 10 minutes (dynamic wallpapers change through the day).
+
+Capturing the wallpaper window alone is not affected by the covers above it. After a Space switch, the cover shows the previous Space's wallpaper until the refresh completes, about 100 ms later.
+
+#### Settings summary
+
+- **Capture:** `Hide desktop icons while capturing`, captioned `Covers desktop icons and widgets with the desktop picture during area, window, fullscreen, previous-area, All-in-One and self-timer captures.`, after `Include window shadow`.
+- **Shortcuts:** `Capture text:` (⌃⇧7).
+- **New `AppSettings` keys:** `hideDesktopIconsWhileCapturing` (false) and `desktopIconsHidden` (false). New shortcut: `captureText` (⌃⇧7).
+
+**Status menu after 7b.** `All-in-One`, `Capture Area`, `Capture Window`, `Capture Fullscreen`, `Capture Scrolling`, `Capture Previous Area`, `Self-Timer`, `Capture Text  ⌃⇧7`; separator; Recent Captures, `Restore Closed Overlay`, Retry Failed Uploads, Reveal Last Capture, `Hide Desktop Icons` (checkmark); separator; the pin items, Settings…, Quit TidyShot. Capture Text is disabled while a capture runs, like the other capture items. `Hide Desktop Icons` is always enabled.
+
+**Architecture.** New files:
+- `TidyShot/Text/`: `TextRecognizer.swift` (Vision), `TextScan.swift`, `TextJoiner.swift` (pure), `TextCaptureOutcome.swift` (pure: the decision and the notification wording).
+- `TidyShot/Desktop/`: `DesktopCoverController.swift`, `DesktopCoverPanel.swift`, `WallpaperSource.swift`, `WallpaperMatcher.swift` (pure), `DesktopCoverReasons.swift` (pure).
+
+Edits:
+- `AppCoordinator`: `captureText(intent:)`, `captureText(at:)`, the covers in the capture flows, `setDesktopIconsHidden(_:)`.
+- `URLCommand` (four kinds), `URLCommandHandler` and `URLCommandTarget`.
+- `Notifier`: an optional URL to open on click.
+- `Shortcuts`, `StatusMenuController`, `CaptureSettingsView`, `ShortcutsSettingsView`, `AppSettings`.
+
+The 2.6 concurrency rule holds: Vision and the wallpaper captures run `@concurrent`, and the panels and controller are MainActor.
+
+**Tests (Swift Testing).**
+- `TextJoinerTests`:
+  - two pieces on one line joined by a space;
+  - lines joined by a newline;
+  - a piece left of the previous one on an overlapping band starts a new line;
+  - empty pieces skipped;
+  - the result trimmed;
+  - a single piece.
+- `TextCaptureOutcomeTests`:
+  - codes win over text;
+  - a duplicate payload kept once;
+  - an empty payload ignored;
+  - text only;
+  - nothing;
+  - each notification title, including `QR code copied`, `Code copied` and `3 codes copied`;
+  - the body cut at 80 characters with `…`, first line only;
+  - the URL to open only for a single `http`/`https` payload with a host (not `javascript:`, `file:` or `mailto:`).
+- `TextRecognizerTests`: real Vision on a generated 2x image with a line of text and a QR code. The text contains the line, and the code's payload is exact. The time limit is 2 minutes, for the cold model.
+- `WallpaperMatcherTests`:
+  - the titled match;
+  - a second display;
+  - the untitled fallback;
+  - another display's wallpaper ignored;
+  - no match.
+- `DesktopCoverReasonsTests`:
+  - capture and persistent together;
+  - the end of a capture leaves persistent;
+  - persistent off during a capture keeps the covers until the capture ends.
+- `URLCommandTests`:
+  - `capture-text` with and without a rect, and its silent rule;
+  - the three desktop-icon commands parse, take no parameters, and need only URL commands on.
+- `URLCommandHandlerTests`: the four routes.
+- `AppSettingsTests`: the two keys' defaults and persistence.
+
+The hand checks go in `docs/testing/phase-7b-manual-checklist.md`.
+
 ## 3. Core workflow in detail
 
 ```
@@ -1034,10 +1192,9 @@ Design in 2.9.
 Delivered: 6a on 2026-10-21 on `phase-6-polish` (PR 13); 6b on 2026-10-21 on `phase-6b-polish`. Phase 6 is released when the 6b PR merges. Design and what was built: 2.9.
 
 ### Phase 7: extras (as wanted)
-- Optimise images with Clop before upload (see 2.7), built 2026-10-21 on branch phase-7-clop; its manual checklist is not yet run.
-- Background tool and window-with-background.
-- OCR via Vision, QR codes.
-- Hide desktop icons during capture.
+- Optimise images with Clop before upload (see 2.7): merged 2026-10-21 (PR 15).
+- 7b: Capture Text (OCR via Vision, QR codes) and Hide desktop icons, on `phase-7b-text-icons`. Design in 2.10.
+- 7c: Background tool and window-with-background.
 
 ### Later: screen recording
 Separate design document. Will reuse Uploader, Naming, History, and Overlay.
