@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// Destination fields, credentials (saved to the Keychain), the object key template, and Save
-/// and Test Connection.
+/// Destination fields, credentials (saved to the Keychain), the object key template, and Save and
+/// Test Connection.
 struct UploadSettingsView: View {
     private let coordinator = AppCoordinator.shared
 

@@ -58,6 +58,7 @@ final class AppSettings {
         static let urlCommandsAllowSilent = "urlCommandsAllowSilent"
         static let selfTimerSeconds = "selfTimerSeconds"
         static let allInOneAspectLock = "allInOneAspectLock"
+        static let optimiseWithClop = "optimiseWithClop"
     }
 
     @ObservationIgnored private let defaults: UserDefaults
@@ -110,6 +111,9 @@ final class AppSettings {
     static let selfTimerChoices = [3, 5, 10]
     /// All-in-One's aspect-ratio lock, as the toolbar last left it (spec 2.9).
     var allInOneAspectLock: Bool { didSet { defaults.set(allInOneAspectLock, forKey: Keys.allInOneAspectLock) } }
+    /// The General tab's Optimize images with Clop (spec 2.7). Takes effect without Save; used only
+    /// while Clop is running.
+    var optimiseWithClop: Bool { didSet { defaults.set(optimiseWithClop, forKey: Keys.optimiseWithClop) } }
 
     /// The five editor values as one value. Setting it writes all five keys.
     var editorDefaults: EditorDefaults {
@@ -155,6 +159,7 @@ final class AppSettings {
             Keys.urlCommandsAllowSilent: false,
             Keys.selfTimerSeconds: 5,
             Keys.allInOneAspectLock: false,
+            Keys.optimiseWithClop: false,
         ])
         showsCursor = defaults.bool(forKey: Keys.showsCursor)
         copyImageToClipboard = defaults.bool(forKey: Keys.copyImageToClipboard)
@@ -191,6 +196,7 @@ final class AppSettings {
         let storedSelfTimer = defaults.integer(forKey: Keys.selfTimerSeconds)
         selfTimerSeconds = Self.selfTimerChoices.contains(storedSelfTimer) ? storedSelfTimer : 5
         allInOneAspectLock = defaults.bool(forKey: Keys.allInOneAspectLock)
+        optimiseWithClop = defaults.bool(forKey: Keys.optimiseWithClop)
 
         // Property observers do not run during init, so templates rewritten by
         // `TemplateMigration` are stored here, once.

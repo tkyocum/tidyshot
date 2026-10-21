@@ -3,6 +3,9 @@ import SwiftUI
 struct GeneralSettingsView: View {
     @Bindable private var settings = AppSettings.shared
     private let saveLocation = AppCoordinator.shared.saveLocation
+    /// Whether either Clop build is installed, read once when the tab appears (the lookup asks
+    /// LaunchServices, so it does not belong in a property initialiser that runs on every rebuild).
+    @State private var clopInstalled = false
 
     var body: some View {
         Form {
@@ -40,6 +43,17 @@ struct GeneralSettingsView: View {
                 Toggle("Show notification", isOn: $settings.showNotification)
                 Toggle("Play sound", isOn: $settings.playSound)
             }
+            Section("Images") {
+                Toggle("Optimize images with Clop", isOn: $settings.optimiseWithClop)
+                    .disabled(!clopInstalled)
+                Text("Clop is an image optimizer that greatly reduces file size. Clop keeps its own copy of each image it optimizes.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if !clopInstalled {
+                    Link("Get Clop", destination: URL(string: "https://lowtechguys.com/clop")!)
+                        .font(.caption)
+                }
+            }
             Section("URL commands") {
                 Toggle("Allow URL commands (tidyshot://)", isOn: $settings.urlCommandsEnabled)
                 Toggle("Allow URL commands that capture without a selection", isOn: $settings.urlCommandsAllowSilent)
@@ -50,5 +64,6 @@ struct GeneralSettingsView: View {
             }
         }
         .formStyle(.grouped)
+        .onAppear { clopInstalled = ClopApp.isInstalled }
     }
 }

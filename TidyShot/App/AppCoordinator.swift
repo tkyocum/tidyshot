@@ -54,6 +54,15 @@ final class AppCoordinator {
     /// finish against the destination they started with (their records store that location),
     /// and Delete can still cancel them.
     @ObservationIgnored private var drainingQueues: [UploadLane] = []
+    /// Optimize images with Clop (spec 2.7): one optimiser, sending to whichever Clop build runs.
+    private let clopOptimiser = ClopApp.makeOptimiser()
+    /// Records whose upload waits for Clop, each with the token of the attempt that waits. Delete's
+    /// cancel takes the record out, and the upload is then never enqueued; a retry started after
+    /// that gets a new token, so the first attempt's task cannot enqueue its stale bytes.
+    @ObservationIgnored private var optimisingIDs: [UUID: UUID] = [:]
+    /// Per lane (by queue identity), the uploads still waiting for Clop or being enqueued, so a lane
+    /// the Upload tab replaced is not dropped from `drainingQueues` before their jobs reach it.
+    @ObservationIgnored private var clopWaitsPerLane: [ObjectIdentifier: Int] = [:]
     /// Records whose delete is in progress (alert showing or requests running): a second click
     /// shows no second alert, and a retry does not re-enqueue them.
     @ObservationIgnored private var deletingIDs: Set<UUID> = []
@@ -120,6 +129,8 @@ final class AppCoordinator {
     func start() {
         // Drag copies from the last run, also after a crash.
         dragFiles.sweep()
+        // A quit or crash mid-request leaves a full-size capture in tmp/Clop.
+        try? FileManager.default.removeItem(at: ClopApp.workDirectory)
         notifier.setUp()
         history.load()
         registerShortcuts()
@@ -831,7 +842,10 @@ final class AppCoordinator {
         queue = nil
         drainingQueues.append(old)
         Task { [weak self] in
-            while !(await old.queue.isIdle) {
+            // An upload still waiting for Clop has no job in the queue yet, so the queue can look
+            // idle while one is coming. No new wait starts on a replaced lane.
+            while true {
+                if (self?.clopWaitsPerLane[ObjectIdentifier(old.queue)] ?? 0) == 0, await old.queue.isIdle { break }
                 try? await Task.sleep(for: .milliseconds(500))
             }
             self?.drainingQueues.removeAll { $0.queue === old.queue }
@@ -865,19 +879,68 @@ final class AppCoordinator {
             history.update(id: recordID) { $0.uploadState = .uploading(fraction: 0) }
             refreshOverlay(for: recordID)
         }
-        let job: UploadJob
+        // The key is named now, not at capture time: a capture taken while no destination was
+        // set up, and every retry, get a counter drawn when their upload starts. The date stays
+        // the capture's own, so a retried upload lands in the capture's date folder. Drawn before
+        // Clop runs, so counters follow the order uploads start.
+        let makeJob: (Data) -> UploadJob
         if let fixedKey {
-            job = UploadJob(id: recordID, data: data, contentType: "image/png", fileExtension: "png",
-                            fixedKey: fixedKey, cacheControl: "no-cache")
+            makeJob = { UploadJob(id: recordID, data: $0, contentType: "image/png", fileExtension: "png",
+                                  fixedKey: fixedKey, cacheControl: "no-cache") }
         } else {
-            // The key is named now, not at capture time: a capture taken while no destination was
-            // set up, and every retry, get a counter drawn when their upload starts. The date stays
-            // the capture's own, so a retried upload lands in the capture's date folder.
             let counter = lane.keyTemplate.contains("{counter}") ? settings.nextCounter() : 0
-            job = UploadJob(id: recordID, data: data, contentType: "image/png", fileExtension: "png",
-                            naming: TemplateContext(date: record.timestamp, counter: counter))
+            let naming = TemplateContext(date: record.timestamp, counter: counter)
+            makeJob = { UploadJob(id: recordID, data: $0, contentType: "image/png", fileExtension: "png",
+                                  naming: naming) }
         }
-        Task { await lane.queue.enqueue(job) }
+        guard settings.optimiseWithClop, clopIsRunning() else {
+            Task { await lane.queue.enqueue(makeJob(data)) }
+            return
+        }
+        // Clop rewrites a throwaway copy: the save-folder file, the pending file and the editor's
+        // file stay as captured, so a Retry optimises the original again. The record stays
+        // `.uploading(fraction: 0)` meanwhile.
+        let token = UUID()
+        optimisingIDs[recordID] = token
+        let laneID = ObjectIdentifier(lane.queue)
+        clopWaitsPerLane[laneID, default: 0] += 1
+        Task {
+            defer {
+                clopWaitsPerLane[laneID, default: 1] -= 1
+                if clopWaitsPerLane[laneID] == 0 { clopWaitsPerLane[laneID] = nil }
+            }
+            let bytes = await optimisedForUpload(data)
+            // Delete cancelled the upload while Clop ran (`cancelUpload` did the bookkeeping).
+            guard optimisingIDs[recordID] == token else { return }
+            optimisingIDs[recordID] = nil
+            guard history.record(id: recordID) != nil else {
+                // Removed from history meanwhile: nothing would point at the object.
+                uploadingIDs.remove(recordID)
+                return
+            }
+            await lane.queue.enqueue(makeJob(bytes))
+        }
+    }
+
+    /// True when a Clop build is running. Otherwise logs why the original uploads (spec 2.7).
+    private func clopIsRunning() -> Bool {
+        guard ClopApp.runningBundleID() != nil else {
+            NSLog("%@", "Clop: \(ClopSkipReason.notRunning.summary), uploading the original")
+            return false
+        }
+        return true
+    }
+
+    /// Clop's smaller PNG, or `data` itself with one `Clop: ` log line saying why. Never fails and
+    /// never posts an error: a capture is never lost to Clop (spec 2.7).
+    private func optimisedForUpload(_ data: Data) async -> Data {
+        switch await clopOptimiser.optimisedPNG(data) {
+        case .optimised(let bytes, _, _):
+            return bytes
+        case .original(let reason):
+            NSLog("%@", "Clop: \(reason.summary), uploading the original")
+            return data
+        }
     }
 
     /// Re-reads the file and uploads it again.
@@ -1198,6 +1261,14 @@ final class AppCoordinator {
     /// queue's `.cancelled` event has been handled, so the record holds the reserved key.
     private func cancelUpload(of recordID: UUID) async {
         guard uploadingIDs.contains(recordID) else { return }
+        // Still waiting for Clop: nothing is enqueued and no key is reserved, so this is the
+        // whole cancel, as the queue's `.cancelled` event would do it.
+        if optimisingIDs.removeValue(forKey: recordID) != nil {
+            uploadingIDs.remove(recordID)
+            history.update(id: recordID) { $0.uploadState = .failed(message: "Upload cancelled.") }
+            refreshOverlay(for: recordID)
+            return
+        }
         for lane in [queue].compactMap({ $0 }) + drainingQueues {
             if case .stopped = await lane.queue.cancel(recordID: recordID) {
                 return

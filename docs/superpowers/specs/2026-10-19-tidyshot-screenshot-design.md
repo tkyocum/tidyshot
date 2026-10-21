@@ -448,28 +448,133 @@ Neither older writer can clobber an edited thumbnail:
 - The `.tidyshot` project package. It is local only and never uploaded, and a warning says it keeps the unredacted original.
 - The after-capture open-editor option.
 
-### 2.7 To-do: optimise images with Clop before upload (2026-10-20)
+### 2.7 Optimise images with Clop before upload (2026-10-20, settled 2026-10-21)
 
-**Request.** Dropshare's Images setting "Optimize images with Clop" (a checkbox with the caption "Clop is an image optimizer that greatly reduces file size.") shrinks images before they upload. TidyShot gets the same option for people who have [Clop](https://lowtechguys.com/clop) installed. Tim owns the paid version.
+**Request.** Dropshare's Images setting "Optimize images with Clop" shrinks images before they upload. Its caption reads "Clop is an image optimizer that greatly reduces file size." TidyShot gets the same option for people who have [Clop](https://lowtechguys.com/clop) installed. Tim owns the paid version.
 
-**Integration.** [ClopSDK](https://github.com/FuzzyIdeas/ClopSDK) is an MIT-licensed Swift package that sends files to the running Clop app over a local Mach port (`com.lowtechguys.Clop.optimisationService`) and returns an `OptimisationResponse` (`path`, `oldBytes`, `newBytes`, sizes). Its main call is `optimise(url:aggressive:downscaleTo:...:hideGUI:copyToClipboard:inTheBackground:) throws`; `waitForClopToBeAvailable(for:)` checks that Clop is reachable. The Clop app itself is GPLv3; TidyShot only talks to it and never reads or copies its code, which keeps decision 7.
+**Integration.** Clop listens on a CFMessagePort named `<Clop bundle id>.optimisationService`:
+- `com.lowtechguys.Clop.optimisationService` for the direct build;
+- `com.lowtechguys.Clop-setapp.optimisationService` for the Setapp build.
+
+[ClopSDK](https://github.com/FuzzyIdeas/ClopSDK) (MIT) is a thin client for that port. TidyShot vendors a cut-down copy of it as `TidyShot/Upload/ClopClient.swift` and does not add the package; see answer 6.
+
+The Clop app itself is GPLv3. TidyShot only talks to it over the port and never reads or copies its code, which keeps decision 7.
+
+**Answers (probed 2026-10-21 on macOS 27.0.1, Clop 3.4.3 Pro, with sandboxed ad-hoc probe apps).**
+
+1. **Sandbox: a new entitlement is needed.**
+   - **Evidence.** With TidyShot's four entitlements, the lookup fails. `CFMessagePortCreateRemote` returns nil, and the log shows `launchd: denied lookup: name = com.lowtechguys.Clop.optimisationService ... error = 159: Sandbox restriction`. With `com.apple.security.temporary-exception.mach-lookup.global-name` the request succeeds.
+   - **Entitlement.** TidyShot adds that entitlement for `com.lowtechguys.Clop.optimisationService` and `com.lowtechguys.Clop-setapp.optimisationService`. This amends the "no new entitlements" constraint.
+   - **Mac App Store.** A temporary exception needs App Review approval. It does not affect the Developer ID or ad-hoc builds. A future Mac App Store build would have to justify it or drop the feature.
+2. **File access: no prompt.**
+   - **Evidence.** Clop, which is not sandboxed and has no Full Disk Access, read and rewrote PNGs in the probe's container (`tmp` and Application Support) without a prompt or a failure. The tccd log shows no `SystemPolicyAppData` request for Clop.
+   - **Fallback, untested signing.** This was tested with ad-hoc containers. If TidyShot is ever team-signed and macOS then prompts, the fallback is a temporary file in the save folder through the bookmark. Clop read `~/Downloads` without a prompt in the probe.
+3. **Output path: TidyShot passes none.**
+   - **Default.** With no output path, Clop rewrites the file in place and keeps its modification date. The response `path` equals the input.
+   - **`output` parameter.** The SDK's `output` is an extensionless path template: Clop appends the extension, so `x.png` becomes `x.png.png`, and `%f` stands for the input's base name. TidyShot does not use it. It writes a throwaway copy and lets Clop rewrite it.
+   - **Clop's cache.** Clop also keeps the original and the result in `~/Library/Caches/Clop/backups/` and `images/`, and TidyShot cannot remove them (see the caption).
+4. **DPI and format: 144 DPI survives; PNGs stay PNG.**
+   - **DPI.** Clop 3.4.3 dropped the `pHYs` and `sRGB` chunks but kept `eXIf`, which carries XResolution 144. Clop 3.6.2 (recorded 2026-10-21, the version the test fixtures come from) keeps `pHYs`. Either way ImageIO, `NSImage` and `ImageEncoder.decode` still read 144 DPI and scale 2.
+   - **Format.** The result is a 256-colour indexed PNG, which is lossy.
+   - **Conversion.** Under Tim's settings PNG is not converted to another format. If a user's Clop settings convert PNG (the response then has a different `path` and a `convertedFrom`), TidyShot uploads its original PNG.
+5. **Licensing: works with Pro; the SDK does not say.**
+   - Requests work with Tim's Pro licence. The SDK reports nothing about licensing.
+   - Clop's site caps on-demand and automation use at 5 per session on the free tier. TidyShot treats any throw, timeout or bad reply as "upload the original", so a free user just gets unoptimised uploads after the cap.
+6. **Dependency: vendored, so KeyboardShortcuts stays the only package.**
+   - **Why not the package.** ClopSDK 1.1.2 (swift-tools 5.9, macOS 13) only compiles under TidyShot's Swift 6 settings with `@preconcurrency import`, because `OptimisationResponse` is not `Sendable`. It also blocks for up to 600 s, launches Clop if it is not running, can run a Spotlight query over `/`, and keeps mutable globals.
+   - **The vendored client.** It is about 70 lines: the two `Codable` structs with ClopSDK's field names, plus one `CFMessagePortSendRequest`, all `nonisolated` and `Sendable`. It compiles cleanly under TidyShot's settings, and the sandboxed probe reached Clop with it.
+   - **Licence notice.** The file keeps the MIT notice in its header, and a new `ThirdPartyNotices.md` at the repo root carries the full ClopSDK licence text.
+
+**Measurements** (sandboxed, Tim's Clop settings). Times run from request to reply:
+
+| Image | Before | After | Reduction | Time |
+|---|---|---|---|---|
+| 3094x2352 screenshot-like PNG | 1.30 MB | 342 KB | 73.6% | 0.63–0.76 s |
+| Real 2x screenshot, 3094x2352 crop | 702 KB | 247 KB | 64.9% | 0.65 s |
+| Real 5120x2880 screenshot | 2.81 MB | 757 KB | 73.1% | 1.06 s |
+| 3094x16000 tall | 9.06 MB | 2.42 MB | 73.3% | 2.26–2.35 s |
+| Already optimised | — | unchanged | 0% | 0.01 s |
 
 **Behaviour.**
-- **Setting.** The Upload tab gains "Optimize images with Clop" with the caption above, off by default. It is enabled only when Clop is installed (`/Applications/Clop.app`, `/Applications/Setapp/Clop.app`, or a running app whose bundle identifier starts with `com.lowtechguys.Clop`). Otherwise the box is disabled, with a link to the Clop site.
-- **When.** After the PNG is written and before the PUT, the coordinator hands Clop a copy in the container, with `hideGUI: true` and `copyToClipboard: false`, and uploads the bytes Clop returns. The save-folder file stays as captured. The uploaded object and an upload-only pending file are optimised.
-- **Annotated images too.** Uploads from the editor (Upload, the same-key replace, Upload as New, and a Retry of any of them) go through the same step, so an annotated screenshot is optimised exactly like a fresh capture. The edited file the editor saves locally stays unoptimised, as a capture's save-folder file does.
-- **Never lose a capture.** Clop is unavailable after a short wait, an optimisation throws or times out, or the result is larger: TidyShot uploads the original bytes, logs why, and posts no error.
-- **Format.** If Clop converts the file (its own settings can turn PNG into JPEG), the object key's extension and the Content-Type follow the returned file.
+- **Setting.** The General tab has a `Section("Images")` between its first section and "URL commands" (moved from the Upload tab after Tim's test, 2026-10-21):
+  - **Control.** `Toggle("Optimize images with Clop", isOn: $settings.optimiseWithClop)`.
+  - **Caption.** "Clop is an image optimizer that greatly reduces file size. Clop keeps its own copy of each image it optimizes."
+  - **Storage.** `AppSettings.optimiseWithClop` (key `optimiseWithClop`, default `false`). It is an app setting, not part of the destination draft, so it takes effect without Save.
+  - **Clop not installed.** "Installed" means `NSWorkspace.shared.urlForApplication(withBundleIdentifier:)` finds `com.lowtechguys.Clop` or `com.lowtechguys.Clop-setapp`. Otherwise the toggle is disabled, and the caption is followed by `Link("Get Clop", destination: URL(string: "https://lowtechguys.com/clop")!)`.
+- **When.** `AppCoordinator.startUpload(recordID:data:destination:fixedKey:)` is the one funnel for every upload: a fresh capture, upload-only, editor Upload, the same-key replace, Upload as New, and Retry of any of them. Inside its `Task`, before the `UploadJob` is built, it calls `await clopOptimiser.optimisedPNG(data)` when `settings.optimiseWithClop` is on, and uploads the bytes it returns. The record stays `.uploading(fraction: 0)` meanwhile. The save-folder file, the upload-only `pending/<id>.png` and the editor's saved file all stay as captured, so a Retry re-optimises from the original.
+- **Running check.** TidyShot never launches Clop. If neither bundle id is running (`NSRunningApplication.runningApplications(withBundleIdentifier:)`), it uploads the original.
+- **Never lose a capture.** TidyShot uploads the original bytes, logs one `NSLog` line (`Clop: <reason>, uploading the original`) and posts no error when any of these happen:
+  - Clop is not running.
+  - The request throws or times out (send 2 s, receive 30 s).
+  - The reply is empty or undecodable.
+  - The response `path` is not the file TidyShot sent (a conversion), or `convertedFrom` is set.
+  - The result is not a decodable PNG with the same pixel size.
+  - The result is not smaller.
+- **Format.** The upload is always PNG (`image/png`, `.png` key), as decision 5 says. The format-following branch from the first draft of this section is dropped.
 
-**Open questions, settle before planning.**
-1. **Sandbox.** A sandboxed app cannot look up another app's Mach port without `com.apple.security.temporary-exception.mach-lookup.global-name` for the port names. That is the first new entitlement since Phase 0 and amends the "no new entitlements" constraint. Verify whether it is needed, and whether it blocks a future Mac App Store build.
-2. **File access.** Clop must read the file TidyShot hands it. A file inside TidyShot's container may trigger macOS's prompt for one app reading another app's data. Test this, and if it prompts, hand Clop a file in a location it can read without asking.
-3. **Output path.** The SDK passes an optional output path; check whether Clop optimises in place or writes beside the original, and where.
-4. **DPI.** Check whether optimised PNGs keep the 144 DPI metadata; browsers ignore it, but a pasted image would show at double size without it.
-5. **Licensing.** Confirm whether SDK requests need Clop Pro.
-6. **Dependency.** ClopSDK becomes the second Swift package, which amends the "KeyboardShortcuts as the only package" constraint.
+**Types** (all in `TidyShot/Upload/`):
+- **`ClopClient.swift`** (vendored, MIT header "Adapted from ClopSDK (https://github.com/FuzzyIdeas/ClopSDK), MIT License, Copyright (c) 2023 The low-tech guys. See ThirdPartyNotices.md."):
+  - `nonisolated struct ClopRequest: Codable, Sendable`. Fields in ClopSDK's order and names: `id`, `urls`, `originalUrls = [:]`, `size: CropSize?`, `downscaleFactor`, `changePlaybackSpeedFactor`, `hideFloatingResult`, `copyToClipboard`, `aggressiveOptimisation`, `source = "sdk"`, `output`, `removeAudio`.
+  - `nonisolated struct ClopResponse: Codable, Sendable, Equatable`, with `path`, `forURL`, `convertedFrom`, `oldBytes`, `newBytes`, `oldWidthHeight`, `newWidthHeight`.
+  - `nonisolated enum ClopClientError: Error, Equatable`, with cases `portUnavailable`, `sendFailed(Int32)` and `badReply`.
+  - `nonisolated struct ClopClient: Sendable`, with:
+    - `static func portName(bundleID: String) -> String`, which returns `"\(bundleID).optimisationService"`;
+    - `init(bundleID:sendTimeout: 2, receiveTimeout: 30)`;
+    - `func optimise(_ url: URL) throws -> ClopResponse`, which blocks and is only called off the main actor.
+  - The request sends `hideFloatingResult: true`, `copyToClipboard: false` and `aggressiveOptimisation: false`.
+- **`ClopOptimiser.swift`:**
+  - `nonisolated struct ClopOptimiser: Sendable`, initialised with `workDirectory: URL` (the container's `tmp/Clop`) and `transport: @Sendable (URL) throws -> ClopResponse`.
+  - `func optimisedPNG(_ data: Data) async -> ClopOutcome`. It:
+    1. writes `<workDirectory>/<UUID>.png`;
+    2. runs the transport on one private serial `DispatchQueue` (`io.tky.tidyshot.clop`, bridged with `withCheckedContinuation`), so requests reach Clop one at a time and never block a cooperative-pool thread;
+    3. validates the result;
+    4. reads it back;
+    5. deletes the file in a `defer`.
+  - `nonisolated enum ClopOutcome: Equatable` has `.optimised(Data, oldBytes: Int, newBytes: Int)` and `.original(ClopSkipReason)`.
+  - `ClopSkipReason` has `.notRunning`, `.failed(String)`, `.converted`, `.notSmaller` and `.invalidResult`.
+  - The coordinator builds it with a transport that wraps `ClopClient(bundleID:)` for the running Clop's bundle id. If no Clop is running, it returns `.original(.notRunning)` without writing a file.
 
-**Placement.** About a day of work once the open questions are settled. It sits with the Phase 7 extras but can be pulled forward after Phase 4b.
+**Entitlement change** (`project.yml`, TidyShot target `entitlements.properties`):
+```yaml
+        com.apple.security.temporary-exception.mach-lookup.global-name:
+          - com.lowtechguys.Clop.optimisationService
+          - com.lowtechguys.Clop-setapp.optimisationService
+```
+Update the Distribution row of section 4 to list it.
+
+**Tests** (Swift Testing, no live Clop):
+- **`ClopClientTests`:**
+  - `ClopRequest` encodes the keys ClopSDK's `OptimisationRequest` uses: `urls` as `file://` strings, `originalUrls` as `[]`, `source == "sdk"`, `hideFloatingResult == true`, `copyToClipboard == false`, and nil optionals omitted.
+  - `ClopResponse` decodes the reply recorded from Clop 3.6.2, both with and without `newWidthHeight`; the second is the already-optimised case.
+  - `portName(bundleID:)` gives both port names.
+- **`ClopOptimiserTests`** (fake transport):
+  - A smaller valid PNG at the same path returns `.optimised` with its bytes.
+  - The fake sees a file holding exactly the input bytes.
+  - The work file is gone afterwards in every case.
+  - A throwing transport returns `.original(.failed)`.
+  - `newBytes >= oldBytes` returns `.original(.notSmaller)`.
+  - A response with another `path` or `convertedFrom` returns `.original(.converted)`.
+  - Non-PNG or wrong-size result bytes return `.original(.invalidResult)`.
+  - An optimised PNG carrying only `eXIf` resolution, with no `pHYs`, still gives `ImageEncoder.decode(...).scale == 2`. The fixture is a 2x PNG with its `pHYs` chunk removed.
+- **`AppSettingsTests`:** `optimiseWithClop` defaults to false and persists.
+- **Manual checklist (Phase 7):**
+  - With Clop running, an area capture uploads a smaller object, and the downloaded object reports 144 DPI (`sips -g dpiWidth`).
+  - A scrolling capture uploads optimised.
+  - Editor Upload, replace, Upload as New and Retry are each optimised.
+  - With Clop quit, the original uploads and the `Clop:` log line appears.
+  - With Clop not installed, the toggle is disabled and the link shows.
+  - No Clop floating result appears and the clipboard is unchanged.
+
+**Built 2026-10-21** on `phase-7-clop`, as specified apart from these differences and additions:
+- **Clop version.** The fixtures and the recorded reply are from Clop 3.6.2, which keeps `pHYs`; 3.4.3 (the probe version) dropped it. The `eXIf`-only DPI test stays as the worst case.
+- **Order inside `startUpload`.** The key and counter are settled first: a fixed key is used as is, otherwise `{counter}` is drawn when the upload starts, before Clop runs, so counters follow the order uploads start. Then the setting and the running check run on the main actor; with the setting off or no Clop running the job is enqueued at once (the log line for "not running" is written there). Only when Clop will run does a `Task` wait for it.
+- **Delete during optimisation cancels the upload.** `optimisingIDs` maps each waiting record to the token of its attempt. `cancelUpload` removes the record, marks it failed with "Upload cancelled." and refreshes the overlay: nothing is enqueued and no key was reserved. A retry started before the first Clop call returns gets a new token, so the first task finds its token gone and drops its bytes. A record deleted from history meanwhile is not enqueued either.
+- **Changing upload settings during optimisation is safe.** The coordinator counts, per lane (queue identity), the uploads still waiting for Clop (`clopWaitsPerLane`); a lane the Upload tab replaced is not dropped from `drainingQueues` before those jobs reach it, on every path including the cancelled one.
+- **Settings tab.** `clopInstalled` starts false and `load()` sets it when the tab appears, so LaunchServices is asked once per appearance and not on every view rebuild.
+- **Release entitlements.** The Release build carries exactly the `mach-lookup.global-name` exception for the two port names plus the four earlier entitlements (`app-sandbox`, `network.client`, `files.user-selected.read-write`, `files.bookmarks.app-scope`), and no `get-task-allow`.
+- **Tests.** 839 tests in 98 suites pass. The manual checklist is `docs/testing/phase-7-clop-manual-checklist.md`; it has not been run.
+
+**Placement.** About a day. It sits with the Phase 7 extras.
 
 ### 2.8 Phase 5 design: scrolling capture (2026-10-21)
 
@@ -843,7 +948,7 @@ Behavioural rules:
 | S3 client | Hand-rolled SigV4 signer over `URLSession`, single `PUT Object` request, optional `x-amz-acl: public-read` | One request type is needed; Soto pulls in about 20 packages and a large binary. Multipart is unnecessary for screenshots. Add Soto later only if recordings need multipart |
 | Image encoding | `ImageIO` for PNG and JPEG, with a DPI tag matching the display scale | Retina images should report 144 DPI so they display at the right size when pasted |
 | Persistence | Capture history and settings in `~/Library/Application Support/TidyShot/` as JSON plus files; `UserDefaults` for simple preferences | Small data, no need for Core Data |
-| Distribution | Developer ID signed and notarized, outside the App Store. Hardened runtime on, App Sandbox on (decided 2026-10-19) | Entitlements: `network.client`, `files.user-selected.read-write`, `files.bookmarks.app-scope`. Save folder chosen via `NSOpenPanel` and persisted as a security-scoped bookmark. Keeps the App Store open as a later channel |
+| Distribution | Developer ID signed and notarized, outside the App Store. Hardened runtime on, App Sandbox on (decided 2026-10-19) | Entitlements: `network.client`, `files.user-selected.read-write`, `files.bookmarks.app-scope`, and (Phase 7, spec 2.7) `temporary-exception.mach-lookup.global-name` for `com.lowtechguys.Clop.optimisationService` and `com.lowtechguys.Clop-setapp.optimisationService`, which needs App Review approval if a Mac App Store build is ever made. Save folder chosen via `NSOpenPanel` and persisted as a security-scoped bookmark. Keeps the App Store open as a later channel |
 | Tests | Swift Testing for the signer (verify against AWS published SigV4 test vectors), naming templates, URL builder, and history store. Manual test checklist for capture UI | Capture UI cannot be unit tested meaningfully |
 | Build | XcodeGen from `project.yml` (decided 2026-10-19); `TidyShot.xcodeproj` is gitignored and regenerated with `xcodegen generate` | Readable diffs, no merge conflicts in project files |
 
@@ -929,7 +1034,7 @@ Design in 2.9.
 Delivered: 6a on 2026-10-21 on `phase-6-polish` (PR 13); 6b on 2026-10-21 on `phase-6b-polish`. Phase 6 is released when the 6b PR merges. Design and what was built: 2.9.
 
 ### Phase 7: extras (as wanted)
-- Optimise images with Clop before upload (see 2.7); can be pulled forward after Phase 4b.
+- Optimise images with Clop before upload (see 2.7), built 2026-10-21 on branch phase-7-clop; its manual checklist is not yet run.
 - Background tool and window-with-background.
 - OCR via Vision, QR codes.
 - Hide desktop icons during capture.

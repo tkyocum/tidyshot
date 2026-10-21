@@ -240,6 +240,22 @@ URL replaces the clipboard contents when the upload finishes. "Upload only, keep
 writes the PNG inside TidyShot's container instead, uploads it, copies the URL and deletes the
 file; a failed upload keeps it until a retry succeeds or the capture is deleted.
 
+### Optimise with Clop
+
+If [Clop](https://lowtechguys.com/clop) (direct or Setapp build) is installed, Settings > General >
+Images has "Optimize images with Clop". With it on and Clop running, every upload (a capture,
+upload-only, the editor's Upload, replace and Upload as New, and every Retry) is first rewritten by
+Clop as a smaller PNG, which is lossy (256 colours); 144 DPI is kept. The setting takes effect without
+Save. Clop works on a throwaway copy: the saved file, the pending file and the editor's file stay as
+captured, and a retry optimises the original again. TidyShot never launches Clop. If Clop is not
+running, fails, converts the format or cannot shrink the image, the original uploads, with one
+`Clop: <reason>, uploading the original` line in the log and no error. Delete during optimisation
+cancels the upload ("Upload cancelled."). Clop keeps its own copy of each image in its cache.
+Talking to Clop needs one sandbox exception (`com.apple.security.temporary-exception.mach-lookup.global-name`
+for Clop's two port names), added to the four entitlements TidyShot already had. That exception would
+need App Review approval for a Mac App Store build; Developer ID builds are unaffected. The client is
+adapted from ClopSDK (MIT); see `ThirdPartyNotices.md`.
+
 ## Recent Captures
 
 Hover Recent Captures in the menu bar menu for the newest 15 captures, each with a thumbnail, its
@@ -370,3 +386,4 @@ Cancelling the save panel keeps the editor open.
 - Phase 5 manual test checklist: `docs/testing/phase-5-manual-checklist.md`
 - Phase 6a manual test checklist: `docs/testing/phase-6a-manual-checklist.md`
 - Phase 6b manual test checklist: `docs/testing/phase-6b-manual-checklist.md`
+- Phase 7 (Clop) manual test checklist: `docs/testing/phase-7-clop-manual-checklist.md`
