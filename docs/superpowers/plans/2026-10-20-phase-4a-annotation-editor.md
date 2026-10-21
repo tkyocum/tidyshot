@@ -54,20 +54,22 @@ Each task gives the exact Swift interfaces it produces, complete Swift Testing t
 | Task 3 | 19 | 4 | 231 tests in 35 suites |
 | Task 4 | 24 | 4 | 255 tests in 39 suites |
 | Task 5 | 10 | 1 | 265 tests in 40 suites |
-| Task 6 | 8 | 1 | 273 tests in 41 suites |
-| Task 7 | 11 | 1 | 284 tests in 42 suites |
-| Task 8 | 20 | 2 | 304 tests in 44 suites |
-| Task 9 | 12 | 1 | 316 tests in 45 suites |
-| Task 10 | 0 | 0 | 316 tests in 45 suites |
-| Task 11 | 2 | 0 | 318 tests in 45 suites |
-| Task 12 | 7 | 2 | 325 tests in 47 suites |
-| Task 13 | 23 | 2 | 348 tests in 49 suites |
-| Task 14 | 22 | 0 | 370 tests in 49 suites |
-| Task 15 | 18 | 1 | 388 tests in 50 suites |
-| Task 16 | 11 | 1 | 399 tests in 51 suites |
-| Task 17 | 0 | 0 | 399 tests in 51 suites |
+| Task 6 | 9 | 1 | 274 tests in 41 suites |
+| Task 7 | 11 | 1 | 285 tests in 42 suites |
+| Task 8 | 20 | 2 | 305 tests in 44 suites |
+| Task 9 | 12 | 1 | 317 tests in 45 suites |
+| Task 10 | 0 | 0 | 317 tests in 45 suites |
+| Task 11 | 2 | 0 | 319 tests in 45 suites |
+| Task 12 | 7 | 2 | 326 tests in 47 suites |
+| Task 13 | 23 | 2 | 349 tests in 49 suites |
+| Task 14 | 22 | 0 | 371 tests in 49 suites |
+| Task 15 | 18 | 1 | 389 tests in 50 suites |
+| Task 16 | 11 | 1 | 400 tests in 51 suites |
+| Task 17 | 0 | 0 | 400 tests in 51 suites |
 
 The totals come from each task's declared tests. Task 17 checks them against a real run and corrects any row that differs.
+
+Task 17 correction: the review fix 60d63ea (tile cache fails closed) added one test to Task 6, so Task 6 is 9 new tests and every row from Task 6 on is one higher; the real run reads 400 tests in 51 suites.
 
 ---
 
