@@ -185,6 +185,63 @@ struct AutoScrollDriverTests {
         #expect(comparison.mismatched == 0)
     }
 
+    /// The scroll-back after a lost step waits for the pointer like a step does: with the pointer
+    /// moved away after the first post, nothing more is posted, and the back goes out once it
+    /// returns.
+    @Test func theScrollBackWaitsForThePointer() async throws {
+        let clock = FakeScrollClock()
+        let world = makeWorld(clock: clock)
+        world.gain = 5
+        let session = makeSession(world)
+        try await start(session, world)
+        try await clock.run(until: { world.posted.count >= 1 })
+        world.pointer = Self.outside
+        try await clock.run(for: .seconds(2))
+        // The step in progress finishes and loses the place; its scroll-back is owed.
+        #expect(world.posted == [50, 50])
+        try await clock.run(for: .seconds(2))
+        #expect(world.posted == [50, 50])
+        #expect(session.status == .autoPaused)
+
+        world.pointer = Self.inside
+        try await clock.run(until: { world.posted.count >= 4 })
+        #expect(Array(world.posted.prefix(4)) == [50, 50, -50, -50])
+        await session.cancel()
+    }
+
+    /// Done and Cancel stop the driver: nothing is posted afterwards.
+    @Test func doneStopsPostingAndFinishesWithTheImage() async throws {
+        let clock = FakeScrollClock()
+        let world = makeWorld(clock: clock)
+        let session = makeSession(world)
+        try await start(session, world)
+        try await clock.run(until: { world.posted.count >= 1 })
+        await session.done()
+        let count = world.posted.count
+        try await clock.run(for: .seconds(2))
+        #expect(world.posted.count == count)
+        guard case .image? = session.outcome else {
+            Issue.record("not an image")
+            return
+        }
+    }
+
+    @Test func cancelStopsPostingAndDiscards() async throws {
+        let clock = FakeScrollClock()
+        let world = makeWorld(clock: clock)
+        let session = makeSession(world)
+        try await start(session, world)
+        try await clock.run(until: { world.posted.count >= 1 })
+        await session.cancel()
+        let count = world.posted.count
+        try await clock.run(for: .seconds(2))
+        #expect(world.posted.count == count)
+        guard case .cancelled? = session.outcome else {
+            Issue.record("not cancelled")
+            return
+        }
+    }
+
     /// The grant is checked before every step: once it is gone, the driver hands over and posts
     /// nothing more.
     @Test func handsOverWhenTheGrantGoes() async throws {

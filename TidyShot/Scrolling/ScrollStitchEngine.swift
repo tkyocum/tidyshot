@@ -13,7 +13,7 @@ nonisolated struct StitchProgress: Sendable {
 }
 
 /// Owns the `ScrollStitcher` off the main actor (spec 2.8, Stitcher). The session hands it each
-/// frame with `await`; matching and committing (about 24 ms for a 2560 x 1800 pair) run on the
+/// frame with `await`; matching and committing (about 31 ms for a 2560 x 1800 pair) run on the
 /// actor's executor, never on the main actor. Everything that crosses in or out is a Sendable
 /// value: `ScrollFrame`, `StitchProgress`, `ScaledImage`.
 actor ScrollStitchEngine {

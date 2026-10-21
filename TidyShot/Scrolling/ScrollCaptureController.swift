@@ -41,9 +41,20 @@ final class ScrollCaptureController {
         // The source makes its filter at Start, when the panel and the frame are on screen, so
         // the application exclusion covers both.
         let source = ScrollFrameSource(rect: rect, display: display, engine: engine)
+        // The panel can sit inside the area (ScrollPanelGeometry), and the pointer is on it after
+        // Start; wheel events posted there would go to TidyShot's own panel. Over the panel
+        // counts as outside the area, so the driver pauses until the pointer is over the content.
+        var environment = AutoScrollEnvironment.live()
+        let livePointer = environment.pointerLocation
+        environment.pointerLocation = { [weak self] in
+            if let panel = self?.panel, panel.frame.contains(NSEvent.mouseLocation) {
+                return CGPoint(x: -CGFloat.greatestFiniteMagnitude, y: 0)
+            }
+            return livePointer()
+        }
         let session = ScrollCaptureSession(source: source, engine: ScrollStitchEngine(finder: OverlapFinder(scale: source.scale)),
                                            area: rect, scale: source.scale, colorSpace: source.colorSpace,
-                                           autoScrollEnvironment: .live(), prefersAutoScroll: settings.scrollingAutoScroll)
+                                           autoScrollEnvironment: environment, prefersAutoScroll: settings.scrollingAutoScroll)
         session.onEnd = { [weak self] outcome in self?.close(with: outcome) }
         session.onAutoScrollChanged = { [settings] value in settings.scrollingAutoScroll = value }
 

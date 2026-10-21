@@ -105,6 +105,8 @@ final class ScrollCaptureSession {
     private let engine: ScrollStitchEngine
     private let colorSpace: CGColorSpace
     private let autoScrollEnvironment: AutoScrollEnvironment?
+    /// False without an environment: the session is manual only, and the panel says so.
+    var isAutoScrollAvailable: Bool { autoScrollEnvironment != nil }
     @ObservationIgnored private var readTask: Task<Void, Never>?
     @ObservationIgnored private var driverTask: Task<Void, Never>?
     @ObservationIgnored private var endTask: Task<Void, Never>?

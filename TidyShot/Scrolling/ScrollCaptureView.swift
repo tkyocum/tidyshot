@@ -33,7 +33,12 @@ struct ScrollCaptureView: View {
                 Toggle("Scroll automatically", isOn: Binding(get: { session.usesAutoScroll },
                                                               set: { session.autoScroll = $0 }))
                     .disabled(!session.isAutoScrollPermitted)
-                if !session.isAutoScrollPermitted {
+                if !session.isAutoScrollAvailable {
+                    Text("Auto-scroll is unavailable: macOS did not deliver TidyShot's scroll events.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else if !session.isAutoScrollPermitted {
                     Button("Allow Auto-Scroll…", action: onAllowAutoScroll)
                         .buttonStyle(.link)
                 }

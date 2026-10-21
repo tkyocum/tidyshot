@@ -47,6 +47,9 @@ final class AutoScrollDriver {
         // Set once a step has gone to the end detector, and once the other direction was tried.
         var decided = false
         var triedOtherDirection = false
+        // The scroll-back owed after a lost step. It goes out at the top of the loop, behind the
+        // same grant and pointer checks as a step, so a pause never lets it reach another window.
+        var pendingBack: CGFloat?
         while session.phase == .capturing(.auto) {
             guard environment.isPermitted() else {
                 session.handOver()
@@ -58,6 +61,11 @@ final class AutoScrollDriver {
                 continue
             }
             session.showAutoStatus(.autoScrolling)
+            if let back = pendingBack {
+                pendingBack = nil
+                guard await scroll(by: back, in: session) != nil else { return }
+                continue
+            }
             guard let frame = await scroll(by: step * direction, in: session),
                   let progress = await session.integrate(frame, predicted: Int((step * session.scale).rounded()))
             else { return }
@@ -81,8 +89,8 @@ final class AutoScrollDriver {
                 direction = -direction
             case .shrinkStep:
                 // Back over the step that lost the place, so the smaller one overlaps the last
-                // accepted frame again.
-                guard await scroll(by: -step * direction, in: session) != nil else { return }
+                // accepted frame again; posted at the top of the loop.
+                pendingBack = -step * direction
                 step = AutoScrollPlan.shrunk(step)
             case .handOver:
                 session.handOver()
