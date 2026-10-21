@@ -55,6 +55,8 @@ final class AppCoordinator {
     /// its card closes, by the next capture and by `removeRecord`. Older cards in the stack load
     /// from the file or the bucket.
     @ObservationIgnored private var latestCapture: (id: UUID, image: ScaledImage)?
+    /// Recently closed cards for Restore Closed Overlay. In memory only.
+    @ObservationIgnored private var closedOverlays = ClosedOverlays()
     /// Records whose editor image is loading, so a second Annotate does not open a second editor.
     @ObservationIgnored private var openingEditorIDs: Set<UUID> = []
     /// Set when the first same-key replace of this launch posts `EditorUploadPlan.cacheNote`.
@@ -82,7 +84,7 @@ final class AppCoordinator {
         thumbnails = ThumbnailStore(nextTo: url)
         pendingFiles = PendingFileStore(nextTo: url)
         history.didPrune = { [weak self] records in self?.removeFiles(ofPruned: records) }
-        overlay.onDidClose = { [weak self] id in self?.forgetLatestCapture(id) }
+        overlay.onDidClose = { [weak self] id, reason in self?.overlayDidClose(id, reason: reason) }
     }
 
     func start() {
@@ -110,6 +112,9 @@ final class AppCoordinator {
         }
         KeyboardShortcuts.onKeyUp(for: .captureScrolling) { [weak self] in
             Task { await self?.captureScrolling() }
+        }
+        KeyboardShortcuts.onKeyUp(for: .restoreOverlay) { [weak self] in
+            Task { await self?.restoreClosedOverlay() }
         }
         // Escape must never be swallowed outside a scrolling capture; the session enables it.
         KeyboardShortcuts.disable(.cancelScrollingCapture)
@@ -436,7 +441,7 @@ final class AppCoordinator {
             copy: { [weak self] id in self?.copyLinkOrFile(recordID: id) },
             retry: { [weak self] id in self?.retryUpload(recordID: id) },
             reveal: { [weak self] id in self?.reveal(recordID: id) },
-            delete: { [weak self] id in Task { await self?.deleteCapture(recordID: id) } },
+            delete: { [weak self] id in self?.afterMenuTracking { Task { await self?.deleteCapture(recordID: id) } } },
             annotate: { [weak self] id in self?.openEditorAfterMenuTracking(recordID: id) })
     }
 
@@ -448,6 +453,34 @@ final class AppCoordinator {
         let index = OverlayScreenChoice.index(choice: settings.overlayDisplay, captureDisplayID: captureDisplayID,
                                               pointerIndex: pointer, screenDisplayIDs: screens.map { $0.displayID ?? 0 })
         return screens[index]
+    }
+
+    /// Every card close: the retained image goes with the newest card, and a restorable close is
+    /// remembered.
+    private func overlayDidClose(_ id: UUID, reason: QuickAccessCloseReason) {
+        forgetLatestCapture(id)
+        closedOverlays.didClose(id, reason: reason)
+    }
+
+    /// Whether Restore Closed Overlay has a card to bring back (the menu item's state).
+    var canRestoreClosedOverlay: Bool {
+        closedOverlays.hasRestorable(exists: { history.record(id: $0) != nil }, shown: Set(overlay.shownIDs))
+    }
+
+    /// Restore Closed Overlay: the newest closed card whose capture still exists and is not
+    /// showing, again at the corner of the stack's screen, with the record as it is now and its
+    /// stored thumbnail. Annotate on it loads from the file or the bucket. It does not check
+    /// `settings.showOverlay`: it is an explicit request.
+    func restoreClosedOverlay() async {
+        guard let id = closedOverlays.popRestorable(exists: { history.record(id: $0) != nil },
+                                                    shown: Set(overlay.shownIDs)),
+              let record = history.record(id: id) else { return }
+        let thumbnail = await thumbnailProvider.thumbnail(for: record)
+        // Deleted during the read, or shown by a second restore meanwhile.
+        guard let current = history.record(id: id), !overlay.isShowing(recordID: id),
+              let screen = overlay.screen ?? overlayScreen(captureDisplayID: nil) else { return }
+        overlay.show(record: current, thumbnail: thumbnail, screen: screen,
+                     autoCloseSeconds: settings.overlayAutoCloseSeconds, actions: overlayActions())
     }
 
     /// The configured destination, or nil when the Upload tab is incomplete, no credentials are
@@ -835,7 +868,7 @@ final class AppCoordinator {
         history.remove(id: id)
         thumbnailProvider.forget(id)
         forgetLatestCapture(id)
-        overlay.close(recordID: id)
+        overlay.close(recordID: id, reason: .deleted)
         pushEditorState(for: id)
     }
 
@@ -1098,12 +1131,17 @@ final class AppCoordinator {
         }
     }
 
-    /// The overlay's Annotate: runs `openEditor` when the run loop is back in its default mode,
-    /// after any menu tracking, as `RecentCapturesMenu.afterMenusClose` does for rows.
-    private func openEditorAfterMenuTracking(recordID: UUID) {
+    /// Runs `work` when the run loop is back in its default mode, after any menu tracking (the
+    /// card's context menu, the status menu), as `RecentCapturesMenu.afterMenusClose` does for rows.
+    private func afterMenuTracking(_ work: @escaping @MainActor () -> Void) {
         RunLoop.main.perform(inModes: [.default]) {
-            MainActor.assumeIsolated { self.openEditor(recordID: recordID) }
+            MainActor.assumeIsolated { work() }
         }
+    }
+
+    /// The card's Annotate.
+    private func openEditorAfterMenuTracking(recordID: UUID) {
+        afterMenuTracking { [weak self] in self?.openEditor(recordID: recordID) }
     }
 
     /// Builds the model and the window and shows them. `openEditor` and `loadAndPresentEditor`
@@ -1125,7 +1163,7 @@ final class AppCoordinator {
         Task { await RedactionRenderer.shared.warmUp(with: image.image) }
         controller.present()
         // The editor is now the capture's surface; the record stays in Recent Captures.
-        overlay.close(recordID: record.id)
+        overlay.close(recordID: record.id, reason: .editorOpened)
     }
 
     /// The editor's actions for `recordID`. Save, Save As…, Copy, Upload and Upload as New all go

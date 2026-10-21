@@ -13,4 +13,10 @@ struct ShortcutsTests {
         #expect(Set(names.map(\.rawValue)).count == names.count)
         #expect(Set(names.compactMap(\.initialShortcut)).count == names.count)
     }
+
+    /// Restore Closed Overlay has a recorder in the Shortcuts tab but no default (spec 2.9).
+    @Test func restoreOverlayHasNoInitialShortcut() {
+        #expect(KeyboardShortcuts.Name.restoreOverlay.rawValue == "restoreOverlay")
+        #expect(KeyboardShortcuts.Name.restoreOverlay.initialShortcut == nil)
+    }
 }

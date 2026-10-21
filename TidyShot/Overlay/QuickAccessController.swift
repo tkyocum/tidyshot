@@ -1,5 +1,29 @@
 import AppKit
 
+/// Why a Quick Access card closed (spec 2.9, Close and restore).
+nonisolated enum QuickAccessCloseReason: Equatable, Sendable {
+    /// The Close badge or the context menu's Close.
+    case user
+    case autoClose
+    /// A newer card took the last place in the stack.
+    case pushedOut
+    /// Dragged out with Close after dragging out on (Task 6).
+    case draggedOut
+    /// The capture was deleted or removed from history.
+    case deleted
+    /// Annotate: the editor holds the capture now.
+    case editorOpened
+
+    /// Restore Closed Overlay brings these back; a deleted capture is gone and an edited one is
+    /// in its editor.
+    var isRestorable: Bool {
+        switch self {
+        case .user, .autoClose, .pushedOut, .draggedOut: true
+        case .deleted, .editorOpened: false
+        }
+    }
+}
+
 /// Shows the Quick Access cards: a stack on one screen, newest at the configured corner. Each
 /// card updates as its upload progresses and closes on its own countdown once the upload has
 /// settled, restarted while the pointer is over it.
@@ -31,9 +55,8 @@ final class QuickAccessController {
         var id: UUID { model.record.id }
     }
 
-    /// Called with the record's id each time a card closes, whatever closed it: the Close button,
-    /// the auto-close timer, a delete, the editor opening, or a newer card pushing it out.
-    var onDidClose: ((UUID) -> Void)?
+    /// Called with the record's id and the reason each time a card closes.
+    var onDidClose: ((UUID, QuickAccessCloseReason) -> Void)?
 
     private let settings: AppSettings
     /// Newest first; index 0 sits at the corner.
@@ -119,10 +142,10 @@ final class QuickAccessController {
         }
     }
 
-    /// Closes the card that shows `recordID` (deleted, or opened in the editor).
-    func close(recordID: UUID) {
+    /// Closes the card that shows `recordID`: `.deleted`, `.editorOpened`, or `.draggedOut` (Task 6).
+    func close(recordID: UUID, reason: QuickAccessCloseReason) {
         guard let card = cards.first(where: { $0.id == recordID }) else { return }
-        closeCard(card)
+        closeCard(card, reason: reason)
         closeGap()
     }
 
@@ -134,23 +157,30 @@ final class QuickAccessController {
         model.onReveal = { actions.reveal(id) }
         model.onDelete = { actions.delete(id) }
         model.onAnnotate = { actions.annotate(id) }
+        // `onSaveAs` and `onCopyImage` keep their no-op defaults until Task 5.
         let card = Card(model: model, autoCloseSeconds: autoCloseSeconds)
         model.onClose = { [weak self, weak card] in
-            guard let self, let card else { return }
-            self.closeCard(card)
-            self.closeGap()
+            // After the context menu's tracking, and outside the hosting view's own click.
+            RunLoop.main.perform(inModes: [.default]) {
+                MainActor.assumeIsolated {
+                    guard let self, let card else { return }
+                    self.closeCard(card, reason: .user)
+                    self.closeGap()
+                }
+            }
         }
         return card
     }
 
-    /// Takes `card` off screen and out of the stack and reports it. The other cards stay put.
-    private func closeCard(_ card: Card) {
+    /// Takes `card` off screen and out of the stack and reports it with `reason`. The other cards
+    /// stay put.
+    private func closeCard(_ card: Card, reason: QuickAccessCloseReason) {
         guard let index = cards.firstIndex(where: { $0 === card }) else { return }
         cards.remove(at: index)
         card.closeTask?.cancel()
         card.closeTask = nil
         card.panel.orderOut(nil)
-        onDidClose?(card.id)
+        onDidClose?(card.id, reason)
     }
 
     /// Closes the oldest cards until the stack fits `screen` and `settings.overlayMaxCards`.
@@ -159,7 +189,7 @@ final class QuickAccessController {
                                                        visibleHeight: screen.visibleFrame.height,
                                                        limit: settings.overlayMaxCards)
         while cards.count > capacity, let oldest = cards.last {
-            closeCard(oldest)
+            closeCard(oldest, reason: .pushedOut)
         }
     }
 
@@ -260,7 +290,7 @@ final class QuickAccessController {
                 break
             }
             guard !Task.isCancelled, let self, let card else { return }
-            self.closeCard(card)
+            self.closeCard(card, reason: .autoClose)
             self.closeGap()
         }
     }
