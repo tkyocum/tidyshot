@@ -113,7 +113,9 @@ text. Crop: press `C`, drag the eight handles or drag out a new rectangle (the r
 size in pixels), and press Return to apply or Escape to cancel; picking another tool applies it.
 A crop is undoable and applies last, so Save, Save As…, Copy and Upload all produce the cropped
 image, the capture's recorded size and thumbnail follow it, and nothing outside the crop is in the
-saved or uploaded file.
+saved or uploaded file. Under an applied crop the covered area is not clickable: Select deselects
+there, Text ignores the press and the drawing tools start at the crop's edge. A paste lands inside
+the crop, and VoiceOver lists only the annotations that reach into it.
 
 ⌘D duplicates the selection 10 points down and to the right, and with Select, dragging it with
 Option held drags a copy. ⌘C copies the selected object and ⌘V pastes it, in the same editor or

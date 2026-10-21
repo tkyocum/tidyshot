@@ -12,9 +12,16 @@ nonisolated enum CanvasAccessibility {
         let value: String?
     }
 
-    static func items(in document: AnnotationDocument) -> [Item] {
+    /// With a crop applied the canvas shows only the crop, so only annotations that reach into it
+    /// are listed (the rule `EditorModel.selectAll` uses). Numbering counts the listed ones.
+    static func items(in document: AnnotationDocument, scale: CGFloat) -> [Item] {
         var counts: [String: Int] = [:]
-        return (document.effects + document.drawings).map { annotation in
+        let listed = (document.effects + document.drawings).filter { annotation in
+            guard let crop = document.crop else { return true }
+            let bounds = annotation.effectRect ?? AnnotationGeometry.bounds(of: annotation, scale: scale)
+            return bounds.intersects(crop)
+        }
+        return listed.map { annotation in
             let number = (counts[annotation.title] ?? 0) + 1
             counts[annotation.title] = number
             return Item(id: annotation.id, label: "\(annotation.title) \(number)", value: value(of: annotation))

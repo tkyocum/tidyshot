@@ -29,6 +29,34 @@ struct CropGeometryTests {
         #expect(CropGeometry.handle(of: rect, at: CGPoint(x: 20, y: 15), tolerance: 2) == nil)
     }
 
+    /// A press in the dimmed area is not a press on the picture (spec 2.6, Crop).
+    @Test func pressOutsideAnAppliedCrop() {
+        let crop = CGRect(x: 10, y: 10, width: 20, height: 20)
+        // Straddles the crop's right edge; its handle at (40, 20) sits in the dimmed area.
+        let box = Annotation.rectangle(ShapeBox(id: UUID(), rect: CGRect(x: 20, y: 10, width: 20, height: 20),
+                                                color: RGBA(red: 1, green: 0, blue: 0, alpha: 1), lineWidth: 4))
+        let outside = CGPoint(x: 50, y: 50)
+        func press(_ point: CGPoint, tool: EditorTool, crop: CGRect? = crop, selected: Annotation? = nil) -> CropGeometry.Press {
+            CropGeometry.press(at: point, crop: crop, tool: tool, selected: selected, tolerance: 2)
+        }
+        // Inside, or no crop: the tool sees the press as it landed, edges included.
+        #expect(press(CGPoint(x: 15, y: 15), tool: .select) == .asPressed)
+        #expect(press(CGPoint(x: 30, y: 30), tool: .text) == .asPressed)
+        #expect(press(outside, tool: .select, crop: nil) == .asPressed)
+        // Select: outside deselects, unless it is on a handle of the selection.
+        #expect(press(outside, tool: .select) == .deselect)
+        #expect(press(CGPoint(x: 35, y: 20), tool: .select, selected: box) == .deselect)
+        #expect(press(CGPoint(x: 40, y: 20), tool: .select, selected: box) == .asPressed)
+        #expect(press(CGPoint(x: 40, y: 20), tool: .select) == .deselect)
+        // Text ignores it; the drawing tools begin at the edge.
+        #expect(press(outside, tool: .text) == .ignore)
+        for tool in [EditorTool.redact, .pixelate, .blur, .rectangle, .arrow, .ellipse, .line, .pencil, .highlighter] {
+            #expect(press(outside, tool: tool) == .clampedToEdge)
+        }
+        #expect(CropGeometry.clamped(outside, to: crop) == CGPoint(x: 30, y: 30))
+        #expect(CropGeometry.clamped(CGPoint(x: 15, y: 0), to: crop) == CGPoint(x: 15, y: 10))
+    }
+
     /// No crop, nothing left after rounding, nothing inside the image, and the whole image all
     /// store nil, so export keeps the capture as it is.
     @Test func emptyCropIsNil() {

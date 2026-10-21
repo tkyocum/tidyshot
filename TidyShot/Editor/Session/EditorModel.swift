@@ -165,7 +165,8 @@ final class EditorModel: CanvasEditing {
         coalescingKey = nil
         apply(snapshot)
         // Undo while cropping: the open draft follows the restored crop, or Return would re-apply the undone one.
-        if cropDraft != nil { cropDraft = snapshot.crop ?? CGRect(origin: .zero, size: imageSize) }
+        // An unrelated step (a rectangle drawn before Crop opened) leaves the crop alone, so the draft stays.
+        if cropDraft != nil, snapshot.crop != current.crop { cropDraft = snapshot.crop ?? CGRect(origin: .zero, size: imageSize) }
     }
 
     private func apply(_ new: AnnotationDocument) {

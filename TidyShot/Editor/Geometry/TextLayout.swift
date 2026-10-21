@@ -92,11 +92,11 @@ nonisolated enum TextLayout {
     }
 
     /// What a commit stores: the typed text without trailing newlines, or nil when nothing but
-    /// whitespace was typed.
+    /// whitespace was typed. A vertical tab is not a newline here, matching `lines(of:)`.
     static func committedString(_ typed: String) -> String? {
         guard typed.contains(where: { !$0.isWhitespace }) else { return nil }
         var string = typed
-        while let last = string.last, last.isNewline {
+        while let last = string.last, last.isNewline, last != "\u{0B}" {
             string.removeLast()
         }
         return string

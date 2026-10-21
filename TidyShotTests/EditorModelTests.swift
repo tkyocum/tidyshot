@@ -460,6 +460,21 @@ struct EditorModelTests {
         #expect(model.undoManager.canRedo)
     }
 
+    /// Undoing a step that leaves the crop alone must not throw away the draft being dragged.
+    @Test func undoOfAnUnrelatedStepKeepsTheCropDraft() {
+        let model = makeModel()
+        let shape = add(box(), to: model)
+        model.tool = .crop
+        let draft = CGRect(x: 3, y: 3, width: 8, height: 8)
+        model.cropDraft = draft
+        model.undoManager.undo()
+        #expect(model.document.annotation(id: shape.id) == nil)
+        #expect(model.cropDraft == draft)
+        model.undoManager.redo()
+        #expect(model.document.annotation(id: shape.id) != nil)
+        #expect(model.cropDraft == draft)
+    }
+
     @Test func selectAllSkipsAnnotationsOutsideTheCrop() {
         let model = makeModel()
         let inside = add(box(x: 2), to: model)

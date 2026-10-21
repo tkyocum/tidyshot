@@ -168,9 +168,25 @@ final class CanvasView: NSView {
             updatePanCursor()
             return
         }
+        // Under an applied crop the dimmed area is not part of the picture: a press there does not pick
+        // anything hidden, except a handle of the selection that sits outside the crop.
+        let pressed = input(for: event, clamped: false)
+        let handling = CropGeometry.press(at: pressed.point, crop: appliedCrop, tool: model.tool,
+                                          selected: model.selection.flatMap { model.document.annotation(id: $0) },
+                                          tolerance: HitTester.tolerance(zoom: model.zoom))
+        switch handling {
+        case .ignore:
+            return
+        case .deselect:
+            model.selection = nil
+            refresh()
+            return
+        case .asPressed, .clampedToEdge:
+            break
+        }
         isTrackingMouse = true
         gestureCancelled = false
-        activeTool.mouseDown(input(for: event), on: model)
+        activeTool.mouseDown(handling == .asPressed ? pressed : input(for: event), on: model)
         refresh()
     }
 
@@ -215,13 +231,15 @@ final class CanvasView: NSView {
         refresh()
     }
 
-    private func input(for event: NSEvent) -> ToolInput {
+    /// The applied crop while it dims the rest of the capture; nil while Crop is open or with none.
+    private var appliedCrop: CGRect? { model.cropDraft == nil ? model.document.crop : nil }
+
+    /// The event as a tool input. A drag or release stays at the crop's edge (the dimmed cover hides the
+    /// rest of the capture); `mouseDown` asks for the raw point and decides what an outside press does.
+    private func input(for event: NSEvent, clamped: Bool = true) -> ToolInput {
         let flags = event.modifierFlags
         var point = model.transform.imagePoint(convert(event.locationInWindow, from: nil))
-        // The dimmed cover hides the rest of the capture, so input stops at the crop's edge.
-        if model.cropDraft == nil, let crop = model.document.crop {
-            point = CGPoint(x: min(max(point.x, crop.minX), crop.maxX), y: min(max(point.y, crop.minY), crop.maxY))
-        }
+        if clamped, let crop = appliedCrop { point = CropGeometry.clamped(point, to: crop) }
         let input = ToolInput(point: point,
                               shift: flags.contains(.shift), option: flags.contains(.option),
                               clickCount: event.clickCount)
@@ -414,7 +432,7 @@ final class CanvasView: NSView {
     /// One element per annotation, in painting order. Elements are reused by id, so VoiceOver
     /// focus survives a refresh; the label and value are brought up to date here.
     override func accessibilityChildren() -> [Any]? {
-        let items = CanvasAccessibility.items(in: model.document)
+        let items = CanvasAccessibility.items(in: model.document, scale: model.scale)
         let ids = Set(items.map(\.id))
         accessibilityElements = accessibilityElements.filter { ids.contains($0.key) }
         return items.map { item -> AnnotationAccessibilityElement in

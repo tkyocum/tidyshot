@@ -19,20 +19,25 @@ nonisolated final class AnnotationAccessibilityElement: NSAccessibilityElement {
         setAccessibilityParent(canvas)
     }
 
-    // The canvas and the id are read out first: both are Sendable, the element is not.
+    // The canvas and the id are read out first: both are Sendable, the element is not. Each
+    // override answers conservatively when a query arrives off the main thread, where
+    // `assumeIsolated` would trap.
 
     override func accessibilityFrame() -> NSRect {
+        guard Thread.isMainThread else { return .zero }
         let (canvas, id) = (canvas, annotationID)
         return MainActor.assumeIsolated { canvas?.accessibilityScreenFrame(of: id) ?? .zero }
     }
 
     override func isAccessibilitySelected() -> Bool {
+        guard Thread.isMainThread else { return false }
         let (canvas, id) = (canvas, annotationID)
         return MainActor.assumeIsolated { canvas?.isAccessibilitySelected(id) ?? false }
     }
 
     /// AXPress selects the annotation; Delete, the arrow keys, ⌘C and ⌘D then act on it.
     override func accessibilityPerformPress() -> Bool {
+        guard Thread.isMainThread else { return false }
         let (canvas, id) = (canvas, annotationID)
         return MainActor.assumeIsolated { canvas?.selectFromAccessibility(id) ?? false }
     }

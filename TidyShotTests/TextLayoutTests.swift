@@ -12,6 +12,16 @@ struct TextLayoutTests {
                 color: RGBA(red: 1, green: 0, blue: 0))
     }
 
+    /// A vertical tab stays on its line in `lines(of:)`, so the commit keeps it too.
+    @Test func committedStringTrimsNewlinesButNotVerticalTab() {
+        #expect(TextLayout.committedString("Hi\n\r\n") == "Hi")
+        #expect(TextLayout.committedString("Hi\u{2028}") == "Hi")
+        #expect(TextLayout.committedString("Hi\u{0B}") == "Hi\u{0B}")
+        #expect(TextLayout.committedString("Hi\u{0B}\n") == "Hi\u{0B}")
+        #expect(TextLayout.lines(of: "Hi\u{0B}") == ["Hi\u{0B}"])
+        #expect(TextLayout.committedString(" \n") == nil)
+    }
+
     @Test func textFrameGrowsWithLines() {
         let font = TextLayout.font(size: 40)
         let lineHeight = TextLayout.lineHeight(fontSize: 40)

@@ -37,12 +37,13 @@ nonisolated struct AnnotationClip: Codable, Equatable, Sendable {
 
     /// The annotation as it lands in `document`, an image of `imageSize` pixels at `scale`:
     /// 1. scaled by `scale / self.scale` and given `id`;
-    /// 2. centred in the image when its bounds lie wholly outside it;
+    /// 2. centred in the visible image (the applied crop, else the whole image) when its bounds lie
+    ///    wholly outside it;
     /// 3. moved by `step` while an annotation identical apart from its id is already there, at
     ///    most `maximumCascade` times, so repeated pastes step aside instead of stacking.
     func placed(in document: AnnotationDocument, imageSize: CGSize, scale: CGFloat, step: CGVector, id: UUID) -> Annotation {
         var pasted = annotation.scaled(by: scale / self.scale).withID(id)
-        let image = CGRect(origin: .zero, size: imageSize)
+        let image = document.crop ?? CGRect(origin: .zero, size: imageSize)
         let bounds = AnnotationGeometry.bounds(of: pasted, scale: scale)
         if !bounds.intersects(image) {
             pasted = pasted.moved(by: CGVector(dx: image.midX - bounds.midX, dy: image.midY - bounds.midY))

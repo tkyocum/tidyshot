@@ -59,4 +59,42 @@ nonisolated enum CropGeometry {
         }
         return best?.index
     }
+
+    /// What a press does when an applied crop dims part of the capture.
+    enum Press: Equatable, Sendable {
+        /// The tool gets the press where it landed: inside the crop, or on a handle of the selection.
+        case asPressed
+        /// The tool gets the press moved to the crop's edge, so a drag that starts outside begins there.
+        case clampedToEdge
+        /// Select: the press lands on nothing visible, so the selection goes and the tool never sees it.
+        case deselect
+        /// Nothing happens.
+        case ignore
+    }
+
+    /// How a press at `point` is handled under `crop`, the applied crop (nil: none, or Crop is open and
+    /// shows the whole capture). Outside the crop Select deselects unless the press is on a handle of
+    /// `selected`, Text ignores it, and the drawing tools start at the edge.
+    static func press(at point: CGPoint, crop: CGRect?, tool: EditorTool, selected: Annotation?,
+                      tolerance: CGFloat) -> Press {
+        guard let crop else { return .asPressed }
+        let inside = point.x >= crop.minX && point.x <= crop.maxX && point.y >= crop.minY && point.y <= crop.maxY
+        if inside { return .asPressed }
+        switch tool {
+        case .select:
+            if let selected, case .handle? = HitTester.hit(selected, at: point, tolerance: tolerance) {
+                return .asPressed
+            }
+            return .deselect
+        case .text:
+            return .ignore
+        case .redact, .pixelate, .blur, .rectangle, .arrow, .ellipse, .line, .pencil, .highlighter, .crop:
+            return .clampedToEdge
+        }
+    }
+
+    /// `point` moved to the nearest point of `crop`.
+    static func clamped(_ point: CGPoint, to crop: CGRect) -> CGPoint {
+        CGPoint(x: min(max(point.x, crop.minX), crop.maxX), y: min(max(point.y, crop.minY), crop.maxY))
+    }
 }

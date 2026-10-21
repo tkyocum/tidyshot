@@ -47,5 +47,11 @@ struct AnnotationClipTests {
         let near = box(x: 10, y: 10)
         #expect(AnnotationClip(annotation: near, scale: 2).placed(in: crowded, imageSize: size, scale: 2, step: step, id: id)
                 == near.withID(id))
+        // With a crop applied the canvas shows only the crop: centred in it, not in the whole image.
+        let cropped = AnnotationDocument(annotations: []).withCrop(CGRect(x: 0, y: 0, width: 100, height: 100))
+        #expect(AnnotationClip(annotation: box(x: 200, y: 200), scale: 2)
+            .placed(in: cropped, imageSize: size, scale: 2, step: step, id: id)
+                == .rectangle(ShapeBox(id: id, rect: CGRect(x: 30, y: 40, width: 40, height: 20),
+                                       color: red, lineWidth: 8)))
     }
 }
