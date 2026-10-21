@@ -76,6 +76,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         menu.addItem(captureItem("Capture Scrolling", .captureScrolling, #selector(captureScrolling)))
         menu.addItem(captureItem("Capture Previous Area", .capturePreviousArea, #selector(capturePreviousArea)))
         menu.addItem(captureItem("Self-Timer", .selfTimer, #selector(captureSelfTimer)))
+        menu.addItem(captureItem("Capture Text", .captureText, #selector(captureText)))
         menu.addItem(.separator())
         recentCaptures.rebuild()
         menu.addItem(recentCaptures.item)
@@ -130,6 +131,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     @objc private func captureScrolling() { Task { await coordinator.captureScrolling() } }
     @objc private func capturePreviousArea() { Task { await coordinator.capturePreviousArea() } }
     @objc private func captureSelfTimer() { Task { await coordinator.captureSelfTimer() } }
+    @objc private func captureText() { Task { await coordinator.captureText() } }
     @objc private func retryFailedUploads() { coordinator.retryFailedUploads() }
     @objc private func restoreClosedOverlay() { Task { await coordinator.restoreClosedOverlay() } }
     @objc private func revealLastCapture() { coordinator.revealLastCapture() }

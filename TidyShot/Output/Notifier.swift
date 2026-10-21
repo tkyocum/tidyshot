@@ -2,7 +2,7 @@ import AppKit
 import UserNotifications
 
 /// Posts "saved", "uploaded" and "failed" notifications. Clicking a saved notification reveals
-/// the file in Finder; clicking an uploaded notification opens the URL.
+/// the file in Finder; clicking an uploaded notification, or a plain one given a URL, opens the URL.
 final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     /// Read from the nonisolated delegate callbacks, so they must not be MainActor-isolated.
     nonisolated private static let pathKey = "path"
@@ -43,13 +43,17 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         post(content)
     }
 
-    /// A plain notification with no click action, such as "Copying image…" and "Image copied".
-    func notify(title: String, body: String, subtitle: String? = nil) {
+    /// A plain notification, such as "Copying image…" and "Image copied". Clicking it opens
+    /// `openURL` when one is given, as an uploaded notification does, and otherwise does nothing.
+    func notify(title: String, body: String, subtitle: String? = nil, openURL: URL? = nil) {
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
         if let subtitle {
             content.subtitle = subtitle
+        }
+        if let openURL {
+            content.userInfo = [Self.urlKey: openURL.absoluteString]
         }
         post(content)
     }

@@ -42,6 +42,18 @@ struct ShortcutsTests {
         #expect(Set(names.compactMap(\.initialShortcut)).count == names.count - 1)
     }
 
+    /// ⌃⇧7 sits after ⌃⇧6 (spec 2.10). No two names share a key or a default shortcut (Self-Timer
+    /// and Restore Closed Overlay have none).
+    @Test func captureTextIsControlShiftSeven() {
+        #expect(KeyboardShortcuts.Name.captureText.rawValue == "captureText")
+        #expect(KeyboardShortcuts.Name.captureText.initialShortcut == .init(.seven, modifiers: [.control, .shift]))
+        let names: [KeyboardShortcuts.Name] = [.allInOne, .captureArea, .captureWindow, .captureFullscreen,
+                                               .captureScrolling, .capturePreviousArea, .selfTimer, .captureText,
+                                               .restoreOverlay, .cancelCapture]
+        #expect(Set(names.map(\.rawValue)).count == names.count)
+        #expect(Set(names.compactMap(\.initialShortcut)).count == names.count - 2)
+    }
+
     /// Self-Timer has a recorder in the Shortcuts tab but no default (spec 2.9), like Restore Closed Overlay.
     @Test func selfTimerHasNoInitialShortcut() {
         #expect(KeyboardShortcuts.Name.selfTimer.rawValue == "selfTimer")

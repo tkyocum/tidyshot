@@ -7,7 +7,7 @@ struct URLCommandGateTests {
     let off = "URL commands are off. Turn them on in Settings > General."
     let refusal = " captures without a selection. Allow it in Settings > General > URL commands."
 
-    /// Every command, and with a rect where one is taken: 8 kinds, 3 of them with a rect too.
+    /// Every command, and with a rect where one is taken: 9 kinds, 4 of them with a rect too.
     var everyCommand: [URLCommand] {
         URLCommand.Kind.allCases.flatMap { kind in
             kind.takesArea ? [URLCommand(kind: kind), URLCommand(kind: kind, area: area)] : [URLCommand(kind: kind)]
@@ -15,7 +15,7 @@ struct URLCommandGateTests {
     }
 
     @Test func withURLCommandsOffEveryCommandIsRefused() {
-        #expect(everyCommand.count == 11)
+        #expect(everyCommand.count == 13)
         #expect(URLCommandGate.disabledMessage == off)
         for command in everyCommand {
             for allowSilent in [false, true] {
@@ -27,7 +27,8 @@ struct URLCommandGateTests {
 
     @Test func capturesWithoutASelectionNeedTheSecondToggle() {
         let silent = [URLCommand(kind: .captureFullscreen), URLCommand(kind: .capturePreviousArea),
-                      URLCommand(kind: .captureArea, area: area)]
+                      URLCommand(kind: .captureArea, area: area), URLCommand(kind: .captureText, area: area)]
+        #expect(everyCommand.filter(\.capturesWithoutSelection).count == silent.count)
         for command in silent {
             #expect(URLCommandGate.decision(for: command, enabled: true, allowSilent: false)
                     == .refuse(command.kind.rawValue + refusal))
@@ -48,10 +49,12 @@ struct URLCommandGateTests {
     }
 
     /// A selection, a window click, All-in-One (a rect only preselects), the self-timer (it selects
-    /// first) and scrolling (the session waits for Start) all wait for the user.
+    /// first), scrolling (the session waits for Start) and Capture Text without a rect all wait for
+    /// the user.
     @Test func commandsThatWaitForTheUserRunWithTheSecondToggleOff() {
         let waiting = everyCommand.filter { !$0.capturesWithoutSelection }
-        #expect(waiting.count == 8)
+        #expect(waiting.count == 9)
+        #expect(waiting.contains(URLCommand(kind: .captureText)))
         for command in waiting {
             #expect(URLCommandGate.decision(for: command, enabled: true, allowSilent: false, sender: "Raycast") == .run)
         }

@@ -11,15 +11,20 @@ nonisolated struct URLCommand: Equatable, Sendable {
         case allInOne = "all-in-one"
         case selfTimer = "self-timer"
         case captureScrolling = "capture-scrolling"
+        case captureText = "capture-text"
         case restoreRecentlyClosed = "restore-recently-closed"
 
         /// CleanShot's names that mean the same command.
         static let aliases: [String: Kind] = ["scrolling-capture": .captureScrolling]
 
-        /// Takes `action`. Restore captures nothing.
+        /// Dropped while a capture runs. Restore captures nothing.
         var isCapture: Bool { self != .restoreRecentlyClosed }
+        /// Takes `action`. Capture Text always copies its result, and restore captures nothing.
+        var takesAction: Bool { self != .restoreRecentlyClosed && self != .captureText }
         /// Takes `x`, `y`, `width`, `height` and `display`.
-        var takesArea: Bool { self == .captureArea || self == .allInOne || self == .captureScrolling }
+        var takesArea: Bool {
+            self == .captureArea || self == .allInOne || self == .captureScrolling || self == .captureText
+        }
     }
 
     enum Action: String, CaseIterable, Sendable {
@@ -45,7 +50,7 @@ nonisolated struct URLCommand: Equatable, Sendable {
     var capturesWithoutSelection: Bool {
         switch kind {
         case .captureFullscreen, .capturePreviousArea: true
-        case .captureArea: area != nil
+        case .captureArea, .captureText: area != nil
         case .captureWindow, .allInOne, .selfTimer, .captureScrolling, .restoreRecentlyClosed: false
         }
     }
@@ -73,7 +78,7 @@ nonisolated struct URLCommand: Equatable, Sendable {
             return .failure(.unknownCommand(name))
         }
 
-        var taken: Set<String> = kind.isCapture ? ["action"] : []
+        var taken: Set<String> = kind.takesAction ? ["action"] : []
         if kind.takesArea {
             taken.formUnion(rectNames + ["display"])
         }

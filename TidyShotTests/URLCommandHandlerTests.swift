@@ -16,6 +16,8 @@ final class URLTargetRecorder: URLCommandTarget {
         case selfTimer(CaptureIntent)
         case scrolling(CaptureIntent, ScreenRect?)
         case restore
+        case text
+        case textAt(ScreenRect)
     }
 
     var isCapturing = false
@@ -32,6 +34,8 @@ final class URLTargetRecorder: URLCommandTarget {
     func captureSelfTimer(intent: CaptureIntent) async { calls.append(.selfTimer(intent)) }
     func captureScrolling(intent: CaptureIntent, preselect: ScreenRect?) async { calls.append(.scrolling(intent, preselect)) }
     func restoreClosedOverlay() async { calls.append(.restore) }
+    func captureText() async { calls.append(.text) }
+    func captureText(at area: ScreenRect) async { calls.append(.textAt(area)) }
 }
 
 /// The notices a handler posted.
@@ -90,7 +94,8 @@ struct URLCommandHandlerTests {
         for string in ["capture-area", "capture-area?x=100&y=100&width=200&height=50", "capture-window",
                        "capture-fullscreen", "capture-previous-area", "all-in-one",
                        "all-in-one?x=10&y=10&width=300&height=200&display=2", "self-timer", "capture-scrolling",
-                       "scrolling-capture?x=0&y=0&width=400&height=600", "restore-recently-closed"] {
+                       "scrolling-capture?x=0&y=0&width=400&height=600", "restore-recently-closed",
+                       "capture-text", "capture-text?x=100&y=100&width=200&height=50&action=copy"] {
             try await send(handler, "tidyshot://\(string)")
         }
         let small = ScreenRect(rect: CGRect(x: 100, y: 930, width: 200, height: 50), displayID: 1)
@@ -98,7 +103,8 @@ struct URLCommandHandlerTests {
         let tall = ScreenRect(rect: CGRect(x: 0, y: 480, width: 400, height: 600), displayID: 1)
         #expect(target.calls == [.area(standard), .areaAt(small, standard), .window(standard), .fullscreen(standard),
                                  .previousArea(standard), .allInOne(standard, nil), .allInOne(standard, second),
-                                 .selfTimer(standard), .scrolling(standard, nil), .scrolling(standard, tall), .restore])
+                                 .selfTimer(standard), .scrolling(standard, nil), .scrolling(standard, tall), .restore,
+                                 .text, .textAt(small)])
         #expect(log.notices.isEmpty)
     }
 
@@ -122,25 +128,28 @@ struct URLCommandHandlerTests {
         try await send(handler, "tidyshot://capture-fullscreen?action=copy", from: "Keyboard Maestro")
         try await send(handler, "tidyshot://capture-previous-area", from: nil)
         try await send(handler, "tidyshot://capture-area?x=0&y=0&width=10&height=10")
+        try await send(handler, "tidyshot://capture-text?x=0&y=0&width=10&height=10")
         #expect(target.calls.isEmpty)
         #expect(log.notices == [
             notice("capture-fullscreen from Keyboard Maestro" + refusal, from: "Keyboard Maestro"),
             notice("capture-previous-area" + refusal, from: nil),
             notice("capture-area from Raycast" + refusal),
+            notice("capture-text from Raycast" + refusal),
         ])
     }
 
     @Test func commandsThatWaitForTheUserRunWithSilentCapturesOff() async throws {
         let handler = await makeHandler()
         for string in ["capture-area?action=copy", "capture-window", "all-in-one?x=100&y=100&width=200&height=50",
-                       "self-timer", "capture-scrolling?x=0&y=0&width=400&height=600", "restore-recently-closed"] {
+                       "self-timer", "capture-scrolling?x=0&y=0&width=400&height=600", "restore-recently-closed",
+                       "capture-text"] {
             try await send(handler, "tidyshot://\(string)")
         }
         let small = ScreenRect(rect: CGRect(x: 100, y: 930, width: 200, height: 50), displayID: 1)
         let tall = ScreenRect(rect: CGRect(x: 0, y: 480, width: 400, height: 600), displayID: 1)
         #expect(target.calls == [.area(CaptureIntent(action: .uploadOnly, copyOnly: true, sender: "Raycast")),
                                  .window(standard), .allInOne(standard, small), .selfTimer(standard),
-                                 .scrolling(standard, tall), .restore])
+                                 .scrolling(standard, tall), .restore, .text])
         #expect(log.notices.isEmpty)
     }
 
@@ -178,7 +187,8 @@ struct URLCommandHandlerTests {
         settings.urlCommandsAllowSilent = true
         target.isCapturing = true
         let handler = await makeHandler()
-        for string in ["capture-area", "capture-fullscreen", "capture-scrolling", "all-in-one", "self-timer"] {
+        for string in ["capture-area", "capture-fullscreen", "capture-scrolling", "all-in-one", "self-timer",
+                       "capture-text", "capture-text?x=0&y=0&width=10&height=10"] {
             try await send(handler, "tidyshot://\(string)")
         }
         #expect(target.calls.isEmpty)

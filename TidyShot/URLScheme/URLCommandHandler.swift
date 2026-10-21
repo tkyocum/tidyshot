@@ -13,6 +13,8 @@ protocol URLCommandTarget: AnyObject {
     func captureSelfTimer(intent: CaptureIntent) async
     func captureScrolling(intent: CaptureIntent, preselect: ScreenRect?) async
     func restoreClosedOverlay() async
+    func captureText() async
+    func captureText(at area: ScreenRect) async
 }
 
 /// A notification the URL scheme posts. The subtitle names the sending app when it is known.
@@ -146,6 +148,12 @@ final class URLCommandHandler {
         case .allInOne: await target.captureAllInOne(intent: intent, preselect: placement, fromURLCommand: true)
         case .selfTimer: await target.captureSelfTimer(intent: intent)
         case .captureScrolling: await target.captureScrolling(intent: intent, preselect: placement)
+        case .captureText:
+            if let placement {
+                await target.captureText(at: placement)
+            } else {
+                await target.captureText()
+            }
         case .restoreRecentlyClosed: await target.restoreClosedOverlay()
         }
         return command.kind.isCapture

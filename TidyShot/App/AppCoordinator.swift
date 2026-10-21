@@ -173,6 +173,9 @@ final class AppCoordinator {
         KeyboardShortcuts.onKeyUp(for: .selfTimer) { [weak self] in
             Task { await self?.captureSelfTimer() }
         }
+        KeyboardShortcuts.onKeyUp(for: .captureText) { [weak self] in
+            Task { await self?.captureText() }
+        }
         KeyboardShortcuts.onKeyUp(for: .restoreOverlay) { [weak self] in
             Task { await self?.restoreClosedOverlay() }
         }
@@ -401,6 +404,76 @@ final class AppCoordinator {
         }
     }
 
+    /// Capture Text (spec 2.10): Capture Area's overlay, with Freeze screen as there, and the image
+    /// Capture Area would have taken. The lock is held for the selection and the capture only, so
+    /// recognition (about 24 s the first time after a restart) never blocks another capture. It
+    /// does not write `lastAreaRect`: the previous area is for image captures.
+    func captureText() async {
+        var captured: CaptureResult?
+        await withCaptureLock {
+            guard let content = await loadContent() else { return }
+            let freeze = settings.freezeScreen ? CaptureOptions(settings: settings, duringSelection: false) : nil
+            guard let selection = await selector.select(mode: .area, content: content, freeze: freeze) else { return }
+            switch selection {
+            case .area(let rect, let display):
+                captured = await selectedAreaResult(rect: rect, display: display)
+            case .window(let window):
+                captured = await capture(.window(window), duringSelection: true)
+            }
+            selector.dismiss()
+        }
+        if let captured {
+            await copyText(in: captured.image)
+        }
+    }
+
+    /// A URL command's `capture-text` with a rect (the gate has allowed it): that rect at once,
+    /// live, with the cards excluded and no pointer. It does not write `lastAreaRect`.
+    func captureText(at area: ScreenRect) async {
+        var captured: CaptureResult?
+        await withCaptureLock {
+            guard let content = await loadContent() else { return }
+            guard let display = content.displays.first(where: { $0.displayID == area.displayID }) else {
+                NSLog("%@", "URL capture-text: display \(area.displayID) is gone")
+                return
+            }
+            let cards = await cardWindows()
+            captured = await capture(.area(rect: area.rect, display: display), excludingWindows: cards,
+                                     duringSelection: true)
+        }
+        if let captured {
+            await copyText(in: captured.image)
+        }
+    }
+
+    /// Reads the text or codes in `image` off the main actor, then puts the result on the
+    /// clipboard with the capture sound and a notification, as Play sound and Show notification
+    /// say. Nothing found and a Vision error are always posted, and leave the clipboard alone.
+    /// No file, record, card or upload; `clipboardOwner` stays, since the change count moved.
+    private func copyText(in image: CGImage) async {
+        let scan: TextScan
+        do {
+            scan = try await TextRecognizer().recognize(image)
+        } catch {
+            NSLog("Text recognition failed: \(error.localizedDescription)")
+            notifier.notifyError(error.localizedDescription, title: "Text not recognized")
+            return
+        }
+        let outcome = TextCaptureOutcome.decide(scan)
+        guard let text = outcome.clipboard else {
+            notifier.notifyError(outcome.body, title: outcome.title)
+            return
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        if settings.playSound {
+            SoundPlayer.playShutter()
+        }
+        if settings.showNotification {
+            notifier.notify(title: outcome.title, body: outcome.body, openURL: outcome.openURL)
+        }
+    }
+
     /// The countdown and the capture behind Self-Timer and All-in-One's Timer button. Call it with
     /// the capture lock held. The selection overlay goes first, then TidyShot gives up activation
     /// so the user's app is frontmost while the badge counts: its menus open and its keys work.
@@ -452,6 +525,12 @@ final class AppCoordinator {
     /// it from the frozen snapshot or captures it live with the overlay and the cards excluded.
     private func areaResult(rect: CGRect, display: SCDisplay) async -> CaptureResult? {
         settings.lastAreaRect = StoredRect(rect)
+        return await selectedAreaResult(rect: rect, display: display)
+    }
+
+    /// An area chosen in the overlay, which is still up, cut from the frozen snapshot or captured
+    /// live with the overlay and the cards excluded. Stores nothing.
+    private func selectedAreaResult(rect: CGRect, display: SCDisplay) async -> CaptureResult? {
         if let frozen = frozenResult(for: rect, display: display) {
             return frozen
         }

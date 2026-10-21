@@ -19,7 +19,7 @@ struct URLCommandTests {
     }
 
     @Test func everyCommandParsesFromTheHost() throws {
-        #expect(URLCommand.Kind.allCases.count == 8)
+        #expect(URLCommand.Kind.allCases.count == 9)
         for kind in URLCommand.Kind.allCases {
             #expect(try parse("tidyshot://\(kind.rawValue)") == .success(URLCommand(kind: kind)))
         }
@@ -64,7 +64,7 @@ struct URLCommandTests {
 
     @Test func everyActionParsesOnEveryCaptureCommand() throws {
         #expect(URLCommand.Action.allCases.map(\.rawValue) == ["upload", "save", "copy", "annotate", "pin"])
-        for kind in URLCommand.Kind.allCases where kind.isCapture {
+        for kind in URLCommand.Kind.allCases where kind.takesAction {
             for action in URLCommand.Action.allCases {
                 #expect(try parse("tidyshot://\(kind.rawValue)?action=\(action.rawValue)")
                         == .success(URLCommand(kind: kind, action: action)))
@@ -84,7 +84,7 @@ struct URLCommandTests {
         #expect(try parse("tidyshot://") == .failure(.unknownCommand("")))
         #expect(try parse("tidyshot:") == .failure(.unknownCommand("")))
         // CleanShot commands that take a file path, open other windows or record are not offered.
-        for name in ["pin", "open-annotate", "add-quick-access-overlay", "open-settings", "open-history", "record-screen", "capture-text"] {
+        for name in ["pin", "open-annotate", "add-quick-access-overlay", "open-settings", "open-history", "record-screen"] {
             #expect(try parse("tidyshot://\(name)?filepath=/tmp/x.png") == .failure(.unknownCommand(name)))
         }
         #expect(try parse("https://capture-area") == .failure(.unknownCommand("https://capture-area")))
@@ -95,6 +95,26 @@ struct URLCommandTests {
         #expect(try parse("tidyshot://capture-area?action=") == .failure(.unknownAction("")))
         #expect(try parse("tidyshot://capture-area?action") == .failure(.unknownAction("")))
         #expect(try parse("tidyshot://capture-area?action=upload%20") == .failure(.unknownAction("upload ")))
+    }
+
+    /// Capture Text (spec 2.10) takes a rect and a display, like capture-area, and no action.
+    @Test func captureTextParsesWithAndWithoutARect() throws {
+        #expect(try parse("tidyshot://capture-text") == .success(URLCommand(kind: .captureText)))
+        #expect(try parse("tidyshot://capture-text?x=10&y=20&width=300&height=40&display=2")
+                == .success(URLCommand(kind: .captureText, area: .init(x: 10, y: 20, width: 300, height: 40), display: 2)))
+        #expect(try parse("tidyshot://capture-text?x=10&y=20") == .failure(.badArea))
+        #expect(try parse("tidyshot://capture-text?display=0") == .failure(.noDisplay("0")))
+    }
+
+    /// Capture Text is a capture, so a running capture drops it, but it takes no action: its
+    /// result always goes to the clipboard. Restore captures nothing and takes no action.
+    @Test func everyCaptureButCaptureTextTakesAnAction() {
+        for kind in URLCommand.Kind.allCases {
+            #expect(kind.isCapture == (kind != .restoreRecentlyClosed), "\(kind)")
+            #expect(kind.takesAction == (kind != .restoreRecentlyClosed && kind != .captureText), "\(kind)")
+        }
+        #expect(URLCommand.Kind.captureText.rawValue == "capture-text")
+        #expect(URLCommand.Kind.captureText.takesArea)
     }
 
     @Test func theFourRectValuesAndTheDisplayParse() throws {
@@ -165,6 +185,10 @@ struct URLCommandTests {
                 == .success(URLCommand(kind: .captureWindow)))
         #expect(try parse("tidyshot://restore-recently-closed?action=bogus&action=pin")
                 == .success(URLCommand(kind: .restoreRecentlyClosed)))
+        #expect(try parse("tidyshot://capture-text?action=bogus&action=pin")
+                == .success(URLCommand(kind: .captureText)))
+        #expect(try parse("tidyshot://capture-text?action=copy&x=1&y=2&width=3&height=4")
+                == .success(URLCommand(kind: .captureText, area: .init(x: 1, y: 2, width: 3, height: 4))))
         #expect(try parse("tidyshot://capture-area?=5&&filepath=/etc/passwd") == .success(URLCommand(kind: .captureArea)))
     }
 
@@ -175,10 +199,11 @@ struct URLCommandTests {
         }
     }
 
-    @Test func onlyFullscreenPreviousAreaAndARectAreaCaptureWithoutASelection() throws {
+    @Test func onlyFullscreenPreviousAreaAndARectAreaOrTextCaptureWithoutASelection() throws {
         let rect = "x=0&y=0&width=10&height=10"
-        let silent = ["capture-fullscreen", "capture-previous-area", "capture-area?\(rect)", "capture-fullscreen?action=copy"]
-        let selecting = ["capture-area", "capture-area?action=copy", "capture-window", "all-in-one", "all-in-one?\(rect)",
+        let silent = ["capture-fullscreen", "capture-previous-area", "capture-area?\(rect)", "capture-fullscreen?action=copy",
+                      "capture-text?\(rect)"]
+        let selecting = ["capture-area", "capture-area?action=copy", "capture-text", "capture-window", "all-in-one", "all-in-one?\(rect)",
                          "self-timer", "capture-scrolling", "capture-scrolling?\(rect)", "scrolling-capture?\(rect)",
                          "restore-recently-closed"]
         for string in silent {
