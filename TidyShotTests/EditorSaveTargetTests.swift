@@ -69,6 +69,26 @@ struct EditorSaveTargetTests {
         #expect(actions(record) == Set(EditorAction.allCases))
     }
 
+    /// Upload saves over the Save target first, and gives an uploaded upload-only capture a pending file.
+    @Test func uploadWritesLocallyWhenASaveTargetExists() {
+        let pending = CaptureRecord(fileURL: pendingURL, fileIsTemporary: true, pixelWidth: 200, pixelHeight: 100,
+                                    appName: nil, uploadState: .failed(message: "offline"))
+        let uploadOnly = CaptureRecord(fileURL: nil, pixelWidth: 200, pixelHeight: 100, appName: nil,
+                                       uploadState: .uploaded(url: link, key: "a.png"), objectLocation: location)
+        #expect(EditorSaveTarget.uploadWrite(for: saved(), saveFolder: folder) == .saveTarget)
+        #expect(EditorSaveTarget.uploadWrite(for: pending, saveFolder: nil) == .saveTarget)
+        #expect(EditorSaveTarget.uploadWrite(for: uploadOnly, saveFolder: folder) == .newPendingFile)
+    }
+
+    /// A file outside the current folder, or no folder: Upload writes nothing locally, so the
+    /// editor must stay unsaved.
+    @Test func uploadWritesNothingLocallyOutsideTheSaveFolder() {
+        let outside = saved(in: URL(filePath: "/Users/tim/Desktop", directoryHint: .isDirectory))
+        #expect(EditorSaveTarget.uploadWrite(for: outside, saveFolder: folder) == .noLocalWrite)
+        #expect(EditorSaveTarget.uploadWrite(for: saved(), saveFolder: nil) == .noLocalWrite)
+        #expect(actions(outside).contains(.upload))
+    }
+
     @Test func noticeOnlyWhenUploadIsStale() {
         let fresh = saved(state: .uploaded(url: link, key: "a.png"))
         let stale = saved(state: .uploaded(url: link, key: "a.png"), stale: true)

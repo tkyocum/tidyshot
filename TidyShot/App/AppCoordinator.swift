@@ -1246,8 +1246,9 @@ final class AppCoordinator {
 
     /// Upload (⌘U) and Upload as New (⌥⌘U). The edit is written locally first, so the file equals
     /// the object; then it goes through the live lane like any upload, over the link's own key for
-    /// a replace or under a new template key. Returns true once the edit has been written locally
-    /// or handed to the queue, which tells the editor to mark the document saved.
+    /// a replace or under a new template key. Returns true once the edit has been written locally,
+    /// which tells the editor to mark the document saved; an upload with no local write leaves the
+    /// document unsaved.
     private func editorUpload(recordID: UUID, image: ScaledImage, asNew: Bool) async -> Bool {
         let action: EditorAction = asNew ? .uploadAsNew : .upload
         // 1. The editor's available set can lag behind the record.
@@ -1270,11 +1271,11 @@ final class AppCoordinator {
         if refuseUpload(action, recordID: recordID) { return false }
         guard let record = history.record(id: recordID) else { return false }
         var wroteLocally = false
-        switch EditorSaveTarget.plan(for: record, saveFolder: saveLocation.currentURL) {
-        case .saveFolderFile, .pendingFile:
+        switch EditorSaveTarget.uploadWrite(for: record, saveFolder: saveLocation.currentURL) {
+        case .saveTarget:
             guard await applyLocalEdit(recordID: recordID, png: png, image: image) else { return false }
             wroteLocally = true
-        case .unavailable where record.fileURL == nil:
+        case .newPendingFile:
             // An uploaded upload-only capture: its pending file went after its upload. The edit gets
             // pending/<id>.png, so Retry and Delete see a file and handle(.uploaded) removes it.
             do {
@@ -1293,9 +1294,10 @@ final class AppCoordinator {
             // bookkeeping (pixel size, editedAt, uploadIsStale, thumbnail, clipboard, editor state).
             guard await applyLocalEdit(recordID: recordID, png: png, image: image) else { return false }
             wroteLocally = true
-        case .unavailable:
+        case .noLocalWrite:
             // A save-folder file outside the current folder, or no folder: the file is not
             // rewritten and the subtitle says so. The clipboard still must not keep the original.
+            // The document stays unsaved, so a failed upload cannot lose the edit on close.
             await replaceClipboardIfStillOriginal(recordID: recordID, png: png, image: image)
         }
         // 4. Plan on the live record, against where the lane writes (as in startUpload).
@@ -1324,7 +1326,7 @@ final class AppCoordinator {
         } else {
             startUpload(recordID: recordID, data: png, destination: destination)
         }
-        return true
+        return wroteLocally
     }
 
     /// Posts the live refusal for `action` as "Not uploaded". True when the upload must stop.

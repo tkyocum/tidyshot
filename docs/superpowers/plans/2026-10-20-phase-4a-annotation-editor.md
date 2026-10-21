@@ -71,6 +71,8 @@ The totals come from each task's declared tests. Task 17 checks them against a r
 
 Task 17 correction: the review fix 60d63ea (tile cache fails closed) added one test to Task 6, so Task 6 is 9 new tests and every row from Task 6 on is one higher; the real run reads 400 tests in 51 suites.
 
+Whole-branch review fix: `uploadWritesLocallyWhenASaveTargetExists` and `uploadWritesNothingLocallyOutsideTheSaveFolder` in `EditorSaveTargetTests` bring the real run to 402 tests in 51 suites.
+
 ---
 
 ### Task 1: Two-tone crosshair and loupe cross
@@ -11235,8 +11237,9 @@ Add under `// MARK: Editor`:
 ```swift
     /// Upload (⌘U) and Upload as New (⌥⌘U). The edit is written locally first, so the file equals
     /// the object; then it goes through the live lane like any upload, over the link's own key for
-    /// a replace or under a new template key. Returns true once the edit has been written locally
-    /// or handed to the queue, which tells the editor to mark the document saved.
+    /// a replace or under a new template key. Returns true once the edit has been written locally,
+    /// which tells the editor to mark the document saved; an upload with no local write leaves the
+    /// document unsaved.
     private func editorUpload(recordID: UUID, image: ScaledImage, asNew: Bool) async -> Bool {
         let action: EditorAction = asNew ? .uploadAsNew : .upload
         // 1. The editor's available set can lag behind the record.
@@ -11259,11 +11262,11 @@ Add under `// MARK: Editor`:
         if refuseUpload(action, recordID: recordID) { return false }
         guard let record = history.record(id: recordID) else { return false }
         var wroteLocally = false
-        switch EditorSaveTarget.plan(for: record, saveFolder: saveLocation.currentURL) {
-        case .saveFolderFile, .pendingFile:
+        switch EditorSaveTarget.uploadWrite(for: record, saveFolder: saveLocation.currentURL) {
+        case .saveTarget:
             guard await applyLocalEdit(recordID: recordID, png: png, image: image) else { return false }
             wroteLocally = true
-        case .unavailable where record.fileURL == nil:
+        case .newPendingFile:
             // An uploaded upload-only capture: its pending file went after its upload. The edit gets
             // pending/<id>.png, so Retry and Delete see a file and handle(.uploaded) removes it.
             do {
@@ -11282,9 +11285,10 @@ Add under `// MARK: Editor`:
             // bookkeeping (pixel size, editedAt, uploadIsStale, thumbnail, clipboard, editor state).
             guard await applyLocalEdit(recordID: recordID, png: png, image: image) else { return false }
             wroteLocally = true
-        case .unavailable:
+        case .noLocalWrite:
             // A save-folder file outside the current folder, or no folder: the file is not
             // rewritten and the subtitle says so. The clipboard still must not keep the original.
+            // The document stays unsaved, so a failed upload cannot lose the edit on close.
             await replaceClipboardIfStillOriginal(recordID: recordID, png: png, image: image)
         }
         // 4. Plan on the live record, against where the lane writes (as in startUpload).
@@ -11313,7 +11317,7 @@ Add under `// MARK: Editor`:
         } else {
             startUpload(recordID: recordID, data: png, destination: destination)
         }
-        return true
+        return wroteLocally
     }
 
     /// Posts the live refusal for `action` as "Not uploaded". True when the upload must stop.
@@ -11325,6 +11329,8 @@ Add under `// MARK: Editor`:
         return true
     }
 ```
+Step 3 switches on `EditorSaveTarget.uploadWrite(for:saveFolder:)` (added by the whole-branch review fix, with two tests in `EditorSaveTargetTests`): `.saveTarget` for `.saveFolderFile` and `.pendingFile`, `.newPendingFile` for `.unavailable` with no `fileURL`, and `.noLocalWrite` for the rest. With `.noLocalWrite` the function returns false, so the editor keeps its edited dot and asks to Save Copy… on close: per spec 2.6, `markSaved()` follows only a local write, and a failed upload must not lose the edit.
+
 Steps 4 to 7 run with no `await` between them, so the plan, the record write and the enqueue see the same record and lane. The refusal is checked three times because the encode, `applyLocalEdit` and the clipboard replacement each await, and a Delete or a Retry can start meanwhile.
 
 In `editorActions(for recordID:)` (Task 10), replace the `upload` stub with a closure in the same form as the `save`, `saveCopy` and `copy` closures that Tasks 12 and 13 wired there. `showEditor(recordID:image:)` already passes that value to the controller, so nothing else changes (Task 16 later converts `showEditor` into `presentEditor` and keeps `editorActions(for:)` as the builder):

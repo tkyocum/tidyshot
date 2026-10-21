@@ -133,7 +133,7 @@ resolution without HiDPI); skip the 1x run if neither is available and say so.
 - [ ] While an editor upload runs (slow profile): ⌘S, ⌘U and ⌥⌘U beep and do nothing, and Save and Upload are greyed in the toolbar; ⌘C, ⇧⌘C and ⇧⌘S work. When the upload finishes they turn on again.
 - [ ] With an editor open, press Delete on its row and leave the alert open: the editor's Save and Upload grey out at once, the subtitle reads `Deleting…`, and ⌘S beeps. Cancel: they turn on again and the subtitle returns to what it was.
 - [ ] Delete again and confirm: the subtitle reads `This capture was deleted. Copy and Save Copy still work.`, Save and Upload stay greyed, ⌘C copies, and ⇧⌘S makes a new capture.
-- [ ] Editor open on a capture in the save folder: Settings > General, Choose… another folder. Save greys out at once, the subtitle gives the reason, and ⌘S beeps. ⌘U still uploads the edit and the file in the old folder is not rewritten. Choose the original folder again: Save turns on.
+- [ ] Editor open on a capture in the save folder: Settings > General, Choose… another folder. Save greys out at once, the subtitle gives the reason, and ⌘S beeps. ⌘U still uploads the edit and the file in the old folder is not rewritten; the edited dot stays after ⌘U, and ⌘W asks with Save Copy…. Choose the original folder again: Save turns on.
 
 ## Closing and quitting
 - [ ] ⌘W on an editor with no changes closes it at once.

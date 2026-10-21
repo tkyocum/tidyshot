@@ -26,6 +26,25 @@ nonisolated enum EditorSaveTarget {
         return .saveFolderFile(fileURL, folder: saveFolder)
     }
 
+    /// The local write before an Upload (⌘U, ⌥⌘U).
+    enum UploadWrite: Equatable, Sendable {
+        /// Save over the Save target first (`applyLocalEdit`), so the file equals the object.
+        case saveTarget
+        /// An uploaded upload-only capture with no file: the edit gets `pending/<id>.png` first.
+        case newPendingFile
+        /// A save-folder file outside the current folder, or no folder: nothing is written locally.
+        /// The edit then lives only in the upload, which can fail, so the editor stays unsaved.
+        case noLocalWrite
+    }
+
+    static func uploadWrite(for record: CaptureRecord, saveFolder: URL?) -> UploadWrite {
+        switch plan(for: record, saveFolder: saveFolder) {
+        case .saveFolderFile, .pendingFile: .saveTarget
+        case .unavailable where record.fileURL == nil: .newPendingFile
+        case .unavailable: .noLocalWrite
+        }
+    }
+
     /// The subtitle note for an edit that was saved locally but that the link does not show yet.
     static func uploadedCopyNotice(for record: CaptureRecord) -> String? {
         record.uploadIsStale ? uploadedCopyStaleNotice : nil
