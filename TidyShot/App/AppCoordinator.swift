@@ -59,6 +59,8 @@ final class AppCoordinator {
     @ObservationIgnored private var deletingIDs: Set<UUID> = []
     /// Set after the first "Upload not configured" notification so later captures stay quiet.
     @ObservationIgnored private var warnedUploadNotConfigured = false
+    /// Set when the first same-key replace of this launch posts `EditorUploadPlan.cacheNote`.
+    @ObservationIgnored private var postedCacheNote = false
     /// What TidyShot last put on the clipboard for a capture: set when `save(_:)` copies the
     /// image, by the editor's Copy, and after an edit replaced the clipboard. An edit of that
     /// capture replaces the clipboard only while the count still matches.
@@ -418,26 +420,34 @@ final class AppCoordinator {
     }
 
     /// Enqueues `data` for `recordID`. `destination` is only used when the queue has to be
-    /// created (first upload, or after the Upload tab was saved); callers read it once.
-    private func startUpload(recordID: UUID, data: Data, destination: S3Destination) {
+    /// created (first upload, or after the Upload tab was saved); callers read it once. With
+    /// `fixedKey` the job PUTs that exact key with `Cache-Control: no-cache` and draws no counter
+    /// (an editor replace, or a retry of one); otherwise the key is named from the template.
+    private func startUpload(recordID: UUID, data: Data, destination: S3Destination, fixedKey: String? = nil) {
         // Look the record up before marking it uploading, so a missing record never leaves an
         // id in `uploadingIDs` (and the menu bar icon spinning) with no job to clear it.
         guard let record = history.record(id: recordID) else { return }
         let lane = queue ?? makeLane(for: destination)
         queue = lane
         uploadingIDs.insert(recordID)
-        // `save` adds new records already marked uploading and shows them in the overlay, so
-        // only a retry (a record in another state) needs the write and the overlay refresh.
+        // `save` and `editorUpload` mark their records uploading and refresh the overlay
+        // themselves, so only a retry (a record in another state) needs the write and the refresh.
         if !record.isUploading {
             history.update(id: recordID) { $0.uploadState = .uploading(fraction: 0) }
             refreshOverlay(for: recordID)
         }
-        // The key is named now, not at capture time: a capture taken while no destination was set
-        // up, and every retry, get a counter drawn when their upload starts. The date stays the
-        // capture's own, so a retried upload lands in the capture's date folder.
-        let counter = lane.keyTemplate.contains("{counter}") ? settings.nextCounter() : 0
-        let job = UploadJob(id: recordID, data: data, contentType: "image/png", fileExtension: "png",
+        let job: UploadJob
+        if let fixedKey {
+            job = UploadJob(id: recordID, data: data, contentType: "image/png", fileExtension: "png",
+                            fixedKey: fixedKey, cacheControl: "no-cache")
+        } else {
+            // The key is named now, not at capture time: a capture taken while no destination was
+            // set up, and every retry, get a counter drawn when their upload starts. The date stays
+            // the capture's own, so a retried upload lands in the capture's date folder.
+            let counter = lane.keyTemplate.contains("{counter}") ? settings.nextCounter() : 0
+            job = UploadJob(id: recordID, data: data, contentType: "image/png", fileExtension: "png",
                             naming: TemplateContext(date: record.timestamp, counter: counter))
+        }
         Task { await lane.queue.enqueue(job) }
     }
 
@@ -468,13 +478,28 @@ final class AppCoordinator {
 
     /// Reads the record's file and starts its upload with `destination`. A record whose delete
     /// is in progress is never re-enqueued, so a retry cannot re-upload what Delete is removing.
+    /// An interrupted or failed replace re-PUTs its own key, so its URL stays.
     private func retry(recordID: UUID, destination: S3Destination) {
         guard !deletingIDs.contains(recordID), let record = history.record(id: recordID) else { return }
+        let data: Data
         do {
-            let data = try readLocalFile(of: record)
-            startUpload(recordID: recordID, data: data, destination: destination)
+            data = try readLocalFile(of: record)
         } catch {
             markFailed(recordID, message: UploadError.fileUnreadable(record.fileURL?.lastPathComponent ?? "no local file").localizedDescription)
+            return
+        }
+        // The location the lane writes to: the same expression `startUpload` uses for its lane.
+        let location = queue?.location ?? ObjectLocation(config: destination.config)
+        let policy = EditorUploadPlan.retryPolicy(record: record, currentLocation: location,
+                                                  others: history.records.filter { $0.id != recordID })
+        let started = EditorUploadPlan.startingRetry(record, policy: policy)
+        if started != record {
+            history.update(id: recordID) { $0 = started }
+        }
+        if case .fixed(let key) = policy {
+            startUpload(recordID: recordID, data: data, destination: destination, fixedKey: key)
+        } else {
+            startUpload(recordID: recordID, data: data, destination: destination)
         }
     }
 
@@ -829,7 +854,7 @@ final class AppCoordinator {
             }
         case .uploaded(let id, let url, let key):
             uploadingIDs.remove(id)
-            guard history.record(id: id) != nil else {
+            guard let before = history.record(id: id) else {
                 // The record disappeared while its upload was running. Nothing would point at the
                 // new object, so remove it again instead of copying or announcing its URL.
                 deleteOrphanedObject(key: key, at: location)
@@ -838,7 +863,7 @@ final class AppCoordinator {
             // Upload-only mode: the temporary file has done its job. If it cannot be removed the
             // record keeps pointing at it, so Delete can still remove it later.
             var removedTemporaryFile = false
-            if let record = history.record(id: id), record.fileIsTemporary, let fileURL = record.fileURL {
+            if before.fileIsTemporary, let fileURL = before.fileURL {
                 removedTemporaryFile = removePendingFile(at: fileURL, context: "after upload")
             }
             history.update(id: id) { record in
@@ -854,14 +879,31 @@ final class AppCoordinator {
                     record.fileURL = nil
                     record.fileIsTemporary = false
                 }
+                record = EditorUploadPlan.applyingSuccess(to: record)
             }
             Pasteboard.copy(url: url)
-            if settings.showNotification {
+            if EditorUploadPlan.shouldPostCacheNote(prior: before.priorUpload, uploadedKey: key, at: location,
+                                                    alreadyPosted: postedCacheNote) {
+                // In place of the usual notification, and also with Show notification off.
+                postedCacheNote = true
+                notifier.notify(title: "Uploaded, URL copied", body: EditorUploadPlan.cacheNote)
+            } else if settings.showNotification {
                 notifier.notifyUploaded(url: url)
             }
             refreshOverlay(for: id)
+            Task { [weak self] in await self?.deleteSupersededObjects(of: id) }
         case .failed(let id, let message):
-            markFailed(id, message: message)
+            guard history.record(id: id)?.priorUpload != nil else {
+                markFailed(id, message: message)
+                return
+            }
+            // An upload of a record that has a link: the old object is untouched, so the record
+            // goes back to it, and keeps the edited file and the stale note.
+            NSLog("Upload failed, the earlier link is kept: \(message)")
+            uploadingIDs.remove(id)
+            history.update(id: id) { $0 = EditorUploadPlan.applyingFailure(to: $0, message: message) }
+            refreshOverlay(for: id)
+            notifier.notifyError(EditorUploadPlan.failedReplaceMessage, title: "Not uploaded")
         case .cancelled(let id, let reservedKey):
             // Requested by the delete flow, which removes the record next; no notification.
             uploadingIDs.remove(id)
@@ -961,9 +1003,8 @@ final class AppCoordinator {
         controller.present()
     }
 
-    /// The editor's actions for `recordID`. Save, Save Copy and Copy go through the coordinator;
-    /// Upload is still a stub that only logs (Task 15 wires it). The stub reports failure, so
-    /// nothing is marked saved.
+    /// The editor's actions for `recordID`. Save, Save Copy, Copy, Upload and Upload as New all go
+    /// through the coordinator's one save and upload paths.
     private func editorActions(for recordID: UUID) -> EditorActions {
         EditorActions(
             save: { [weak self] image in await self?.editorSave(recordID: recordID, image: image) ?? false },
@@ -973,9 +1014,8 @@ final class AppCoordinator {
             copy: { [weak self] image in
                 await self?.editorCopy(recordID: recordID, image: image)
             },
-            upload: { _, asNew in
-                NSLog("Editor: Upload\(asNew ? " as New" : "") of \(recordID) is not wired yet")
-                return false
+            upload: { [weak self] image, asNew in
+                await self?.editorUpload(recordID: recordID, image: image, asNew: asNew) ?? false
             })
     }
 
@@ -1154,6 +1194,124 @@ final class AppCoordinator {
                             options: options) != nil else { return false }
         await replaceClipboardIfStillOriginal(recordID: recordID, png: png, image: image)
         return true
+    }
+
+    /// Upload (⌘U) and Upload as New (⌥⌘U). The edit is written locally first, so the file equals
+    /// the object; then it goes through the live lane like any upload, over the link's own key for
+    /// a replace or under a new template key. Returns true once the edit has been written locally
+    /// or handed to the queue, which tells the editor to mark the document saved.
+    private func editorUpload(recordID: UUID, image: ScaledImage, asNew: Bool) async -> Bool {
+        let action: EditorAction = asNew ? .uploadAsNew : .upload
+        // 1. The editor's available set can lag behind the record.
+        if refuseUpload(action, recordID: recordID) { return false }
+        // 2. Nothing is written, and the record stays as it is, without a destination.
+        guard let destination = makeDestination() else {
+            notifier.notifyError("Set up a destination in Settings > Upload, then upload again.", title: "Upload not configured")
+            return false
+        }
+        let png: Data
+        do {
+            png = try await Task.detached(priority: .userInitiated) {
+                try ImageEncoder.pngData(from: image.image, scale: image.scale)
+            }.value
+        } catch {
+            notifier.notifyError(error.localizedDescription, title: "Not uploaded")
+            return false
+        }
+        // 3. The local write, on the record as it is after the encode.
+        if refuseUpload(action, recordID: recordID) { return false }
+        guard let record = history.record(id: recordID) else { return false }
+        var wroteLocally = false
+        switch EditorSaveTarget.plan(for: record, saveFolder: saveLocation.currentURL) {
+        case .saveFolderFile, .pendingFile:
+            guard await applyLocalEdit(recordID: recordID, png: png, image: image) else { return false }
+            wroteLocally = true
+        case .unavailable where record.fileURL == nil:
+            // An uploaded upload-only capture: its pending file went after its upload. The edit gets
+            // pending/<id>.png, so Retry and Delete see a file and handle(.uploaded) removes it.
+            do {
+                let url = try pendingFiles.write(png, id: recordID, ext: "png")
+                history.update(id: recordID) { record in
+                    record.fileURL = url
+                    record.fileIsTemporary = true
+                }
+            } catch {
+                NSLog("Pending write failed: \(error.localizedDescription)")
+                keepOnClipboard(image, png: png, alreadyOnClipboard: false)
+                notifier.notifyError("\(error.localizedDescription) The image is on the clipboard.", title: "Not saved")
+                return false
+            }
+            // Now a pending-file target: applyLocalEdit rewrites the same bytes and does the
+            // bookkeeping (pixel size, editedAt, uploadIsStale, thumbnail, clipboard, editor state).
+            guard await applyLocalEdit(recordID: recordID, png: png, image: image) else { return false }
+            wroteLocally = true
+        case .unavailable:
+            // A save-folder file outside the current folder, or no folder: the file is not
+            // rewritten and the subtitle says so. The clipboard still must not keep the original.
+            await replaceClipboardIfStillOriginal(recordID: recordID, png: png, image: image)
+        }
+        // 4. Plan on the live record, against where the lane writes (as in startUpload).
+        if refuseUpload(action, recordID: recordID) { return wroteLocally }
+        guard let current = history.record(id: recordID) else { return wroteLocally }
+        let location = queue?.location ?? ObjectLocation(config: destination.config)
+        let plan = EditorUploadPlan.plan(record: current, currentLocation: location,
+                                         others: history.records.filter { $0.id != recordID }, asNew: asNew)
+        switch plan {
+        case .refuse(let reason):
+            notifier.notifyError(reason, title: "Not uploaded")
+            return wroteLocally
+        case .newObject(_, let notice?):
+            notifier.notify(title: "New link", body: notice)
+        case .newObject, .replace:
+            break
+        }
+        // 5. Uploading, the prior link and any superseded object, in one write.
+        history.update(id: recordID) { $0 = EditorUploadPlan.startingUpload($0, plan: plan) }
+        // 6. startUpload skips this refresh for a record already uploading, so the overlay and the
+        // editor (through pushEditorState) show Uploading… now, before the first progress event.
+        refreshOverlay(for: recordID)
+        // 7. Through the live lane: uploadingIDs, progress, cancel, Delete and the menu bar icon.
+        if case .replace(let key) = plan {
+            startUpload(recordID: recordID, data: png, destination: destination, fixedKey: key)
+        } else {
+            startUpload(recordID: recordID, data: png, destination: destination)
+        }
+        return true
+    }
+
+    /// Posts the live refusal for `action` as "Not uploaded". True when the upload must stop.
+    private func refuseUpload(_ action: EditorAction, recordID: UUID) -> Bool {
+        guard let reason = EditorAvailability.refusal(for: action, record: history.record(id: recordID),
+                                                      saveFolder: saveLocation.currentURL,
+                                                      isDeleting: deletingIDs.contains(recordID)) else { return false }
+        notifier.notifyError(reason, title: "Not uploaded")
+        return true
+    }
+
+    /// After a successful upload: deletes each superseded object at its own location, signed with
+    /// the credentials stored now. A key another capture points at is kept and dropped from the
+    /// list (that capture's own Delete removes it). A key that cannot be deleted stays listed, so
+    /// Delete tries it again through `CaptureDeletion.objects(for:)`.
+    private func deleteSupersededObjects(of id: UUID) async {
+        guard !deletingIDs.contains(id), let record = history.record(id: id), !record.supersededObjects.isEmpty else { return }
+        let live = record.uploadedKey.flatMap { key in record.objectLocation.map { ObjectRef(key: key, location: $0) } }
+        var settled: [ObjectRef] = []
+        for ref in record.supersededObjects {
+            if ref == live {
+                settled.append(ref) // never delete the link itself
+                continue
+            }
+            let others = history.records.filter { $0.id != id }
+            if !CaptureDeletion.sharedKeys([ref.key], at: ref.location, with: others).isEmpty {
+                NSLog("Kept superseded \(ref.key): another capture shares it")
+                settled.append(ref)
+            } else if let reason = await deleteObjects([ref.key], at: ref.location) {
+                NSLog("Could not delete superseded \(ref.key): \(reason)")
+            } else {
+                settled.append(ref)
+            }
+        }
+        history.update(id: id) { $0.supersededObjects.removeAll { settled.contains($0) } }
     }
 
     /// The clipboard rule (spec 2.6), after a Save Copy or (from Task 13) a local edit. Puts the
