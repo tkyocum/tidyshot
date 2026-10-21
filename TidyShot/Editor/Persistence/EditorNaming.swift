@@ -1,6 +1,7 @@
-import Foundation
+import AppKit
+import UniformTypeIdentifiers
 
-/// What the editor's Save As… panel suggests.
+/// What a Save As… panel suggests, for the editor and for a Quick Access card.
 nonisolated enum EditorNaming {
     struct SaveAsSuggestion: Equatable, Sendable {
         /// `nameFieldStringValue`, with `.png`.
@@ -24,5 +25,19 @@ nonisolated enum EditorNaming {
             fileName = namer.name(counter: counter) + ".png"
         }
         return SaveAsSuggestion(fileName: fileName, directory: saveFolder)
+    }
+
+    /// The Save As… panel for `suggestion`: PNG only, its name, and its folder when it has one
+    /// (otherwise the panel opens where it last was). The editor shows it as a sheet, a Quick
+    /// Access card as a window.
+    @MainActor
+    static func savePanel(for suggestion: SaveAsSuggestion) -> NSSavePanel {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.png]
+        panel.nameFieldStringValue = suggestion.fileName
+        if let directory = suggestion.directory {
+            panel.directoryURL = directory
+        }
+        return panel
     }
 }

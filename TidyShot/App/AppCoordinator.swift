@@ -442,7 +442,9 @@ final class AppCoordinator {
             retry: { [weak self] id in self?.retryUpload(recordID: id) },
             reveal: { [weak self] id in self?.reveal(recordID: id) },
             delete: { [weak self] id in self?.afterMenuTracking { Task { await self?.deleteCapture(recordID: id) } } },
-            annotate: { [weak self] id in self?.openEditorAfterMenuTracking(recordID: id) })
+            annotate: { [weak self] id in self?.openEditorAfterMenuTracking(recordID: id) },
+            saveAs: { [weak self] id in self?.saveAs(recordID: id) },
+            copyImage: { [weak self] id in Task { await self?.copyImage(recordID: id) } })
     }
 
     /// The screen for the card stack under `settings.overlayDisplay`; nil without screens.
@@ -678,7 +680,41 @@ final class AppCoordinator {
         }
     }
 
-    /// The capture's PNG: the local file when it can be read, otherwise the uploaded object. The
+    /// Save As… from a Quick Access card (and from a pin's menu, 6b): runs `saveCopy` after any
+    /// menu tracking (`afterMenuTracking`).
+    func saveAs(recordID: UUID) {
+        afterMenuTracking { [weak self] in
+            Task { await self?.saveCopy(recordID: recordID) }
+        }
+    }
+
+    /// Activates the app, asks for a place with the editor's suggestion, then writes the capture's
+    /// PNG there unchanged (`imageData(of:)`: the local file, or a signed GET). A copy only: the
+    /// record, its link, `lastCaptureURL` and the clipboard stay as they are.
+    private func saveCopy(recordID: UUID) async {
+        guard history.record(id: recordID) != nil else { return }
+        let panel = EditorNaming.savePanel(for: saveAsSuggestion(recordID: recordID))
+        // Reached from a non-activating card while another app is active; a plain activate() can
+        // be refused and the panel would open behind that app (as in SaveLocation.chooseFolder).
+        NSApplication.shared.activate(ignoringOtherApps: true)
+        guard await panel.begin() == .OK, let url = panel.url else { return }
+        // Read again: the upload may have finished, or the capture been deleted, while the panel was open.
+        guard let record = history.record(id: recordID) else {
+            NSLog("Save As: \(recordID) was deleted while the panel was open")
+            return
+        }
+        let png: Data
+        do {
+            png = try await imageData(of: record, downloadTitle: "Saving a copy…")
+        } catch {
+            notifier.notifyError(error.localizedDescription, title: "Not saved")
+            return
+        }
+        await writeSaveAsCopy(png, to: url)
+    }
+
+    /// The capture's PNG: the local file when it can be read, otherwise the uploaded object. Copy
+    /// Image, Annotate and the card's Save As… use it. The
     /// save folder is resolved here, on the main actor, and the file is read in a detached task,
     /// as `ThumbnailProvider` does: a temporary file in `pending` directly, a saved one through
     /// the folder's security scope.
@@ -1175,7 +1211,7 @@ final class AppCoordinator {
                 await self?.editorSaveAs(recordID: recordID, image: image, to: url) ?? false
             },
             saveAsSuggestion: { [weak self] in
-                self?.editorSaveAsSuggestion(recordID: recordID)
+                self?.saveAsSuggestion(recordID: recordID)
                     ?? EditorNaming.SaveAsSuggestion(fileName: "Screenshot.png", directory: nil)
             },
             copy: { [weak self] image in
@@ -1356,25 +1392,42 @@ final class AppCoordinator {
         let png: Data
         do {
             png = try await Task.detached(priority: .userInitiated) {
-                let png = try ImageEncoder.pngData(from: image.image, scale: image.scale)
-                try png.write(to: url, options: .atomic)
-                return png
+                try ImageEncoder.pngData(from: image.image, scale: image.scale)
             }.value
         } catch {
             NSLog("Save As failed: \(error.localizedDescription)")
             notifier.notifyError(error.localizedDescription, title: "Not saved")
             return false
         }
+        guard await writeSaveAsCopy(png, to: url) else { return false }
         await replaceClipboardIfStillOriginal(recordID: recordID, png: png, image: image)
+        return true
+    }
+
+    /// The one Save As… write, for the editor and for a card: `png` as it is, atomically, to a
+    /// URL a save panel returned. The panel's URL is user-selected, so the sandbox grants the
+    /// write, and no bookmark is kept. Posts `Saved` with the file name when notifications are on,
+    /// or the error as `Not saved`. Touches no record.
+    @discardableResult
+    private func writeSaveAsCopy(_ png: Data, to url: URL) async -> Bool {
+        do {
+            try await Task.detached(priority: .userInitiated) {
+                try png.write(to: url, options: .atomic)
+            }.value
+        } catch {
+            NSLog("Save As failed: \(error.localizedDescription)")
+            notifier.notifyError(error.localizedDescription, title: "Not saved")
+            return false
+        }
         if settings.showNotification {
             notifier.notifySaved(fileURL: url, title: "Saved")
         }
         return true
     }
 
-    /// The save panel's suggestion for `recordID`: its file name in the save folder, or the file
-    /// name template's name with the current `{counter}` (none is drawn).
-    private func editorSaveAsSuggestion(recordID: UUID) -> EditorNaming.SaveAsSuggestion {
+    /// The Save As… suggestion for `recordID`, the editor's and the card's: its file name in the
+    /// save folder, or the file name template's name with the current `{counter}` (none is drawn).
+    private func saveAsSuggestion(recordID: UUID) -> EditorNaming.SaveAsSuggestion {
         EditorNaming.saveAsSuggestion(for: history.record(id: recordID), saveFolder: saveLocation.currentURL,
                                       namer: FileNamer(template: settings.fileNameTemplate),
                                       currentCounter: settings.currentCounter)

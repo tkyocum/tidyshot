@@ -37,6 +37,10 @@ final class QuickAccessController {
         /// Opens the annotation editor; see `AppCoordinator.openEditor(recordID:)`. Stays enabled
         /// while the upload runs.
         var annotate: (UUID) -> Void
+        /// Save As… for the card's button and menu item; see `AppCoordinator.saveAs(recordID:)`.
+        var saveAs: (UUID) -> Void
+        /// Copy Image for the card's menu item; see `AppCoordinator.copyImage(recordID:)`.
+        var copyImage: (UUID) -> Void
     }
 
     /// One card: its panel, its model and its auto-close countdown.
@@ -157,7 +161,8 @@ final class QuickAccessController {
         model.onReveal = { actions.reveal(id) }
         model.onDelete = { actions.delete(id) }
         model.onAnnotate = { actions.annotate(id) }
-        // `onSaveAs` and `onCopyImage` keep their no-op defaults until Task 5.
+        model.onSaveAs = { actions.saveAs(id) }
+        model.onCopyImage = { actions.copyImage(id) }
         let card = Card(model: model, autoCloseSeconds: autoCloseSeconds)
         model.onClose = { [weak self, weak card] in
             // After the context menu's tracking, and outside the hosting view's own click.

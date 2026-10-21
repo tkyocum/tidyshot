@@ -14,7 +14,7 @@ final class QuickAccessModel {
     @ObservationIgnored var onDelete: () -> Void = {}
     @ObservationIgnored var onAnnotate: () -> Void = {}
     @ObservationIgnored var onClose: () -> Void = {}
-    /// Task 5 wires these to `AppCoordinator.saveAs(recordID:)` and `copyImage(recordID:)`.
+    /// The card's Save As… and Copy Image: `AppCoordinator.saveAs(recordID:)` and `copyImage(recordID:)`.
     @ObservationIgnored var onSaveAs: () -> Void = {}
     @ObservationIgnored var onCopyImage: () -> Void = {}
 
