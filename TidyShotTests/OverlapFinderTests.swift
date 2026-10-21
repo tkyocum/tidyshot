@@ -120,6 +120,45 @@ struct OverlapFinderTests {
         #expect(finder.find(previous: frame(offset: 40), current: frame(offset: 40), predicted: nil) == .still)
     }
 
+    /// A column of text no wider than two stripes is all that moves: the rest of the band is blank.
+    /// That is a scroll, not an animation, at any step; a noise spinner elsewhere changes nothing.
+    @Test func aScrollOfANarrowColumnIsNotStill() {
+        let width = 320, height = 300, header = 30, footer = 20, column = 0..<70
+        func pageRow(_ r: Int) -> [UInt8] {
+            (0..<width).map { x in
+                column.contains(x) && r % 24 > 4 && r % 24 < 18 ? UInt8((x * 3 + r * 29 + r / 24 * 7) % 200) : 250
+            }
+        }
+        func frame(offset: Int, spinner seed: UInt64? = nil) -> ScrollFrame {
+            var noise = SyntheticPage.LCG(seed: seed ?? 0)
+            var bgra = [UInt8]()
+            bgra.reserveCapacity(width * height * 4)
+            for y in 0..<height {
+                var row = y < header ? (0..<width).map { UInt8(100 + ($0 * 7 + y * 13) % 120) }
+                    : y >= height - footer ? (0..<width).map { UInt8(60 + ($0 * 11 + y * 5) % 90) }
+                    : pageRow(offset + y - header)
+                if seed != nil, (120..<160).contains(y) {
+                    for x in 200..<224 { row[x] = UInt8(truncatingIfNeeded: noise.next()) }
+                }
+                for v in row { bgra += [v, v, v, 255] }
+            }
+            return ScrollFrame(bgra: Data(bgra), width: width, height: height, bytesPerRow: width * 4)
+        }
+        let finder = OverlapFinder(scrollbarColumns: 0)
+        for step in [3, 20, 90] {
+            let result = finder.find(previous: frame(offset: 100), current: frame(offset: 100 + step), predicted: nil)
+            #expect(dy(of: result) == step, "step \(step) gave \(result)")
+        }
+        for step in [3, 20] {
+            let result = finder.find(previous: frame(offset: 100, spinner: 1),
+                                     current: frame(offset: 100 + step, spinner: 2), predicted: nil)
+            #expect(dy(of: result) == step, "step \(step) with a spinner gave \(result)")
+        }
+        #expect(finder.find(previous: frame(offset: 100), current: frame(offset: 100), predicted: nil) == .still)
+        #expect(finder.find(previous: frame(offset: 100, spinner: 1), current: frame(offset: 100, spinner: 2),
+                            predicted: nil) == .still)
+    }
+
     @Test func framesOfDifferentSizesAreLost() {
         var page = SyntheticPage()
         var other = SyntheticPage(height: 880)

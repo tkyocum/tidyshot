@@ -11,10 +11,15 @@ final class FakeFrameSource: FrameSource {
     private(set) var stopCount = 0
     /// Thrown by `start()` when set.
     var startError: (any Error)?
+    /// When true, `start()` suspends after counting itself until `releaseStart()`, like a stream
+    /// that is still fetching its content filter.
+    var holdsStart = false
+    private var startGate: CheckedContinuation<Void, Never>?
     private var continuation: AsyncStream<FrameEvent>.Continuation?
 
     func start() async throws -> AsyncStream<FrameEvent> {
         startCount += 1
+        if holdsStart { await withCheckedContinuation { startGate = $0 } }
         if let startError { throw startError }
         let (events, continuation) = AsyncStream.makeStream(of: FrameEvent.self)
         self.continuation = continuation
@@ -25,6 +30,15 @@ final class FakeFrameSource: FrameSource {
         stopCount += 1
         continuation?.finish()
         continuation = nil
+    }
+
+    /// True while a held `start()` waits.
+    var isHoldingStart: Bool { startGate != nil }
+
+    func releaseStart() {
+        holdsStart = false
+        startGate?.resume()
+        startGate = nil
     }
 
     func send(_ event: FrameEvent) {

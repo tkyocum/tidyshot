@@ -104,6 +104,31 @@ struct ScrollCaptureSessionTests {
         #expect(idleSource.startCount == 0)
     }
 
+    /// Cancel while the stream is still starting: when the start returns, the session stops the
+    /// stream again and reads nothing from it.
+    @Test func cancelDuringTheStreamStartStopsItAgainAndReadsNothing() async throws {
+        var page = makePage()
+        let (session, source, _) = makeSession(page)
+        source.holdsStart = true
+        let starting = Task { await session.start() }
+        try await eventually { source.isHoldingStart }
+
+        await session.cancel()
+        #expect(source.stopCount == 1)
+        source.releaseStart()
+        await starting.value
+
+        guard case .cancelled? = session.outcome else {
+            Issue.record("not cancelled")
+            return
+        }
+        #expect(source.stopCount == 2)
+        send(&page, source, offsets: [0, 80])
+        for _ in 0..<20 { await Task.yield() }
+        #expect(session.framesRead == 0)
+        #expect(session.phase == .ended)
+    }
+
     /// `advance()` is Start, then Done. Done waits for the first frame; with no movement the
     /// result is that frame alone, which is also the preview until rows are stitched.
     @Test func doneWithoutMovementGivesTheFirstFrame() async throws {

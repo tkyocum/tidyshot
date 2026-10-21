@@ -78,6 +78,7 @@ nonisolated final class ScrollFrameSource: NSObject, FrameSource, SCStreamOutput
         guard !started else { return events }
         started = true
         let filter = try await makeFilter()
+        if stopped { return events }
         let config = SCStreamConfiguration()
         config.sourceRect = Geometry.displayLocal(rect, in: display.frame)
         config.width = pixelWidth

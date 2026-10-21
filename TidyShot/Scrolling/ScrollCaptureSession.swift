@@ -71,7 +71,7 @@ final class ScrollCaptureSession {
     /// first frame.
     private(set) var heightPixels: Int
     private(set) var status: ScrollCaptureStatus = .readyManual
-    /// The first frame until rows are stitched, then the stitched rows, at most
+    /// The first frame, at full size, until rows are stitched; then the stitched rows, at most
     /// `ScrollCaptureLimits.previewMaxWidth` pixels wide.
     private(set) var preview: CGImage?
     /// True once the first frame has arrived. Done waits for it.

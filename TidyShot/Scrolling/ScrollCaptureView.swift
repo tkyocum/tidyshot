@@ -6,7 +6,7 @@ import SwiftUI
 struct ScrollCaptureView: View {
     static let padding: CGFloat = 12
     /// The panel's height without the preview, in points: the readout, the status line at two
-    /// lines, the buttons, the spacing and the padding. Measured in Step 9 and fixed here.
+    /// lines, the buttons, the spacing and the padding. Measured in Step 10.
     static let chromeHeight: CGFloat = 120
     static var previewWidth: CGFloat { ScrollPanelGeometry.panelWidth - 2 * padding }
 

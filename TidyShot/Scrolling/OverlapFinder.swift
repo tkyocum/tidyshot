@@ -21,7 +21,8 @@ nonisolated struct OverlapFinder: Sendable {
     /// This fraction of the informative rows equal at the same y, between the leading and the
     /// trailing run of equal rows, means nothing moved.
     var stillFraction = 0.9
-    /// A row still counts as equal when at most this many of its stripes differ.
+    /// A row still counts as equal when at most this many of its stripes differ, and none of the
+    /// differing stripe cells shows content the other frame has at another row.
     var stillTolerance = 2
     /// A candidate shift needs this fraction of its informative cells to agree.
     var acceptScore = 0.8
@@ -49,15 +50,25 @@ nonisolated struct OverlapFinder: Sendable {
         // trailing run of equal rows. A sticky header or footer is equal in both frames whatever
         // happened, so counting it would read a small scroll of a sparse page as still. A row is
         // equal when all but `stillTolerance` of its stripes are, so a spinner, caret or GIF in the
-        // band does not break the runs or count as movement.
+        // band does not break the runs or count as movement; but a differing stripe that shows what the
+        // other frame has at another row is a scroll of a narrow column, which is not equal.
         let fa = rowHashes(a, columns: usable), fb = rowHashes(b, columns: usable)
+        // Identical rows throughout: nothing to look at, and the stripe hashes are not worth computing.
+        if !fa.indices.contains(where: { fa[$0] != fb[$0] }) { return .still }
         let freqA = counts(fa[...])
         let stripeColumns = stripeGroups(usable)
         let sa = stripeColumns.map { rowHashes(a, columns: $0) }, sb = stripeColumns.map { rowHashes(b, columns: $0) }
+        let stripeFreqA = sa.map { counts($0[...]) }, stripeFreqB = sb.map { counts($0[...]) }
         func equal(_ y: Int) -> Bool {
             if fa[y] == fb[y] { return true }
             var differing = 0
-            for g in 0..<sa.count where sa[g][y] != sb[g][y] { differing += 1 }
+            for g in 0..<sa.count where sa[g][y] != sb[g][y] {
+                // A stripe cell that shows content the other frame has at another row moved: that is a
+                // scroll (perhaps of a narrow column), not an animation, so the row is not equal.
+                if let n = stripeFreqA[g][sb[g][y]], n <= maxRepeat { return false }
+                if let n = stripeFreqB[g][sa[g][y]], n <= maxRepeat { return false }
+                differing += 1
+            }
             return differing <= stillTolerance
         }
         var lead = 0
