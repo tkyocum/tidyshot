@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Thumbnail, upload status, and copy, retry, delete and close buttons. Hosted in `QuickAccessPanel`.
+/// Thumbnail, upload status, and annotate, copy, retry, close and delete buttons. Hosted in `QuickAccessPanel`.
 struct QuickAccessView: View {
     static let size = CGSize(width: 340, height: 104)
 
@@ -13,7 +13,16 @@ struct QuickAccessView: View {
                 status
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            VStack(spacing: 10) {
+            VStack(spacing: 8) {
+                Button {
+                    model.onAnnotate()
+                } label: {
+                    Image(systemName: "pencil.tip.crop.circle")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Annotate")
+                .accessibilityLabel("Annotate")
                 Button {
                     model.onClose()
                 } label: {

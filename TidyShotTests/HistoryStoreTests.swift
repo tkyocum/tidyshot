@@ -92,19 +92,29 @@ struct HistoryStoreTests {
     @Test func didPruneReportsDroppedRecordsOnAddAndLoad() {
         let first = store(retentionDays: 30)
         var pruned: [[UUID]] = []
-        first.didPrune = { pruned.append($0.map(\.id)) }
+        var stillListed: [UUID] = []
+        first.didPrune = { dropped in
+            pruned.append(dropped.map(\.id))
+            // Reported after `records` dropped them, so the editor state push finds them gone.
+            stillListed += dropped.map(\.id).filter { first.record(id: $0) != nil }
+        }
         let old = record(age: 31 * 86_400)
         first.add(old)
         #expect(pruned == [[old.id]])
         first.add(record(age: 29 * 86_400))
         #expect(pruned == [[old.id]])
+        #expect(stillListed.isEmpty)
 
         let second = store(retentionDays: 7)
         var prunedOnLoad: [UUID] = []
-        second.didPrune = { prunedOnLoad = $0.map(\.id) }
+        second.didPrune = { dropped in
+            prunedOnLoad = dropped.map(\.id)
+            stillListed += dropped.map(\.id).filter { second.record(id: $0) != nil }
+        }
         second.load()
         #expect(prunedOnLoad.count == 1)
         #expect(second.records.isEmpty)
+        #expect(stillListed.isEmpty)
     }
 
     /// An upload-only capture that was never uploaded has its only copy in `pending/`; retention
@@ -140,6 +150,55 @@ struct HistoryStoreTests {
 
         #expect(history.records.map(\.id) == [uploading.id])
         #expect(pruned == [old.id])
+    }
+
+    /// An upload-only capture whose replace failed keeps the edited bytes in `pending/` while its
+    /// link still shows the original. That file is the edit's only copy, so retention keeps it.
+    @Test func staleUploadOnlyEditIsNeverPruned() {
+        let history = store(retentionDays: 7)
+        var pruned: [UUID] = []
+        history.didPrune = { pruned += $0.map(\.id) }
+        let staleEdit = CaptureRecord(timestamp: now.addingTimeInterval(-30 * 86_400), fileURL: dir.appending(path: "pending/a.png"),
+                                      fileIsTemporary: true, pixelWidth: 1, pixelHeight: 1, appName: nil,
+                                      uploadState: .uploaded(url: URL(string: "https://snap.tky.io/a.png")!, key: "a.png"),
+                                      editedAt: now.addingTimeInterval(-29 * 86_400), uploadIsStale: true)
+        let notStale = CaptureRecord(timestamp: now.addingTimeInterval(-30 * 86_400), fileURL: dir.appending(path: "pending/b.png"),
+                                     fileIsTemporary: true, pixelWidth: 1, pixelHeight: 1, appName: nil,
+                                     uploadState: .uploaded(url: URL(string: "https://snap.tky.io/b.png")!, key: "b.png"))
+        #expect(staleEdit.keepsUnuploadedEdit)
+        #expect(!notStale.keepsUnuploadedEdit)
+
+        history.add(staleEdit)
+        history.add(notStale)
+        #expect(history.records.map(\.id) == [staleEdit.id])
+        #expect(pruned == [notStale.id])
+
+        let reloaded = store(retentionDays: 7)
+        reloaded.load()
+        #expect(reloaded.records.map(\.id) == [staleEdit.id])
+    }
+
+    /// A quit or crash during an editor replace: the record loads as failed, and the link it had
+    /// stays on disk, also after load saves the rewrite, so Copy URL and Delete still find it.
+    @Test func interruptedReplaceKeepsPriorUpload() throws {
+        let location = ObjectLocation(endpoint: "https://s3.us-west-2.amazonaws.com", region: "us-west-2",
+                                      bucket: "snap", usePathStyle: false)
+        let prior = PriorUpload(url: URL(string: "https://snap.tky.io/a.png")!, key: "a.png", location: location, isReplace: true)
+        var item = record(state: .uploading(fraction: 0.4))
+        item.objectLocation = location
+        item.priorUpload = prior
+        store().add(item)
+
+        let second = store()
+        second.load()
+        let loaded = try #require(second.record(id: item.id))
+        #expect(loaded.uploadState == .failed(message: "Upload was interrupted."))
+        #expect(loaded.priorUpload == prior)
+        #expect(loaded.linkURL == prior.url)
+
+        let third = store()
+        third.load()
+        #expect(third.record(id: item.id)?.priorUpload == prior)
     }
 
     @Test func missingFileLoadsEmpty() {

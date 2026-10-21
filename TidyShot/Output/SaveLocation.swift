@@ -75,6 +75,43 @@ final class SaveLocation {
         return try Data(contentsOf: fileURL)
     }
 
+    /// True when `fileURL` lies inside `folder`, at any depth. Paths are compared component by
+    /// component as written, with `.` and `..` applied. Symlinks are not resolved and the file
+    /// system is not consulted, so a file reached through another spelling of the folder counts
+    /// as outside, which only turns Save off.
+    nonisolated static func contains(_ fileURL: URL, inFolder folder: URL) -> Bool {
+        guard fileURL.isFileURL, folder.isFileURL else { return false }
+        let file = lexicalComponents(of: fileURL)
+        let base = lexicalComponents(of: folder)
+        return file.count > base.count && file.starts(with: base)
+    }
+
+    /// Replaces `fileURL` with `data` atomically, holding `folder`'s security scope for the write.
+    /// Throws `CocoaError(.fileWriteNoPermission)` for a file outside `folder`, so Save over never
+    /// writes anywhere else. Touches no instance state, so it runs in a detached task.
+    nonisolated static func overwriteScoped(_ data: Data, at fileURL: URL, folder: URL) throws {
+        guard contains(fileURL, inFolder: folder) else {
+            throw CocoaError(.fileWriteNoPermission,
+                             userInfo: [NSLocalizedDescriptionKey: "\(fileURL.lastPathComponent) is not in the save folder."])
+        }
+        let accessing = folder.startAccessingSecurityScopedResource()
+        defer { if accessing { folder.stopAccessingSecurityScopedResource() } }
+        try data.write(to: fileURL, options: .atomic)
+    }
+
+    /// The path's components with `.` dropped and `..` applied, from the text alone.
+    nonisolated private static func lexicalComponents(of url: URL) -> [String] {
+        var parts: [String] = []
+        for part in url.path(percentEncoded: false).split(separator: "/") {
+            switch part {
+            case ".": continue
+            case "..": if !parts.isEmpty { parts.removeLast() }
+            default: parts.append(String(part))
+            }
+        }
+        return parts
+    }
+
     /// Deletes a file inside the save folder, holding security-scoped access. A file that is
     /// already gone is not an error; any other failure throws, and Delete then offers to remove the
     /// record from history and leave the file.

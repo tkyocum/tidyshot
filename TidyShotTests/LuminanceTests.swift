@@ -68,4 +68,17 @@ struct LuminanceTests {
         #expect(CrosshairStyle(luminance: 0.5) == .light)
         #expect(CrosshairStyle(luminance: 0) == .light)
     }
+
+    /// Each style is an opaque line over a halo in the opposite colour; `.outlined` has the
+    /// colours of `.light`.
+    @Test func crosshairStyleColours() {
+        #expect(CrosshairStyle.dark.lineWhite == 0)
+        #expect(CrosshairStyle.dark.haloWhite == 1)
+        #expect(CrosshairStyle.light.lineWhite == 1)
+        #expect(CrosshairStyle.light.haloWhite == 0)
+        #expect(CrosshairStyle.outlined.lineWhite == 1)
+        #expect(CrosshairStyle.outlined.haloWhite == 0)
+        #expect(CrosshairStyle.lineAlpha == 1)
+        #expect(CrosshairStyle.haloAlpha == 0.7)
+    }
 }

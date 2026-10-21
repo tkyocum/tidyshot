@@ -9,7 +9,14 @@ final class QuickAccessController {
         var reveal: (UUID) -> Void
         /// Deletes the capture everywhere after one confirmation; see `AppCoordinator.deleteCapture`.
         var delete: (UUID) -> Void
+        /// Opens the annotation editor; see `AppCoordinator.openEditor(recordID:)`. Stays enabled
+        /// while the upload runs.
+        var annotate: (UUID) -> Void
     }
+
+    /// Called with the record's id each time a panel closes, whatever closed it: the Close button,
+    /// the auto-close timer, a delete, the editor opening, or the next capture's panel replacing it.
+    var onDidClose: ((UUID) -> Void)?
 
     private var panel: QuickAccessPanel?
     private var model: QuickAccessModel?
@@ -23,6 +30,7 @@ final class QuickAccessController {
         model.onRetry = { actions.retry(record.id) }
         model.onReveal = { actions.reveal(record.id) }
         model.onDelete = { actions.delete(record.id) }
+        model.onAnnotate = { actions.annotate(record.id) }
         model.onClose = { [weak self] in self?.close() }
         self.model = model
         self.autoCloseSeconds = autoCloseSeconds
@@ -59,9 +67,13 @@ final class QuickAccessController {
     func close() {
         closeTask?.cancel()
         closeTask = nil
+        let closedID = model?.record.id
         panel?.orderOut(nil)
         panel = nil
         model = nil
+        if let closedID {
+            onDidClose?(closedID)
+        }
     }
 
     /// Waits `autoCloseSeconds`; while the mouse is over the panel the countdown restarts.

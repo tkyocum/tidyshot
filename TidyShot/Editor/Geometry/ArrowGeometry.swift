@@ -1,0 +1,79 @@
+import CoreGraphics
+import Foundation
+
+/// The arrow's filled head and the end of its round-capped shaft, in image pixels. `scale` is the
+/// capture scale, so a 2x capture gets a head twice as many pixels long.
+nonisolated enum ArrowGeometry {
+    /// Half the angle at the tip.
+    static let halfAngleDegrees: CGFloat = 28
+
+    /// The head's length along the shaft: max(12 * scale, 4 * lineWidth), but never longer than
+    /// the arrow, so a short arrow's head ends at its tail.
+    static func headLength(from: CGPoint, to: CGPoint, lineWidth: CGFloat, scale: CGFloat) -> CGFloat {
+        min(max(12 * scale, 4 * lineWidth), hypot(to.x - from.x, to.y - from.y))
+    }
+
+    /// The head triangle. `tip` is `to`. `left` and `right` are the corners of the base, which is
+    /// square to the shaft `headLength` back from the tip; left and right are as seen travelling
+    /// from `from` to `to` with y growing downward. A zero-length arrow gives three equal points.
+    static func head(from: CGPoint, to: CGPoint, lineWidth: CGFloat, scale: CGFloat) -> (tip: CGPoint, left: CGPoint, right: CGPoint) {
+        guard let unit = direction(from: from, to: to) else { return (to, to, to) }
+        let length = headLength(from: from, to: to, lineWidth: lineWidth, scale: scale)
+        let halfWidth = length * tan(halfAngleDegrees * .pi / 180)
+        let base = CGPoint(x: to.x - unit.dx * length, y: to.y - unit.dy * length)
+        let left = CGPoint(x: base.x + unit.dy * halfWidth, y: base.y - unit.dx * halfWidth)
+        let right = CGPoint(x: base.x - unit.dy * halfWidth, y: base.y + unit.dx * halfWidth)
+        return (to, left, right)
+    }
+
+    /// Where the shaft stops: half the head's length back from the tip. That is past the base, so
+    /// no gap shows, and the round cap stays inside the triangle: there the distance to each side
+    /// is (length / 2) * sin(28°), at least 0.94 * lineWidth because length is at least
+    /// 4 * lineWidth, against a cap radius of lineWidth / 2.
+    static func shaftEnd(from: CGPoint, to: CGPoint, lineWidth: CGFloat, scale: CGFloat) -> CGPoint {
+        guard let unit = direction(from: from, to: to) else { return to }
+        let back = headLength(from: from, to: to, lineWidth: lineWidth, scale: scale) / 2
+        return CGPoint(x: to.x - unit.dx * back, y: to.y - unit.dy * back)
+    }
+
+    /// The unit vector from `from` to `to`, nil when they are equal.
+    private static func direction(from: CGPoint, to: CGPoint) -> CGVector? {
+        let length = hypot(to.x - from.x, to.y - from.y)
+        guard length > 0 else { return nil }
+        return CGVector(dx: (to.x - from.x) / length, dy: (to.y - from.y) / length)
+    }
+}
+
+/// Everything an annotation paints, in image pixels, so the canvas can invalidate it and skip the
+/// drawings outside a dirty rect.
+nonisolated enum AnnotationGeometry {
+    /// Anti-aliasing can touch one pixel past the geometry.
+    static let antialiasMargin: CGFloat = 1
+
+    static func bounds(of annotation: Annotation, scale: CGFloat) -> CGRect {
+        let painted: CGRect
+        switch annotation {
+        case .rectangle(let shape):
+            // The stroke sits inside the rect.
+            painted = shape.rect.standardized
+        case .arrow(let segment):
+            let head = ArrowGeometry.head(from: segment.from, to: segment.to, lineWidth: segment.lineWidth, scale: scale)
+            let end = ArrowGeometry.shaftEnd(from: segment.from, to: segment.to, lineWidth: segment.lineWidth, scale: scale)
+            let cap = segment.lineWidth / 2
+            let shaft = enclosing([segment.from, end]).insetBy(dx: -cap, dy: -cap)
+            painted = shaft.union(enclosing([head.tip, head.left, head.right]))
+        case .redact(let region, _), .blur(let region, _), .pixelate(let region, _):
+            painted = region.rect.standardized
+        }
+        return painted.insetBy(dx: -antialiasMargin, dy: -antialiasMargin)
+    }
+
+    /// The smallest rect holding `points`; it may have zero width or height.
+    private static func enclosing(_ points: [CGPoint]) -> CGRect {
+        let xs = points.map(\.x)
+        let ys = points.map(\.y)
+        let minX = xs.min() ?? 0
+        let minY = ys.min() ?? 0
+        return CGRect(x: minX, y: minY, width: (xs.max() ?? 0) - minX, height: (ys.max() ?? 0) - minY)
+    }
+}

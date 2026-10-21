@@ -10,9 +10,11 @@ nonisolated final class FakeDestination: Destination, Sendable {
         var failuresRemaining = 0
         var failure: UploadError = .httpStatus(503, body: "")
         var headKeys: [String] = []
-        var uploads: [(key: String, data: Data, contentType: String)] = []
+        var uploads: [(key: String, data: Data, contentType: String, cacheControl: String?)] = []
         /// Every call to `upload`, including ones that throw.
         var uploadAttempts = 0
+        /// The key of every call to `upload`, including ones that throw, in order.
+        var attemptKeys: [String] = []
         /// This many uploads (after any scripted failures) wait a minute instead of finishing,
         /// so a test can cancel them; the wait throws `CancellationError` when the task is cancelled.
         var blockingUploadsRemaining = 0
@@ -38,9 +40,11 @@ nonisolated final class FakeDestination: Destination, Sendable {
         state.withLock { $0.headKeys.append(key); return $0.existingKeys.contains(key) }
     }
 
-    func upload(_ data: Data, key: String, contentType: String, progress: @escaping @Sendable (Double) -> Void) async throws {
+    func upload(_ data: Data, key: String, contentType: String, cacheControl: String?,
+                progress: @escaping @Sendable (Double) -> Void) async throws {
         let failure: UploadError? = state.withLock {
             $0.uploadAttempts += 1
+            $0.attemptKeys.append(key)
             guard $0.failuresRemaining > 0 else { return nil }
             $0.failuresRemaining -= 1
             return $0.failure
@@ -75,7 +79,7 @@ nonisolated final class FakeDestination: Destination, Sendable {
         }
         progress(0.5)
         progress(1)
-        state.withLock { $0.uploads.append((key, data, contentType)) }
+        state.withLock { $0.uploads.append((key, data, contentType, cacheControl)) }
     }
 
     /// Finishes every held upload, now and later: successfully, or by throwing `error`.
@@ -118,6 +122,8 @@ func eventually(_ condition: () async -> Bool) async throws {
 
 struct UploadQueueTests {
     let data = Data("png".utf8)
+    let fixedKey = "shots/2026/10/aB3dE9.png"
+    let fixedURL = URL(string: "https://snap.tky.io/shots/2026/10/aB3dE9.png")!
 
     func makeQueue(destination: FakeDestination, log: EventLog) -> UploadQueue {
         UploadQueue(destination: destination,
@@ -411,5 +417,124 @@ struct UploadQueueTests {
         }
         #expect(ids == [first, first, second, second])
         try await eventually { await queue.isIdle }
+    }
+
+    /// A fixed key is the record's own key at its own location, so the queue sends no HEAD. The
+    /// existing initialiser still names its key from the template.
+    @Test func fixedKeyJobSkipsHEAD() async throws {
+        let naming = TemplateContext(date: Date(timeIntervalSince1970: 1_792_411_200), counter: 3, hostname: "miffle")
+        #expect(UploadJob(id: UUID(), data: data, contentType: "image/png", fileExtension: "png", naming: naming).key
+                == .template(naming))
+        #expect(UploadJob(id: UUID(), data: data, contentType: "image/png", fileExtension: "png", fixedKey: fixedKey).key
+                == .fixed(fixedKey))
+
+        let destination = FakeDestination()
+        let log = EventLog()
+        let queue = makeQueue(destination: destination, log: log)
+        let id = UUID()
+
+        await queue.enqueue(UploadJob(id: id, data: data, contentType: "image/png", fileExtension: "png", fixedKey: fixedKey))
+        try await eventually { log.events.contains(.uploaded(id: id, url: fixedURL, key: fixedKey)) }
+
+        #expect(log.events.first == .started(id: id, attempt: 1))
+        #expect(destination.state.withLock { $0.headKeys } == [])
+        #expect(destination.state.withLock { state in state.uploads.map { $0.key } } == [fixedKey])
+    }
+
+    /// HEAD would find the record's own object and steer the replace to a new key. A fixed key
+    /// overwrites the object that is there.
+    @Test func fixedKeyPutsExactKeyEvenWhenItExists() async throws {
+        let destination = FakeDestination(.init(existingKeys: [fixedKey]))
+        let log = EventLog()
+        let queue = makeQueue(destination: destination, log: log)
+        let id = UUID()
+
+        await queue.enqueue(UploadJob(id: id, data: data, contentType: "image/png", fileExtension: "png", fixedKey: fixedKey))
+        try await eventually { log.events.contains(.uploaded(id: id, url: fixedURL, key: fixedKey)) }
+
+        #expect(destination.state.withLock { state in state.uploads.map { $0.key } } == [fixedKey])
+        #expect(destination.state.withLock { $0.headKeys } == [])
+    }
+
+    /// Every attempt PUTs the same key, so a retried replace keeps the URL.
+    @Test func fixedKeyRetryReusesKey() async throws {
+        let destination = FakeDestination(.init(failuresRemaining: 2, failure: .httpStatus(503, body: "")))
+        let log = EventLog()
+        let queue = makeQueue(destination: destination, log: log)
+        let id = UUID()
+
+        await queue.enqueue(UploadJob(id: id, data: data, contentType: "image/png", fileExtension: "png", fixedKey: fixedKey))
+        try await eventually { log.events.contains(.uploaded(id: id, url: fixedURL, key: fixedKey)) }
+
+        let starts = log.events.filter { if case .started = $0 { return true } else { return false } }
+        #expect(starts == [.started(id: id, attempt: 1), .started(id: id, attempt: 2), .started(id: id, attempt: 3)])
+        #expect(destination.state.withLock { $0.attemptKeys } == [fixedKey, fixedKey, fixedKey])
+        #expect(destination.state.withLock { $0.headKeys } == [])
+    }
+
+    /// Delete cancels an in-flight replace and must learn its key, because the PUT may have landed.
+    @Test func cancelOfFixedKeyJobReportsThatKey() async throws {
+        let destination = FakeDestination(.init(blockingUploadsRemaining: 1))
+        let log = EventLog()
+        let queue = makeQueue(destination: destination, log: log)
+        let id = UUID()
+
+        await queue.enqueue(UploadJob(id: id, data: data, contentType: "image/png", fileExtension: "png", fixedKey: fixedKey))
+        try await eventually { destination.state.withLock { $0.uploadAttempts } == 1 }
+
+        #expect(await queue.cancel(recordID: id) == .stopped(reservedKey: fixedKey))
+        #expect(log.events == [.started(id: id, attempt: 1), .cancelled(id: id, reservedKey: fixedKey)])
+        try await eventually { await queue.isIdle }
+        #expect(destination.state.withLock { $0.uploads.isEmpty })
+    }
+
+    /// The coordinator draws a `{counter}` only for template jobs. The queue never expands the
+    /// template for a fixed key, so nothing is drawn from the key namer. The template job after it
+    /// uses the same namer, which shows that the zero is not vacuous.
+    @Test func fixedKeyDrawsNoCounter() async throws {
+        let draws = Mutex(0)
+        let destination = FakeDestination()
+        let log = EventLog()
+        let queue = UploadQueue(destination: destination,
+                                keyNamer: ObjectKeyNamer(template: "{counter}-{random}", randomString: { length in
+                                    draws.withLock { $0 += 1 }
+                                    return String(repeating: "K", count: length)
+                                }),
+                                policy: .immediate, sleep: { _ in }, events: { log.events.append($0) })
+        let fixed = UUID()
+        let template = UUID()
+
+        await queue.enqueue(UploadJob(id: fixed, data: data, contentType: "image/png", fileExtension: "png", fixedKey: fixedKey))
+        try await eventually { log.events.contains(.uploaded(id: fixed, url: fixedURL, key: fixedKey)) }
+        #expect(draws.withLock { $0 } == 0)
+
+        let naming = TemplateContext(date: Date(timeIntervalSince1970: 1_792_411_200), counter: 7, hostname: "miffle")
+        await queue.enqueue(UploadJob(id: template, data: data, contentType: "image/png", fileExtension: "png", naming: naming))
+        try await eventually { log.events.contains(.uploaded(id: template, url: URL(string: "https://snap.tky.io/7-KKKKKK.png")!,
+                                                              key: "7-KKKKKK.png")) }
+        #expect(draws.withLock { $0 } == 1)
+    }
+
+    /// A replace sends `Cache-Control: no-cache` by default. A template job sends none.
+    @Test func fixedKeyPassesCacheControl() async throws {
+        #expect(UploadJob(id: UUID(), data: data, contentType: "image/png", fileExtension: "png", fixedKey: fixedKey).cacheControl
+                == "no-cache")
+        #expect(UploadJob(id: UUID(), data: data, contentType: "image/png", fileExtension: "png", fixedKey: fixedKey,
+                          cacheControl: nil).cacheControl == nil)
+        #expect(UploadJob(id: UUID(), data: data, contentType: "image/png", fileExtension: "png").cacheControl == nil)
+
+        let destination = FakeDestination()
+        let log = EventLog()
+        let queue = makeQueue(destination: destination, log: log)
+        let fixed = UUID()
+        let template = UUID()
+
+        await queue.enqueue(UploadJob(id: fixed, data: data, contentType: "image/png", fileExtension: "png", fixedKey: fixedKey))
+        await queue.enqueue(UploadJob(id: template, data: data, contentType: "image/png", fileExtension: "png"))
+        try await eventually { log.events.filter { if case .uploaded = $0 { return true } else { return false } }.count == 2 }
+
+        let uploads = destination.state.withLock { $0.uploads }
+        #expect(uploads.map { $0.key } == [fixedKey, "s/KKKKKK.png"])
+        #expect(uploads.map { $0.cacheControl } == ["no-cache", nil])
     }
 }

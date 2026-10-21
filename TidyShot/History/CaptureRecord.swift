@@ -32,10 +32,28 @@ nonisolated struct CaptureRecord: Codable, Identifiable, Equatable, Sendable {
     /// The key a cancelled upload had reserved. Its PUT may have completed on the server as it
     /// was cancelled, so Delete removes this key too, also when a first attempt failed.
     var pendingObjectKey: String?
+    /// When an edit from the editor was last written over this capture's file (Save, or the
+    /// local write before an Upload). Nil for a capture never edited. A capture-time thumbnail
+    /// that finishes late is not named on an edited record, because it shows the original.
+    var editedAt: Date?
+    /// True once an edit was written locally while the link still serves the earlier upload.
+    /// The editor's subtitle then says so. Cleared when an upload of the edit succeeds.
+    var uploadIsStale: Bool
+    /// Objects the record's earlier uploads left behind: the old key of an Upload as New, or of an
+    /// upload after the destination changed, each at its own location. Deleted after the new
+    /// upload succeeds; a ref whose DELETE failed stays here, so Delete removes it later.
+    var supersededObjects: [ObjectRef]
+    /// The link the record had when the editor started an upload over it. Set in the same update
+    /// that marks the record uploading; cleared on `.uploaded` and on a handled failure. It
+    /// survives a quit or crash mid-upload (`HistoryStore.load` turns `.uploading` into
+    /// `.failed`), so the link stays copyable and Delete still finds its object.
+    var priorUpload: PriorUpload?
 
     init(id: UUID = UUID(), timestamp: Date = Date(), fileURL: URL?, fileIsTemporary: Bool = false,
          thumbnailFileName: String? = nil, pixelWidth: Int, pixelHeight: Int, appName: String?,
-         uploadState: UploadState = .none, objectLocation: ObjectLocation? = nil, pendingObjectKey: String? = nil) {
+         uploadState: UploadState = .none, objectLocation: ObjectLocation? = nil, pendingObjectKey: String? = nil,
+         editedAt: Date? = nil, uploadIsStale: Bool = false,
+         supersededObjects: [ObjectRef] = [], priorUpload: PriorUpload? = nil) {
         self.id = id
         self.timestamp = timestamp
         self.fileURL = fileURL
@@ -47,16 +65,22 @@ nonisolated struct CaptureRecord: Codable, Identifiable, Equatable, Sendable {
         self.uploadState = uploadState
         self.objectLocation = objectLocation
         self.pendingObjectKey = pendingObjectKey
+        self.editedAt = editedAt
+        self.uploadIsStale = uploadIsStale
+        self.supersededObjects = supersededObjects
+        self.priorUpload = priorUpload
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, timestamp, fileURL, fileIsTemporary, thumbnailFileName, pixelWidth, pixelHeight, appName, uploadState
-        case objectLocation, pendingObjectKey
+        case objectLocation, pendingObjectKey, editedAt, uploadIsStale
+        case supersededObjects, priorUpload
     }
 
     /// Phase 2 history files have no `fileIsTemporary`, `thumbnailFileName`, `objectLocation` or
-    /// `pendingObjectKey`, and always have a `fileURL`; they decode with the defaults. Encoding
-    /// is synthesised.
+    /// `pendingObjectKey`, and always have a `fileURL`; Phase 3 files have no `editedAt` or
+    /// `uploadIsStale`. They decode with the defaults. Files from before Phase 4 have no
+    /// supersededObjects or priorUpload either; they decode as [] and nil. Encoding is synthesised.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(UUID.self, forKey: .id)
@@ -70,6 +94,10 @@ nonisolated struct CaptureRecord: Codable, Identifiable, Equatable, Sendable {
         uploadState = try container.decode(UploadState.self, forKey: .uploadState)
         objectLocation = try container.decodeIfPresent(ObjectLocation.self, forKey: .objectLocation)
         pendingObjectKey = try container.decodeIfPresent(String.self, forKey: .pendingObjectKey)
+        editedAt = try container.decodeIfPresent(Date.self, forKey: .editedAt)
+        uploadIsStale = try container.decodeIfPresent(Bool.self, forKey: .uploadIsStale) ?? false
+        supersededObjects = try container.decodeIfPresent([ObjectRef].self, forKey: .supersededObjects) ?? []
+        priorUpload = try container.decodeIfPresent(PriorUpload.self, forKey: .priorUpload)
     }
 
     var uploadedURL: URL? {
@@ -83,11 +111,33 @@ nonisolated struct CaptureRecord: Codable, Identifiable, Equatable, Sendable {
         return nil
     }
 
+    /// The link to copy: the uploaded URL, or, while an editor upload runs over an earlier link and
+    /// after a quit or crash interrupted it, that earlier link. `uploadedURL` and `uploadedKey`
+    /// stay computed from `uploadState` alone.
+    var linkURL: URL? { uploadedURL ?? priorUpload?.url }
+
+    /// What an edit written to the capture's file changes on the record: its pixel size, `editedAt`,
+    /// and, when the record has a link (`linkURL`, so also one that lives only in `priorUpload`
+    /// after an interrupted replace), `uploadIsStale`, because that link still shows the original.
+    /// `AppCoordinator.applyLocalEdit` calls this inside `history.update`.
+    mutating func recordLocalEdit(pixelWidth: Int, pixelHeight: Int, at editedAt: Date) {
+        self.pixelWidth = pixelWidth
+        self.pixelHeight = pixelHeight
+        self.editedAt = editedAt
+        if linkURL != nil {
+            uploadIsStale = true
+        }
+    }
+
     var hasLocalFile: Bool { fileURL != nil }
 
     /// An upload-only capture that has not been uploaded: its PNG in `pending` is the only copy,
     /// so retention never prunes it.
     var isPendingOnly: Bool { fileIsTemporary && fileURL != nil && uploadedKey == nil }
+
+    /// An upload-only capture whose `pending` file holds an edit its link does not show yet (a
+    /// replace that failed). The file is the edit's only copy, so retention never prunes it.
+    var keepsUnuploadedEdit: Bool { fileIsTemporary && fileURL != nil && uploadIsStale }
 
     var isFailed: Bool {
         if case .failed = uploadState { return true }
@@ -98,4 +148,14 @@ nonisolated struct CaptureRecord: Codable, Identifiable, Equatable, Sendable {
         if case .uploading = uploadState { return true }
         return false
     }
+}
+
+/// The link a record had when the editor started an upload over it. `isReplace` is true when that
+/// upload PUTs the same key, so the URL stays. It is false when the upload makes a new object and
+/// the old key goes to `supersededObjects`.
+nonisolated struct PriorUpload: Codable, Equatable, Sendable {
+    var url: URL
+    var key: String
+    var location: ObjectLocation
+    var isReplace: Bool
 }

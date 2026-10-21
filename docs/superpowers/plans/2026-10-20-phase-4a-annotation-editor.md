@@ -31,10 +31,10 @@ Each task gives the exact Swift interfaces it produces, complete Swift Testing t
 - Model geometry is in image pixels with a top-left origin (CGImage row 0). Line widths, blur radii and pixel blocks are stored in image pixels (points chosen in the UI times the capture scale at creation). The model never stores CGColor, CGPath, NSColor or CIFilter.
 - Concurrency: any `nonisolated async` function that must run off the main actor is marked `@concurrent`. `RedactionRenderer` is an actor and owns the only `CIContext`; CIFilters are built inside each call. No GPU or Core Image work runs inside `draw(_:)`. Tests never block the main actor with a semaphore; fakes wait on an async gate.
 - Exact user-visible strings (from spec 2.6), used verbatim:
-  - Notification titles: `Not saved`, `Not uploaded`, `Could not open the capture`; bodies `Image copied`, `Upload failed. The link still shows the earlier image.`, `Replaced. Copies opened before now may stay cached for a while.` (posted once per app session, on the first successful same-key replace).
-  - Window subtitles: `Uploading…`, `Deleting…`, `The uploaded copy still shows the original. Upload to replace it.`, `This capture was deleted. Copy and Save Copy still work.`
+  - Notification titles: `Not saved`, `Not uploaded`, `Could not open the capture`, `Image copied`; bodies `Upload failed. The link still shows the earlier image.`, `Replaced. Copies opened before now may stay cached for a while.` (posted once per app session, on the first successful same-key replace).
+  - Window subtitles: `Uploading…`, `Deleting…`, `The uploaded copy still shows the original. Upload to replace it.`, `This capture was deleted. Copy and Save As still work.` (was `… Copy and Save Copy still work.` until feedback round 1)
   - Upload notices: `The destination changed, so this uploads as a new link.`, `Another capture shares this link, so this uploads as a new link.`, `The earlier upload stays in the bucket.`
-  - Close sheet: message `Do you want to save the changes made to “<title>”?`, informative text `Your changes will be lost if you don’t save them.`, buttons Save (or Save Copy… when Save is unavailable), Cancel, Don’t Save.
+  - Close sheet: message `Do you want to save the changes made to “<title>”?`, informative text `Your changes will be lost if you don’t save them.`, buttons Save (or `Save As…` when Save is unavailable), Cancel, Don’t Save. Feedback round 1 replaced Save Copy with Save As… (⇧⌘S, `saveDocumentAs:`), and the toolbar tool tips are `Copy the image (⌘C)`, `Save (⌘S)` and `Upload and copy the link (⌘U)`; notification title `Saved` for Save As….
 - Shortcuts: the 4a `EditorShortcut` table in spec 2.6 (⌘S, ⇧⌘S, ⌘C, ⇧⌘C, ⌘U, ⌥⌘U, ⌘Z, ⇧⌘Z, ⌘W, ⌘0, ⌘1, ⌘=, ⌘-, ⌘A); tool letters V, D, X, B, R, A; digits 1 to 6 for line widths 2, 3, 4, 6, 8, 12 pt. ⌘X has no row.
 - The editor activates the app (`activate(ignoringOtherApps:)`, then `makeKeyAndOrderFront`, then `orderFrontRegardless` if still inactive). Menu and overlay actions that open it run after menu tracking ends (`afterMenusClose`).
 - Tests use Swift Testing, run with:
@@ -53,21 +53,31 @@ Each task gives the exact Swift interfaces it produces, complete Swift Testing t
 | Task 2 | 20 | 3 | 212 tests in 31 suites |
 | Task 3 | 19 | 4 | 231 tests in 35 suites |
 | Task 4 | 24 | 4 | 255 tests in 39 suites |
-| Task 5 | 9 | 1 | 264 tests in 40 suites |
-| Task 6 | 8 | 1 | 272 tests in 41 suites |
-| Task 7 | 11 | 1 | 283 tests in 42 suites |
-| Task 8 | 20 | 2 | 303 tests in 44 suites |
-| Task 9 | 12 | 1 | 315 tests in 45 suites |
-| Task 10 | 0 | 0 | 315 tests in 45 suites |
-| Task 11 | 2 | 0 | 317 tests in 45 suites |
-| Task 12 | 7 | 2 | 324 tests in 47 suites |
-| Task 13 | 23 | 2 | 347 tests in 49 suites |
-| Task 14 | 22 | 0 | 369 tests in 49 suites |
-| Task 15 | 18 | 1 | 387 tests in 50 suites |
-| Task 16 | 11 | 1 | 398 tests in 51 suites |
-| Task 17 | 0 | 0 | 398 tests in 51 suites |
+| Task 5 | 10 | 1 | 265 tests in 40 suites |
+| Task 6 | 9 | 1 | 274 tests in 41 suites |
+| Task 7 | 11 | 1 | 285 tests in 42 suites |
+| Task 8 | 20 | 2 | 305 tests in 44 suites |
+| Task 9 | 12 | 1 | 317 tests in 45 suites |
+| Task 10 | 0 | 0 | 317 tests in 45 suites |
+| Task 11 | 2 | 0 | 319 tests in 45 suites |
+| Task 12 | 7 | 2 | 326 tests in 47 suites |
+| Task 13 | 23 | 2 | 349 tests in 49 suites |
+| Task 14 | 22 | 0 | 371 tests in 49 suites |
+| Task 15 | 18 | 1 | 389 tests in 50 suites |
+| Task 16 | 11 | 1 | 400 tests in 51 suites |
+| Task 17 | 0 | 0 | 400 tests in 51 suites |
 
 The totals come from each task's declared tests. Task 17 checks them against a real run and corrects any row that differs.
+
+Task 17 correction: the review fix 60d63ea (tile cache fails closed) added one test to Task 6, so Task 6 is 9 new tests and every row from Task 6 on is one higher; the real run reads 400 tests in 51 suites.
+
+Whole-branch review fix: `uploadWritesLocallyWhenASaveTargetExists` and `uploadWritesNothingLocallyOutsideTheSaveFolder` in `EditorSaveTargetTests` bring the real run to 402 tests in 51 suites.
+
+Review follow-ups: `supersededCleanupNeverDeletesALink` in `EditorUploadPlanTests` and the new `CanvasFitTests` suite (2 tests) bring the real run to 405 tests in 52 suites.
+
+Feedback round 1 (2026-10-20, Save As…, plain toolbar buttons, Upload closes the editor): 8 new tests net (Save As suggestion, save command, close-sheet button, upload outcome, toolbar width) bring the real run to 413 tests in 52 suites.
+
+Feedback round 1 review fixes: `saveAsOntoTheOwnFileIsASave` in `EditorSaveTargetTests` brings the real run to 414 tests in 52 suites.
 
 ---
 
@@ -3061,7 +3071,7 @@ Run:
 ```bash
 xcodegen generate && xcodebuild test -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build 2>&1 | grep -E "Test run with|error:|TEST"
 ```
-Expected: no `error:` lines, and `Test run with 264 tests in 40 suites passed`.
+Expected: no `error:` lines, and `Test run with 265 tests in 40 suites passed`.
 
 - [ ] **Step 5: Commit**
 
@@ -3633,7 +3643,7 @@ Run:
 ```bash
 xcodegen generate && xcodebuild test -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build 2>&1 | grep -E "Test run with|error:|TEST"
 ```
-Expected: no `error:` lines, and `Test run with 272 tests in 41 suites passed`.
+Expected: no `error:` lines, and `Test run with 273 tests in 41 suites passed`.
 
 This task has no UI, so there is no hand check. Task 10 checks the tiles on screen.
 
@@ -4198,7 +4208,7 @@ Run:
 ```bash
 xcodegen generate && xcodebuild test -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build 2>&1 | grep -E "Test run with|error:|TEST"
 ```
-Expected: no `error:` lines, then `Test run with 283 tests in 42 suites passed`.
+Expected: no `error:` lines, then `Test run with 284 tests in 42 suites passed`.
 
 - [ ] **Step 6: Hand check**
 
@@ -5133,7 +5143,7 @@ Run:
 ```bash
 xcodegen generate && xcodebuild test -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build 2>&1 | grep -E "Test run with|error:|TEST"
 ```
-Expected: no `error:` lines, and `Test run with 303 tests in 44 suites passed`.
+Expected: no `error:` lines, and `Test run with 304 tests in 44 suites passed`.
 
 A failing `RedactionExportTests` case means a defect in `RedactionRenderer`, `RedactionTileCache` or `EditorFlattener` (Tasks 5 to 7). Fix it there, add that file to the commit below, and never loosen an assertion. Without a Metal device the renderer falls back to `CIContext(options:)`; every expectation is computed in the same run, so the tests hold either way.
 
@@ -5864,7 +5874,7 @@ Run:
 ```bash
 xcodegen generate && xcodebuild test -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build 2>&1 | grep -E "Test run with|error:|TEST"
 ```
-Expected: no `error:` lines, and `Test run with 315 tests in 45 suites passed`.
+Expected: no `error:` lines, and `Test run with 316 tests in 45 suites passed`.
 
 There is no hand check in this task. The tools run in a window from Task 10, and its hand checks drag each one.
 
@@ -6948,7 +6958,7 @@ Run:
 ```bash
 xcodegen generate && xcodebuild test -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build 2>&1 | grep -E "Test run with|error:|TEST"
 ```
-Expected: no `error:` lines, and `Test run with 315 tests in 45 suites passed`, unchanged, because this task adds no tests. If the hosted test run ends, `applicationShouldTerminate(_:)` returns `.terminateNow` because of `isRunningTests`.
+Expected: no `error:` lines, and `Test run with 316 tests in 45 suites passed`, unchanged, because this task adds no tests. If the hosted test run ends, `applicationShouldTerminate(_:)` returns `.terminateNow` because of `isRunningTests`.
 
 - [ ] **Step 9: Check by hand**
 
@@ -7236,7 +7246,7 @@ Run:
 ```bash
 xcodegen generate && xcodebuild test -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build 2>&1 | grep -E "Test run with|error:|TEST"
 ```
-Expected: no `error:` lines, and `Test run with 317 tests in 45 suites passed`.
+Expected: no `error:` lines, and `Test run with 318 tests in 45 suites passed`.
 
 - [ ] **Step 5: Write the colour palette**
 
@@ -7699,7 +7709,7 @@ Run:
 ```bash
 xcodegen generate && xcodebuild test -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build 2>&1 | grep -E "Test run with|error:|TEST"
 ```
-Expected: no `error:` lines, and `Test run with 317 tests in 45 suites passed`.
+Expected: no `error:` lines, and `Test run with 318 tests in 45 suites passed`.
 
 Then:
 ```bash
@@ -7890,7 +7900,7 @@ Run:
 ```bash
 xcodegen generate && xcodebuild test -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build 2>&1 | grep -E "Test run with|error:|TEST"
 ```
-Expected: no `error:` lines, and `Test run with 324 tests in 47 suites passed`.
+Expected: no `error:` lines, and `Test run with 325 tests in 47 suites passed`.
 
 - [ ] **Step 5: Return the change count from every pasteboard write**
 
@@ -8255,7 +8265,7 @@ Run:
 xcodegen generate && xcodebuild test -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build 2>&1 | grep -E "Test run with|error:|TEST"
 grep -c "persist(png:" TidyShot/App/AppCoordinator.swift
 ```
-Expected: no `error:` lines, `Test run with 324 tests in 47 suites passed`, then `3`.
+Expected: no `error:` lines, `Test run with 325 tests in 47 suites passed`, then `3`.
 
 - [ ] **Step 9: Check by hand**
 
@@ -9038,7 +9048,7 @@ Run:
 ```bash
 xcodegen generate && xcodebuild test -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build 2>&1 | grep -E "Test run with|error:|TEST"
 ```
-Expected: no `error:` lines, and `Test run with 347 tests in 49 suites passed`.
+Expected: no `error:` lines, and `Test run with 348 tests in 49 suites passed`.
 
 - [ ] **Step 7: Coordinator: state push, folder observation, Save through `applyLocalEdit`**
 
@@ -9363,7 +9373,7 @@ Run:
 ```bash
 xcodegen generate && xcodebuild test -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build 2>&1 | grep -E "Test run with|error:|TEST"
 ```
-Expected: no `error:` lines, and `Test run with 347 tests in 49 suites passed`.
+Expected: no `error:` lines, and `Test run with 348 tests in 49 suites passed`.
 
 Then:
 ```bash
@@ -10516,7 +10526,7 @@ Run:
 ```bash
 xcodegen generate && xcodebuild test -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build 2>&1 | grep -E "Test run with|error:|TEST"
 ```
-Expected: no `error:` lines, and `Test run with 369 tests in 49 suites passed`. The 16 earlier UploadQueueTests pass without edits to their bodies.
+Expected: no `error:` lines, and `Test run with 370 tests in 49 suites passed`. The 16 earlier UploadQueueTests pass without edits to their bodies.
 
 - [ ] **Step 8: Check by hand (regressions only)**
 
@@ -11059,7 +11069,7 @@ Run:
 ```bash
 xcodegen generate && xcodebuild test -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build 2>&1 | grep -E "Test run with|error:|TEST"
 ```
-Expected: no `error:` lines, and `Test run with 387 tests in 50 suites passed`.
+Expected: no `error:` lines, and `Test run with 388 tests in 50 suites passed`.
 
 - [ ] **Step 5: Fixed-key jobs in `startUpload`**
 
@@ -11233,8 +11243,9 @@ Add under `// MARK: Editor`:
 ```swift
     /// Upload (⌘U) and Upload as New (⌥⌘U). The edit is written locally first, so the file equals
     /// the object; then it goes through the live lane like any upload, over the link's own key for
-    /// a replace or under a new template key. Returns true once the edit has been written locally
-    /// or handed to the queue, which tells the editor to mark the document saved.
+    /// a replace or under a new template key. Returns true once the edit has been written locally,
+    /// which tells the editor to mark the document saved; an upload with no local write leaves the
+    /// document unsaved.
     private func editorUpload(recordID: UUID, image: ScaledImage, asNew: Bool) async -> Bool {
         let action: EditorAction = asNew ? .uploadAsNew : .upload
         // 1. The editor's available set can lag behind the record.
@@ -11257,11 +11268,11 @@ Add under `// MARK: Editor`:
         if refuseUpload(action, recordID: recordID) { return false }
         guard let record = history.record(id: recordID) else { return false }
         var wroteLocally = false
-        switch EditorSaveTarget.plan(for: record, saveFolder: saveLocation.currentURL) {
-        case .saveFolderFile, .pendingFile:
+        switch EditorSaveTarget.uploadWrite(for: record, saveFolder: saveLocation.currentURL) {
+        case .saveTarget:
             guard await applyLocalEdit(recordID: recordID, png: png, image: image) else { return false }
             wroteLocally = true
-        case .unavailable where record.fileURL == nil:
+        case .newPendingFile:
             // An uploaded upload-only capture: its pending file went after its upload. The edit gets
             // pending/<id>.png, so Retry and Delete see a file and handle(.uploaded) removes it.
             do {
@@ -11280,9 +11291,10 @@ Add under `// MARK: Editor`:
             // bookkeeping (pixel size, editedAt, uploadIsStale, thumbnail, clipboard, editor state).
             guard await applyLocalEdit(recordID: recordID, png: png, image: image) else { return false }
             wroteLocally = true
-        case .unavailable:
+        case .noLocalWrite:
             // A save-folder file outside the current folder, or no folder: the file is not
             // rewritten and the subtitle says so. The clipboard still must not keep the original.
+            // The document stays unsaved, so a failed upload cannot lose the edit on close.
             await replaceClipboardIfStillOriginal(recordID: recordID, png: png, image: image)
         }
         // 4. Plan on the live record, against where the lane writes (as in startUpload).
@@ -11311,7 +11323,7 @@ Add under `// MARK: Editor`:
         } else {
             startUpload(recordID: recordID, data: png, destination: destination)
         }
-        return true
+        return wroteLocally
     }
 
     /// Posts the live refusal for `action` as "Not uploaded". True when the upload must stop.
@@ -11323,6 +11335,8 @@ Add under `// MARK: Editor`:
         return true
     }
 ```
+Step 3 switches on `EditorSaveTarget.uploadWrite(for:saveFolder:)` (added by the whole-branch review fix, with two tests in `EditorSaveTargetTests`): `.saveTarget` for `.saveFolderFile` and `.pendingFile`, `.newPendingFile` for `.unavailable` with no `fileURL`, and `.noLocalWrite` for the rest. With `.noLocalWrite` the function returns false, so the editor keeps its edited dot and asks to Save Copy… on close: per spec 2.6, `markSaved()` follows only a local write, and a failed upload must not lose the edit.
+
 Steps 4 to 7 run with no `await` between them, so the plan, the record write and the enqueue see the same record and lane. The refusal is checked three times because the encode, `applyLocalEdit` and the clipboard replacement each await, and a Delete or a Retry can start meanwhile.
 
 In `editorActions(for recordID:)` (Task 10), replace the `upload` stub with a closure in the same form as the `save`, `saveCopy` and `copy` closures that Tasks 12 and 13 wired there. `showEditor(recordID:image:)` already passes that value to the controller, so nothing else changes (Task 16 later converts `showEditor` into `presentEditor` and keeps `editorActions(for:)` as the builder):
@@ -11339,7 +11353,7 @@ Run:
 ```bash
 xcodegen generate && xcodebuild test -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build 2>&1 | grep -E "Test run with|error:|TEST"
 ```
-Expected: no `error:` lines, and `Test run with 387 tests in 50 suites passed`.
+Expected: no `error:` lines, and `Test run with 388 tests in 50 suites passed`.
 
 - [ ] **Step 10: Check by hand against a real bucket**
 
@@ -11617,7 +11631,7 @@ Run:
 ```bash
 xcodegen generate && xcodebuild test -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build 2>&1 | grep -E "Test run with|error:|TEST"
 ```
-Expected: no `error:` lines, and `Test run with 398 tests in 51 suites passed`.
+Expected: no `error:` lines, and `Test run with 400 tests in 51 suites passed`.
 
 - [ ] **Step 5: Annotate on the overlay**
 
@@ -11940,7 +11954,7 @@ Run:
 ```bash
 xcodegen generate && xcodebuild test -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build 2>&1 | grep -E "Test run with|error:|TEST"
 ```
-Expected: no `error:` lines, and `Test run with 398 tests in 51 suites passed`. OverlayGeometryTests are unchanged.
+Expected: no `error:` lines, and `Test run with 400 tests in 51 suites passed`. OverlayGeometryTests are unchanged.
 
 - [ ] **Step 10: Check by hand**
 
@@ -12252,14 +12266,14 @@ Run:
 ```bash
 xcodegen generate && xcodebuild test -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build 2>&1 | grep -E "Test run with|error:|TEST"
 ```
-Expected: no `error:` lines, `** TEST SUCCEEDED **`, and `Test run with 398 tests in 51 suites passed`.
+Expected: no `error:` lines, `** TEST SUCCEEDED **`, and `Test run with 400 tests in 51 suites passed`.
 
 That count must equal the Task 17 row of the "Test totals" table in the plan's header section (`task-00-header.md` in the plan files, and in `docs/superpowers/plans/2026-10-20-phase-4a-annotation-editor.md`, which is those files concatenated). Reconcile the table against the repo first:
 ```bash
 grep -rhE '^(@MainActor )?struct [A-Za-z0-9]+Tests\b' TidyShotTests | wc -l; grep -rhE '^\s*@Test' TidyShotTests | wc -l
 grep -c '{{' docs/superpowers/plans/2026-10-20-phase-4a-annotation-editor.md
 ```
-Expected: the first count is the suites in the Task 17 row (one `struct …Tests` per suite; helper files such as FakeTileRenderer.swift declare none), and the second is its tests (Swift Testing counts a parameterized `@Test` once, as SigV4TestSuiteTests shows in the 191 baseline); the last count is `0`, so no `398 tests in 51 suites` placeholder is left. If the run differs from the Task 17 row, a review fix added or removed tests. Find which task with:
+Expected: the first count is the suites in the Task 17 row (one `struct …Tests` per suite; helper files such as FakeTileRenderer.swift declare none), and the second is its tests (Swift Testing counts a parameterized `@Test` once, as SigV4TestSuiteTests shows in the 191 baseline); the last count is `0`, so no `399 tests in 51 suites` placeholder is left. If the run differs from the Task 17 row, a review fix added or removed tests. Find which task with:
 ```bash
 git log --oneline --stat f4541da..HEAD -- TidyShotTests
 ```
@@ -12319,6 +12333,6 @@ The plan and the spec are in the list so that Step 3 and Step 4 amendments land 
 
 - [ ] **Step 7: Stop here**
 
-Phase 4a is done when the last test run reads `Test run with 398 tests in 51 suites passed` and the checklist passes. Do not push and do not open a PR: the controller pushes and opens PR 1 after the whole-branch review. Report the final test line, which checklist items were run (and whether the 1x and second-bucket items were skipped), and any amendment made in Step 3 or Step 4.
+Phase 4a is done when the last test run reads `Test run with 400 tests in 51 suites passed` and the checklist passes. Do not push and do not open a PR: the controller pushes and opens PR 1 after the whole-branch review. Report the final test line, which checklist items were run (and whether the 1x and second-bucket items were skipped), and any amendment made in Step 3 or Step 4.
 
 ---

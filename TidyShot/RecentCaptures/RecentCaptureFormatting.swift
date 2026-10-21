@@ -24,13 +24,25 @@ nonisolated enum RecentCaptureFormatting {
         }
     }
 
-    /// Copy URL needs an uploaded object.
+    /// Copy URL needs a link: an uploaded object, or the earlier link of an editor upload that is
+    /// running or was interrupted (`CaptureRecord.linkURL`).
     static func canCopyLink(_ record: CaptureRecord) -> Bool {
-        record.uploadedURL != nil
+        record.linkURL != nil
     }
 
     /// Copy Image needs a local file, or an uploaded object whose bucket is known (signed GET).
     static func canCopyImage(_ record: CaptureRecord) -> Bool {
         record.hasLocalFile || (record.uploadedKey != nil && record.objectLocation != nil)
+    }
+
+    /// Annotate needs an image the editor can load: the capture just taken (still in memory), a
+    /// file it can read, or an uploaded object whose bucket is known. Only `.unavailable` disables
+    /// the button, for example a record from before Phase 3 with no file, or a file outside the
+    /// current save folder that was never uploaded.
+    static func canAnnotate(_ record: CaptureRecord, retainedID: UUID?, saveFolder: URL?) -> Bool {
+        if case .unavailable = EditorInput.source(for: record, retainedID: retainedID, saveFolder: saveFolder) {
+            return false
+        }
+        return true
     }
 }

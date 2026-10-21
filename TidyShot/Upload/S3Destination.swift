@@ -53,9 +53,13 @@ nonisolated struct S3Destination: Destination {
         }
     }
 
-    func upload(_ data: Data, key: String, contentType: String,
+    func upload(_ data: Data, key: String, contentType: String, cacheControl: String?,
                 progress: @escaping @Sendable (Double) -> Void) async throws {
         var headers = [(name: "content-type", value: contentType)]
+        if let cacheControl {
+            // Signed like every extra header, so a change in transit fails the signature.
+            headers.append((name: "cache-control", value: cacheControl))
+        }
         if config.sendPublicReadACL {
             headers.append((name: "x-amz-acl", value: "public-read"))
         }
