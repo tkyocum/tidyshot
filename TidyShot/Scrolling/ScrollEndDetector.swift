@@ -27,9 +27,9 @@ nonisolated struct ScrollEndDetector: Sendable {
     /// Losses in a row that hand over to manual mode.
     static let lossesBeforeHandOver = 3
 
-    private var decisions = 0
-    private var stills = 0
-    private var losses = 0
+    private(set) var decisions = 0
+    private(set) var stills = 0
+    private(set) var losses = 0
 
     /// `isFull` is `StitchStep.isFull`: the output reached `ScrollCaptureLimits.maxPixelHeight`.
     ///

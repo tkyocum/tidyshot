@@ -85,6 +85,8 @@ final class ScrollCaptureSession {
     @ObservationIgnored private(set) var latestFrame: ScrollFrame?
     @ObservationIgnored private(set) var latestFrameAt: ContinuousClock.Instant?
     @ObservationIgnored private(set) var frameSerial = 0
+    /// Auto-scroll has handed over to manual mode (diagnostics only).
+    @ObservationIgnored private var handedOver = false
     /// Called once, when the session ends.
     @ObservationIgnored var onEnd: ((ScrollCaptureOutcome) -> Void)?
     /// The Scroll automatically checkbox (`AppSettings.scrollingAutoScroll`). It takes effect
@@ -232,6 +234,8 @@ final class ScrollCaptureSession {
     /// Auto-scroll gives up: the user scrolls from here, and frames go to the engine again.
     func handOver() {
         guard phase == .capturing(.auto) else { return }
+        ScrollDiag.log("session hand over to manual at serial=\(frameSerial)")
+        handedOver = true
         phase = .capturing(.manual)
         status = .autoHandedOver
     }
@@ -261,9 +265,9 @@ final class ScrollCaptureSession {
     }
 
     private func take(_ frame: ScrollFrame) async {
-        #if DEBUG
-        ScrollDiag.log("session take serial=\(frameSerial + 1) \(frame.width)x\(frame.height) phase=\(phase) sincePrevious=\(latestFrameAt.map { ScrollDiag.ms(clock.now - $0) } ?? "-")ms")
-        #endif
+        var frame = frame
+        frame.serial = frameSerial + 1
+        ScrollDiag.log("session take serial=\(frame.serial) \(frame.width)x\(frame.height) phase=\(phase) sincePrevious=\(latestFrameAt.map { ScrollDiag.ms(clock.now - $0) } ?? "-")ms")
         latestFrame = frame
         latestFrameAt = clock.now
         frameSerial += 1
@@ -278,7 +282,9 @@ final class ScrollCaptureSession {
         }
         // In auto mode the driver stitches the settled frames itself (`integrate`).
         guard phase != .capturing(.auto) else { return }
-        apply(await engine.add(frame))
+        let progress = await engine.add(frame)
+        ScrollDiag.log("manual result serial=\(frame.serial) afterHandOver=\(handedOver) -> \(ScrollDiag.describe(progress.step.match)) committed=\(progress.step.committedRows) height=\(progress.heightPixels) status=\(status)")
+        apply(progress)
     }
 
     /// The readout, the preview, the manual status line and the cap, from one stitched frame.

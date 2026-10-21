@@ -43,7 +43,10 @@ nonisolated struct OverlapFinder: Sendable {
     }
 
     func find(previous a: ScrollFrame, current b: ScrollFrame, predicted: Int?) -> OverlapMatch {
-        guard a.width == b.width, a.height == b.height else { return .lost }
+        guard a.width == b.width, a.height == b.height else {
+            ScrollDiag.findNote("find size mismatch \(a.width)x\(a.height) vs \(b.width)x\(b.height) -> lost")
+            return .lost
+        }
         let h = a.height
         let usable = Array(0..<max(1, a.width - scrollbarColumns))
 
@@ -54,17 +57,13 @@ nonisolated struct OverlapFinder: Sendable {
         // band does not break the runs or count as movement; but a differing stripe that shows what the
         // other frame has at another row is a scroll of a narrow column, which is not equal.
         let fa = rowHashes(a, columns: usable), fb = rowHashes(b, columns: usable)
-        #if DEBUG
         func note(_ s: @autoclosure () -> String) {
-            ScrollDiag.log("find \(a.width)x\(a.height) scrollbarColumns=\(scrollbarColumns) predicted=\(predicted.map(String.init) ?? "nil") \(s())")
+            ScrollDiag.findNote("find \(a.width)x\(a.height) scrollbarColumns=\(scrollbarColumns) predicted=\(predicted.map(String.init) ?? "nil") \(s())")
         }
         if ScrollDiag.enabled {
             let sameY = fa.indices.filter { fa[$0] == fb[$0] }.count
             note("rowsEqualAtSameY=\(sameY)/\(h)")
         }
-        #else
-        func note(_ s: @autoclosure () -> String) {}
-        #endif
         // Identical rows throughout: nothing to look at, and the stripe hashes are not worth computing.
         if !fa.indices.contains(where: { fa[$0] != fb[$0] }) { note("-> still (identical rows)"); return .still }
         let freqA = counts(fa[...])

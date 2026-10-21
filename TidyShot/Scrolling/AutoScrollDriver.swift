@@ -52,22 +52,34 @@ final class AutoScrollDriver {
         // The scroll-back owed after a lost step. It goes out at the top of the loop, behind the
         // same grant and pointer checks as a step, so a pause never lets it reach another window.
         var pendingBack: CGFloat?
+        var pausedLogged = false
         while session.phase == .capturing(.auto) {
             // The pointer first: the grant is a TCC preflight, asked only when a post would follow,
             // never 20 times a second while paused.
             guard session.hasFirstFrame, session.area.contains(environment.pointerLocation()) else {
+                if !pausedLogged {
+                    pausedLogged = true
+                    ScrollDiag.log("auto paused: \(session.hasFirstFrame ? "pointer outside the area" : "no first frame yet") serial=\(session.frameSerial)")
+                }
                 session.showAutoStatus(.autoPaused)
                 guard await pause(Self.pollInterval) else { return }
                 continue
             }
+            if pausedLogged {
+                pausedLogged = false
+                ScrollDiag.log("auto resumed serial=\(session.frameSerial)")
+            }
             guard environment.isPermitted() else {
+                ScrollDiag.log("auto HAND OVER to manual: PostEvent grant gone, serial=\(session.frameSerial)")
                 session.handOver()
                 return
             }
             session.showAutoStatus(.autoScrolling)
             if let back = pendingBack {
                 pendingBack = nil
+                ScrollDiag.log("auto scroll-back step=\(abs(back))pt direction=\(back < 0 ? "up" : "down") serial=\(session.frameSerial)")
                 guard let moved = await scroll(by: back, in: session) else { return }
+                ScrollDiag.log("auto scroll-back posted=\(moved.posted)pt settledSerial=\(moved.frame.serial) (not compared)")
                 // A scroll-back cut short (the pointer left, or the grant went) owes the rest.
                 if abs(moved.posted) < abs(back) { pendingBack = back - moved.posted }
                 continue
@@ -81,18 +93,14 @@ final class AutoScrollDriver {
             // synthetic deltas, the step pushed against the top. Try the other direction once,
             // as a fresh first step, before the end detector may count it as the end.
             if !decided, !triedOtherDirection, progress.step.match == .still, !progress.step.isFull {
-                #if DEBUG
-                ScrollDiag.log("auto first step posted=\(moved.posted)pt was still: trying the other direction")
-                #endif
+                ScrollDiag.log("auto first step posted=\(moved.posted)pt settledSerial=\(moved.frame.serial) was still: trying the other direction")
                 triedOtherDirection = true
                 direction = -direction
                 continue
             }
             decided = true
             let decision = detector.decide(after: progress.step.match, isFull: progress.step.isFull)
-            #if DEBUG
-            ScrollDiag.log("auto step posted=\(moved.posted)pt predicted=\(Int((moved.posted * session.scale).rounded()))px -> \(ScrollDiag.describe(progress.step.match)) committed=\(progress.step.committedRows) decision=\(decision) nextStep=\(step)pt direction=\(direction)")
-            #endif
+            ScrollDiag.log("auto step size=\(step)pt direction=\(direction < 0 ? "up" : "down") posted=\(moved.posted)pt predicted=\(Int((moved.posted * session.scale).rounded()))px settledSerial=\(moved.frame.serial) -> \(ScrollDiag.describe(progress.step.match)) committed=\(progress.step.committedRows) decision=\(decision) detector(stills=\(detector.stills) losses=\(detector.losses))")
             switch decision {
             case .continue:
                 if case .moved(_, let top, let bandEnd, _) = progress.step.match {
@@ -108,6 +116,7 @@ final class AutoScrollDriver {
                 pendingBack = -moved.posted
                 step = AutoScrollPlan.shrunk(step)
             case .handOver:
+                ScrollDiag.log("auto HAND OVER to manual: \(detector.losses) lost steps in a row (limit \(ScrollEndDetector.lossesBeforeHandOver)), last settledSerial=\(moved.frame.serial) step=\(step)pt")
                 session.handOver()
                 return
             case .end(let reason):
@@ -144,33 +153,24 @@ final class AutoScrollDriver {
             let event = points < 0 ? -size : size
             environment.poster.post(points: event)
             posted += event
-            #if DEBUG
             ScrollDiag.log("auto post event=\(event)pt postedSoFar=\(posted)pt of \(points)pt serial=\(session.frameSerial)")
-            #endif
         }
-        #if DEBUG
         let stepStart = ContinuousClock.now
         var frames = 0, changes = 0
         var lastHash = baseline
-        #endif
         var settler = FrameSettler(stepStart: clock.now, baselineHash: baseline)
         while session.phase == .capturing(.auto) {
             guard await pause(Self.pollInterval) else { return nil }
             if session.frameSerial != seen, let frame = session.latestFrame {
                 seen = session.frameSerial
                 let hash = FrameSettler.contentHash(of: frame, ignoringRightColumns: ignored)
-                #if DEBUG
                 frames += 1
                 if hash != lastHash { changes += 1; lastHash = hash }
                 ScrollDiag.log("settler frame serial=\(seen) changed=\(hash != baseline ? "vsBaseline" : "sameAsBaseline") changesSoFar=\(changes) sinceStep=\(ScrollDiag.ms(since: stepStart))ms")
-                #endif
                 _ = settler.observe(.frame(hash: hash, at: session.latestFrameAt ?? clock.now))
             }
             if settler.observe(.idle(at: clock.now)) {
-                #if DEBUG
-                let settledHash = session.latestFrame.map { FrameSettler.contentHash(of: $0, ignoringRightColumns: ignored) }
-                ScrollDiag.log("settler SETTLED after \(ScrollDiag.ms(since: stepStart))ms framesSeen=\(frames) contentChanges=\(changes) serial=\(session.frameSerial) settledFrameIsBaseline=\(settledHash == baseline)")
-                #endif
+                ScrollDiag.log("settler SETTLED after \(ScrollDiag.ms(since: stepStart))ms framesSeen=\(frames) contentChanges=\(changes) serial=\(session.frameSerial) settledFrameIsBaseline=\(session.latestFrame.map { FrameSettler.contentHash(of: $0, ignoringRightColumns: ignored) } == baseline)")
                 return session.latestFrame.map { ($0, posted) }
             }
         }

@@ -9,6 +9,9 @@ nonisolated struct ScrollFrame: Sendable {
     let bgra: Data
     /// `width * height` bytes of luminance, `(77 R + 150 G + 29 B) >> 8` (white stays 255).
     let gray: [UInt8]
+    /// The session's serial for this frame (`ScrollCaptureSession.frameSerial` when it took it), 0
+    /// for a frame that has none. For diagnostics only.
+    var serial = 0
 
     /// Copies `height` rows of `width` BGRA pixels out of `source`, whose rows are `bytesPerRow`
     /// apart, so the caller can release a `CVPixelBuffer` as soon as this returns.
