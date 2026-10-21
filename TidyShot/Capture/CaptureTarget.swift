@@ -8,6 +8,18 @@ enum CaptureTarget {
     case window(SCWindow)
 }
 
+extension CaptureTarget {
+    /// The display the capture came from: the area's or the fullscreen display, or the display
+    /// under a window's centre. The Quick Access stack goes there with `Show on` set to the capture.
+    var displayID: CGDirectDisplayID {
+        switch self {
+        case .display(let display): display.displayID
+        case .area(_, let display): display.displayID
+        case .window(let window): CaptureEngine.displayID(containing: window.frame)
+        }
+    }
+}
+
 struct CaptureOptions: Equatable {
     var showsCursor: Bool = false
     /// Window captures only: keep the window's shadow (spec 2.9). Off is today's output.

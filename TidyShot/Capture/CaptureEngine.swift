@@ -72,10 +72,7 @@ final class CaptureEngine {
     }
 
     static func screen(forDisplayID id: CGDirectDisplayID) -> NSScreen? {
-        NSScreen.screens.first { screen in
-            let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
-            return number?.uint32Value == id
-        }
+        NSScreen.screens.first { $0.displayID == id }
     }
 
     /// The display containing the centre of `cgRect` (CG global coordinates), or the main display.
@@ -84,5 +81,12 @@ final class CaptureEngine {
         var count: UInt32 = 0
         CGGetDisplaysWithPoint(CGPoint(x: cgRect.midX, y: cgRect.midY), 1, &id, &count)
         return count > 0 ? id : CGMainDisplayID()
+    }
+}
+
+extension NSScreen {
+    /// The CoreGraphics display id of this screen.
+    var displayID: CGDirectDisplayID? {
+        (deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value
     }
 }

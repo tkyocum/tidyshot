@@ -130,4 +130,32 @@ struct AppSettingsTests {
         #expect(defaults.object(forKey: "freezeScreen") as? Bool == true)
         #expect(AppSettings(defaults: defaults).freezeScreen)
     }
+
+    /// Phase 6a: the stack shows up to five cards on the display of the capture (spec 2.9).
+    @Test func overlayStackSettingsDefaultAndPersist() {
+        let defaults = freshDefaults()
+        let first = AppSettings(defaults: defaults)
+        #expect(first.overlayDisplay == .capture)
+        #expect(first.overlayMaxCards == 5)
+        first.overlayDisplay = .main
+        first.overlayMaxCards = 3
+        #expect(defaults.string(forKey: "overlayDisplay") == "main")
+        #expect(defaults.integer(forKey: "overlayMaxCards") == 3)
+        let second = AppSettings(defaults: defaults)
+        #expect(second.overlayDisplay == .main)
+        #expect(second.overlayMaxCards == 3)
+    }
+
+    /// A stored value outside the Stepper's 1 to 8, or an unknown display choice, reads as the
+    /// nearest valid one.
+    @Test func overlayStackSettingsOutOfRangeReadAsValid() {
+        let defaults = freshDefaults()
+        defaults.set("elsewhere", forKey: "overlayDisplay")
+        defaults.set(0, forKey: "overlayMaxCards")
+        let low = AppSettings(defaults: defaults)
+        #expect(low.overlayDisplay == .capture)
+        #expect(low.overlayMaxCards == 1)
+        defaults.set(20, forKey: "overlayMaxCards")
+        #expect(AppSettings(defaults: defaults).overlayMaxCards == 8)
+    }
 }

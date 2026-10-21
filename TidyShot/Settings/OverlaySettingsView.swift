@@ -18,6 +18,16 @@ struct OverlaySettingsView: View {
                      : "Auto-close after \(Int(settings.overlayAutoCloseSeconds)) s")
             }
             .disabled(!settings.showOverlay)
+            Picker("Show on", selection: $settings.overlayDisplay) {
+                ForEach(OverlayDisplayChoice.allCases) { choice in
+                    Text(choice.title).tag(choice)
+                }
+            }
+            .disabled(!settings.showOverlay)
+            Stepper(value: $settings.overlayMaxCards, in: AppSettings.overlayMaxCardsRange) {
+                Text(settings.overlayMaxCards == 1 ? "Show up to 1 overlay" : "Show up to \(settings.overlayMaxCards) overlays")
+            }
+            .disabled(!settings.showOverlay)
             Stepper("Keep history for \(settings.historyRetentionDays) days", value: $settings.historyRetentionDays, in: 1...365)
         }
         .formStyle(.grouped)

@@ -40,6 +40,8 @@ final class AppSettings {
         static let showOverlay = "showOverlay"
         static let overlayCorner = "overlayCorner"
         static let overlayAutoCloseSeconds = "overlayAutoCloseSeconds"
+        static let overlayDisplay = "overlayDisplay"
+        static let overlayMaxCards = "overlayMaxCards"
         static let historyRetentionDays = "historyRetentionDays"
         static let s3Config = "s3DestinationConfig"
         static let editorStrokeColor = "editorStrokeColor"
@@ -64,6 +66,11 @@ final class AppSettings {
     var showOverlay: Bool { didSet { defaults.set(showOverlay, forKey: Keys.showOverlay) } }
     var overlayCorner: OverlayCorner { didSet { defaults.set(overlayCorner.rawValue, forKey: Keys.overlayCorner) } }
     var overlayAutoCloseSeconds: Double { didSet { defaults.set(overlayAutoCloseSeconds, forKey: Keys.overlayAutoCloseSeconds) } }
+    /// Which screen the card stack uses (Overlay tab, `Show on`).
+    var overlayDisplay: OverlayDisplayChoice { didSet { defaults.set(overlayDisplay.rawValue, forKey: Keys.overlayDisplay) } }
+    /// How many cards the stack shows at most (Overlay tab, `Show up to N overlays`).
+    var overlayMaxCards: Int { didSet { defaults.set(overlayMaxCards, forKey: Keys.overlayMaxCards) } }
+    static let overlayMaxCardsRange: ClosedRange<Int> = 1...8
     var historyRetentionDays: Int { didSet { defaults.set(historyRetentionDays, forKey: Keys.historyRetentionDays) } }
     /// Nil until the Upload tab has been saved once. Stored as JSON.
     var s3Config: S3DestinationConfig? {
@@ -113,6 +120,8 @@ final class AppSettings {
             Keys.showOverlay: true,
             Keys.overlayCorner: OverlayCorner.bottomRight.rawValue,
             Keys.overlayAutoCloseSeconds: 5.0,
+            Keys.overlayDisplay: OverlayDisplayChoice.capture.rawValue,
+            Keys.overlayMaxCards: 5,
             Keys.historyRetentionDays: 30,
             Keys.editorLineWidthPoints: Double(EditorDefaults.standard.lineWidthPoints),
             Keys.editorBlurRadiusPoints: Double(EditorDefaults.standard.blurRadiusPoints),
@@ -132,6 +141,9 @@ final class AppSettings {
         showOverlay = defaults.bool(forKey: Keys.showOverlay)
         overlayCorner = OverlayCorner(rawValue: defaults.string(forKey: Keys.overlayCorner) ?? "") ?? .bottomRight
         overlayAutoCloseSeconds = defaults.double(forKey: Keys.overlayAutoCloseSeconds)
+        overlayDisplay = OverlayDisplayChoice(rawValue: defaults.string(forKey: Keys.overlayDisplay) ?? "") ?? .capture
+        overlayMaxCards = min(max(defaults.integer(forKey: Keys.overlayMaxCards), Self.overlayMaxCardsRange.lowerBound),
+                              Self.overlayMaxCardsRange.upperBound)
         historyRetentionDays = defaults.integer(forKey: Keys.historyRetentionDays)
         // Decoding drops `{app}` from the key template (see `S3DestinationConfig.init(from:)`).
         let storedConfig = defaults.data(forKey: Keys.s3Config)

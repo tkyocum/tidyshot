@@ -26,8 +26,8 @@ final class AppCoordinator {
     let credentialStore: any CredentialStore = KeychainCredentialStore()
     private let notifier = Notifier()
     private let permissionWindow = PermissionWindowController()
-    private let overlay = QuickAccessController()
-    @ObservationIgnored private lazy var selector = SelectionController(engine: engine)
+    private let overlay = QuickAccessController(settings: AppSettings.shared)
+    @ObservationIgnored private lazy var selector = SelectionController(engine: engine, cardWindowNumbers: { [weak self] in self?.overlay.windowNumbers ?? [] })
     @ObservationIgnored private lazy var scrollCapture = ScrollCaptureController(engine: engine, settings: settings)
     /// Thumbnails and previews for Recent Captures.
     @ObservationIgnored private(set) lazy var thumbnailProvider = ThumbnailProvider(
@@ -49,10 +49,11 @@ final class AppCoordinator {
     @ObservationIgnored private var deletingIDs: Set<UUID> = []
     /// Set after the first "Upload not configured" notification so later captures stay quiet.
     @ObservationIgnored private var warnedUploadNotConfigured = false
-    /// The capture just taken and its pixels, kept while its overlay shows, so Annotate opens the
+    /// The capture just taken and its pixels, kept while its card shows, so Annotate opens the
     /// editor at once: also while the upload runs, and after an upload-only capture's pending file
-    /// is gone. The overlay's NSImage wraps the same CGImage, so this costs no memory. Cleared when
-    /// the overlay closes, by the next capture and by `removeRecord`.
+    /// is gone. The card's NSImage wraps the same CGImage, so this costs no memory. Cleared when
+    /// its card closes, by the next capture and by `removeRecord`. Older cards in the stack load
+    /// from the file or the bucket.
     @ObservationIgnored private var latestCapture: (id: UUID, image: ScaledImage)?
     /// Records whose editor image is loading, so a second Annotate does not open a second editor.
     @ObservationIgnored private var openingEditorIDs: Set<UUID> = []
@@ -122,7 +123,7 @@ final class AppCoordinator {
         await withCaptureLock {
             guard let content = await loadContent() else { return }
             guard let display = Self.display(under: NSEvent.mouseLocation, in: content.displays) else { return }
-            guard let result = await capture(.display(display)) else { return }
+            guard let result = await capture(.display(display), excludingWindows: await cardWindows()) else { return }
             await save(result)
         }
     }
@@ -276,7 +277,8 @@ final class AppCoordinator {
         let copiedChangeCount: Int? = copyImageNow ? Pasteboard.copy(pngData: png, tiffData: encoded.tiff) : nil
 
         guard let record = await persist(png: png, image: image, action: action, destination: destination,
-                                         alreadyOnClipboard: copyImageNow) else { return }
+                                         alreadyOnClipboard: copyImageNow,
+                                         captureDisplayID: result.target.displayID) else { return }
         if let copiedChangeCount {
             clipboardOwner = EditorClipboard.Owner(recordID: record.id, changeCount: copiedChangeCount)
         }
@@ -289,7 +291,7 @@ final class AppCoordinator {
     /// notified and left the image on the clipboard (`alreadyOnClipboard` says it is there
     /// already). Any other clipboard write is the caller's.
     private func persist(png: Data, image: ScaledImage, action: AfterCaptureAction, destination: S3Destination?,
-                         alreadyOnClipboard: Bool) async -> CaptureRecord? {
+                         alreadyOnClipboard: Bool, captureDisplayID: CGDirectDisplayID) async -> CaptureRecord? {
         // The object key is not named here: `startUpload` names it when the upload starts.
         let id = UUID()
         let fileURL: URL
@@ -326,7 +328,7 @@ final class AppCoordinator {
                                    appName: nil, uploadState: state)
         history.add(record)
         makeThumbnail(from: image.image, for: id)
-        showOverlay(for: record, image: image.image, scale: image.scale)
+        showOverlay(for: record, image: image.image, scale: image.scale, captureDisplayID: captureDisplayID)
 
         if let destination {
             startUpload(recordID: record.id, data: png, destination: destination)
@@ -415,23 +417,37 @@ final class AppCoordinator {
         }
     }
 
-    private func showOverlay(for record: CaptureRecord, image: CGImage?, scale: CGFloat) {
-        guard settings.showOverlay else { return }
+    private func showOverlay(for record: CaptureRecord, image: CGImage?, scale: CGFloat, captureDisplayID: CGDirectDisplayID) {
+        guard settings.showOverlay, let screen = overlayScreen(captureDisplayID: captureDisplayID) else { return }
         // The well shows the top of a tall capture, as its thumbnail does. The crop shares the pixels.
         let shown = image.map { full in
             full.cropping(to: ThumbnailMaker.cropForThumbnail(CGSize(width: full.width, height: full.height))) ?? full
         }
         let thumbnail = shown.map { NSImage(cgImage: $0, size: NSSize(width: CGFloat($0.width) / scale, height: CGFloat($0.height) / scale)) }
-        overlay.show(record: record, thumbnail: thumbnail, corner: settings.overlayCorner,
-                     autoCloseSeconds: settings.overlayAutoCloseSeconds,
-                     actions: QuickAccessController.Actions(
-                        copy: { [weak self] id in self?.copyLinkOrFile(recordID: id) },
-                        retry: { [weak self] id in self?.retryUpload(recordID: id) },
-                        reveal: { [weak self] id in self?.reveal(recordID: id) },
-                        delete: { [weak self] id in Task { await self?.deleteCapture(recordID: id) } },
-                        annotate: { [weak self] id in self?.openEditorAfterMenuTracking(recordID: id) }))
-        // After `show`: its `close()` of the previous panel has already reported that capture.
+        overlay.show(record: record, thumbnail: thumbnail, screen: screen,
+                     autoCloseSeconds: settings.overlayAutoCloseSeconds, actions: overlayActions())
+        // After `show`: a card it pushed out of the stack has already reported its capture.
         latestCapture = image.map { (id: record.id, image: ScaledImage(image: $0, scale: scale)) }
+    }
+
+    /// Every card's buttons. Shared by new captures' cards and restored ones (Task 4).
+    private func overlayActions() -> QuickAccessController.Actions {
+        QuickAccessController.Actions(
+            copy: { [weak self] id in self?.copyLinkOrFile(recordID: id) },
+            retry: { [weak self] id in self?.retryUpload(recordID: id) },
+            reveal: { [weak self] id in self?.reveal(recordID: id) },
+            delete: { [weak self] id in Task { await self?.deleteCapture(recordID: id) } },
+            annotate: { [weak self] id in self?.openEditorAfterMenuTracking(recordID: id) })
+    }
+
+    /// The screen for the card stack under `settings.overlayDisplay`; nil without screens.
+    private func overlayScreen(captureDisplayID: CGDirectDisplayID?) -> NSScreen? {
+        let screens = NSScreen.screens
+        guard !screens.isEmpty else { return nil }
+        let pointer = screens.firstIndex { $0.frame.contains(NSEvent.mouseLocation) }
+        let index = OverlayScreenChoice.index(choice: settings.overlayDisplay, captureDisplayID: captureDisplayID,
+                                              pointerIndex: pointer, screenDisplayIDs: screens.map { $0.displayID ?? 0 })
+        return screens[index]
     }
 
     /// The configured destination, or nil when the Upload tab is incomplete, no credentials are
@@ -1533,6 +1549,14 @@ final class AppCoordinator {
             }
             return nil
         }
+    }
+
+    /// The Quick Access cards as ScreenCaptureKit sees them, for a capture taken without the
+    /// selection overlay; no lookup when no card shows.
+    private func cardWindows() async -> [SCWindow] {
+        let numbers = overlay.windowNumbers
+        guard !numbers.isEmpty else { return [] }
+        return await OverlayWindowLookup.windows(numbers: numbers, engine: engine)
     }
 
     private func withCaptureLock(_ body: () async -> Void) async {

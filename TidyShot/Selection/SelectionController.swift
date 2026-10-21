@@ -5,6 +5,8 @@ import ScreenCaptureKit
 /// On success the overlay stays up until `dismiss()` so the capture can exclude it by window.
 final class SelectionController {
     private let engine: CaptureEngine
+    /// The Quick Access cards on screen, left out of every capture and snapshot taken here.
+    private let cardWindowNumbers: () -> Set<CGWindowID>
     private var windows: [SelectionWindow] = []
     private var views: [SelectionView] = []
     private var continuation: CheckedContinuation<Selection?, Never>?
@@ -17,8 +19,9 @@ final class SelectionController {
     /// Freeze screen: one snapshot per display, taken before any overlay window existed. Cleared by `dismiss()`.
     private var frozenSnapshots: [CGDirectDisplayID: FrozenSnapshot] = [:]
 
-    init(engine: CaptureEngine) {
+    init(engine: CaptureEngine, cardWindowNumbers: @escaping () -> Set<CGWindowID> = { [] }) {
         self.engine = engine
+        self.cardWindowNumbers = cardWindowNumbers
     }
 
     func select(mode: SelectionMode, content: SCShareableContent, freeze: CaptureOptions? = nil) async -> Selection? {
@@ -74,8 +77,8 @@ final class SelectionController {
         return await withCheckedContinuation { continuation = $0 }
     }
 
-    /// One `engine.capture(.display(_:))` per display with whatever `overlayWindows()` excludes
-    /// (nothing yet; Task 3 adds the Quick Access cards). Failures are dropped. Sequential: a
+    /// One `engine.capture(.display(_:))` per display with whatever `overlayWindows()` excludes:
+    /// the Quick Access cards, as no selection window exists yet. Failures are dropped. Sequential: a
     /// task group of main-actor children is rejected by the Swift 6 compiler here, because
     /// `SCDisplay` and `SCWindow` are not Sendable.
     private func captureFrozenSnapshots(options: CaptureOptions) async -> [CGDirectDisplayID: FrozenSnapshot] {
@@ -96,16 +99,19 @@ final class SelectionController {
         frozenSnapshots[displayID]
     }
 
-    /// Our overlay windows as ScreenCaptureKit sees them, for `excludingWindows`, through
-    /// `OverlayWindowLookup` (by window number, so other TidyShot windows are unaffected, with a
-    /// short retry). A complete result is cached until `dismiss()`, so the capture after selection
-    /// does not look up again.
+    /// Our overlay windows and the Quick Access cards as ScreenCaptureKit sees them, for
+    /// `excludingWindows`, through `OverlayWindowLookup` (by window number, with a short retry).
+    /// A complete result is cached until `dismiss()`; it is reused while it covers every window
+    /// wanted now, because a card can close (auto-close) or appear (Task 4's restore) meanwhile.
     func overlayWindows() async -> [SCWindow] {
         let wanted = Set(windows.compactMap { $0.windowNumber > 0 ? CGWindowID($0.windowNumber) : nil })
-        if let cachedOverlayWindows, cachedOverlayWindows.count >= wanted.count { return cachedOverlayWindows }
+            .union(cardWindowNumbers())
+        if let cachedOverlayWindows, Set(cachedOverlayWindows.map(\.windowID)).isSuperset(of: wanted) {
+            return cachedOverlayWindows
+        }
         guard !wanted.isEmpty else { return [] }
         let found = await OverlayWindowLookup.windows(numbers: wanted, engine: engine)
-        if !wanted.isEmpty, found.count >= wanted.count { cachedOverlayWindows = found }
+        if found.count >= wanted.count { cachedOverlayWindows = found }
         return found
     }
 
@@ -114,8 +120,9 @@ final class SelectionController {
         let pending = displays.filter { frozenSnapshots[$0.displayID] == nil }
         guard !pending.isEmpty else { return }
         let overlays = await overlayWindows()
+        let selectionNumbers = Set(windows.compactMap { $0.windowNumber > 0 ? CGWindowID($0.windowNumber) : nil })
         // A snapshot taken without every overlay excluded would show the dimming in the loupe; skip instead.
-        guard overlays.count >= windows.count else { return }
+        guard selectionNumbers.isSubset(of: Set(overlays.map(\.windowID))) else { return }
         for display in pending {
             guard !Task.isCancelled else { return }
             guard let index = windows.firstIndex(where: { $0.displayID == display.displayID }) else { continue }

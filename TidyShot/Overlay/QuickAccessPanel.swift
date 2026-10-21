@@ -1,8 +1,9 @@
 import AppKit
 import SwiftUI
 
-/// Floating, non-activating panel in a screen corner. Visible on every Space, including over
-/// full-screen apps, and never steals focus from the app the user is working in.
+/// Floating, non-activating card in the Quick Access stack. Visible on every Space, including
+/// over full-screen apps, and never steals focus from the app the user is working in. The stack
+/// places its cards, so dragging one does not move it.
 final class QuickAccessPanel: NSPanel {
     init(model: QuickAccessModel) {
         super.init(contentRect: CGRect(origin: .zero, size: QuickAccessView.size),
@@ -15,7 +16,7 @@ final class QuickAccessPanel: NSPanel {
         isOpaque = false
         backgroundColor = .clear
         hasShadow = true
-        isMovableByWindowBackground = true
+        isMovableByWindowBackground = false
         animationBehavior = .utilityWindow
         contentView = NSHostingView(rootView: QuickAccessView(model: model))
     }
