@@ -28,7 +28,7 @@ Tiers: **P0** is the MVP, **P1** follows once the upload loop is solid, **P2** i
 | All-in-One mode | One hotkey, then pick mode from a small toolbar; locks size and aspect ratio; remembers last selection | P1 | Good default hotkey once area/window/fullscreen exist |
 | Capture previous area | Re-capture the last rectangle | P1 | Cheap once selection is stored |
 | Quick Access Overlay | Thumbnail in a screen corner after capture with copy, save, annotate, share, drag-out, auto-close, restore closed overlay, multi-display | P0 (minimal), P1 (full) | MVP shows upload status plus copy/save/drag; the rest in P1 |
-| After-capture action | Preference: show overlay, save, copy, open editor, or upload automatically | P0 | Upload-and-copy-URL is the default this app exists for. Phase 3 adds "Upload only" (no local file kept), see 2.4 |
+| After-capture action | Preference: show overlay, save, copy, open editor, or upload automatically | P0 | Upload-and-copy-URL is the default this app exists for. Phase 3 adds "Upload only" (no local file kept), see 2.4. "Open editor" is deferred to Phase 4c; Phase 4 opens the editor from the overlay and Recent Captures, see 2.6 |
 | Upload and copy link | One click, link copied | P0 | Replaced by S3 destination |
 | Window with background | Padding plus wallpaper, custom image, or solid colour behind a window shot | P2 | Pure image compositing |
 | Transparent window / shadow toggle | Keep or drop the window shadow | P1 | `ignoreShadowsSingleWindow` in ScreenCaptureKit |
@@ -96,6 +96,336 @@ Prior art: macshot (GPL-3.0) is an open-source Swift app with S3-compatible uplo
 **Upload settings clarity.** Endpoint and Public URL fields show a neutral "Required" prompt; the example value sits in a caption under each field, so an unfilled field cannot be mistaken for a filled one. Save and Test Connection reports success without echoing the probe URL.
 
 **Adaptive crosshair.** The selection crosshair samples the frozen snapshot under the cursor and draws black on light backgrounds and white on dark ones; before the snapshot arrives it is white with a one-pixel dark edge.
+
+**Loupe crosshair (feedback after the Phase 3.1 build, 2026-10-20).** The cross inside the loupe stayed white, so over light pixels it vanished while the main crosshair turned black, and the 1 pt crosshair at 0.8 alpha was faint on any background. Both become two-tone strokes in the first task of Phase 4; see "Crosshair and loupe contrast" in 2.6.
+
+### 2.6 Phase 4 design: the annotation editor (2026-10-20)
+
+**Scope, order and release.** Phase 4 is one release delivered as two PRs on the branch `phase-4-annotation`.
+- **4a (PR 1).** In order: the loupe and crosshair contrast fix; the editor model, rendering, undo and tools, with an end-to-end redaction export test; a window with Select, Redact, Pixelate, Blur, Rectangle and Arrow, the colour palette, line widths and zoom; the four actions (Save, Save Copy, Copy, and Upload with Upload as New); and the Annotate entry points on the Quick Access overlay and on Recent Captures rows. Redaction lands first because screenshots of dashboards and terminals carry secrets, and the 4a build can be used and tested before the drawing tools exist.
+- **4b (PR 2).** Ellipse, Line, Pencil, Highlighter, Text and Crop, then keyboard polish (duplicate, object copy and paste, Space-drag pan) and canvas accessibility.
+- **The Phase 4 release is 4a plus 4b.** Section 6 and the Annotate row (P1, "basic set plus blur, pixelate, redact") put ellipse, line, pencil, highlighter, text and crop in the first editor release next to the effects. The two PRs are an order of work, not a smaller first release.
+- **4c (after the release, P2).** Spotlight, Counter, the editable project format, and "open editor" as an after-capture action (deferred from the 2.1 row: the overlay and Recent Captures cover the need in Phase 4, while a fourth after-capture action touches `save(_:)` and the Settings picker).
+
+**Crosshair and loupe contrast.** After the Phase 3.1 build the cross inside the loupe was still hard-coded white, and the 1 pt crosshair at 0.8 alpha was too faint. Every stroke `SelectionView` draws through `stroke(_:)` (the crosshair, the drag rectangle border, the completed rectangle border) and the loupe's cross become two-tone: an opaque 1 pt line in the style's colour over a halo one device pixel wider on each side in the opposite colour at 0.7 alpha. `CrosshairStyle` (Luminance.swift) carries the colour table so it can be tested like the thresholds:
+- `var lineWhite: CGFloat`: 0 for `.dark`, 1 for `.light` and `.outlined`.
+- `var haloWhite: CGFloat`: 1 for `.dark`, 0 for `.light` and `.outlined`.
+- `static let lineAlpha: CGFloat = 1` and `static let haloAlpha: CGFloat = 0.7`.
+
+The cases keep their meaning: `.dark` over light pixels (black line, white halo), `.light` over dark pixels (white line, black halo), and `.outlined` when no luminance is available (white line, black halo, the same colours as `.light`). In `drawLoupe(at:)`, `stroke(cross)` replaces the hard-coded `NSColor.white.withAlphaComponent(0.9)` cross. `style(at:)` already samples a 24 pt square (`Luminance.sampleSide`) that encloses the loupe's 16 pt region, so no second sample is needed. The loupe's 2 pt white ring is unchanged. No loupe is drawn before the snapshot arrives (`drawLoupe` returns when `snapshot` is nil), so the loupe sees `.outlined` only when the sample lies wholly outside the snapshot.
+
+**Architecture.** AppKit owns the editor window, toolbar, canvas, events and menus. SwiftUI appears only as the content of two NSPopovers (colour palette and tool options), hosted by `NSHostingController` with `sizingOptions = .preferredContentSize`. New code lives in `TidyShot/Editor/`, in seven subfolders:
+- `Model/`: nonisolated, Sendable, Codable value types.
+- `Geometry/`: pure nonisolated helpers.
+- `Rendering/`: one actor, one MainActor cache, and nonisolated CoreGraphics drawing.
+- `Session/EditorModel.swift`: MainActor, `@Observable`.
+- `Tools/`: MainActor tool classes behind protocols, plus `ToolFactory.swift` with `makeTool(for:)`. Its exhaustive switch makes the compiler flag every new `EditorTool` case.
+- `Window/`: AppKit views, `EditorToolbar.swift` and the window controller.
+- `Persistence/`: pure decision tables for the four actions, the clipboard and the shortcut gate.
+
+XcodeGen's recursive `TidyShot` source path picks the folders up with `xcodegen generate` alone.
+
+The coordinator side lives in `AppCoordinator.swift` itself, under `// MARK: Editor`. It has to, because it calls `private` (file-scoped) members: `makeThumbnail(from:for:)`, `showOverlay(for:image:scale:)`, `startUpload(recordID:data:destination:)`, `imageData(of:)`, `deleteObjects(_:at:)`, `removeRecord(id:)`, `removeFiles(ofPruned:)`, `refreshOverlay(for:)`, `notifier`, `overlay` and `deletingIDs`. Every branch the coordinator takes comes from a tested helper in `Editor/Persistence/`.
+
+A new `nonisolated struct ScaledImage: Sendable { let image: CGImage; let scale: CGFloat }` (TidyShot/Output/ScaledImage.swift) is the only type that crosses between the editor and the coordinator. It exists because `CaptureResult` requires a MainActor `CaptureTarget`. `CaptureResult` gains `var scaled: ScaledImage`. The editor never writes files, never touches the pasteboard and never enqueues uploads. AppCoordinator stays the one save path, the one upload path and the one delete path.
+
+**Concurrency rule.** Under `SWIFT_APPROACHABLE_CONCURRENCY` (NonisolatedNonsendingByDefault), a `nonisolated async` function runs on the caller's executor. Any nonisolated async function that must run off the main actor is therefore marked `@concurrent`. Detached tasks and actor methods are unaffected:
+- `RedactionRenderer` is an actor, so its methods run on its own executor.
+- `EditorModel.renderExport` flattens inside `Task.detached`.
+- The test `FakeTileRenderer.tile` is `@concurrent` and waits on an async gate (an `actor TileGate` holding a `CheckedContinuation`), never on a `DispatchSemaphore`. A semaphore would block the main actor that the MainActor tile-cache tests run on, and deadlock.
+
+**Document model.** All model geometry is in image pixels with a top-left origin (CGImage row 0). This is the same convention as `Luminance.mean(of:in:)` and `CGImage.cropping(to:)`.
+- `RGBA` holds `red, green, blue, alpha: Double` in sRGB and derives `cgColor`. The model never stores a CGColor, CGPath, NSColor or CIFilter; CGPath and CIFilter are not Sendable in the 27 SDK.
+- The payload structs are `ShapeBox { id: UUID; rect: CGRect; color: RGBA; lineWidth: CGFloat }`, `Segment { id; from: CGPoint; to: CGPoint; color; lineWidth }` and `Region { id; rect }`.
+- `enum Annotation: Identifiable, Equatable, Sendable, Codable` has the 4a cases `rectangle(ShapeBox)`, `arrow(Segment)`, `redact(Region, fill: RGBA)`, `blur(Region, radius: CGFloat)` and `pixelate(Region, block: CGFloat)`. 4b adds `ellipse`, `line`, `pencil`, `highlighter` and `text`.
+- Line widths, blur radii and block sizes are stored in image pixels: the points chosen in the UI times the capture scale at creation. Export therefore needs no conversion, and a 2x capture gets twice the pixels.
+- `isEffect` is true for redact, blur and pixelate. Effects belong to the base layer: they render beneath every drawing, in creation order.
+- `struct AnnotationDocument: Equatable, Sendable, Codable { var annotations: [Annotation] }` exposes `effects` and `drawings` (both in creation order), `annotation(id:)`, `appending(_:)`, `removing(id:)`, `replacing(_:)` and `moving(id:by:)`. 4b adds `crop: CGRect?` (decodeIfPresent).
+- The base CGImage is not part of the document. EditorModel holds it next to the document and never mutates it.
+- No file in Phase 4 persists the document. The only file on disk with unredacted pixels is the original the user chose not to overwrite. The clipboard rule below covers the one other copy.
+
+**Rendering.** The window's content view stacks two viewport-sized views. There is no document-sized view and no NSScrollView magnification. This avoids `_NSTiledLayer` seams and a 10240x5760 backing store for a 5K capture.
+
+*`BaseImageView`* is flipped and layer-backed, and its `hitTest` returns nil. It shows:
+- the capture as one `CALayer.contents` texture, with implicit actions disabled;
+- one sublayer per effect tile, in creation order, each framed at `transform.viewRect(rect)`.
+
+Zoom and pan only move layer frames. All layers use `magnificationFilter = .nearest` when `zoom * backingScale >= 2` and `.linear` below, with `.trilinear` minification, so redacted pixels read exactly when zoomed in.
+
+*`CanvasView`* sits on top. It is flipped and layer-backed, not opaque, with `layerContentsRedrawPolicy = .onSetNeedsDisplay`. Its `draw(_:)` works only within the dirty rect:
+1. Concatenates `transform.affine`, so drawing is in image pixels.
+2. Draws placeholders for pending effects: the fill colour for a pending redact, grey at 0.5 alpha for a pending blur or pixelate.
+3. Draws every drawing whose bounds meet the dirty rect, then the transient shape, through `AnnotationDrawing.draw(_:in:scale:)`.
+4. Restores the CTM, then draws selection handles (8 pt squares) and, for a selected effect, a dashed outline. Both are drawn in view space so they keep a constant size.
+
+*Tiles.* `actor RedactionRenderer: TileRendering` owns the app's one `CIContext(mtlDevice: MTLCreateSystemDefaultDevice(), options: [.cacheIntermediates: true, .name: "TidyShot.redaction"])`, with `CIContext(options:)` as the fallback. Filters are built inside each call, because CIFilter is not Sendable. The method `tile(for effect: Annotation, over base: CGImage, beneath: [EffectTile]) -> CGImage?` composites the earlier tiles under the input, then applies one of three graphs:
+- **Blur:** `clampedToExtent().applyingGaussianBlur(sigma: radius).cropped(to: rect)`.
+- **Pixelate:** an averaged mosaic. It crops the block-aligned rect, applies `transformed(by: 1/block, highQualityDownsample: true)`, then `samplingNearest()`, scales back up and crops to the rect. The grid is anchored to image pixel (0,0), so the picture under a dragged region does not reshuffle. This is not `CIPixellate`, which point-samples.
+- **Redact:** `CIImage(color:).cropped(to: rect)`.
+
+Output always goes through `createCGImage(_:from:format: .RGBA8, colorSpace: base.colorSpace ?? sRGB, deferred: false)`, so no GPU work runs inside `draw(_:)`. The actor has two more methods: `warmUp(with:)` renders a 1x1 tile when an editor opens, and `clearCaches()` runs when the last editor closes.
+
+Redact is a tile like the others, so a later blur or pixelate that overlaps a redaction blurs black, never the secret. `beneath` holds every earlier effect whose rect meets the later effect's sample rect, `EffectGeometry.sampleRect(of:imageSize:)`:
+- for blur, the rect grown by `ceil(3 * radius)`;
+- for pixelate, the block-snapped rect;
+- for redact, the rect itself.
+
+A blur next to a redaction therefore never smears secret pixels in from its margin.
+
+*`RedactionTileCache`* (MainActor) keys each tile by `TileKey { effect: Annotation; beneath: [Annotation] }`. The key holds the effect's own value plus the values of the earlier effects it samples. A change to an earlier effect therefore changes the key of every later effect it touches, so no explicit invalidation pass is needed.
+- `reconcile(document:transient:)` computes the wanted keys with the pure `RedactionTileCache.keys(for:imageSize:)`.
+- It renders the mismatched tiles in creation order in one task, and the latest call wins through a cache-wide generation.
+- A warm render of an 800x400 tile should take a few milliseconds, so tiles render on every `mouseDragged`. If a Mac cannot keep up, `RectDragTool` renders the live tile on mouseUp only, a one-line change.
+- The transient effect being dragged is reconciled as the last effect. Its tile carries over unchanged on commit, because id, value and beneath are equal.
+
+**Export.** `EditorModel.renderExport() async -> ScaledImage?` works in two steps:
+1. `await tileCache.allTiles(for: document)` renders anything missing through the same actor, so export bytes equal preview bytes.
+2. A `Task.detached(priority: .userInitiated)` calls `EditorFlattener.flatten(base:tiles:document:scale:) -> CGImage?`.
+
+The flattener:
+1. Creates `CGContext(data: nil, width: base.width, height: base.height, bitsPerComponent: 8, bytesPerRow: 0, space: base.colorSpace ?? sRGB, bitmapInfo: premultipliedLast)`. If that colour space is refused, it converts the base to sRGB once.
+2. Sets interpolation `.none` and draws the base.
+3. Draws each tile at `ImageRects.bottomLeft(rect, imageHeight:)` on integral rects.
+4. Flips the CTM to top-left and draws all drawings through the same `AnnotationDrawing.draw(_:in:scale:)` the canvas uses.
+5. Calls `makeImage()`.
+
+It uses no NSGraphicsContext, which is MainActor. Pixels outside the effects equal the base byte for byte. Alpha survives, so window captures keep their transparent corners. A solid redact over a transparent corner paints opaque pixels.
+
+Encoding always uses `ImageEncoder.pngData(from:scale:)` with the capture's own scale (DPI 72 x scale), so a Retina edit stays 144 DPI. Copy also uses `Pasteboard.tiffData(of:scale:)`. The scale comes from `CaptureResult.scale` when the image was retained, or from `ImageEncoder.decode(_:).scale` when it was loaded from a file or a download.
+
+**Redaction is tested end to end.** `RedactionExportTests` drives the real `RedactionRenderer` (no fake) through `EditorModel.renderExport()`, then `ImageEncoder.pngData`, then `ImageEncoder.decode`. The source is a 64x48 high-entropy sRGB image in which every pixel value is distinct from the redact fill. The tests assert, on the decoded PNG bytes:
+1. Every pixel inside a redact region equals the fill, so no source value survives.
+2. A blur placed over a redaction contains no pixel equal to the source at the same position inside the redaction.
+3. Pixelate blocks are uniform, and at least one differs from the source.
+4. A blur region differs from the source.
+5. Pixels outside every effect equal the base, and the decoded scale is 2.
+
+This is the automated counterpart of the manual 400% inspection in the checklist.
+
+**Tools.** Tools are MainActor classes behind `protocol CanvasTool` (`cursor`, `mouseDown`, `mouseDragged`, `mouseUp`, `flagsChanged`). Each method takes `ToolInput { point: CGPoint; shift: Bool; option: Bool; clickCount: Int }` in image pixels. Tools talk only to `protocol CanvasEditing`, which EditorModel adopts and tests fake. Common rules:
+- A tool commits exactly once per completed gesture, on mouseUp.
+- The shape in progress lives in `transient` and is never undoable.
+- Drags shorter than 2/zoom px in either dimension are discarded.
+- `flagsChanged` re-applies Shift and Option mid-drag without mouse movement.
+
+| Tool (letter) | Behaviour |
+|---|---|
+| **Select (V)** | `HitTester.topmost(in:at:tolerance:)` tests handles before bodies, and drawings front to back before effects front to back, so a blur under an arrow stays selectable. Tolerance is `8 / zoom` px. A drag moves the selection, and Shift locks the dominant axis. A handle drag resizes via `HitTester.resized(_:handle:to:square:)`: 8 handles for boxes, 2 endpoints for arrows. A click on empty space deselects. Delete removes the selection. Arrow keys nudge 1 px, or 10 px with Shift. Escape deselects. |
+| **Redact (D)** | `RectDragTool(.redact)`. Shift squares and Option draws from the centre. The fill is `redactColor`, default black. It is listed first among the drawing tools because it is the only safe redaction. |
+| **Pixelate (X)** | Default block `RedactionDefaults.block(points: 10, scale:, region:)`, with a floor of 6 pt x scale and capped at the region's shorter side. The options slider runs 6 to 32 pt. |
+| **Blur (B)** | Default sigma 8 pt x scale, floor 4 pt x scale. The options slider runs 4 to 24 pt. |
+| **Rectangle (R)** | A `ShapeBox` with `strokeColor` and `lineWidthPoints * scale`, stroked inset by half the line width so the stroke sits inside the rect. |
+| **Arrow (A)** | `TwoPointTool(.arrow)`: tail at mouseDown, head at mouseUp. Shift snaps to 45 degrees. `ArrowGeometry.head(from:to:lineWidth:scale:)` gives a filled triangle with length `max(12 * scale, 4 * lineWidth)` and a 28 degree half-angle. The shaft stops at `ArrowGeometry.shaftEnd(from:to:lineWidth:scale:)` with round caps. |
+
+A new shape is selected after creation. 4b adds Ellipse (E), Line (L), Pencil (P), Highlighter (H), Text (T) and Crop (C). Each 4b tool task adds its case to `EditorTool` (the toolbar order comes from `EditorTool.toolbarOrder`), to `makeTool(for:)` in ToolFactory.swift, and to the tools group in EditorToolbar.swift.
+
+**Palette and options.** The toolbar colour item shows the current colour as a filled circle. Its NSPopover (`.transient`) hosts `ColorPaletteView`: ten swatches (black, red, orange, yellow, green, teal, blue, purple, pink, white) plus `ColorPicker(supportsOpacity: false)`. Shapes use `strokeColor` (default red) and Redact uses `redactColor` (default black). The palette edits the colour of the active tool and of the selected annotation.
+
+The options popover hosts `ToolOptionsView` with three controls:
+- line width: 2, 3, 4, 6, 8 or 12 pt, also on keys 1 to 6, default 4 pt;
+- blur radius;
+- pixel block.
+
+Changes apply live to the selection through a coalesced commit, so a slider drag is one undo step.
+
+AppSettings persists five keys and adds no Settings tab: `editorStrokeColor` and `editorRedactColor` (RGBA as JSON Data), `editorLineWidthPoints` (4), `editorBlurRadiusPoints` (8) and `editorPixelBlockPoints` (10). They are read once into `EditorDefaults` when an editor opens.
+
+**Undo.** EditorModel owns `let undoManager = UndoManager()` with `groupsByEvent = false`. UndoManager is MainActor-isolated in the 27 SDK, so no Sendable work is needed. `CanvasView.undoManager` and `windowWillReturnUndoManager(_:)` both return it, so `undo:` and `redo:` from the responder chain reach it.
+
+The single write path is `commit(_ new: AnnotationDocument, actionName: String, coalescingKey: String? = nil)`:
+1. It wraps the registration in `beginUndoGrouping` and `endUndoGrouping`.
+2. It registers a handler that re-commits the previous snapshot. That re-commit registers the inverse, which gives redo.
+3. It calls `setActionName`, assigns `document` and calls `tileCache.reconcile`.
+
+Coalescing works without timers. When `coalescingKey` equals the last commit's key, the document changes with no new registration, so a burst is one undo step. Arrow-key nudges use `"Nudge-<id>"` and a slider drag uses `"Blur Radius-<id>"`. The key is cleared by any other commit, by undo, by redo and by a selection change.
+
+Selection, zoom, pan, tool and colour choice never enter the undo stack. `hasUnsavedChanges` is `document != savedDocument`. `markSaved()` runs after a successful Save, Save Copy or Upload local write, and `window.isDocumentEdited` mirrors the flag. A text edit in progress (4b) uses its own UndoManager, described below.
+
+**Keyboard.**
+- **Editor shortcuts.** The SwiftUI main menu of an LSUIElement app is never drawn, so editor shortcuts do not depend on it. `EditorWindow: NSWindow` overrides `performKeyEquivalent(with:)` and looks the event up in the pure table `EditorShortcut.match(characters:command:shift:option:control:isEditingText:)`. The key window sees key equivalents before the main menu, so nothing is handled twice. The 4a table:
+  - ⌘S `saveDocument:`, ⇧⌘S `saveDocumentCopy:`
+  - ⌘C `copy:`, ⇧⌘C `copyImage:`
+  - ⌘U `uploadDocument:`, ⌥⌘U `uploadDocumentAsNew:`
+  - ⌘Z `undo:`, ⇧⌘Z `redo:`
+  - ⌘W `performClose:`
+  - ⌘0 `zoomToFit:` and ⌘1 `zoomToActualSize:` (natural point size)
+  - ⌘= `zoomIn:` and ⌘- `zoomOut:` (factor 1.25 around the view centre)
+  - ⌘A `selectAll:`
+
+  In 4a, `copy:` reaches EditorWindowController, which copies the flattened image, so ⌘C and ⇧⌘C behave the same. In 4b, CanvasView implements `copy:` for a selected object and passes it up the responder chain when nothing is selected, so the table does not change for ⌘C. 4b adds ⌘V `paste:` and ⌘D `duplicate:` and updates the table test in the same task. ⌘X has no row in any phase: Phase 4 has no object cut (rejectedIdeas), so ⌘X always goes to the responder chain.
+- **Text editing bypass.** While a text annotation is being edited (`isEditingText`, 4b), `match` returns nil for the rows with `passesThroughWhileEditingText`: ⌘C, ⌘A, ⌘Z and ⇧⌘Z, plus ⌘V and ⌘D from 4b. Those keys then reach the NSTextView's own handling, as does ⌘X, which has no row. Save, Upload, Close and Zoom still match, and their controller actions first call `model.commitTextEditing()`.
+- **Validation.** `NSApp.sendAction(_:to:from:)` does not consult `NSUserInterfaceValidations`. So on a match, EditorWindow:
+  1. Resolves `NSApp.target(forAction:to: nil, from: self)`.
+  2. If that target adopts NSUserInterfaceValidations, passes it a `ShortcutItem: NSObject, NSValidatedUserInterfaceItem` carrying the selector.
+  3. When validation fails, beeps and consumes the event. Otherwise calls `NSApp.sendAction`.
+
+  As a second guard, every action method on EditorWindowController (`saveDocument:`, `saveDocumentCopy:`, `copyImage:`, `uploadDocument:`, `uploadDocumentAsNew:`) re-checks the available set and returns at once when its `EditorAction` is missing. The pure `EditorCommandGate.action(for:)` maps each selector to an `EditorAction`, and `EditorCommandGate.permits(_:available:)` decides. Both are tested. The coordinator applies a third check at write time (see Record state).
+- **Unmodified keys.** These reach `CanvasView.keyDown` only while the canvas is first responder. `KeyRouting.action(characters:command:control:option:isEditingText:)` maps tool letters and the digits 1 to 6. Everything else goes to `interpretKeyEvents`:
+  - Escape and ⌘. become `cancelOperation:`, which abandons the drag and then deselects. It never closes the window.
+  - Delete becomes `deleteBackward:` or `deleteForward:`.
+  - The arrow keys become `moveLeft:` and its siblings, which nudge by `KeyRouting.nudge(dx:dy:shift:)`.
+- **Pointer zoom and pan.** Pinch calls `magnify(with:)`, ⌘-scroll zooms around the cursor, and plain scroll pans. Zoom limits are `0.1 / captureScale ... 8 / captureScale`, and offsets snap to device pixels. Tooltips show each tool's letter.
+
+**Window.**
+- **Shape.** `EditorWindowController: NSWindowController, NSWindowDelegate, NSUserInterfaceValidations` runs one window per record. AppCoordinator holds the controllers in `editors: [UUID: EditorWindowController]`. The window is an `EditorWindow` with:
+  - style mask `[.titled, .closable, .miniaturizable, .resizable]` and `toolbarStyle = .unified`;
+  - normal level, managed collection behaviour plus `.fullScreenPrimary`, and `tabbingMode = .disallowed`;
+  - `representedURL` set to the file when one exists, and `title` set to the file name or `Capture <time>`;
+  - `subtitle` showing the status line from `EditorAvailability.status`, for example `Uploading…`, `Deleting…`, `The uploaded copy still shows the original. Upload to replace it.` or `This capture was deleted. Copy and Save Copy still work.`
+- **Size and placement.** There is no frame autosave. `EditorWindowGeometry.initialContentSize(imagePixels:scale:chrome:visibleFrame:)` sizes the window to the image's natural point size plus chrome and a 24 pt inset. The size is at least 640x420 and at most 90% of the visible frame of the screen under the mouse. The transform starts at `CanvasTransform.fitting(imagePixelSize:in:inset: 24, captureScale:)`, never above natural size. Later editors are placed by `EditorWindowGeometry.cascaded(from:size:visibleFrame:)`, 22 pt down and to the right, clamped to the screen.
+- **Showing.** `present()` calls `NSApplication.shared.activate(ignoringOtherApps: true)`, then `makeKeyAndOrderFront(nil)`, then `orderFrontRegardless()` if the app is still inactive. This is the codebase's proven idiom: a plain `activate()` is refused when called from the non-activating overlay.
+- **Toolbar** (EditorToolbar.swift). `NSToolbar(identifier: "AnnotationEditor")`, `.iconOnly`, no customisation. The items, in order:
+  - `.tools`: an `NSToolbarItemGroup` with images, `.selectOne` and `controlRepresentation = .automatic`, built from `EditorTool.toolbarOrder`;
+  - `.space`, `.color`, `.toolOptions`, `.flexibleSpace`;
+  - `.zoom`: a pop-up with Fit, 50 %, 100 %, 200 % and 400 %;
+  - `.copyImage`;
+  - `.save`: an `NSMenuToolbarItem` whose menu offers Save Copy…;
+  - `.upload`: an `NSMenuToolbarItem` with `style = .prominent`, whose menu offers Upload and Upload as New.
+
+  Liquid Glass comes free, so there are no custom backgrounds.
+- **Closing.** `windowShouldClose(_:)` returns false while `hasUnsavedChanges` and runs `askToSaveBeforeClosing() async -> Bool` as an NSAlert sheet:
+  - message: `Do you want to save the changes made to “<title>”?`
+  - informative text: `Your changes will be lost if you don’t save them.`
+  - buttons: Save (or Save Copy… when Save is unavailable), Cancel, and Don’t Save (⌘D).
+
+  Quitting does not call `windowShouldClose`. So `AppDelegate.applicationShouldTerminate(_:)` returns `.terminateLater` while any editor is dirty and calls `AppCoordinator.reviewEditorsBeforeQuit() async -> Bool`. On close, the controller tells the coordinator. The coordinator drops the registry entry and, when no editor is left, calls `RedactionRenderer.shared.clearCaches()`.
+- **Record state.** One coordinator helper, `pushEditorState(for id: UUID)`, calls `editors[id]?.recordDidChange(history.record(id: id), saveFolder: saveLocation.currentURL, isDeleting: deletingIDs.contains(id))`. A nil record means deleted or pruned. These call it:
+  - `refreshOverlay(for:)`, so every upload progress, success, failure and retry reaches the editor;
+  - `removeRecord(id:)`;
+  - `removeFiles(ofPruned:)`, for each pruned record, because retention pruning goes through `didPrune` and not through `removeRecord`;
+  - `deleteCapture(recordID:)`, right after `deletingIDs.insert` (AppCoordinator.swift:538) and again from its `defer` after `deletingIDs.remove`. While the delete alert, `cancelUpload`, `deleteObjects` and the second alert are pending, `EditorAvailability.actions(record:saveFolder:isDeleting: true)` leaves only Copy and Save Copy;
+  - `editorUpload`, after its own `history.update` sets `.uploading(0)`. `startUpload` calls `refreshOverlay` only for a record that is not already uploading (AppCoordinator.swift:385-388), so without this the editor would learn of the upload only at the first progress event.
+
+  Save-folder changes are pushed too. While any editor is open, the coordinator observes `saveLocation.currentURL` (SaveLocation is `@Observable`). It uses the `withObservationTracking { } onChange: { Task { @MainActor in … } }` idiom from StatusMenuController and re-registers on each change. A change calls `pushEditorState` for every open editor, so Save availability and the subtitle follow a folder chosen in Settings. Safety does not depend on this push: `EditorSaveTarget.plan` is recomputed from the current record and folder at write time.
+
+  The same set drives the toolbar items and the shortcut gate. `editorSave`, `editorUpload` and `editorSaveCopy` also re-check, at write time and on the coordinator side, `EditorAvailability.refusal(for:record:saveFolder:isDeleting:)`. They use `history.record(id:)` and `deletingIDs.contains(id)` read at that moment. A non-nil reason posts `notifyError(reason, title: "Not saved")` (or `"Not uploaded"`) and writes nothing. A Save racing a delete therefore never recreates a pending or thumbnail file for a removed record.
+
+**Opening from the overlay.** `QuickAccessController.Actions` gains `annotate: (UUID) -> Void`, and `QuickAccessModel` gains `onAnnotate`. `QuickAccessView` gets a `pencil.tip.crop.circle` plain button (help `Annotate`) at the top of the right column, above Close and Delete. Column spacing becomes 8 and `QuickAccessView.size` stays 340x104. `showOverlay` binds `annotate` to `openEditor(recordID:)`, and Annotate stays enabled while the upload runs.
+
+In `save(_:)`, when the overlay is shown, the coordinator keeps `latestCapture: (id: UUID, image: ScaledImage)?`. The overlay's NSImage already wraps the same CGImage, so this costs no memory. It is cleared by three events: the new `QuickAccessController.onDidClose: ((UUID) -> Void)?`, the next capture, and `removeRecord`.
+
+`openEditor(recordID:)` works in five steps:
+1. If an editor is already open for the record, it brings that editor forward with `present()`.
+2. Otherwise it asks `EditorInput.source(for:retainedID:saveFolder:)`.
+3. `.retained` takes the in-memory image at once. This covers an upload-only capture whose pending file is gone after upload, and a capture that is still uploading.
+4. `.pendingFile`, `.saveFolderFile` and `.download` go through the existing `imageData(of:)`: a detached scoped or pending read, falling back to a signed GET. `ImageEncoder.decode` then runs in a detached task to recover the scale. `.unavailable(reason)` posts `notifyError(reason, title: "Could not open the capture")`.
+5. It builds the EditorModel and the controller, then closes the overlay. The editor is now the record's surface, and the record stays in Recent Captures.
+
+The image source per record kind, from the overlay:
+- **Save-folder file** (Save and Upload modes): the retained image, falling back to a scoped read.
+- **Upload-only, pending or failed:** the retained image, falling back to the pending file.
+- **Upload-only, already uploaded** (`fileURL` nil): the retained image, falling back to a signed GET from `objectLocation` + `uploadedKey`.
+- **Pre-Phase-3 uploaded record:** the scoped read. Without a file it is `.unavailable`.
+
+**Annotate from Recent Captures.** Each Recent Captures row gains a fourth icon button, Annotate (`pencil.tip.crop.circle`), before Copy URL. `RecentCaptureActions` gains `annotate: (UUID) -> Void`, which runs through `afterMenusClose` like the other row actions, so the window never opens inside menu tracking. It calls the same `openEditor(recordID:)`; with no retained image the loader reads the file or downloads the object. The button is disabled when `EditorInput.source` would be `.unavailable` (a pre-Phase-3 record with no file). This gives an entry point with Show overlay off, and a way back to an upload-only record whose replace failed (see Outcome below).
+
+**One local-edit path.** Save and the local write before an Upload both go through `applyLocalEdit(recordID:png:image:) async -> Bool`. That function:
+1. Re-checks `EditorAvailability.refusal` on the current record.
+2. Writes the file for the target `EditorSaveTarget.plan(for:saveFolder:)` picks, using the current record and folder.
+3. Sets `pixelWidth`/`pixelHeight` and `editedAt = now` with `history.update(id:)`.
+4. Sets `uploadIsStale = true` when the record has an `uploadedURL` or a `priorUpload`.
+5. Replaces the thumbnail and calls `thumbnailProvider.forget(id)`.
+6. Applies the clipboard rule.
+7. Calls `pushEditorState(for:)`.
+
+The editor then calls `markSaved()`. Upload therefore implies Save over whenever a save target exists (decided 2026-10-20).
+
+**Save (⌘S).** `EditorSaveTarget.plan(for:saveFolder:)` picks the target:
+- `.saveFolderFile(url, folder:)` when the file is in the current save folder, checked with `SaveLocation.contains(_:inFolder:)`. The write is the new `nonisolated static SaveLocation.overwriteScoped(_ data: Data, at fileURL: URL, folder: URL) throws`. It is atomic, runs under the folder's scope in a detached task, and throws `CocoaError(.fileWriteNoPermission)` for a file outside the folder.
+- `.pendingFile(url)` for a temporary file. The write is `pendingFiles.write(png, id:, ext: "png")`, which replaces `<id>.png` in place, so a later retry uploads the edited bytes.
+- `.unavailable(reason)` for a record with no local file, a file outside the current folder, or no folder. Save is then disabled, and Save Copy and Upload remain.
+
+Save and Upload are disabled while the record is uploading or being deleted. Save never touches the network. On an uploaded record, `uploadIsStale` drives the subtitle `The uploaded copy still shows the original. Upload to replace it.` A failed write posts `notifyError(..., title: "Not saved")` and puts the edited image on the clipboard, so an edit is never dropped.
+
+**Clipboard rule (secrets).** `save(_:)` copies the original image when `copyImageNow` is true (AppCoordinator.swift:171-183). That happens in three cases:
+- Save mode with "Copy image to clipboard" on (the default);
+- Upload or Upload-only mode with "Also copy image";
+- an upload action with no destination configured, where the image goes to the clipboard instead of a URL.
+
+The `keepOnClipboard` failure paths also copy it, but they return before a record exists, so no editor can open for that image. After a redaction, the original would stay on the clipboard. To prevent that:
+- `Pasteboard.copy` now returns the pasteboard's `changeCount`.
+- The coordinator keeps `clipboardOwner: (recordID: UUID, changeCount: Int)?`. `save(_:)` sets it whenever `copyImageNow` is true, and the editor's Copy also sets it.
+- After a successful local edit or Save Copy, the coordinator replaces the clipboard with the edited PNG and TIFF when `EditorClipboard.shouldReplace(owner:recordID:currentChangeCount:)` holds. That means the clipboard still holds exactly what TidyShot put there for this record. Anything the user copied since is left alone.
+- An Upload's `.uploaded` handler then copies the URL as the last write, as it does today.
+
+**Save Copy (⇧⌘S).** The tail of `save(_:)` is factored into `persist(png: Data, image: ScaledImage, action: AfterCaptureAction, destination: S3Destination?, options: PersistOptions) async -> CaptureRecord?`, where `PersistOptions { baseName: String?; alreadyOnClipboard: Bool; playsSound: Bool }`. It writes the file, warns once when upload is not configured, plays the sound, records the capture, makes the thumbnail, shows the overlay, and starts the upload or posts notifySaved. Both `save(_:)` and Save Copy call it, so there is still one save path. `writeFile`, `writePendingFile` and `keepOnClipboard` take `ScaledImage` instead of `CaptureResult`.
+
+Save Copy creates a new CaptureRecord that follows `settings.afterCaptureAction`:
+- It gets a new file in the save folder, or a pending file that uploads in upload-only mode, plus a thumbnail, a Recent Captures row and the overlay.
+- There is no shutter sound, and the clipboard changes only through the clipboard rule.
+- The file name is `EditorNaming.copyBaseName(for:)`, which returns `<original stem> edited`, made unique by `FileNamer.uniqueURL`. When the original has no file, the name comes from the template, with `{counter}` drawn as for a capture.
+- The editor stays on the original record and calls `markSaved()`. A deleted or pruned original does not block Save Copy.
+
+**Copy (⌘C, ⇧⌘C).** `ImageEncoder.pngData` and `Pasteboard.tiffData` run detached. Then `Pasteboard.copy(pngData:tiffData:)` runs on the main actor and the coordinator records `clipboardOwner`. An `Image copied` notification is posted when `settings.showNotification` is on. The window stays open.
+
+**Upload (⌘U) and Upload as New (⌥⌘U).**
+- **Prior upload, persisted.** `CaptureRecord.priorUpload: PriorUpload?` (decodeIfPresent, default nil) holds `PriorUpload { url: URL; key: String; location: ObjectLocation; isReplace: Bool }`.
+  - It is set whenever the editor uploads a record that has a link, in the same `history.update` that sets `.uploading(0)`. It is cleared on `.uploaded` and on a handled failure.
+  - `uploadedURL` and `uploadedKey` stay computed from `uploadState` only. The new `linkURL` is `uploadedURL ?? priorUpload?.url`. `RecentCaptureFormatting.canCopyLink` and the coordinator methods `AppCoordinator.copyLink(recordID:)` and `copyLinkOrFile(recordID:)` (AppCoordinator.swift:443-458) use it.
+  - A crash or quit mid-upload goes through `HistoryStore.load`, which turns `.uploading` into `.failed("Upload was interrupted.")`. `priorUpload` survives on disk, so the shared link stays copyable.
+  - `CaptureDeletion.objects(for:)` lists the prior key at its own location, so Delete removes it. `sharedKeys` and `deleteOrphanedObject` see it too.
+- **Plan.** `EditorUploadPlan.plan(record:currentLocation:others:asNew:)` takes the record's link from `uploadedKey` with `objectLocation`, or else from `priorUpload` (key and location). It returns one of:
+  - `.refuse(reason)` while the record is uploading.
+  - `.replace(key:)` when all four hold: a link exists; its location equals `ObjectLocation(config: destination.config)`; `CaptureDeletion.sharedKeys([key], at:, with: others)` is empty; and `asNew` is false.
+  - `.newObject(supersede: ObjectRef?, notice: String?)` otherwise:
+    - Never uploaded: a plain first upload.
+    - `asNew`: supersede the old key.
+    - Destination changed: supersede the old key at its own location, with the notice `The destination changed, so this uploads as a new link.`
+    - Key shared with another capture: no supersede, with the notice `Another capture shares this link, so this uploads as a new link.`
+    - Pre-Phase-3 record: no supersede, with the notice `The earlier upload stays in the bucket.`
+- **Retry.** `retry(recordID:destination:)` asks `EditorUploadPlan.retryPolicy(record:currentLocation:others:)`, which returns one of:
+  - `.fixed(key)` for a `priorUpload` with `isReplace` whose location still matches and whose key is unshared. An interrupted or failed replace is re-PUT to the same key, so no new key is minted.
+  - `.template(supersede: ObjectRef?)` otherwise. A replace whose destination has since changed supersedes the old key.
+- **Local write first.** Before any upload, the coordinator runs `applyLocalEdit`, so the file equals the object. For a record with no local file, it writes `pending/<id>.png` and sets `fileURL` and `fileIsTemporary = true`. Retry and Delete then see the file, and `handle(.uploaded)` removes it as today. A save-folder file outside the current folder is not rewritten; the upload still proceeds, and the subtitle says so.
+- **Starting.** `editorUpload` performs these steps:
+  1. `EditorUploadPlan.startingUpload(_:plan:)` sets `uploadState = .uploading(0)`, `priorUpload` and `supersededObjects` in one `history.update`.
+  2. It inserts the id into `uploadingIDs` through `startUpload`.
+  3. It calls `refreshOverlay(for:)` itself, which also pushes the editor state, so the overlay and the editor show `Uploading…` at once.
+- **Replace.** Replace sets `priorUpload` (isReplace true) and calls `startUpload(recordID:data:destination:fixedKey: key)`.
+  - `UploadJob` gains `enum KeyPolicy: Sendable, Equatable { case template(TemplateContext); case fixed(String) }`.
+  - The existing `init(...naming:)` keeps mapping to `.template`, and a new `init(id:data:contentType:fileExtension:fixedKey:cacheControl:)` is added.
+  - For `.fixed`, `UploadQueue.process(_:)` skips `reserveKey`, records the key in `reservedKeys` so a cancel reports it, re-PUTs the same key on retry, and draws no `{counter}`.
+- **Why skipping HEAD is safe.** HEAD-before-PUT exists to avoid overwriting another object. A fixed key is only ever this record's own key at its own location, and the shared-key rule has already excluded every other record that points at it. A HEAD would find the record's own object and wrongly steer away from it. Template jobs are unchanged, and all 16 UploadQueueTests stay green.
+- **Cache-Control.** Fixed-key PUTs send `Cache-Control: no-cache` as a signed header. `Destination.upload` gains a `cacheControl: String?` parameter, and a protocol extension keeps the old four-argument call. `handle(.uploaded)` re-copies the URL, which is unchanged unless the Public URL template was edited.
+- **Caches keep what they already served.** A replace does not purge CloudFront or any other cache. Normal uploads send no Cache-Control, so a CDN that fetched the link before the replace serves the original until its own TTL expires, and a browser that opened it may too; a versioned bucket also keeps the old bytes as a prior version. Redacting before the link is first opened (before it is pasted anywhere that unfurls it) leaves nothing cached. Upload as New deletes the old object at the origin, which stops new edge fetches, but it does not purge an edge copy either. The README and the 4a checklist say this, and the first replace in a session posts the notification `Replaced. Copies opened before now may stay cached for a while.`
+- **New object.** Before `startUpload`, the coordinator appends the old `ObjectRef { key; location }` to `CaptureRecord.supersededObjects: [ObjectRef]` (decodeIfPresent, default []) and sets `priorUpload` (isReplace false). After `.uploaded`, `deleteSupersededObjects(of:)` deletes each ref at its own location. It skips keys that `sharedKeys` reports and drops the refs that delete successfully. Failures stay on the record, and `deleteCapture` removes them later through `CaptureDeletion.objects(for:)`. That function lists, grouped by location:
+  - the uploaded key and the pending key at `objectLocation`;
+  - the prior upload at its location;
+  - the superseded refs.
+
+  `ObjectLocation` becomes Hashable.
+- **Outcome.** The pure functions `EditorUploadPlan.applyingSuccess(to:)` and `applyingFailure(to:message:)` decide record state.
+  - On `.uploaded`, `priorUpload` and `uploadIsStale` are cleared.
+  - On `.failed` with a `priorUpload`, the record returns to `.uploaded(url, key)` at the prior location. It keeps `uploadIsStale = true`, drops the superseded ref it added (the old object is live again) and clears `priorUpload`. The coordinator then notifies `Upload failed. The link still shows the earlier image.` instead of calling `markFailed`.
+  - On a failed replace for an upload-only record whose file was gone, the restored record keeps `fileURL = pending/<id>.png` with `fileIsTemporary = true`. That file holds the edited bytes, and the subtitle says the link still shows the original. `HistoryStore.pruned` never drops a record with `keepsUnuploadedEdit` (`fileIsTemporary && fileURL != nil && uploadIsStale`). Annotate on its Recent Captures row reopens it, a later Upload replaces the object, and `handle(.uploaded)` removes the file.
+  - A record with no `priorUpload` fails as today.
+- **Lane.** Every editor upload goes through the live lane, so cancel, progress, `uploadingIDs`, Delete and the menu bar icon keep working. The URL copy on `.uploaded` is always the last clipboard write.
+
+**Thumbnails after an edit.** An edited thumbnail gets a new name, `ThumbnailStore.fileName(for:editedAt:)` = `<UUID>-<milliseconds>.png`, written by the new `ThumbnailStore.write(_:fileName:)`. The previous file is removed. `RecentCaptureRow` reloads on `.task(id: record.thumbnailFileName)`, so rows refresh without further work.
+
+Neither older writer can clobber an edited thumbnail:
+- The capture-time `makeThumbnail` and the legacy `ThumbnailProvider` path only ever write `<UUID>.png`.
+- A late `makeThumbnail` checks `record.editedAt == nil` before naming its file on the record, and otherwise deletes the file.
+- ThumbnailProvider needs no change: its `forget` bumps the generation, so a late legacy write is discarded.
+
+`CaptureRecord.editedAt: Date?` and `uploadIsStale: Bool` (both decodeIfPresent) drive the subtitle note.
+
+**Phase 4b.**
+- Ellipse and Line.
+- Pencil, with decimated points and Catmull-Rom smoothing. Hit testing strokes a CGPath built on the fly.
+- Highlighter: multiply blend, yellow at 0.45 alpha.
+- Text: an NSTextView subview of CanvasView, positioned by the transform.
+  - Its delegate's `undoManager(for:)` returns a private UndoManager for the edit, so typing never registers into the editor's `groupsByEvent = false` manager. Committing the text is one editor commit, and the private manager is then discarded.
+  - `isEditingText` turns off tool letters and the pass-through chords in EditorShortcut.
+  - Committed text is drawn with CoreText on the bare CGContext, with a flipped text matrix.
+- Crop: `document.crop` with 8 handles, a dim mask and a W x H readout. Return applies and Escape cancels. The crop is undoable, is applied last at export, and updates the pixel size on Save.
+- ⌘D and ⌥-drag duplicate; object copy and paste; Space-drag pan; canvas accessibility elements.
+- A 4b checklist, a README section and a totals check.
+
+**Phase 4c (later, P2).**
+- Spotlight and Counter.
+- The `.tidyshot` project package. It is local only and never uploaded, and a warning says it keeps the unredacted original.
+- The after-capture open-editor option.
 
 ## 3. Core workflow in detail
 
@@ -195,9 +525,10 @@ Each phase ends with something usable. Phases 1 and 2 deliver the headline workf
 - Adaptive crosshair colour from the snapshot.
 
 ### Phase 4: annotation (1 to 2 weeks)
-- Editor window with arrow, rectangle, ellipse, line, pencil, highlighter, text, crop, undo, colour palette, and from the first release blur, pixelate, and a solid redact rectangle.
-- Save over, save copy, copy, upload from editor; overlay's Annotate button opens it.
-- Then spotlight, counter, and an editable project format.
+Design in 2.6. One release in two PRs.
+- 4a: crosshair and loupe contrast; editor window with Select, Redact, Pixelate, Blur, Rectangle, Arrow, undo, colour palette, line widths and zoom; Save over, Save Copy, Copy, Upload (same key) and Upload as New; Annotate on the overlay and on Recent Captures rows.
+- 4b: Ellipse, Line, Pencil, Highlighter, Text, Crop; duplicate, object copy and paste, Space-drag pan, canvas accessibility.
+- 4c (later): spotlight, counter, an editable project format, and "open editor" as an after-capture action.
 
 ### Phase 5: scrolling capture (1 to 2 weeks)
 - Accessibility permission flow for posting scroll events.
