@@ -124,7 +124,8 @@ With `Hide Desktop Icons` on.
 - [ ] While a selection is open (⌃⇧4 held), `t toggle-desktop-icons` still runs.
 
 ## The failure notification
-- [ ] It is hard to force, because every display normally has a wallpaper window. One way: quit TidyShot, `tccutil reset ScreenCapture io.tky.tidyshot`, open TidyShot (the permission window shows), then choose `Hide Desktop Icons`: `Desktop icons still showing` with `TidyShot could not read the desktop picture.` is posted and the icons stay. Choose it off and on again: no second notification in this launch. Grant Screen Recording again afterwards (and relaunch). Write down how it was checked if you used another way.
+- [ ] Without Screen Recording: quit TidyShot, `tccutil reset ScreenCapture io.tky.tidyshot`, open TidyShot (the permission window shows), close the permission window, then choose `Hide Desktop Icons`: the permission window shows again, no `Desktop icons still showing` is posted, and the icons stay. Choose it off and on again: nothing more in this launch. Relaunch, turn on `Hide desktop icons while capturing` and press ⌃⇧3: the permission window shows, nothing is captured, and no `Desktop icons still showing` is posted. Grant Screen Recording again afterwards (and relaunch).
+- [ ] The notification itself (`Desktop icons still showing` with `TidyShot could not read the desktop picture.`, once per launch) has no practical way to force with Screen Recording granted, because every display has a wallpaper window. It is checked by code reading: `DesktopCoverPlan` reports a display with no cover and no wallpaper, and the coordinator's `reportFailure` posts it when Screen Recording is granted. Write down any other way you used.
 
 ## Regression
 - [ ] With both desktop-icon options off, ⌃⇧1 to ⌃⇧6, the self-timer, the overlay, pins and URL commands behave as in the Phase 6b checklist.

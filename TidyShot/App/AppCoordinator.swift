@@ -40,9 +40,15 @@ final class AppCoordinator {
         })
     @ObservationIgnored private lazy var selfTimer = SelfTimerController()
     /// Hide desktop icons (spec 2.10): the wallpaper over the desktop's icons and widgets, while a
-    /// capture runs or until turned off. A display it cannot cover is reported once per session.
+    /// capture runs or until turned off. A display it cannot cover is reported once per session;
+    /// without Screen Recording, which is why nothing could be read, the permission window shows instead.
     @ObservationIgnored private lazy var covers = DesktopCoverController(source: WallpaperSource(), reportFailure: { [weak self] in
-        self?.notifier.notifyError("TidyShot could not read the desktop picture.", title: "Desktop icons still showing")
+        guard let self else { return }
+        if !ScreenCapturePermission.isGranted {
+            self.showPermissionWindow()
+        } else {
+            self.notifier.notifyError("TidyShot could not read the desktop picture.", title: "Desktop icons still showing")
+        }
     })
     /// Thumbnails and previews for Recent Captures.
     @ObservationIgnored private(set) lazy var thumbnailProvider = ThumbnailProvider(

@@ -106,7 +106,7 @@ final class AppSettings {
     /// General, URL commands: `Allow URL commands (tidyshot://)`. Off refuses every command.
     var urlCommandsEnabled: Bool { didSet { defaults.set(urlCommandsEnabled, forKey: Keys.urlCommandsEnabled) } }
     /// General, URL commands: `Allow URL commands that capture without a selection`
-    /// (capture-fullscreen, capture-previous-area, capture-area with a rect). Off by default.
+    /// (capture-fullscreen, capture-previous-area, capture-area or capture-text with a rect). Off by default.
     var urlCommandsAllowSilent: Bool { didSet { defaults.set(urlCommandsAllowSilent, forKey: Keys.urlCommandsAllowSilent) } }
     /// The Capture tab's Self-timer: seconds counted down before the capture. One of `selfTimerChoices`.
     var selfTimerSeconds: Int { didSet { defaults.set(selfTimerSeconds, forKey: Keys.selfTimerSeconds) } }

@@ -16,8 +16,10 @@ final class DesktopCoverController {
     private var isShowing = false
     /// The show that is capturing and ordering the panels front, for a later show to wait on.
     private var bringingUp: Task<Void, Never>?
-    /// The capture in flight, shared by every show and refresh that arrives meanwhile.
+    /// The capture in flight, shared by every show that arrives meanwhile.
     private var capturing: Task<[CGDirectDisplayID: CGImage], Never>?
+    /// A refresh arrived while a capture was in flight; one more runs when it ends.
+    private var refreshPending = false
     private var hasReportedFailure = false
     private var observers: [(center: NotificationCenter, token: any NSObjectProtocol)] = []
     private var refreshTimer: Timer?
@@ -55,6 +57,7 @@ final class DesktopCoverController {
         reasons.remove(reason)
         guard !reasons.showsCovers else { return }
         stopRefreshing()
+        refreshPending = false
         for panel in panels.values {
             panel.orderOut(nil)
         }
@@ -63,23 +66,30 @@ final class DesktopCoverController {
 
     private func bringUp() async {
         // While the covers are up, only screens without one are new; the others are left as is.
-        let keepsExisting = isShowing
+        // From hidden, the kept panels' wallpapers may be hours old or from another Space.
+        let wasShowing = isShowing
         let wallpapers = await captureWallpapers()
         // Hidden again while capturing.
         guard reasons.showsCovers else { return }
-        update(with: wallpapers, keepsExisting: keepsExisting && isShowing)
+        update(with: wallpapers, kind: wasShowing && isShowing ? .showWhileUp : .show)
         isShowing = true
         startRefreshing()
         CATransaction.flush()
         try? await Task.sleep(for: Self.settleDelay)
     }
 
+    /// Captures the wallpapers again. A capture in flight began before the trigger and may miss
+    /// what it is for (a new Space, a new display), so one more capture follows it.
     private func refresh() {
         guard isShowing else { return }
+        if capturing != nil {
+            refreshPending = true
+            return
+        }
         Task {
             let wallpapers = await captureWallpapers()
             guard isShowing else { return }
-            update(with: wallpapers, keepsExisting: false)
+            update(with: wallpapers, kind: .refresh)
         }
     }
 
@@ -89,18 +99,23 @@ final class DesktopCoverController {
         let task = Task {
             let wallpapers = await source.wallpapers()
             capturing = nil
+            if refreshPending {
+                refreshPending = false
+                refresh()
+            }
             return wallpapers
         }
         capturing = task
         return await task.value
     }
 
-    /// Builds or updates one panel per screen with a new wallpaper and orders them front. A panel
-    /// whose capture failed keeps its last wallpaper; one whose screen is gone is dropped.
-    private func update(with wallpapers: [CGDirectDisplayID: CGImage], keepsExisting: Bool) {
+    /// Builds or updates one panel per screen with a new wallpaper and orders them front. While the
+    /// covers show, a panel whose capture failed keeps its last wallpaper; one whose screen is gone
+    /// is dropped.
+    private func update(with wallpapers: [CGDirectDisplayID: CGImage], kind: DesktopCoverPlan.Kind) {
         let screens = NSScreen.screens.compactMap { screen in screen.displayID.map { ($0, screen) } }
         let plan = DesktopCoverPlan.make(screens: screens.map(\.0), covered: Set(panels.keys),
-                                         captured: Set(wallpapers.keys), keepsExisting: keepsExisting)
+                                         captured: Set(wallpapers.keys), kind: kind)
         for displayID in plan.removed {
             panels.removeValue(forKey: displayID)?.orderOut(nil)
         }
