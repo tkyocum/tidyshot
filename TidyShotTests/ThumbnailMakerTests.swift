@@ -38,6 +38,23 @@ struct ThumbnailMakerTests {
         #expect(small.height == 50)
     }
 
+    /// Pin to screen shows a huge capture from `scaled`: a tall image stays whole, where
+    /// `thumbnail(from:)` cuts it to its top rows.
+    @Test func scaledKeepsATallImageWholeAndNeverUpscales() throws {
+        let tall = makeImage(width: 100, height: 700)
+        let whole = try #require(ThumbnailMaker.scaled(tall, maxSide: 350))
+        #expect(whole.width == 50)
+        #expect(whole.height == 350)
+        #expect(whole.alphaInfo != .none && whole.alphaInfo != .noneSkipLast && whole.alphaInfo != .noneSkipFirst)
+        // The thumbnail of the same image is its top 150 rows (`cropForThumbnail`), not the whole.
+        let cut = try #require(ThumbnailMaker.thumbnail(from: tall, maxSide: 350))
+        #expect(cut.width == 100)
+        #expect(cut.height == 150)
+        let small = try #require(ThumbnailMaker.scaled(makeImage(width: 100, height: 50), maxSide: 350))
+        #expect(small.width == 100)
+        #expect(small.height == 50)
+    }
+
     @Test func thumbnailFromPNGDataMatchesImageIOBounds() throws {
         let wide = try ImageEncoder.pngData(from: makeImage(width: 640, height: 400), scale: 2)
         let thumbnail = try #require(ThumbnailMaker.thumbnail(fromPNGData: wide))

@@ -17,6 +17,11 @@ struct CaptureSettingsView: View {
             Text("Window captures keep transparent rounded corners either way.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            Picker("Self-timer", selection: $settings.selfTimerSeconds) {
+                ForEach(AppSettings.selfTimerChoices, id: \.self) { seconds in
+                    Text("\(seconds) seconds").tag(seconds)
+                }
+            }
         }
         .formStyle(.grouped)
     }

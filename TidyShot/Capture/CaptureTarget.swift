@@ -20,6 +20,26 @@ extension CaptureTarget {
     }
 }
 
+extension CaptureTarget {
+    /// Where the capture looks, in CoreGraphics global points: the display's frame, the area's
+    /// rect or the window's frame. The self-timer's badge and frame are placed from it.
+    var cgFrame: CGRect {
+        switch self {
+        case .display(let display): display.frame
+        case .area(let rect, _): rect
+        case .window(let window): window.frame
+        }
+    }
+}
+
+extension CaptureTarget {
+    /// The rect of an area capture (CoreGraphics global points), nil for a display or a window.
+    /// A pin of the newest capture opens over it.
+    var areaRect: CGRect? {
+        if case .area(let rect, _) = self { rect } else { nil }
+    }
+}
+
 struct CaptureOptions: Equatable {
     var showsCursor: Bool = false
     /// Window captures only: keep the window's shadow (spec 2.9). Off is today's output.

@@ -48,6 +48,13 @@ nonisolated enum ThumbnailMaker {
     static func thumbnail(from image: CGImage, maxSide: Int = maxSide) -> CGImage? {
         let crop = cropForThumbnail(CGSize(width: image.width, height: image.height))
         let image = crop.height < CGFloat(image.height) ? (image.cropping(to: crop) ?? image) : image
+        return scaled(image, maxSide: maxSide)
+    }
+
+    /// Draws all of `image` into a bitmap whose longest side is at most `maxSide` pixels: aspect
+    /// kept, never upscaled, alpha kept (sRGB). Unlike `thumbnail(from:maxSide:)` it never cuts a
+    /// tall image to its top. Pin to screen shows captures over 8,192 px from it.
+    static func scaled(_ image: CGImage, maxSide: Int) -> CGImage? {
         let size = targetSize(for: CGSize(width: image.width, height: image.height), maxSide: maxSide)
         guard let space = CGColorSpace(name: CGColorSpace.sRGB),
               let context = CGContext(data: nil, width: Int(size.width), height: Int(size.height), bitsPerComponent: 8,

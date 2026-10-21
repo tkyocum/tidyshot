@@ -37,4 +37,26 @@ struct SelectionOutcomeTests {
         #expect(SelectionOutcome.resolve(mode: .scrolling, dragRect: nil, hasHighlight: false) == .cancel)
         #expect(SelectionOutcome.resolve(mode: .scrolling, dragRect: jitter, hasHighlight: false) == .cancel)
     }
+
+    /// All-in-One's first selection works as scrolling's: a drag is an area, a click the
+    /// highlighted window (spec 2.9). The overlay then keeps the rect adjustable.
+    @Test func allInOneModeDragsAnAreaOrClicksAWindow() {
+        #expect(SelectionOutcome.resolve(mode: .allInOne, dragRect: drag, hasHighlight: false) == .area(drag))
+        #expect(SelectionOutcome.resolve(mode: .allInOne, dragRect: drag, hasHighlight: true) == .area(drag))
+        #expect(SelectionOutcome.resolve(mode: .allInOne, dragRect: nil, hasHighlight: true) == .window)
+        let jitter = CGRect(x: 10, y: 10, width: 1, height: 1)
+        #expect(SelectionOutcome.resolve(mode: .allInOne, dragRect: jitter, hasHighlight: true) == .window)
+        #expect(SelectionOutcome.resolve(mode: .allInOne, dragRect: nil, hasHighlight: false) == .cancel)
+    }
+
+    /// Self-Timer selects like scrolling: a drag is an area, a click on the highlight is a window.
+    @Test func selfTimerModeDragsAnAreaOrClicksAWindow() {
+        #expect(SelectionOutcome.resolve(mode: .selfTimer, dragRect: drag, hasHighlight: false) == .area(drag))
+        #expect(SelectionOutcome.resolve(mode: .selfTimer, dragRect: drag, hasHighlight: true) == .area(drag))
+        #expect(SelectionOutcome.resolve(mode: .selfTimer, dragRect: nil, hasHighlight: true) == .window)
+        let jitter = CGRect(x: 10, y: 10, width: 1, height: 1)
+        #expect(SelectionOutcome.resolve(mode: .selfTimer, dragRect: jitter, hasHighlight: true) == .window)
+        #expect(SelectionOutcome.resolve(mode: .selfTimer, dragRect: nil, hasHighlight: false) == .cancel)
+        #expect(SelectionOutcome.resolve(mode: .selfTimer, dragRect: jitter, hasHighlight: false) == .cancel)
+    }
 }

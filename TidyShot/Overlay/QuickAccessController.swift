@@ -37,6 +37,8 @@ final class QuickAccessController {
         /// Opens the annotation editor; see `AppCoordinator.openEditor(recordID:)`. Stays enabled
         /// while the upload runs.
         var annotate: (UUID) -> Void
+        /// Pins the capture on screen; see AppCoordinator.pin(recordID:).
+        var pin: (UUID) -> Void
         /// Save As… for the card's button and menu item; see `AppCoordinator.saveAs(recordID:)`.
         var saveAs: (UUID) -> Void
         /// Copy Image for the card's menu item; see `AppCoordinator.copyImage(recordID:)`.
@@ -171,6 +173,7 @@ final class QuickAccessController {
         model.onReveal = { actions.reveal(id) }
         model.onDelete = { actions.delete(id) }
         model.onAnnotate = { actions.annotate(id) }
+        model.onPin = { actions.pin(id) }
         model.onSaveAs = { actions.saveAs(id) }
         model.onCopyImage = { actions.copyImage(id) }
         model.onPrepareDrag = { actions.prepareDrag(id) }

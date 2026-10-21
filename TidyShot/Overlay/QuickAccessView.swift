@@ -26,6 +26,15 @@ struct QuickAccessView: View {
                 .help("Annotate")
                 .accessibilityLabel("Annotate")
                 Button {
+                    model.onPin()
+                } label: {
+                    Image(systemName: "pin")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Pin to screen")
+                .accessibilityLabel("Pin to screen")
+                Button {
                     model.onDelete()
                 } label: {
                     Image(systemName: "trash")
@@ -77,6 +86,7 @@ struct QuickAccessView: View {
         Button("Copy Image") { model.onCopyImage() }
         Button("Save As…") { model.onSaveAs() }
         Button("Annotate") { model.onAnnotate() }
+        Button("Pin to Screen") { model.onPin() }
         if model.canReveal {
             Button("Reveal in Finder") { model.onReveal() }
         }

@@ -104,6 +104,43 @@ struct ScrollCaptureSessionTests {
         #expect(idleSource.startCount == 0)
     }
 
+    /// A URL command's session (spec 2.9) still waiting for Start after the timeout cancels
+    /// itself, with nothing to save; not a moment before.
+    @Test func anUnstartedSessionCancelsItselfAfterTheReadyTimeout() async throws {
+        let (session, source, clock) = makeSession(makePage())
+        var ended: [ScrollCaptureOutcome] = []
+        session.onEnd = { ended.append($0) }
+        session.cancelIfNotStarted(within: ScrollCaptureSession.readyTimeout)
+
+        await clock.advance(by: .seconds(59))
+        #expect(session.phase == .ready)
+        #expect(ended.isEmpty)
+
+        await clock.advance(by: .seconds(1))
+        try await eventually { session.phase == .ended }
+        guard case .cancelled? = session.outcome else {
+            Issue.record("not cancelled")
+            return
+        }
+        #expect(ended.count == 1)
+        #expect(session.outcome?.imageToSave == nil)
+        #expect(source.startCount == 0)
+    }
+
+    /// Start before the timeout: the timeout no longer applies, and the capture runs on.
+    @Test func aStartedSessionIsNotCancelledByTheReadyTimeout() async throws {
+        let (session, _, clock) = makeSession(makePage())
+        var ended: [ScrollCaptureOutcome] = []
+        session.onEnd = { ended.append($0) }
+        session.cancelIfNotStarted(within: ScrollCaptureSession.readyTimeout)
+        await clock.advance(by: .seconds(30))
+        await session.start()
+        await clock.advance(by: .seconds(60))
+        #expect(session.phase == .capturing(.manual))
+        #expect(ended.isEmpty)
+        await session.cancel()
+    }
+
     /// Cancel while the stream is still starting: when the start returns, the session stops the
     /// stream again and reads nothing from it.
     @Test func cancelDuringTheStreamStartStopsItAgainAndReadsNothing() async throws {

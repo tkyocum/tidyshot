@@ -191,4 +191,54 @@ struct AppSettingsTests {
         #expect(defaults.object(forKey: "overlayCloseAfterDrag") as? Bool == false)
         #expect(!AppSettings(defaults: defaults).overlayCloseAfterDrag)
     }
+
+    /// All-in-One's aspect lock is off by default and persists (spec 2.9).
+    @Test func allInOneAspectLockDefaultsOffAndPersists() {
+        let defaults = freshDefaults()
+        let first = AppSettings(defaults: defaults)
+        #expect(!first.allInOneAspectLock)
+        first.allInOneAspectLock = true
+        #expect(defaults.object(forKey: "allInOneAspectLock") as? Bool == true)
+        #expect(AppSettings(defaults: defaults).allInOneAspectLock)
+    }
+
+    /// Phase 6b: Self-timer counts 5 seconds unless the Capture tab says 3 or 10 (spec 2.9).
+    @Test func selfTimerSecondsDefaultsToFiveAndPersists() {
+        let defaults = freshDefaults()
+        let first = AppSettings(defaults: defaults)
+        #expect(first.selfTimerSeconds == 5)
+        #expect(AppSettings.selfTimerChoices == [3, 5, 10])
+        first.selfTimerSeconds = 10
+        #expect(defaults.integer(forKey: "selfTimerSeconds") == 10)
+        #expect(AppSettings(defaults: defaults).selfTimerSeconds == 10)
+    }
+
+    /// A stored value the picker does not offer reads as the default.
+    @Test func selfTimerSecondsOutsideTheChoicesReadAsFive() {
+        let defaults = freshDefaults()
+        for stored in [0, 1, 4, 7, 60, -3] {
+            defaults.set(stored, forKey: "selfTimerSeconds")
+            #expect(AppSettings(defaults: defaults).selfTimerSeconds == 5)
+        }
+        defaults.set(3, forKey: "selfTimerSeconds")
+        #expect(AppSettings(defaults: defaults).selfTimerSeconds == 3)
+    }
+
+    @Test func urlCommandsAreOnAndSilentCapturesOffByDefault() {
+        let settings = AppSettings(defaults: freshDefaults())
+        #expect(settings.urlCommandsEnabled)
+        #expect(!settings.urlCommandsAllowSilent)
+    }
+
+    @Test func urlCommandSettingsRoundTripThroughASecondInstance() {
+        let defaults = freshDefaults()
+        let first = AppSettings(defaults: defaults)
+        first.urlCommandsEnabled = false
+        first.urlCommandsAllowSilent = true
+        let second = AppSettings(defaults: defaults)
+        #expect(!second.urlCommandsEnabled)
+        #expect(second.urlCommandsAllowSilent)
+        #expect(defaults.object(forKey: "urlCommandsEnabled") as? Bool == false)
+        #expect(defaults.object(forKey: "urlCommandsAllowSilent") as? Bool == true)
+    }
 }
