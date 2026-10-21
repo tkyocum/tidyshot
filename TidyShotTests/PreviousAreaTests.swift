@@ -51,6 +51,16 @@ struct PreviousAreaTests {
         #expect(PreviousArea.resolve(rect: rect, displays: [main]) == .offScreen)
     }
 
+    /// A 1 pt wide rect whose centre is 0.1 pt inside the main display's right edge keeps 0.6 pt
+    /// on it: too thin to capture, so it counts as off screen. The same at the bottom edge.
+    @Test func aRectLeavingUnderOnePointOnItsDisplayIsOffScreen() {
+        #expect(PreviousArea.resolve(rect: CGRect(x: 1919.4, y: 100, width: 1, height: 300), displays: [main]) == .offScreen)
+        #expect(PreviousArea.resolve(rect: CGRect(x: 100, y: 1079.4, width: 300, height: 1), displays: [main]) == .offScreen)
+        // Exactly one point left on the display is enough.
+        #expect(PreviousArea.resolve(rect: CGRect(x: 1919, y: 100, width: 1.5, height: 300), displays: [main])
+                == .area(CGRect(x: 1919, y: 100, width: 1, height: 300), 1))
+    }
+
     @Test func noDisplaysIsOffScreen() {
         #expect(PreviousArea.resolve(rect: CGRect(x: 0, y: 0, width: 100, height: 100), displays: []) == .offScreen)
     }

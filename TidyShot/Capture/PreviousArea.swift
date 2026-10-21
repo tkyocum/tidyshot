@@ -31,7 +31,8 @@ nonisolated enum PreviousArea {
     enum Resolution: Equatable, Sendable {
         /// No usable rect: none stored, or smaller than one point on a side.
         case none
-        /// A rect whose centre is on no connected display.
+        /// A rect whose centre is on no connected display, or that leaves less than a point on a
+        /// side on the display holding its centre.
         case offScreen
         /// The rect clipped to the display holding its centre, and that display.
         case area(CGRect, CGDirectDisplayID)
@@ -44,6 +45,9 @@ nonisolated enum PreviousArea {
         guard let rect, !rect.isNull, !rect.isInfinite, rect.width >= 1, rect.height >= 1 else { return .none }
         let centre = CGPoint(x: rect.midX, y: rect.midY)
         guard let display = displays.first(where: { $0.frame.contains(centre) }) else { return .offScreen }
-        return .area(rect.intersection(display.frame), display.id)
+        // A centre just inside an edge of a thin rect can leave less than a point on the display.
+        let clipped = rect.intersection(display.frame)
+        guard clipped.width >= 1, clipped.height >= 1 else { return .offScreen }
+        return .area(clipped, display.id)
     }
 }

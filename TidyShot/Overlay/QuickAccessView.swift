@@ -37,8 +37,9 @@ struct QuickAccessView: View {
         }
         .padding(12)
         .frame(width: Self.size.width, height: Self.size.height)
-        // Under the content and over the material: a press anywhere but a button drags out.
-        .background(QuickAccessCardDragSource(model: model))
+        // Under the content and over the material: a press anywhere but a button drags out. The
+        // status texts do not take the pointer, so a failure's full message is this view's tooltip.
+        .background(QuickAccessCardDragSource(model: model, toolTip: failureMessage))
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(.quaternary))
         .overlay(alignment: .topLeading) { closeBadge }
@@ -124,6 +125,12 @@ struct QuickAccessView: View {
                                                toolTip: model.canReveal ? "Reveal in Finder" : nil))
     }
 
+    /// A failed upload's message, the card's tooltip (`statusContent` shows it on one line).
+    private var failureMessage: String? {
+        if case .failed(let message) = model.record.uploadState { return message }
+        return nil
+    }
+
     /// The file name, or what stands in for it for an upload-only capture.
     private var fileLabel: String {
         model.record.fileURL?.lastPathComponent ?? "Upload only, no local file"
@@ -165,7 +172,6 @@ struct QuickAccessView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
-                .help(message)
         case .none:
             Label("Saved", systemImage: "checkmark.circle.fill")
                 .foregroundStyle(.green)

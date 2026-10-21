@@ -73,6 +73,9 @@ final class AppCoordinator {
     /// Bumped when a record's drag folder is removed or its pending file adopted. A stage or
     /// download that started before compares it at its end and drops what it made.
     @ObservationIgnored private var dragGenerations: [UUID: Int] = [:]
+    /// Bumped by every `prepareDragFile` for a record. A stage hands its file to the card only
+    /// while it is still the newest, so an older stage never sets a file a newer one replaced.
+    @ObservationIgnored private var dragStageSeqs: [UUID: Int] = [:]
     /// Drag folders waiting `dragCleanupDelay` after their card closed.
     @ObservationIgnored private var dragCleanups: [UUID: Task<Void, Never>] = [:]
     /// Restored cards whose drag file is downloading, so a press does not start a second GET.
@@ -486,7 +489,7 @@ final class AppCoordinator {
             delete: { [weak self] id in self?.afterMenuTracking { Task { await self?.deleteCapture(recordID: id) } } },
             annotate: { [weak self] id in self?.openEditorAfterMenuTracking(recordID: id) },
             saveAs: { [weak self] id in self?.saveAs(recordID: id) },
-            copyImage: { [weak self] id in Task { await self?.copyImage(recordID: id) } },
+            copyImage: { [weak self] id in self?.afterMenuTracking { Task { await self?.copyImage(recordID: id) } } },
             prepareDrag: { [weak self] id in self?.prepareDragFile(recordID: id) },
             dragEnded: { [weak self] id, accepted in self?.dragDidEnd(recordID: id, accepted: accepted) })
     }
@@ -768,10 +771,10 @@ final class AppCoordinator {
 
     /// The capture's PNG: the local file when it can be read, otherwise the uploaded object. Copy
     /// Image, Annotate and the card's Save As… use it. Between the two, the record's drag copy
-    /// (DragFileStore), which an upload-only capture keeps while its card shows. The
-    /// save folder is resolved here, on the main actor, and the file is read in a detached task,
-    /// as `ThumbnailProvider` does: a temporary file in `pending` directly, a saved one through
-    /// the folder's security scope.
+    /// (`DragFileStore`), which an upload-only capture keeps while its card shows; an edit removes
+    /// it (`applyLocalEdit`). The save folder is resolved here, on the main actor, and the file is
+    /// read in a detached task, as `ThumbnailProvider` does: a temporary file in `pending`
+    /// directly, a saved one through the folder's security scope.
     private func imageData(of record: CaptureRecord, downloadTitle: String = "Copying image…") async throws -> Data {
         let fileURL = record.fileURL
         let temporary = record.fileIsTemporary
@@ -1187,6 +1190,8 @@ final class AppCoordinator {
         dragCleanups.removeValue(forKey: recordID)?.cancel()
         let name = DragFileName.name(for: record, suggestion: saveAsSuggestion(recordID: recordID))
         let generation = dragGenerations[recordID, default: 0]
+        dragStageSeqs[recordID, default: 0] += 1
+        let seq = dragStageSeqs[recordID, default: 0]
         overlay.setDragFile(nil, for: recordID)
         let store = dragFiles
         let source = record.fileURL
@@ -1196,14 +1201,17 @@ final class AppCoordinator {
                 if let source, let url = try? store.stage(id: recordID, name: name, from: source, scope: scope) {
                     return url
                 }
-                // An adopted or downloaded copy, or the last copy of a file that has gone since.
-                return store.stagedFile(id: recordID)
+                // An adopted or downloaded copy, or the last copy of a file that has gone since,
+                // under the name worked out above.
+                return store.restage(id: recordID, name: name)
             }.value
             guard let self else { return }
             guard self.dragGenerations[recordID, default: 0] == generation else {
                 self.dropStaleDragFolder(recordID)
                 return
             }
+            // A later press staged again; its file is the card's.
+            guard self.dragStageSeqs[recordID, default: 0] == seq else { return }
             if let staged {
                 self.overlay.setDragFile(staged, for: recordID)
             } else {
@@ -1500,6 +1508,10 @@ final class AppCoordinator {
             await keepFailedEditOnClipboard(image, png: png, recordID: recordID, error: error)
             return false
         }
+        // The drag copy holds the pixels from before the edit: `imageData(of:)` would read it
+        // before the bucket once the file is gone. A press on a showing card stages the edit.
+        removeDragFolder(recordID)
+        overlay.setDragFile(nil, for: recordID)
         let editedAt = Date()
         history.update(id: recordID) {
             $0.recordLocalEdit(pixelWidth: image.image.width, pixelHeight: image.image.height, at: editedAt)

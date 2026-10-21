@@ -26,9 +26,20 @@ nonisolated struct DragFileStore: Sendable {
     }
 
     /// The file in `id`'s folder, or nil. A folder holds one file, except for a moment while two
-    /// operations on it overlap; then the first by name.
+    /// operations on it overlap; then the first by name. Hidden files (a `.DS_Store`) never count.
     func stagedFile(id: UUID) -> URL? {
         Self.entries(in: folder(for: id)).min { $0.lastPathComponent < $1.lastPathComponent }
+    }
+
+    /// The file in `id`'s folder as `Drag/<id>/<name>`: a file already of that name, or the folder's
+    /// file copied under it (replacing the rest), or, when that copy fails, the file as it is. Nil
+    /// for an empty folder. A restored card's download keeps the key name, and a folder an adopt
+    /// and a stage both wrote to settles on one file.
+    func restage(id: UUID, name: String) -> URL? {
+        let named = folder(for: id).appending(path: name)
+        if FileManager.default.fileExists(atPath: named.path(percentEncoded: false)) { return named }
+        guard let existing = stagedFile(id: id) else { return nil }
+        return (try? stage(id: id, name: name, from: existing, scope: nil)) ?? existing
     }
 
     /// Copies `source` to `Drag/<id>/<name>` and returns it, replacing what the folder held.
@@ -101,7 +112,8 @@ nonisolated struct DragFileStore: Sendable {
     }
 
     private static func entries(in folder: URL) -> [URL] {
-        (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
+        (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil,
+                                                      options: .skipsHiddenFiles)) ?? []
     }
 
     private static func removeLogged(_ url: URL) {

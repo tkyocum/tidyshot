@@ -103,6 +103,46 @@ struct DragFileStoreTests {
         #expect(store.stagedFile(id: id)?.lastPathComponent == "aSIS7.png")
     }
 
+    /// A restored card's download under its old name is handed out under the name worked out now,
+    /// as the only file in the folder.
+    @Test func restageRenamesTheFoldersFile() throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let id = UUID()
+        try store.write(Data([4, 5]), id: id, name: "Screenshot 2026-10-21 at 09.15.02.png")
+        let restaged = try #require(store.restage(id: id, name: "aSIS7.png"))
+        #expect(restaged.lastPathComponent == "aSIS7.png")
+        #expect(names(id) == ["aSIS7.png"])
+        #expect(try Data(contentsOf: restaged) == Data([4, 5]))
+        #expect(store.restage(id: id, name: "aSIS7.png") == restaged)
+        #expect(names(id) == ["aSIS7.png"])
+    }
+
+    /// With two files left by overlapping operations, the one already under the name wins, though
+    /// another sorts first; an empty or missing folder gives nil.
+    @Test func restagePrefersTheFileAlreadyUnderTheName() throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let id = UUID()
+        #expect(store.restage(id: id, name: "aSIS7.png") == nil)
+        try store.write(Data([1]), id: id, name: "aSIS7.png")
+        try Data([2]).write(to: store.folder(for: id).appending(path: "Screenshot 2026-10-21 at 09.15.02.png"))
+        #expect(store.stagedFile(id: id)?.lastPathComponent == "Screenshot 2026-10-21 at 09.15.02.png")
+        let restaged = try #require(store.restage(id: id, name: "aSIS7.png"))
+        #expect(restaged.lastPathComponent == "aSIS7.png")
+        #expect(try Data(contentsOf: restaged) == Data([1]))
+    }
+
+    /// Finder's `.DS_Store` in a folder is never the drag file (it sorts before every name).
+    @Test func hiddenFilesAreNeverTheStagedFile() throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let id = UUID()
+        try FileManager.default.createDirectory(at: store.folder(for: id), withIntermediateDirectories: true)
+        try Data([0]).write(to: store.folder(for: id).appending(path: ".DS_Store"))
+        #expect(store.stagedFile(id: id) == nil)
+        #expect(store.restage(id: id, name: "aSIS7.png") == nil)
+        try store.write(Data([7]), id: id, name: "aSIS7.png")
+        #expect(store.stagedFile(id: id)?.lastPathComponent == "aSIS7.png")
+    }
+
     /// One record's folder goes; another's stays; removing it again is no error.
     @Test func removeDeletesOneRecordsFolder() throws {
         defer { try? FileManager.default.removeItem(at: root) }
