@@ -3,10 +3,11 @@ import CoreGraphics
 /// Puts a capture on a background. CoreGraphics only: it runs off the main actor and needs no
 /// NSGraphicsContext.
 nonisolated enum BackgroundCompositor {
-    /// The shadow under the content, in points; `scale` turns them into pixels.
-    private static let shadowOffset: CGFloat = 8
-    private static let shadowBlur: CGFloat = 24
-    private static let shadowAlpha: CGFloat = 0.35
+    /// The shadow under the content, in points; `scale` turns them into pixels. The editor's
+    /// preview draws the same shadow with a layer.
+    static let shadowOffset: CGFloat = 8
+    static let shadowBlur: CGFloat = 24
+    static let shadowAlpha: CGFloat = 0.35
 
     /// `content` on the fill `style` names, as an 8-bit premultiplied RGBA bitmap in sRGB. The
     /// desktop picture and the custom image arrive as `fillImage`; when it is nil, those fills draw
@@ -44,6 +45,20 @@ nonisolated enum BackgroundCompositor {
         context.draw(content, in: rect)
         if style.shadow { context.endTransparencyLayer() }
         context.restoreGState()
+        return context.makeImage()
+    }
+
+    /// The fill alone, `size` pixels, as `compose` draws it under the content: the editor's preview
+    /// shows it behind the capture's layers. Nil when no bitmap can be made.
+    static func fill(_ fill: BackgroundFill, size: CGSize, fillImage: CGImage?) -> CGImage? {
+        guard size.width >= 1, size.height >= 1,
+              let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(data: nil, width: Int(size.width), height: Int(size.height),
+                                      bitsPerComponent: 8, bytesPerRow: 0, space: space,
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else { return nil }
+        drawFill(fill, fillImage: fillImage, in: context,
+                 canvas: CGRect(x: 0, y: 0, width: context.width, height: context.height), space: space)
         return context.makeImage()
     }
 

@@ -94,7 +94,7 @@ struct ImageTilingTests {
         view.transform = transform
         let rects = ImageTiling.tiles(width: 8, height: 40_000)
         #expect(view.baseTiles.map(\.rect) == rects)
-        let layers = try #require(view.layer?.sublayers)
+        let layers = view.contentLayers
         #expect(layers.count == 3)
         for (layer, rect) in zip(layers, rects) {
             let expected = transform.viewRect(rect)
@@ -106,7 +106,7 @@ struct ImageTilingTests {
             #expect(contents.width == 8)
         }
         view.image = try makeImage(width: 8, height: 100)
-        #expect(view.layer?.sublayers?.count == 1)
+        #expect(view.contentLayers.count == 1)
         view.image = nil
         #expect(view.baseTiles.isEmpty)
     }

@@ -17,6 +17,49 @@ nonisolated struct TextEditing: Equatable, Sendable {
     let original: TextBox?
 }
 
+/// The background as the canvas shows it (spec 2.11, Editor), in image pixels with a top-left
+/// origin, like the rest of the model.
+nonisolated struct ShownBackground: Equatable, Sendable {
+    let style: BackgroundStyle
+    /// The whole background. It reaches past `contentRect` by the padding, and further on one axis
+    /// for an aspect ratio, so its origin is usually negative.
+    let canvasRect: CGRect
+    /// The part of the capture on the background: the applied crop, or the whole capture.
+    let contentRect: CGRect
+    /// The content's corner radius.
+    let radius: CGFloat
+
+    /// The longest side of the fill the preview renders.
+    static let previewFillMaximumSide: CGFloat = 2_048
+
+    /// The size of the preview's fill: the canvas in pixels, scaled down to at most
+    /// `previewFillMaximumSide` on its long side, in whole pixels. The layer stretches it over
+    /// `canvasRect`.
+    var previewFillSize: CGSize {
+        let size = canvasRect.size
+        let factor = min(1, Self.previewFillMaximumSide / max(size.width, size.height, 1))
+        return CGSize(width: max(1, (size.width * factor).rounded()), height: max(1, (size.height * factor).rounded()))
+    }
+}
+
+/// Why `EditorModel.renderExport` made no image.
+nonisolated enum EditorExportFailure: Error, Equatable {
+    /// An effect over the image has no tile, so its pixels would export unredacted.
+    case missingTile
+    /// No bitmap could be made for the flattened image.
+    case flatten
+    /// The background could not be composed: the content is too large, or no bitmap could be made.
+    case background
+
+    /// The notification body for a failure the user should hear about; nil for the rest, which beep.
+    var message: String? {
+        switch self {
+        case .background: "The background could not be drawn."
+        case .missingTile, .flatten: nil
+        }
+    }
+}
+
 /// One editor's state: the capture, the annotation document and the one path that changes it.
 ///
 /// `commit(_:actionName:coalescingKey:)` is the only write. Each call is one explicit undo group
@@ -37,6 +80,7 @@ final class EditorModel: CanvasEditing {
         static let editText = "Edit Text"
         static let textSize = "Text Size"
         static let crop = "Crop"
+        static let background = "Background"
     }
 
     let recordID: UUID
@@ -70,6 +114,9 @@ final class EditorModel: CanvasEditing {
     }
     /// The Crop tool's rect while it is active; nil otherwise. Not part of the document or of undo.
     var cropDraft: CGRect?
+    /// The Background popover's style while a slider is dragged, so the canvas shows it live;
+    /// `commitBackgroundDraft()` makes it one step. Nil otherwise. Not part of the document or of undo.
+    var backgroundDraft: BackgroundStyle?
     var imageSize: CGSize { CGSize(width: base.width, height: base.height) }
     /// Redaction is the reason the editor exists, so it opens with Redact. A tool change commits the
     /// text being typed and applies a crop draft.
@@ -163,6 +210,7 @@ final class EditorModel: CanvasEditing {
         }
         undoManager.setActionName(actionName)
         coalescingKey = nil
+        backgroundDraft = nil
         apply(snapshot)
         // Undo while cropping: the open draft follows the restored crop, or Return would re-apply the undone one.
         // An unrelated step (a rectangle drawn before Crop opened) leaves the crop alone, so the draft stays.
@@ -325,6 +373,57 @@ final class EditorModel: CanvasEditing {
         guard let draft = cropDraft else { return }
         cropDraft = nil
         commit(document.withCrop(CropGeometry.integralCrop(draft, in: imageSize)), actionName: ActionName.crop)
+    }
+
+    // MARK: Background
+
+    /// The part of the capture a background frames: the applied crop, or the whole capture.
+    var backgroundContentRect: CGRect {
+        document.crop ?? CGRect(origin: .zero, size: imageSize)
+    }
+
+    /// Whether `style` can be laid out around the content; false over 16,384 px on a side.
+    func backgroundFits(_ style: BackgroundStyle) -> Bool {
+        BackgroundLayout.make(contentSize: backgroundContentRect.size, style: style, scale: scale) != nil
+    }
+
+    /// The background the canvas shows: the draft being dragged, else the document's. Nil with no
+    /// background, while the Crop tool is open (the crop handles work on the bare capture), and
+    /// when the content is too large to lay out.
+    var shownBackground: ShownBackground? {
+        guard cropDraft == nil, let committed = document.background else { return nil }
+        let style = backgroundDraft ?? committed
+        let content = backgroundContentRect
+        guard let layout = BackgroundLayout.make(contentSize: content.size, style: style, scale: scale) else { return nil }
+        let canvas = CGRect(x: content.minX - layout.contentRect.minX, y: content.minY - layout.contentRect.minY,
+                            width: layout.canvasSize.width, height: layout.canvasSize.height)
+        return ShownBackground(style: style, canvasRect: canvas, contentRect: content, radius: layout.radius)
+    }
+
+    /// The popover's `Background` toggle: `style` turns the background on, nil turns it off and
+    /// keeps nothing. One step.
+    func setBackground(_ style: BackgroundStyle?) {
+        backgroundDraft = nil
+        commit(document.withBackground(style), actionName: ActionName.background)
+    }
+
+    /// The popover's `onCommit`: the draft becomes one step (a swatch, a slider drag, the shadow
+    /// toggle, the aspect picker). The colour panel commits on every change, so a solid colour
+    /// replacing only the fill is committed under one coalescing key: a run of colour changes
+    /// with nothing else in between is one step. Nothing happens with no background.
+    func commitBackgroundDraft() {
+        guard let draft = backgroundDraft else { return }
+        backgroundDraft = nil
+        guard let current = document.background else { return }
+        commit(document.withBackground(draft), actionName: ActionName.background,
+               coalescingKey: Self.changesOnlyTheSolidColour(from: current, to: draft) ? "Background Colour" : nil)
+    }
+
+    private static func changesOnlyTheSolidColour(from old: BackgroundStyle, to new: BackgroundStyle) -> Bool {
+        guard case .solid = new.fill, new.fill != old.fill else { return false }
+        var recoloured = old
+        recoloured.fill = new.fill
+        return recoloured == new
     }
 
     // MARK: Text
@@ -493,20 +592,30 @@ final class EditorModel: CanvasEditing {
     // MARK: Export
 
     /// The flattened image at the capture's scale. Tiles come from the same renderer as the
-    /// preview, so export bytes equal preview bytes; the flatten runs off the main actor.
-    func renderExport() async -> ScaledImage? {
+    /// preview, so export bytes equal preview bytes; the flatten runs off the main actor. With a
+    /// background, the flattened (and cropped) image is then composed on it, also off the main
+    /// actor; a desktop picture is the wallpaper of `displayID`, the display under the editor
+    /// window, which the window controller passes so the model stays AppKit-free.
+    func renderExport(displayID: CGDirectDisplayID? = nil) async throws(EditorExportFailure) -> ScaledImage {
         let document = self.document
         let tiles = await tileCache.allTiles(for: document)
         let imageSize = CGSize(width: base.width, height: base.height)
         for effect in document.effects where !tiles.contains(where: { $0.effect == effect }) {
             // An effect that covers image pixels but has no tile would export them unredacted.
-            guard let rect = effect.effectRect, ImageRects.integral(rect, clippedTo: imageSize).isEmpty else { return nil }
+            guard let rect = effect.effectRect, ImageRects.integral(rect, clippedTo: imageSize).isEmpty else {
+                throw .missingTile
+            }
         }
         let base = self.base
         let scale = self.scale
-        let image = await Task.detached(priority: .userInitiated) {
+        guard let flat = await Task.detached(priority: .userInitiated, operation: {
             EditorFlattener.flatten(base: base, tiles: tiles, document: document, scale: scale)
-        }.value
-        return image.map { ScaledImage(image: $0, scale: scale) }
+        }).value else { throw .flatten }
+        guard let style = document.background else { return ScaledImage(image: flat, scale: scale) }
+        let fillImage = await BackgroundFillSource.fillImage(for: style.fill, displayID: displayID)
+        guard let composed = await Task.detached(priority: .userInitiated, operation: {
+            BackgroundCompositor.compose(flat, style: style, scale: scale, fillImage: fillImage)
+        }).value else { throw .background }
+        return ScaledImage(image: composed, scale: scale)
     }
 }

@@ -13,8 +13,6 @@ struct BackgroundOptionsView: View {
 
     /// The custom swatch's picture, read off the main actor; nil when there is no stored image.
     @State private var customPreview: CGImage?
-    /// Bumped after a store, so the preview is read again.
-    @State private var customRevision = 0
     /// The last solid colour picked here, which the solid swatch shows while another fill is chosen.
     @State private var lastSolidColor = RGBA(hex: 0xFFFFFF)
 
@@ -47,7 +45,8 @@ struct BackgroundOptionsView: View {
                 }
             }
         }
-        .task(id: customRevision) {
+        // Every view showing the image reads it again after a store, here or in another window.
+        .task(id: CustomBackgroundRevision.shared.count) {
             customPreview = await Task.detached(priority: .userInitiated) {
                 CustomBackgroundStore.shared.preview(maxSide: 128)
             }.value
@@ -185,7 +184,7 @@ struct BackgroundOptionsView: View {
             }.value
             switch outcome {
             case .success:
-                customRevision += 1
+                CustomBackgroundRevision.shared.bump()
                 choose(.customImage)
             case .failure(CustomBackgroundStore.StoreError.notAnImage):
                 onUnusableImage(url.lastPathComponent)

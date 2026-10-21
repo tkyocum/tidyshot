@@ -17,6 +17,9 @@ final class CanvasView: NSView {
         var editingID: UUID?
         /// The Crop tool's rect. A change repaints the whole view, since the readout sits outside it.
         var cropDraft: CGRect?
+        /// The background shown (`EditorModel.shownBackground`). A change repaints the whole view,
+        /// since the drawings are clipped to its rounded content rect.
+        var background: ShownBackground?
     }
 
     /// True while a text annotation is being typed. EditorWindow reads it to let the clipboard and
@@ -55,7 +58,8 @@ final class CanvasView: NSView {
         activeToolKind = model.tool
         activeTool = makeTool(for: model.tool)
         shown = Shown(document: model.document, transient: model.transient, selection: model.selection,
-                      transform: model.transform, editingID: model.textEditing?.box.id, cropDraft: model.cropDraft)
+                      transform: model.transform, editingID: model.textEditing?.box.id, cropDraft: model.cropDraft,
+                      background: model.shownBackground)
         super.init(frame: .zero)
         wantsLayer = true
         layerContentsRedrawPolicy = .onSetNeedsDisplay
@@ -80,8 +84,10 @@ final class CanvasView: NSView {
 
     // MARK: Zoom and pan
 
-    /// What Fit shows: the whole capture while cropping or with no crop, else the applied crop.
-    private func fitRect(document: AnnotationDocument, cropDraft: CGRect?) -> CGRect {
+    /// What Fit shows: the whole background when one is shown, else the whole capture while
+    /// cropping or with no crop, else the applied crop. While cropping no background is shown.
+    private func fitRect(document: AnnotationDocument, cropDraft: CGRect?, background: ShownBackground?) -> CGRect {
+        if let background { return background.canvasRect }
         let whole = CGRect(origin: .zero, size: imagePixelSize)
         return cropDraft == nil ? (document.crop ?? whole) : whole
     }
@@ -90,7 +96,7 @@ final class CanvasView: NSView {
     /// natural size; kept on resize.
     func fitToView() {
         guard bounds.width > 0, bounds.height > 0 else { return }
-        let shown = fitRect(document: model.document, cropDraft: model.cropDraft)
+        let shown = fitRect(document: model.document, cropDraft: model.cropDraft, background: model.shownBackground)
         let fit = CanvasTransform.fitting(imagePixelSize: shown.size, in: bounds.size, inset: EditorWindowGeometry.inset,
                                           captureScale: model.scale)
         apply(fit.panned(by: CGPoint(x: -shown.minX * fit.zoom, y: -shown.minY * fit.zoom)), fits: true)
@@ -486,6 +492,7 @@ final class CanvasView: NSView {
             _ = model.tool
             _ = model.textEditing
             _ = model.cropDraft
+            _ = model.backgroundDraft
         } onChange: { [weak self] in
             Task { @MainActor in
                 self?.observeModel()
@@ -504,7 +511,8 @@ final class CanvasView: NSView {
         }
         syncTextView()
         let now = Shown(document: model.document, transient: model.transient, selection: model.selection,
-                        transform: model.transform, editingID: model.textEditing?.box.id, cropDraft: model.cropDraft)
+                        transform: model.transform, editingID: model.textEditing?.box.id, cropDraft: model.cropDraft,
+                        background: model.shownBackground)
         guard now != shown else { return }
         let previous = shown
         shown = now
@@ -515,6 +523,7 @@ final class CanvasView: NSView {
             NSAccessibility.post(element: self, notification: .selectedChildrenChanged)
         }
         baseView.transform = now.transform
+        baseView.setBackground(now.background, captureScale: model.scale)
         // The effect being dragged is rendered on every change; commits reconcile in the model.
         if now.transient != previous.transient, now.transient?.isEffect == true || previous.transient?.isEffect == true {
             model.tileCache.reconcile(document: now.document, transient: now.transient)
@@ -528,15 +537,15 @@ final class CanvasView: NSView {
         }
         #endif
         if now.document == previous.document, now.selection == previous.selection, now.transform == previous.transform,
-           now.cropDraft == previous.cropDraft, now.editingID == previous.editingID {
+           now.cropDraft == previous.cropDraft, now.editingID == previous.editingID, now.background == previous.background {
             setNeedsDisplay(repaintRect(for: previous.transient, in: previous.document)
                 .union(repaintRect(for: now.transient, in: now.document)))
         } else {
             needsDisplay = true
         }
-        // Starting or ending cropping, and undo or redo of a crop, change what Fit shows.
-        if fitsOnResize, fitRect(document: now.document, cropDraft: now.cropDraft)
-            != fitRect(document: previous.document, cropDraft: previous.cropDraft) {
+        // Starting or ending cropping, undo or redo of a crop, and a background change what Fit shows.
+        if fitsOnResize, fitRect(document: now.document, cropDraft: now.cropDraft, background: now.background)
+            != fitRect(document: previous.document, cropDraft: previous.cropDraft, background: previous.background) {
             fitToView()
         }
     }
@@ -819,13 +828,21 @@ final class CanvasView: NSView {
     /// Spec 2.6 Rendering: (1) image-pixel CTM; (2) placeholders for effects with no tile yet;
     /// (3) drawings meeting the dirty rect, then the transient shape; (4) back in view space, the
     /// crop chrome and readout while cropping, else the cover outside an applied crop and the
-    /// selection handles or dashed outline. No Core Image or GPU work happens here.
+    /// selection handles or dashed outline. No Core Image or GPU work happens here. With a
+    /// background shown, steps 2 and 3 are clipped to its rounded content rect, as the export
+    /// clips the capture, and the background replaces the crop cover.
     override func draw(_ dirtyRect: NSRect) {
         guard let context = NSGraphicsContext.current?.cgContext else { return }
         let transform = model.transform
         let visible = transform.imageRect(dirtyRect)
         context.saveGState()
         context.concatenate(transform.affine)
+        if let background = shown.background {
+            let content = background.contentRect
+            let radius = min(background.radius, content.width / 2, content.height / 2)
+            context.addPath(CGPath(roundedRect: content, cornerWidth: radius, cornerHeight: radius, transform: nil))
+            context.clip()
+        }
         drawHighlighterBackdrops(in: context, visible: visible)
         for effect in displayedEffects where pendingIDs.contains(effect.id) {
             guard let rect = effect.effectRect, rect.intersects(visible) else { continue }
@@ -842,7 +859,7 @@ final class CanvasView: NSView {
             drawCropReadout(for: draft)
             return
         }
-        if let crop = model.document.crop {
+        if let crop = model.document.crop, shown.background == nil {
             // Resolved under the view's appearance, which AppKit makes current inside draw(_:).
             AnnotationDrawing.drawCropCover(keeping: crop, bounds: bounds, transform: transform,
                                             color: NSColor.windowBackgroundColor.cgColor, scale: backingScale, in: context)

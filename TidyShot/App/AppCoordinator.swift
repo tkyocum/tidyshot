@@ -1976,7 +1976,9 @@ final class AppCoordinator {
                 canPaste: { Pasteboard.hasAnnotationClip }),
             upload: { [weak self] image, asNew in
                 await self?.editorUpload(recordID: recordID, image: image, asNew: asNew) ?? .refused
-            })
+            },
+            exportFailed: { [weak self] message, title in self?.notifier.notifyError(message, title: title) },
+            unusableBackgroundImage: { [weak self] fileName in self?.notifyUnusableBackgroundImage(named: fileName) })
     }
 
     /// Tells the record's open editor, if any, what it may do now: the record as it is (nil once

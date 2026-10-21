@@ -24,6 +24,11 @@ struct EditorActions {
     var copy: (ScaledImage) async -> Void
     var objectClipboard: EditorObjectClipboard
     var upload: (ScaledImage, _ asNew: Bool) async -> EditorUploadOutcome
+    /// An export that failed for a reason worth telling (`EditorExportFailure.message`), posted as
+    /// an error notification under `title`: `Not saved`, `Not uploaded` or `Could not copy image`.
+    var exportFailed: (_ message: String, _ title: String) -> Void
+    /// The Background popover's `Choose Image…` was given a file that does not decode.
+    var unusableBackgroundImage: (_ fileName: String) -> Void
 }
 
 /// One annotation editor window for one capture record: the window, the two stacked views, the
@@ -31,6 +36,7 @@ struct EditorActions {
 final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUserInterfaceValidations {
     let model: EditorModel
     let canvasView: CanvasView
+    private let baseView: BaseImageView
     /// Called from `windowWillClose(_:)`; AppCoordinator drops the editor from its registry.
     var onClose: ((EditorWindowController) -> Void)?
 
@@ -38,6 +44,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
     /// The toolbar's popovers (EditorToolbar.swift), kept so only one is shown at a time.
     var colorPopover: NSPopover?
     var optionsPopover: NSPopover?
+    var backgroundPopover: NSPopover?
     /// One document action at a time; another one beeps until it finishes.
     private var isPerformingAction = false
     /// What the editor may do now. Empty until the coordinator's first push, which presentEditor
@@ -45,6 +52,11 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
     private(set) var available: Set<EditorAction> = []
     /// What ⌘S does now: write over the record's file, or open the save panel.
     private(set) var saveCommand: EditorSaveCommand = .saveAs
+    /// What the background preview's fill was last rendered for, and the render under way.
+    private var renderedFill: BackgroundFillKey?
+    private var fillTask: Task<Void, Never>?
+    /// The last desktop picture or custom image read, so a slider drag only redraws the fill.
+    private var fillSource: (key: BackgroundFillKey, image: CGImage?)?
 
     #if DEBUG
     private static var loggedMainMenu = false
@@ -55,6 +67,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
         self.actions = actions
         let baseView = BaseImageView(frame: .zero)
         baseView.image = model.base
+        self.baseView = baseView
         let canvasView = CanvasView(model: model, baseView: baseView)
         self.canvasView = canvasView
         canvasView.objectClipboard = actions.objectClipboard
@@ -84,6 +97,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
         installToolbar()
         placeWindow(cascadeFrom: cascadeFrom)
         observeEdited()
+        observeBackgroundFill()
     }
 
     @available(*, unavailable)
@@ -188,7 +202,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
         canvasView.commitTextEditing()
         guard permits(#selector(copyImage(_:))) else { return }
         runDocumentTask {
-            await self.exportAndDeliver(marksSaved: false) { image in
+            await self.exportAndDeliver(marksSaved: false, failureTitle: "Could not copy image") { image in
                 await self.actions.copy(image)
                 return true
             }
@@ -227,7 +241,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
     private func performSave() async -> Bool {
         switch saveCommand {
         case .writeOver:
-            await exportAndDeliver(marksSaved: true) { await self.actions.save($0) }
+            await exportAndDeliver(marksSaved: true, failureTitle: "Not saved") { await self.actions.save($0) }
         case .saveAs:
             await performSaveAs()
         }
@@ -240,13 +254,13 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
         guard let window else { return false }
         let panel = EditorNaming.savePanel(for: actions.saveAsSuggestion())
         guard await panel.beginSheetModal(for: window) == .OK, let url = panel.url else { return false }
-        return await exportAndDeliver(marksSaved: true) { await self.actions.saveAs($0, url) }
+        return await exportAndDeliver(marksSaved: true, failureTitle: "Not saved") { await self.actions.saveAs($0, url) }
     }
 
     /// Upload and Upload as New. The window closes without the unsaved-changes sheet when the
     /// outcome says so; a refusal keeps it open, and the coordinator's notification says why.
     private func performUpload(asNew: Bool) async -> Bool {
-        guard let (image, exported) = await export() else { return false }
+        guard let (image, exported) = await export(failureTitle: "Not uploaded") else { return false }
         let outcome = await actions.upload(image, asNew)
         let unchanged = model.document == exported
         if outcome.marksSaved, unchanged {
@@ -265,8 +279,9 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
     /// Flattens the document as it is now and hands the image over. It is marked saved only when
     /// `deliver` succeeds and nothing was edited meanwhile; an edit made during the save stays
     /// unsaved.
-    private func exportAndDeliver(marksSaved: Bool, _ deliver: (ScaledImage) async -> Bool) async -> Bool {
-        guard let (image, exported) = await export() else { return false }
+    private func exportAndDeliver(marksSaved: Bool, failureTitle: String,
+                                  _ deliver: (ScaledImage) async -> Bool) async -> Bool {
+        guard let (image, exported) = await export(failureTitle: failureTitle) else { return false }
         guard await deliver(image) else { return false }
         if marksSaved, model.document == exported {
             model.markSaved()
@@ -275,17 +290,97 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
     }
 
     /// The flattened image and the document it was made from, or nil (with a beep) when the
-    /// export failed.
-    private func export() async -> (ScaledImage, AnnotationDocument)? {
+    /// export failed. A background that could not be drawn is also posted as `failureTitle`
+    /// (`Not saved`, `Not uploaded`), so the editor stays dirty and says why.
+    private func export(failureTitle: String) async -> (ScaledImage, AnnotationDocument)? {
         // A crop still being edited is what the window shows, so it is applied (one undo step) first.
         model.applyCrop()
+        // A slider drag cut short by the popover closing is what the window shows, too.
+        model.commitBackgroundDraft()
         let exported = model.document
-        guard let image = await model.renderExport() else {
-            NSLog("Editor: the export of \(model.recordID) failed")
+        do throws(EditorExportFailure) {
+            return (try await model.renderExport(displayID: displayID), exported)
+        } catch {
+            NSLog("Editor: the export of \(model.recordID) failed (\(error))")
+            if let message = error.message {
+                actions.exportFailed(message, failureTitle)
+            }
             NSSound.beep()
             return nil
         }
-        return (image, exported)
+    }
+
+    /// The display under the editor window, whose wallpaper a desktop-picture background uses;
+    /// nil (the main display) while the window is off screen.
+    var displayID: CGDirectDisplayID? {
+        (window?.screen?.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value
+    }
+
+    // MARK: Background preview
+
+    /// What the preview's fill depends on: the fill, its size (the canvas, which the style and the
+    /// crop decide), the display for a desktop picture, and the stored image for a custom one.
+    struct BackgroundFillKey: Equatable {
+        var fill: BackgroundFill
+        var size: CGSize
+        var displayID: CGDirectDisplayID?
+        var customRevision: Int
+    }
+
+    /// Nil while no background is shown.
+    private var backgroundFillKey: BackgroundFillKey? {
+        guard let shown = model.shownBackground else { return nil }
+        let fill = shown.style.fill
+        return BackgroundFillKey(fill: fill, size: shown.previewFillSize,
+                                 displayID: fill == .desktopPicture ? displayID : nil,
+                                 customRevision: fill == .customImage ? CustomBackgroundRevision.shared.count : 0)
+    }
+
+    /// Renders the fill again whenever its key changes, re-registering on each change as
+    /// `observeEdited` does. The display is not observable; `windowDidChangeScreen` covers it.
+    private func observeBackgroundFill() {
+        let key = withObservationTracking {
+            backgroundFillKey
+        } onChange: { [weak self] in
+            Task { @MainActor in self?.observeBackgroundFill() }
+        }
+        renderBackgroundFill(for: key)
+    }
+
+    /// The fill for `key`, rendered off the main actor at most 2,048 px on its long side, then
+    /// handed to `BaseImageView`; the latest key wins. With no background the layer is hidden and
+    /// keeps its last fill.
+    private func renderBackgroundFill(for key: BackgroundFillKey?) {
+        guard key != renderedFill else { return }
+        renderedFill = key
+        fillTask?.cancel()
+        guard let key else { return }
+        fillTask = Task { [weak self] in
+            guard let self else { return }
+            let source = await fillSourceImage(for: key)
+            guard !Task.isCancelled else { return }
+            let image = await Task.detached(priority: .userInitiated) {
+                BackgroundCompositor.fill(key.fill, size: key.size, fillImage: source)
+            }.value
+            guard !Task.isCancelled else { return }
+            baseView.backgroundFill = image
+        }
+    }
+
+    /// The desktop picture or the custom image for `key` (nil for a gradient or a colour), read
+    /// again only when the fill, the display or the stored image changed.
+    private func fillSourceImage(for key: BackgroundFillKey) async -> CGImage? {
+        switch key.fill {
+        case .gradient, .solid:
+            return nil
+        case .desktopPicture, .customImage:
+            var sourceKey = key
+            sourceKey.size = .zero
+            if let fillSource, fillSource.key == sourceKey { return fillSource.image }
+            let image = await BackgroundFillSource.fillImage(for: key.fill, displayID: key.displayID)
+            fillSource = (sourceKey, image)
+            return image
+        }
     }
 
     // MARK: Zoom
@@ -386,6 +481,16 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
 
     func windowWillClose(_ notification: Notification) {
         onClose?(self)
+    }
+
+    /// A desktop-picture background follows the display under the window.
+    func windowDidChangeScreen(_ notification: Notification) {
+        renderBackgroundFill(for: backgroundFillKey)
+    }
+
+    /// The Background popover's `Choose Image…` was given a file that does not decode.
+    func reportUnusableBackgroundImage(named fileName: String) {
+        actions.unusableBackgroundImage(fileName)
     }
 
     /// Space's key-up goes elsewhere once the window is not key, so the pan key is let go here.

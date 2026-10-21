@@ -6,6 +6,7 @@ extension NSToolbarItem.Identifier {
     static let tools = NSToolbarItem.Identifier("editor.tools")
     static let color = NSToolbarItem.Identifier("editor.color")
     static let toolOptions = NSToolbarItem.Identifier("editor.toolOptions")
+    static let background = NSToolbarItem.Identifier("editor.background")
     static let zoom = NSToolbarItem.Identifier("editor.zoom")
     static let copyImage = NSToolbarItem.Identifier("editor.copyImage")
     static let save = NSToolbarItem.Identifier("editor.save")
@@ -27,14 +28,15 @@ extension EditorModel {
 /// without the canvas knowing about the toolbar. Liquid Glass comes free: no custom backgrounds.
 extension EditorWindowController: NSToolbarDelegate, NSToolbarItemValidation {
     private static let itemIdentifiers: [NSToolbarItem.Identifier] = [
-        .tools, .space, .color, .toolOptions, .flexibleSpace, .zoom, .copyImage, .save, .upload,
+        .tools, .space, .color, .toolOptions, .background, .flexibleSpace, .zoom, .copyImage, .save, .upload,
     ]
     private static let zoomPopUpWidth: CGFloat = 84
 
     /// The narrowest content width that shows every item of `itemIdentifiers`: the window buttons
     /// and the title measured from the window, the zoom pop-up at its fixed width, and the items
     /// AppKit draws itself (one segment per tool in `EditorTool.toolbarOrder`; Colour, Options,
-    /// Copy and Save; the prominent Upload; the fixed space) from `EditorWindowGeometry.ToolbarMetrics`.
+    /// Background, Copy and Save; the prominent Upload; the fixed space) from
+    /// `EditorWindowGeometry.ToolbarMetrics`.
     func minimumToolbarContentWidth() -> CGFloat {
         guard let window else { return EditorWindowGeometry.minimumContentSize.width }
         let measured = [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton]
@@ -43,7 +45,8 @@ extension EditorWindowController: NSToolbarDelegate, NSToolbarItemValidation {
         let titleWidth = (window.title as NSString).size(withAttributes: [.font: NSFont.titleBarFont(ofSize: 0)]).width
         let width = EditorWindowGeometry.toolbarWidth(
             windowButtonsMaxX: windowButtonsMaxX, titleWidth: titleWidth, toolSegments: EditorTool.toolbarOrder.count,
-            buttons: [NSToolbarItem.Identifier.color, .toolOptions, .copyImage, .save].count, prominentButtons: 1,
+            buttons: [NSToolbarItem.Identifier.color, .toolOptions, .background, .copyImage, .save].count,
+            prominentButtons: 1,
             viewWidths: [Self.zoomPopUpWidth],
             fixedSpaces: Self.itemIdentifiers.filter { $0 == .space }.count)
         return EditorWindowGeometry.minimumContentWidth(toolbarWidth: width)
@@ -80,6 +83,10 @@ extension EditorWindowController: NSToolbarDelegate, NSToolbarItemValidation {
         case .toolOptions:
             return makeButtonItem(.toolOptions, label: "Options", toolTip: "Line width, blur radius and pixel block",
                                   image: symbol("slider.horizontal.3", "Options"), action: #selector(showToolOptions(_:)))
+        case .background:
+            return makeButtonItem(.background, label: "Background", toolTip: "Background",
+                                  image: symbol("rectangle.inset.filled", "Background"),
+                                  action: #selector(showBackgroundOptions(_:)))
         case .zoom:
             return makeZoomItem()
         case .copyImage:
@@ -173,6 +180,13 @@ extension EditorWindowController: NSToolbarDelegate, NSToolbarItemValidation {
         optionsPopover = showPopover(ToolOptionsView(model: model), from: .toolOptions)
     }
 
+    @objc func showBackgroundOptions(_ sender: Any?) {
+        let view = BackgroundPopoverView(model: model) { [weak self] fileName in
+            self?.reportUnusableBackgroundImage(named: fileName)
+        }
+        backgroundPopover = showPopover(view, from: .background)
+    }
+
     /// 50 %, 200 % and 400 % from the zoom pop-up: `tag` percent of natural size, around the
     /// view centre, through `CanvasView` like ⌘=, so the canvas stops refitting on resize and
     /// redraws at once.
@@ -188,6 +202,7 @@ extension EditorWindowController: NSToolbarDelegate, NSToolbarItemValidation {
     private func showPopover(_ content: some View, from identifier: NSToolbarItem.Identifier) -> NSPopover? {
         colorPopover?.close()
         optionsPopover?.close()
+        backgroundPopover?.close()
         guard let item = toolbarItem(identifier) else { return nil }
         let host = NSHostingController(rootView: content)
         host.sizingOptions = .preferredContentSize

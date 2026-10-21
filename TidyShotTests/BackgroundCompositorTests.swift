@@ -52,6 +52,22 @@ struct BackgroundCompositorTests {
         #expect(CGSize(width: output.width, height: output.height) == layout.canvasSize)
     }
 
+    /// The editor's preview renders the fill alone, as compose draws it under the content.
+    @Test func fillAloneHasTheSizeAndTheFill() throws {
+        let red = RGBA(red: 1, green: 0, blue: 0)
+        let solid = try bitmap(BackgroundCompositor.fill(.solid(red), size: CGSize(width: 30, height: 20), fillImage: nil))
+        #expect(solid.width == 30 && solid.height == 20)
+        #expect(solid[0, 0] == [255, 0, 0, 255])
+        #expect(solid[29, 19] == [255, 0, 0, 255])
+        // The same canvas as a 10 px content with 10 px of padding: the same gradient corners.
+        let gradient = try bitmap(BackgroundCompositor.fill(.gradient(0), size: CGSize(width: 30, height: 30), fillImage: nil))
+        let composed = try bitmap(BackgroundCompositor.compose(blueContent(10, 10), style: style(fill: .gradient(0), padding: 10),
+                                                               scale: 1, fillImage: nil))
+        #expect(gradient[0, 0] == composed[0, 0])
+        #expect(gradient[29, 29] == composed[29, 29])
+        #expect(BackgroundCompositor.fill(.gradient(0), size: .zero, fillImage: nil) == nil)
+    }
+
     @Test func solidFillShowsAtTheCorner() throws {
         let red = RGBA(red: 1, green: 0, blue: 0)
         let output = try bitmap(BackgroundCompositor.compose(blueContent(), style: style(fill: .solid(red)),

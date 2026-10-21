@@ -1,6 +1,7 @@
 import CoreGraphics
 import Foundation
 import ImageIO
+import Observation
 
 /// The one custom background image (spec 2.11), kept as `custom.png` in the container's
 /// `Application Support/TidyShot/Backgrounds`. A new image replaces the old one. Every method
@@ -69,5 +70,20 @@ nonisolated struct CustomBackgroundStore: Sendable {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
         return support.appending(path: "TidyShot/Backgrounds", directoryHint: .isDirectory)
+    }
+}
+
+/// Counts the custom images stored this session, so what shows the stored image (the style
+/// editor's swatch, the editor's preview) reads it again after `Choose Image…` replaces it, even
+/// when the style, already `.customImage`, does not change.
+@Observable
+final class CustomBackgroundRevision {
+    static let shared = CustomBackgroundRevision()
+
+    private(set) var count = 0
+
+    /// Called on the main actor after a successful `CustomBackgroundStore.store(contentsOf:)`.
+    func bump() {
+        count += 1
     }
 }
