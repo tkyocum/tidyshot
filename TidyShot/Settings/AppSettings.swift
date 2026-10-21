@@ -1,7 +1,7 @@
 import Foundation
 import Observation
 
-enum AfterCaptureAction: String, CaseIterable, Identifiable {
+nonisolated enum AfterCaptureAction: String, CaseIterable, Identifiable, Sendable {
     /// Save the file, upload it, and put the URL on the clipboard when the upload finishes.
     case upload
     /// Upload from a temporary file inside the app container, copy the URL, and delete the file
@@ -54,6 +54,8 @@ final class AppSettings {
         static let lastAreaRect = "lastAreaRect"
         static let windowShadow = "windowShadow"
         static let freezeScreen = "freezeScreen"
+        static let urlCommandsEnabled = "urlCommandsEnabled"
+        static let urlCommandsAllowSilent = "urlCommandsAllowSilent"
         static let selfTimerSeconds = "selfTimerSeconds"
         static let allInOneAspectLock = "allInOneAspectLock"
     }
@@ -98,6 +100,11 @@ final class AppSettings {
     var windowShadow: Bool { didSet { defaults.set(windowShadow, forKey: Keys.windowShadow) } }
     /// The Capture tab's Freeze screen while selecting (spec 2.9). Area selections then show a still image.
     var freezeScreen: Bool { didSet { defaults.set(freezeScreen, forKey: Keys.freezeScreen) } }
+    /// General, URL commands: `Allow URL commands (tidyshot://)`. Off refuses every command.
+    var urlCommandsEnabled: Bool { didSet { defaults.set(urlCommandsEnabled, forKey: Keys.urlCommandsEnabled) } }
+    /// General, URL commands: `Allow URL commands that capture without a selection`
+    /// (capture-fullscreen, capture-previous-area, capture-area with a rect). Off by default.
+    var urlCommandsAllowSilent: Bool { didSet { defaults.set(urlCommandsAllowSilent, forKey: Keys.urlCommandsAllowSilent) } }
     /// The Capture tab's Self-timer: seconds counted down before the capture. One of `selfTimerChoices`.
     var selfTimerSeconds: Int { didSet { defaults.set(selfTimerSeconds, forKey: Keys.selfTimerSeconds) } }
     static let selfTimerChoices = [3, 5, 10]
@@ -144,6 +151,8 @@ final class AppSettings {
             Keys.scrollingAutoScroll: true,
             Keys.windowShadow: false,
             Keys.freezeScreen: false,
+            Keys.urlCommandsEnabled: true,
+            Keys.urlCommandsAllowSilent: false,
             Keys.selfTimerSeconds: 5,
             Keys.allInOneAspectLock: false,
         ])
@@ -177,6 +186,8 @@ final class AppSettings {
         lastAreaRect = defaults.data(forKey: Keys.lastAreaRect).flatMap { try? JSONDecoder().decode(StoredRect.self, from: $0) }
         windowShadow = defaults.bool(forKey: Keys.windowShadow)
         freezeScreen = defaults.bool(forKey: Keys.freezeScreen)
+        urlCommandsEnabled = defaults.bool(forKey: Keys.urlCommandsEnabled)
+        urlCommandsAllowSilent = defaults.bool(forKey: Keys.urlCommandsAllowSilent)
         let storedSelfTimer = defaults.integer(forKey: Keys.selfTimerSeconds)
         selfTimerSeconds = Self.selfTimerChoices.contains(storedSelfTimer) ? storedSelfTimer : 5
         allInOneAspectLock = defaults.bool(forKey: Keys.allInOneAspectLock)

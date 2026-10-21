@@ -31,6 +31,13 @@ final class AppCoordinator {
     private let overlay = QuickAccessController(settings: AppSettings.shared)
     @ObservationIgnored private lazy var selector = SelectionController(engine: engine, settings: settings, cardWindowNumbers: { [weak self] in self?.overlay.windowNumbers ?? [] })
     @ObservationIgnored private lazy var scrollCapture = ScrollCaptureController(engine: engine, settings: settings)
+    /// `tidyshot://` commands (spec 2.9): held until `start()` has run, then parsed, gated and
+    /// routed to the capture functions. It holds this coordinator weakly.
+    @ObservationIgnored private lazy var urlCommands = URLCommandHandler(
+        settings: settings, target: self, screens: { AppCoordinator.urlCommandScreens() },
+        post: { [weak self] notice in
+            self?.notifier.notifyError(notice.body, title: notice.title, subtitle: notice.subtitle)
+        })
     @ObservationIgnored private lazy var selfTimer = SelfTimerController()
     /// Thumbnails and previews for Recent Captures.
     @ObservationIgnored private(set) lazy var thumbnailProvider = ThumbnailProvider(
@@ -59,7 +66,7 @@ final class AppCoordinator {
     /// from the file or the bucket.
     @ObservationIgnored private var latestCapture: (id: UUID, image: ScaledImage)?
     /// The area the newest capture was taken from (CoreGraphics global points), so its pin opens
-    /// over the spot. Kept with `latestCapture`: cleared by `save(_:)`, by `forgetLatestCapture`.
+    /// over the spot. Kept with `latestCapture`: cleared by `save(_:intent:)`, by `forgetLatestCapture`.
     @ObservationIgnored private var latestCaptureArea: (id: UUID, rect: CGRect)?
     /// Pin to screen's windows. Records whose image is loading for a pin are in `pinningIDs`.
     @ObservationIgnored private lazy var pins = PinController()
@@ -73,7 +80,7 @@ final class AppCoordinator {
     @ObservationIgnored private var openingEditorIDs: Set<UUID> = []
     /// Set when the first same-key replace of this launch posts `EditorUploadPlan.cacheNote`.
     @ObservationIgnored private var postedCacheNote = false
-    /// What TidyShot last put on the clipboard for a capture: set when `save(_:)` copies the
+    /// What TidyShot last put on the clipboard for a capture: set when `save(_:intent:)` copies the
     /// image, by the editor's Copy, and after an edit replaced the clipboard. An edit of that
     /// capture replaces the clipboard only while the count still matches.
     @ObservationIgnored private var clipboardOwner: EditorClipboard.Owner?
@@ -119,10 +126,18 @@ final class AppCoordinator {
         if !ScreenCapturePermission.isGranted {
             permissionWindow.show()
         }
+        // A URL that launched the app arrived before this point and waits in the handler.
+        Task { await urlCommands.ready() }
     }
 
     func showPermissionWindow() {
         permissionWindow.show()
+    }
+
+    /// A `tidyshot://` URL from `AppDelegate`'s Apple-event handler, with the sending app's name
+    /// when it is known. The handler holds it until `start()` has run.
+    func handleURL(_ url: URL, sender: String?) {
+        Task { await urlCommands.handle(url, sender: sender) }
     }
 
     private func registerShortcuts() {
@@ -160,21 +175,21 @@ final class AppCoordinator {
         }
     }
 
-    func captureFullscreen() async {
+    func captureFullscreen(intent: CaptureIntent = .standard) async {
         await withCaptureLock {
             guard let content = await loadContent() else { return }
             guard let display = Self.display(under: NSEvent.mouseLocation, in: content.displays) else { return }
             guard let result = await capture(.display(display), excludingWindows: await cardWindows()) else { return }
-            await save(result)
+            await save(result, intent: intent)
         }
     }
 
-    func captureArea() async {
-        await runSelection(mode: .area)
+    func captureArea(intent: CaptureIntent = .standard) async {
+        await runSelection(mode: .area, intent: intent)
     }
 
-    func captureWindow() async {
-        await runSelection(mode: .window)
+    func captureWindow(intent: CaptureIntent = .standard) async {
+        await runSelection(mode: .window, intent: intent)
     }
 
     /// All-in-One (spec 2.9): one adjustable selection whose toolbar picks the capture. Opens on
@@ -182,14 +197,14 @@ final class AppCoordinator {
     /// area, when it is on a connected display. Capture and Window are taken while the overlay is
     /// up, with the overlay and the cards excluded, so the pointer is never in them; Fullscreen
     /// dismisses the overlay first and follows Show cursor, as Capture Fullscreen does. Each ends
-    /// in `save(_:)`.
-    func captureAllInOne(preselect: CGRect? = nil) async {
+    /// in `save(_:intent:)`.
+    func captureAllInOne(intent: CaptureIntent = .standard, preselect: ScreenRect? = nil) async {
         await withCaptureLock {
             guard let content = await loadContent() else { return }
             // Freeze applies to Capture; the snapshots follow the cursor setting, as in area mode.
             let freeze = settings.freezeScreen ? CaptureOptions(settings: settings, duringSelection: false) : nil
             guard let choice = await selector.selectAllInOne(content: content, freeze: freeze,
-                                                             preselect: preselect ?? settings.lastAreaRect?.cgRect)
+                                                             preselect: preselect?.rect ?? settings.lastAreaRect?.cgRect)
             else { return }
 
             let result: CaptureResult?
@@ -207,25 +222,28 @@ final class AppCoordinator {
                 NSCursor.arrow.set()
                 result = await capture(.display(display), excludingWindows: overlays)
             case .scrolling(let rect, let display):
-                await runScrolling(rect: rect, display: display)
+                await runScrolling(rect: rect, display: display, intent: intent)
                 return
             case .timer(let rect, let display):
                 // Every All-in-One area kind stores the previous area (spec 2.9). `runSelfTimer`
-                // dismisses the overlay; the countdown ends in its own `save(_:)`.
+                // dismisses the overlay; the countdown ends in its own `save(_:intent:)`.
                 settings.lastAreaRect = StoredRect(rect)
-                await runSelfTimer(.area(rect: rect, display: display))
+                await runSelfTimer(.area(rect: rect, display: display), intent: intent)
                 return
             }
             selector.dismiss()
             if let result {
-                await save(result)
+                await save(result, intent: intent)
             }
         }
     }
 
     /// Capture Scrolling: select an area or a window's frame, run the scrolling session, and save
-    /// the stitched image like any capture. During a session the shortcut is Start, then Done.
-    func captureScrolling() async {
+    /// the stitched image like any capture. During a session the shortcut is Start, then Done. A URL
+    /// command's rect (`preselect`) skips the selection: the session opens on it and waits for
+    /// Start. A URL command never reaches this during a session: the handler drops it while a
+    /// capture runs.
+    func captureScrolling(intent: CaptureIntent = .standard, preselect: ScreenRect? = nil) async {
         // During a session the shortcut is Start, then Done (the lock is held meanwhile).
         if scrollCapture.isRunning {
             scrollCapture.advance()
@@ -233,19 +251,30 @@ final class AppCoordinator {
         }
         await withCaptureLock {
             guard let content = await loadContent() else { return }
+            if let preselect {
+                guard let display = content.displays.first(where: { $0.displayID == preselect.displayID }) else {
+                    NSLog("%@", "Capture Scrolling: display \(preselect.displayID) is gone")
+                    return
+                }
+                // No selection overlay activated the app, and the panel's Start must take Return.
+                NSApplication.shared.activate(ignoringOtherApps: true)
+                // `runScrolling` refuses a rect under 100 pt; its `dismiss()` is a no-op here.
+                await runScrolling(rect: preselect.rect, display: display, intent: intent)
+                return
+            }
             guard let selection = await selector.select(mode: .scrolling, content: content) else { return }
             guard case .area(let rect, let display) = selection else {
                 selector.dismiss()
                 return
             }
-            await runScrolling(rect: rect, display: display)
+            await runScrolling(rect: rect, display: display, intent: intent)
         }
     }
 
     /// A scrolling capture of an area chosen in the overlay, which is still up: refuses one under
     /// 100 pt with the Phase 5 message, stores the previous area, dismisses the overlay, runs the
     /// session and saves the stitched image like any capture.
-    private func runScrolling(rect: CGRect, display: SCDisplay) async {
+    private func runScrolling(rect: CGRect, display: SCDisplay, intent: CaptureIntent) async {
         guard rect.height >= CGFloat(ScrollCaptureLimits.minimumAreaHeightPoints) else {
             selector.dismiss()
             notifier.notifyError("Select an area at least 100 points tall.", title: "Scrolling capture")
@@ -259,7 +288,7 @@ final class AppCoordinator {
         }
         if let image = outcome.imageToSave {
             await save(CaptureResult(image: image.image, scale: image.scale,
-                                     target: .area(rect: rect, display: display)))
+                                     target: .area(rect: rect, display: display)), intent: intent)
         }
     }
 
@@ -267,7 +296,7 @@ final class AppCoordinator {
     /// `PreviousArea.resolve` clips the stored rect to the display under its centre. The cards are
     /// excluded and the pointer follows Show cursor, as for a fullscreen capture. It does not
     /// write `lastAreaRect`: a clipped rect would shrink the memory.
-    func capturePreviousArea() async {
+    func capturePreviousArea(intent: CaptureIntent = .standard) async {
         await withCaptureLock {
             guard let content = await loadContent() else { return }
             let displays = content.displays.map { PreviousArea.Display(id: $0.displayID, frame: $0.frame) }
@@ -280,29 +309,46 @@ final class AppCoordinator {
                 guard let display = content.displays.first(where: { $0.displayID == displayID }) else { return }
                 let cards = await cardWindows()
                 guard let result = await capture(.area(rect: rect, display: display), excludingWindows: cards) else { return }
-                await save(result)
+                await save(result, intent: intent)
             }
+        }
+    }
+
+    /// A URL command's `capture-area` with x, y, width and height (the gate has allowed it): that
+    /// rect at once, live, with no selection overlay, as Capture Previous Area captures (the cards
+    /// excluded, the pointer from Show cursor). It is stored as the previous area.
+    func captureArea(at area: ScreenRect, intent: CaptureIntent) async {
+        await withCaptureLock {
+            guard let content = await loadContent() else { return }
+            guard let display = content.displays.first(where: { $0.displayID == area.displayID }) else {
+                NSLog("%@", "URL capture-area: display \(area.displayID) is gone")
+                return
+            }
+            settings.lastAreaRect = StoredRect(area.rect)
+            let cards = await cardWindows()
+            guard let result = await capture(.area(rect: area.rect, display: display), excludingWindows: cards) else { return }
+            await save(result, intent: intent)
         }
     }
 
     /// Self-Timer: select an area or click a window, then count down and capture it live. The
     /// lock is held for the selection, the countdown and the capture.
-    func captureSelfTimer() async {
+    func captureSelfTimer(intent: CaptureIntent = .standard) async {
         await withCaptureLock {
             guard let content = await loadContent() else { return }
             guard let selection = await selector.select(mode: .selfTimer, content: content) else { return }
             switch selection {
             case .area(let rect, let display):
                 settings.lastAreaRect = StoredRect(rect)
-                await runSelfTimer(.area(rect: rect, display: display))
+                await runSelfTimer(.area(rect: rect, display: display), intent: intent)
             case .window(let window):
-                await runSelfTimer(.window(window))
+                await runSelfTimer(.window(window), intent: intent)
             }
         }
     }
 
     /// Show the overlay, capture with the overlay excluded (or cut the frozen snapshot), dismiss, then save.
-    private func runSelection(mode: SelectionMode) async {
+    private func runSelection(mode: SelectionMode, intent: CaptureIntent) async {
         await withCaptureLock {
             guard let content = await loadContent() else { return }
             // Freeze applies to area mode only. The snapshots follow the cursor setting: they are
@@ -321,7 +367,7 @@ final class AppCoordinator {
             selector.dismiss()
 
             if let result {
-                await save(result)
+                await save(result, intent: intent)
             }
         }
     }
@@ -330,7 +376,7 @@ final class AppCoordinator {
     /// the capture lock held. The selection overlay goes first, then TidyShot gives up activation
     /// so the user's app is frontmost while the badge counts: its menus open and its keys work.
     /// A countdown that is cancelled leaves nothing behind.
-    private func runSelfTimer(_ target: CaptureTarget) async {
+    private func runSelfTimer(_ target: CaptureTarget, intent: CaptureIntent) async {
         selector.dismiss()
         NSApplication.shared.deactivate()
         let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
@@ -338,7 +384,7 @@ final class AppCoordinator {
         let stage = SelfTimerScreenStage(subject: Geometry.appKitRect(fromCG: target.cgFrame, primaryHeight: primaryHeight),
                                          screenFrame: screenFrame)
         _ = await selfTimer.run(seconds: settings.selfTimerSeconds, stage: stage) { [self] in
-            await captureAfterCountdown(target)
+            await captureAfterCountdown(target, intent: intent)
         }
     }
 
@@ -346,7 +392,7 @@ final class AppCoordinator {
     /// display or window is found in it by id: a window may have moved or closed during the
     /// countdown, and an `SCWindow` from before would size the image from its old frame. The
     /// pointer follows Show cursor and the cards are left out, as for a fullscreen capture.
-    private func captureAfterCountdown(_ target: CaptureTarget) async {
+    private func captureAfterCountdown(_ target: CaptureTarget, intent: CaptureIntent) async {
         guard let content = await loadContent() else { return }
         let fresh: CaptureTarget
         switch target {
@@ -370,7 +416,7 @@ final class AppCoordinator {
             fresh = .window(current)
         }
         guard let result = await capture(fresh, excludingWindows: await cardWindows()) else { return }
-        await save(result)
+        await save(result, intent: intent)
     }
 
     /// An area chosen in the overlay, which is still up: stores it as the previous area, then cuts
@@ -424,12 +470,19 @@ final class AppCoordinator {
     /// so a capture is never dropped. When the image goes on the clipboard, `clipboardOwner`
     /// records it for this capture, so an edit can replace it later. The PNG, and the TIFF when the
     /// image goes on the clipboard now, are made in a detached task, so a tall capture does not hold
-    /// up the main actor.
-    func save(_ result: CaptureResult) async {
+    /// up the main actor. The intent's action replaces the General one; `copyOnly` leaves after
+    /// `copyOnly(_:sender:)`; `then` opens the editor or a pin on the new record. Returns the
+    /// record, or nil when nothing was recorded.
+    @discardableResult
+    func save(_ result: CaptureResult, intent: CaptureIntent = .standard) async -> CaptureRecord? {
+        if intent.copyOnly {
+            await copyOnly(result, sender: intent.sender)
+            return nil
+        }
         latestCapture = nil
         latestCaptureArea = nil
         let image = result.scaled
-        let action = settings.afterCaptureAction
+        let action = intent.action
         // One keychain read per capture; persist passes the result to startUpload.
         let destination = action.uploads ? makeDestination() : nil
         let copyImageNow: Bool
@@ -458,21 +511,58 @@ final class AppCoordinator {
             }.value
             Pasteboard.copy(tiffData: tiff)
             notifier.notifyError(error.localizedDescription)
-            return
+            return nil
         }
         let png = encoded.png
         let copiedChangeCount: Int? = copyImageNow ? Pasteboard.copy(pngData: png, tiffData: encoded.tiff) : nil
 
         guard let record = await persist(png: png, image: image, action: action, destination: destination,
                                          alreadyOnClipboard: copyImageNow,
-                                         captureDisplayID: result.target.displayID) else { return }
+                                         captureDisplayID: result.target.displayID) else { return nil }
+        // Before anything below, so a pin of this record opens over the spot it came from.
         latestCaptureArea = result.target.areaRect.map { (id: record.id, rect: $0) }
         if let copiedChangeCount {
             clipboardOwner = EditorClipboard.Owner(recordID: record.id, changeCount: copiedChangeCount)
         }
+        switch intent.then {
+        case .none: break
+        case .annotate: openEditor(recordID: record.id)
+        case .pin: await pin(recordID: record.id)
+        }
+        return record
     }
 
-    /// The capture save path behind `save(_:)`. Writes the file (save folder, or the container's
+    /// `action=copy` (spec 2.9, URL scheme, Actions): the image goes on the clipboard and nothing
+    /// else happens: no file, no record, no thumbnail, no card, no upload. The shutter sound follows
+    /// Play sound, so no capture happens unheard, and `Image copied` is posted when notifications
+    /// are on, naming the sending app. `latestCapture` and `clipboardOwner` stay: the newest card
+    /// still owns its image, and an edit of an earlier capture compares the clipboard's change
+    /// count, which this copy has moved on.
+    private func copyOnly(_ result: CaptureResult, sender: String?) async {
+        let image = result.scaled
+        let encoded = await Task.detached(priority: .userInitiated) { () -> (png: Data?, tiff: Data?) in
+            (try? ImageEncoder.pngData(from: image.image, scale: image.scale),
+             Pasteboard.companionTIFF(of: image.image, scale: image.scale))
+        }.value
+        if let png = encoded.png {
+            Pasteboard.copy(pngData: png, tiffData: encoded.tiff)
+        } else {
+            // As `save` does when the PNG fails: the TIFF alone, so the capture is not lost.
+            let tiff = await Task.detached(priority: .userInitiated) {
+                Pasteboard.tiffData(of: image.image, scale: image.scale)
+            }.value
+            Pasteboard.copy(tiffData: tiff)
+        }
+        if settings.playSound {
+            SoundPlayer.playShutter()
+        }
+        if settings.showNotification {
+            notifier.notify(title: "Image copied", body: "\(image.image.width) × \(image.image.height) px",
+                            subtitle: sender.map { "From \($0)" })
+        }
+    }
+
+    /// The capture save path behind `save(_:intent:)`. Writes the file (save folder, or the container's
     /// `pending` folder in upload-only mode), warns once when upload is not configured, plays the
     /// sound, records the capture, starts the thumbnail, shows the overlay, and starts the upload
     /// or posts "saved". Returns nil when the file could not be written; the writer has then
@@ -2077,6 +2167,19 @@ final class AppCoordinator {
         return await OverlayWindowLookup.windows(numbers: numbers, engine: engine)
     }
 
+    /// The displays in `NSScreen.screens` order with CoreGraphics frames, and the one under the
+    /// pointer, for a URL command's rect.
+    private static func urlCommandScreens() -> URLCommandHandler.Screens {
+        let screens = NSScreen.screens
+        let primaryHeight = screens.first?.frame.height ?? 0
+        let displays = screens.map {
+            URLCommandGeometry.Display(id: $0.displayID ?? 0,
+                                       frame: Geometry.cgRect(fromAppKit: $0.frame, primaryHeight: primaryHeight))
+        }
+        return URLCommandHandler.Screens(displays: displays,
+                                         pointerIndex: screens.firstIndex { $0.frame.contains(NSEvent.mouseLocation) })
+    }
+
     private func withCaptureLock(_ body: () async -> Void) async {
         guard !isCapturing else { return }
         isCapturing = true
@@ -2091,6 +2194,9 @@ final class AppCoordinator {
         return displays.first { $0.frame.contains(cgPoint) } ?? displays.first
     }
 }
+
+/// The URL scheme's routes are the capture functions above, with their own signatures.
+extension AppCoordinator: URLCommandTarget {}
 
 /// Why Copy Image had nothing to put on the clipboard.
 nonisolated enum CopyImageError: LocalizedError, Equatable, Sendable {

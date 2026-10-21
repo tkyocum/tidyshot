@@ -33,18 +33,24 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         post(content)
     }
 
-    func notifyError(_ message: String, title: String = "Capture failed") {
+    func notifyError(_ message: String, title: String = "Capture failed", subtitle: String? = nil) {
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = message
+        if let subtitle {
+            content.subtitle = subtitle
+        }
         post(content)
     }
 
     /// A plain notification with no click action, such as "Copying image…" and "Image copied".
-    func notify(title: String, body: String) {
+    func notify(title: String, body: String, subtitle: String? = nil) {
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
+        if let subtitle {
+            content.subtitle = subtitle
+        }
         post(content)
     }
 

@@ -223,4 +223,22 @@ struct AppSettingsTests {
         defaults.set(3, forKey: "selfTimerSeconds")
         #expect(AppSettings(defaults: defaults).selfTimerSeconds == 3)
     }
+
+    @Test func urlCommandsAreOnAndSilentCapturesOffByDefault() {
+        let settings = AppSettings(defaults: freshDefaults())
+        #expect(settings.urlCommandsEnabled)
+        #expect(!settings.urlCommandsAllowSilent)
+    }
+
+    @Test func urlCommandSettingsRoundTripThroughASecondInstance() {
+        let defaults = freshDefaults()
+        let first = AppSettings(defaults: defaults)
+        first.urlCommandsEnabled = false
+        first.urlCommandsAllowSilent = true
+        let second = AppSettings(defaults: defaults)
+        #expect(!second.urlCommandsEnabled)
+        #expect(second.urlCommandsAllowSilent)
+        #expect(defaults.object(forKey: "urlCommandsEnabled") as? Bool == false)
+        #expect(defaults.object(forKey: "urlCommandsAllowSilent") as? Bool == true)
+    }
 }

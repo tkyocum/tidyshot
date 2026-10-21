@@ -9,6 +9,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The menu bar item, kept for the life of the app.
     private var statusMenu: StatusMenuController?
 
+    /// Installed before launch finishes, so a URL that launched the app reaches it (spec 2.9). It
+    /// replaces AppKit's default handler, so SwiftUI's scene machinery never sees the URL.
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        guard !Self.isRunningTests else { return }
+        NSAppleEventManager.shared().setEventHandler(self, andSelector: #selector(handleGetURL(_:withReplyEvent:)),
+                                                     forEventClass: AEEventClass(kInternetEventClass),
+                                                     andEventID: AEEventID(kAEGetURL))
+    }
+
+    /// A `tidyshot://` URL from LaunchServices: `open`, Raycast, Keyboard Maestro, Shortcuts, a browser.
+    @objc private func handleGetURL(_ event: NSAppleEventDescriptor, withReplyEvent reply: NSAppleEventDescriptor) {
+        guard let string = event.paramDescriptor(forKeyword: AEKeyword(keyDirectObject))?.stringValue,
+              let url = URL(string: string) else {
+            NSLog("%@", "A URL event without a readable URL was ignored")
+            return
+        }
+        AppCoordinator.shared.handleURL(url, sender: Self.senderName(of: event))
+    }
+
+    /// The sending app's name: the event's `keySenderPIDAttr`, then the running application with
+    /// that pid. Nil when the event carries no pid, or the process has gone or has no name.
+    private static func senderName(of event: NSAppleEventDescriptor) -> String? {
+        guard let pid = event.attributeDescriptor(forKeyword: AEKeyword(keySenderPIDAttr))?.int32Value, pid > 0 else {
+            return nil
+        }
+        return NSRunningApplication(processIdentifier: pid)?.localizedName
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard !Self.isRunningTests else { return }
         AppCoordinator.shared.start()

@@ -46,6 +46,10 @@ targets:
         LSUIElement: true
         LSApplicationCategoryType: public.app-category.utilities
         NSHumanReadableCopyright: "Copyright © 2026 Tim Yocum"
+        CFBundleURLTypes:
+          - CFBundleURLName: io.tky.tidyshot
+            CFBundleURLSchemes:
+              - tidyshot
     entitlements:
       path: TidyShot/TidyShot.entitlements
       properties:
