@@ -53,19 +53,19 @@ Each task gives the exact Swift interfaces it produces, complete Swift Testing t
 | Task 2 | 20 | 3 | 212 tests in 31 suites |
 | Task 3 | 19 | 4 | 231 tests in 35 suites |
 | Task 4 | 24 | 4 | 255 tests in 39 suites |
-| Task 5 | 9 | 1 | 264 tests in 40 suites |
-| Task 6 | 8 | 1 | 272 tests in 41 suites |
-| Task 7 | 11 | 1 | 283 tests in 42 suites |
-| Task 8 | 20 | 2 | 303 tests in 44 suites |
-| Task 9 | 12 | 1 | 315 tests in 45 suites |
-| Task 10 | 0 | 0 | 315 tests in 45 suites |
-| Task 11 | 2 | 0 | 317 tests in 45 suites |
-| Task 12 | 7 | 2 | 324 tests in 47 suites |
-| Task 13 | 23 | 2 | 347 tests in 49 suites |
-| Task 14 | 22 | 0 | 369 tests in 49 suites |
-| Task 15 | 18 | 1 | 387 tests in 50 suites |
-| Task 16 | 11 | 1 | 398 tests in 51 suites |
-| Task 17 | 0 | 0 | 398 tests in 51 suites |
+| Task 5 | 10 | 1 | 265 tests in 40 suites |
+| Task 6 | 8 | 1 | 273 tests in 41 suites |
+| Task 7 | 11 | 1 | 284 tests in 42 suites |
+| Task 8 | 20 | 2 | 304 tests in 44 suites |
+| Task 9 | 12 | 1 | 316 tests in 45 suites |
+| Task 10 | 0 | 0 | 316 tests in 45 suites |
+| Task 11 | 2 | 0 | 318 tests in 45 suites |
+| Task 12 | 7 | 2 | 325 tests in 47 suites |
+| Task 13 | 23 | 2 | 348 tests in 49 suites |
+| Task 14 | 22 | 0 | 370 tests in 49 suites |
+| Task 15 | 18 | 1 | 388 tests in 50 suites |
+| Task 16 | 11 | 1 | 399 tests in 51 suites |
+| Task 17 | 0 | 0 | 399 tests in 51 suites |
 
 The totals come from each task's declared tests. Task 17 checks them against a real run and corrects any row that differs.
 
@@ -3061,7 +3061,7 @@ Run:
 ```bash
 xcodegen generate && xcodebuild test -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build 2>&1 | grep -E "Test run with|error:|TEST"
 ```
-Expected: no `error:` lines, and `Test run with 264 tests in 40 suites passed`.
+Expected: no `error:` lines, and `Test run with 265 tests in 40 suites passed`.
 
 - [ ] **Step 5: Commit**
 
@@ -3633,7 +3633,7 @@ Run:
 ```bash
 xcodegen generate && xcodebuild test -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build 2>&1 | grep -E "Test run with|error:|TEST"
 ```
-Expected: no `error:` lines, and `Test run with 272 tests in 41 suites passed`.
+Expected: no `error:` lines, and `Test run with 273 tests in 41 suites passed`.
 
 This task has no UI, so there is no hand check. Task 10 checks the tiles on screen.
 
@@ -4198,7 +4198,7 @@ Run:
 ```bash
 xcodegen generate && xcodebuild test -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build 2>&1 | grep -E "Test run with|error:|TEST"
 ```
-Expected: no `error:` lines, then `Test run with 283 tests in 42 suites passed`.
+Expected: no `error:` lines, then `Test run with 284 tests in 42 suites passed`.
 
 - [ ] **Step 6: Hand check**
 
@@ -5133,7 +5133,7 @@ Run:
 ```bash
 xcodegen generate && xcodebuild test -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build 2>&1 | grep -E "Test run with|error:|TEST"
 ```
-Expected: no `error:` lines, and `Test run with 303 tests in 44 suites passed`.
+Expected: no `error:` lines, and `Test run with 304 tests in 44 suites passed`.
 
 A failing `RedactionExportTests` case means a defect in `RedactionRenderer`, `RedactionTileCache` or `EditorFlattener` (Tasks 5 to 7). Fix it there, add that file to the commit below, and never loosen an assertion. Without a Metal device the renderer falls back to `CIContext(options:)`; every expectation is computed in the same run, so the tests hold either way.
 
@@ -5864,7 +5864,7 @@ Run:
 ```bash
 xcodegen generate && xcodebuild test -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build 2>&1 | grep -E "Test run with|error:|TEST"
 ```
-Expected: no `error:` lines, and `Test run with 315 tests in 45 suites passed`.
+Expected: no `error:` lines, and `Test run with 316 tests in 45 suites passed`.
 
 There is no hand check in this task. The tools run in a window from Task 10, and its hand checks drag each one.
 
@@ -6948,7 +6948,7 @@ Run:
 ```bash
 xcodegen generate && xcodebuild test -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build 2>&1 | grep -E "Test run with|error:|TEST"
 ```
-Expected: no `error:` lines, and `Test run with 315 tests in 45 suites passed`, unchanged, because this task adds no tests. If the hosted test run ends, `applicationShouldTerminate(_:)` returns `.terminateNow` because of `isRunningTests`.
+Expected: no `error:` lines, and `Test run with 316 tests in 45 suites passed`, unchanged, because this task adds no tests. If the hosted test run ends, `applicationShouldTerminate(_:)` returns `.terminateNow` because of `isRunningTests`.
 
 - [ ] **Step 9: Check by hand**
 
@@ -7236,7 +7236,7 @@ Run:
 ```bash
 xcodegen generate && xcodebuild test -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build 2>&1 | grep -E "Test run with|error:|TEST"
 ```
-Expected: no `error:` lines, and `Test run with 317 tests in 45 suites passed`.
+Expected: no `error:` lines, and `Test run with 318 tests in 45 suites passed`.
 
 - [ ] **Step 5: Write the colour palette**
 
@@ -7699,7 +7699,7 @@ Run:
 ```bash
 xcodegen generate && xcodebuild test -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build 2>&1 | grep -E "Test run with|error:|TEST"
 ```
-Expected: no `error:` lines, and `Test run with 317 tests in 45 suites passed`.
+Expected: no `error:` lines, and `Test run with 318 tests in 45 suites passed`.
 
 Then:
 ```bash
@@ -7890,7 +7890,7 @@ Run:
 ```bash
 xcodegen generate && xcodebuild test -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build 2>&1 | grep -E "Test run with|error:|TEST"
 ```
-Expected: no `error:` lines, and `Test run with 324 tests in 47 suites passed`.
+Expected: no `error:` lines, and `Test run with 325 tests in 47 suites passed`.
 
 - [ ] **Step 5: Return the change count from every pasteboard write**
 
@@ -8255,7 +8255,7 @@ Run:
 xcodegen generate && xcodebuild test -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build 2>&1 | grep -E "Test run with|error:|TEST"
 grep -c "persist(png:" TidyShot/App/AppCoordinator.swift
 ```
-Expected: no `error:` lines, `Test run with 324 tests in 47 suites passed`, then `3`.
+Expected: no `error:` lines, `Test run with 325 tests in 47 suites passed`, then `3`.
 
 - [ ] **Step 9: Check by hand**
 
@@ -9038,7 +9038,7 @@ Run:
 ```bash
 xcodegen generate && xcodebuild test -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build 2>&1 | grep -E "Test run with|error:|TEST"
 ```
-Expected: no `error:` lines, and `Test run with 347 tests in 49 suites passed`.
+Expected: no `error:` lines, and `Test run with 348 tests in 49 suites passed`.
 
 - [ ] **Step 7: Coordinator: state push, folder observation, Save through `applyLocalEdit`**
 
@@ -9363,7 +9363,7 @@ Run:
 ```bash
 xcodegen generate && xcodebuild test -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build 2>&1 | grep -E "Test run with|error:|TEST"
 ```
-Expected: no `error:` lines, and `Test run with 347 tests in 49 suites passed`.
+Expected: no `error:` lines, and `Test run with 348 tests in 49 suites passed`.
 
 Then:
 ```bash
@@ -10516,7 +10516,7 @@ Run:
 ```bash
 xcodegen generate && xcodebuild test -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build 2>&1 | grep -E "Test run with|error:|TEST"
 ```
-Expected: no `error:` lines, and `Test run with 369 tests in 49 suites passed`. The 16 earlier UploadQueueTests pass without edits to their bodies.
+Expected: no `error:` lines, and `Test run with 370 tests in 49 suites passed`. The 16 earlier UploadQueueTests pass without edits to their bodies.
 
 - [ ] **Step 8: Check by hand (regressions only)**
 
@@ -11059,7 +11059,7 @@ Run:
 ```bash
 xcodegen generate && xcodebuild test -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build 2>&1 | grep -E "Test run with|error:|TEST"
 ```
-Expected: no `error:` lines, and `Test run with 387 tests in 50 suites passed`.
+Expected: no `error:` lines, and `Test run with 388 tests in 50 suites passed`.
 
 - [ ] **Step 5: Fixed-key jobs in `startUpload`**
 
@@ -11339,7 +11339,7 @@ Run:
 ```bash
 xcodegen generate && xcodebuild test -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build 2>&1 | grep -E "Test run with|error:|TEST"
 ```
-Expected: no `error:` lines, and `Test run with 387 tests in 50 suites passed`.
+Expected: no `error:` lines, and `Test run with 388 tests in 50 suites passed`.
 
 - [ ] **Step 10: Check by hand against a real bucket**
 
@@ -11617,7 +11617,7 @@ Run:
 ```bash
 xcodegen generate && xcodebuild test -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build 2>&1 | grep -E "Test run with|error:|TEST"
 ```
-Expected: no `error:` lines, and `Test run with 398 tests in 51 suites passed`.
+Expected: no `error:` lines, and `Test run with 399 tests in 51 suites passed`.
 
 - [ ] **Step 5: Annotate on the overlay**
 
@@ -11940,7 +11940,7 @@ Run:
 ```bash
 xcodegen generate && xcodebuild test -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build 2>&1 | grep -E "Test run with|error:|TEST"
 ```
-Expected: no `error:` lines, and `Test run with 398 tests in 51 suites passed`. OverlayGeometryTests are unchanged.
+Expected: no `error:` lines, and `Test run with 399 tests in 51 suites passed`. OverlayGeometryTests are unchanged.
 
 - [ ] **Step 10: Check by hand**
 
@@ -12252,14 +12252,14 @@ Run:
 ```bash
 xcodegen generate && xcodebuild test -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build 2>&1 | grep -E "Test run with|error:|TEST"
 ```
-Expected: no `error:` lines, `** TEST SUCCEEDED **`, and `Test run with 398 tests in 51 suites passed`.
+Expected: no `error:` lines, `** TEST SUCCEEDED **`, and `Test run with 399 tests in 51 suites passed`.
 
 That count must equal the Task 17 row of the "Test totals" table in the plan's header section (`task-00-header.md` in the plan files, and in `docs/superpowers/plans/2026-10-20-phase-4a-annotation-editor.md`, which is those files concatenated). Reconcile the table against the repo first:
 ```bash
 grep -rhE '^(@MainActor )?struct [A-Za-z0-9]+Tests\b' TidyShotTests | wc -l; grep -rhE '^\s*@Test' TidyShotTests | wc -l
 grep -c '{{' docs/superpowers/plans/2026-10-20-phase-4a-annotation-editor.md
 ```
-Expected: the first count is the suites in the Task 17 row (one `struct …Tests` per suite; helper files such as FakeTileRenderer.swift declare none), and the second is its tests (Swift Testing counts a parameterized `@Test` once, as SigV4TestSuiteTests shows in the 191 baseline); the last count is `0`, so no `398 tests in 51 suites` placeholder is left. If the run differs from the Task 17 row, a review fix added or removed tests. Find which task with:
+Expected: the first count is the suites in the Task 17 row (one `struct …Tests` per suite; helper files such as FakeTileRenderer.swift declare none), and the second is its tests (Swift Testing counts a parameterized `@Test` once, as SigV4TestSuiteTests shows in the 191 baseline); the last count is `0`, so no `399 tests in 51 suites` placeholder is left. If the run differs from the Task 17 row, a review fix added or removed tests. Find which task with:
 ```bash
 git log --oneline --stat f4541da..HEAD -- TidyShotTests
 ```
@@ -12319,6 +12319,6 @@ The plan and the spec are in the list so that Step 3 and Step 4 amendments land 
 
 - [ ] **Step 7: Stop here**
 
-Phase 4a is done when the last test run reads `Test run with 398 tests in 51 suites passed` and the checklist passes. Do not push and do not open a PR: the controller pushes and opens PR 1 after the whole-branch review. Report the final test line, which checklist items were run (and whether the 1x and second-bucket items were skipped), and any amendment made in Step 3 or Step 4.
+Phase 4a is done when the last test run reads `Test run with 399 tests in 51 suites passed` and the checklist passes. Do not push and do not open a PR: the controller pushes and opens PR 1 after the whole-branch review. Report the final test line, which checklist items were run (and whether the 1x and second-bucket items were skipped), and any amendment made in Step 3 or Step 4.
 
 ---

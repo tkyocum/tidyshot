@@ -234,4 +234,20 @@ struct RedactionRendererTests {
         #expect(edge.allSatisfy { abs(Int($0.pixel[0]) - Int($0.pixel[1])) <= 1 && abs(Int($0.pixel[1]) - Int($0.pixel[2])) <= 1 })
         #expect(edge.allSatisfy { $0.pixel[1] < 250 })
     }
+
+    @Test func pixelateOverEarlierRedactAveragesFill() async throws {
+        let renderer = RedactionRenderer()
+        let base = noise()
+        let redact = Annotation.redact(region(16, 16, 32, 32), fill: black)
+        let pixelate = Annotation.pixelate(region(8, 8, 48, 48), block: 8)
+        let redactTile = try #require(await renderer.tile(for: redact, over: base, beneath: []))
+        let tile = Pixels(try #require(await renderer.tile(for: pixelate, over: base, beneath: [EffectTile(effect: redact, image: redactTile)])))
+        let source = Pixels(base)
+        // Image pixels 16..<48 are under the redaction, and the 8 px blocks there lie wholly inside
+        // it, so each averages only black. The pixelate tile starts at image pixel 8.
+        let notBlack = grid(16..<48, 16..<48).filter { tile.pixel($0.x - 8, $0.y - 8) != [0, 0, 0, 255] }
+        #expect(notBlack.isEmpty, "not black at \(notBlack.prefix(3))")
+        let survived = grid(16..<48, 16..<48).filter { tile.pixel($0.x - 8, $0.y - 8)[0..<3] == source.pixel($0.x, $0.y)[0..<3] }
+        #expect(survived.isEmpty, "source value survived at \(survived.prefix(3))")
+    }
 }
