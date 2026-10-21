@@ -158,4 +158,14 @@ struct AppSettingsTests {
         defaults.set(20, forKey: "overlayMaxCards")
         #expect(AppSettings(defaults: defaults).overlayMaxCards == 8)
     }
+
+    /// Close after dragging out is on by default and persists (spec 2.9).
+    @Test func overlayCloseAfterDragDefaultsOnAndPersists() {
+        let defaults = freshDefaults()
+        let first = AppSettings(defaults: defaults)
+        #expect(first.overlayCloseAfterDrag)
+        first.overlayCloseAfterDrag = false
+        #expect(defaults.object(forKey: "overlayCloseAfterDrag") as? Bool == false)
+        #expect(!AppSettings(defaults: defaults).overlayCloseAfterDrag)
+    }
 }

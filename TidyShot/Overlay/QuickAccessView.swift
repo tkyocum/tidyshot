@@ -37,6 +37,8 @@ struct QuickAccessView: View {
         }
         .padding(12)
         .frame(width: Self.size.width, height: Self.size.height)
+        // Under the content and over the material: a press anywhere but a button drags out.
+        .background(QuickAccessCardDragSource(model: model))
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(.quaternary))
         .overlay(alignment: .topLeading) { closeBadge }
@@ -114,13 +116,12 @@ struct QuickAccessView: View {
         .frame(width: 96, height: 72)
         .background(Color.black.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
         .clipShape(RoundedRectangle(cornerRadius: 8))
-        if model.canReveal {
-            image
-                .onTapGesture { model.onReveal() }
-                .help("Reveal in Finder")
-        } else {
-            image
-        }
+        // A drag from the thumbnail drags out; a click without a drag reveals a save-folder file.
+        image
+            .allowsHitTesting(false)
+            .overlay(QuickAccessCardDragSource(model: model,
+                                               onClick: model.canReveal ? { model.onReveal() } : nil,
+                                               toolTip: model.canReveal ? "Reveal in Finder" : nil))
     }
 
     /// The file name, or what stands in for it for an upload-only capture.
@@ -128,8 +129,15 @@ struct QuickAccessView: View {
         model.record.fileURL?.lastPathComponent ?? "Upload only, no local file"
     }
 
-    @ViewBuilder
+    /// Labels and texts only, none of them hit-testable: a press on them reaches the card's drag
+    /// surface (`QuickAccessCardDragSource`) in the background.
     private var status: some View {
+        statusContent
+            .allowsHitTesting(false)
+    }
+
+    @ViewBuilder
+    private var statusContent: some View {
         switch model.record.uploadState {
         case .uploading(let fraction):
             HStack(spacing: 8) {
@@ -150,7 +158,6 @@ struct QuickAccessView: View {
                 .font(.caption)
                 .lineLimit(1)
                 .truncationMode(.middle)
-                .textSelection(.enabled)
         case .failed(let message):
             Label("Upload failed", systemImage: "exclamationmark.triangle.fill")
                 .foregroundStyle(.red)

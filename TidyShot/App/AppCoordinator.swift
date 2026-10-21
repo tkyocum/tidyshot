@@ -23,6 +23,8 @@ final class AppCoordinator {
     /// `thumbnails` and `pending` folders next to `history.json`.
     let thumbnails: ThumbnailStore
     let pendingFiles: PendingFileStore
+    /// Drag-out copies, `<container tmp>/Drag/<id>/` (spec 2.9).
+    let dragFiles: DragFileStore
     let credentialStore: any CredentialStore = KeychainCredentialStore()
     private let notifier = Notifier()
     private let permissionWindow = PermissionWindowController()
@@ -68,6 +70,13 @@ final class AppCoordinator {
     /// image, by the editor's Copy, and after an edit replaced the clipboard. An edit of that
     /// capture replaces the clipboard only while the count still matches.
     @ObservationIgnored private var clipboardOwner: EditorClipboard.Owner?
+    /// Bumped when a record's drag folder is removed or its pending file adopted. A stage or
+    /// download that started before compares it at its end and drops what it made.
+    @ObservationIgnored private var dragGenerations: [UUID: Int] = [:]
+    /// Drag folders waiting `dragCleanupDelay` after their card closed.
+    @ObservationIgnored private var dragCleanups: [UUID: Task<Void, Never>] = [:]
+    /// Restored cards whose drag file is downloading, so a press does not start a second GET.
+    @ObservationIgnored private var prefetchingDragIDs: Set<UUID> = []
 
     private(set) var isCapturing = false
     /// The last capture written to the save folder (upload-only captures do not count).
@@ -86,11 +95,14 @@ final class AppCoordinator {
         history = HistoryStore(fileURL: url, retentionDays: { AppSettings.shared.historyRetentionDays })
         thumbnails = ThumbnailStore(nextTo: url)
         pendingFiles = PendingFileStore(nextTo: url)
+        dragFiles = DragFileStore(temporaryDirectory: FileManager.default.temporaryDirectory)
         history.didPrune = { [weak self] records in self?.removeFiles(ofPruned: records) }
         overlay.onDidClose = { [weak self] id, reason in self?.overlayDidClose(id, reason: reason) }
     }
 
     func start() {
+        // Drag copies from the last run, also after a crash.
+        dragFiles.sweep()
         notifier.setUp()
         history.load()
         registerShortcuts()
@@ -447,7 +459,9 @@ final class AppCoordinator {
             delete: { [weak self] id in self?.afterMenuTracking { Task { await self?.deleteCapture(recordID: id) } } },
             annotate: { [weak self] id in self?.openEditorAfterMenuTracking(recordID: id) },
             saveAs: { [weak self] id in self?.saveAs(recordID: id) },
-            copyImage: { [weak self] id in Task { await self?.copyImage(recordID: id) } })
+            copyImage: { [weak self] id in Task { await self?.copyImage(recordID: id) } },
+            prepareDrag: { [weak self] id in self?.prepareDragFile(recordID: id) },
+            dragEnded: { [weak self] id, accepted in self?.dragDidEnd(recordID: id, accepted: accepted) })
     }
 
     /// The screen for the card stack under `settings.overlayDisplay`; nil without screens.
@@ -460,8 +474,8 @@ final class AppCoordinator {
         return screens[index]
     }
 
-    /// Every card close: the retained image goes with the newest card, and a restorable close is
-    /// remembered.
+    /// Every card close: the retained image goes with the newest card, a restorable close is
+    /// remembered, and the card's drag folder is scheduled for removal.
     private func overlayDidClose(_ id: UUID, reason: QuickAccessCloseReason) {
         forgetLatestCapture(id)
         if isRestoring, reason == .pushedOut {
@@ -469,6 +483,7 @@ final class AppCoordinator {
         } else {
             closedOverlays.didClose(id, reason: reason)
         }
+        scheduleDragCleanup(id)
     }
 
     /// Whether Restore Closed Overlay has a card to bring back (the menu item's state).
@@ -492,6 +507,8 @@ final class AppCoordinator {
         defer { isRestoring = false }
         overlay.show(record: current, thumbnail: thumbnail, screen: screen,
                      autoCloseSeconds: settings.overlayAutoCloseSeconds, actions: overlayActions())
+        // A record without a local file starts its quiet download now.
+        prepareDragFile(recordID: id)
     }
 
     /// The configured destination, or nil when the Upload tab is incomplete, no credentials are
@@ -723,37 +740,48 @@ final class AppCoordinator {
     }
 
     /// The capture's PNG: the local file when it can be read, otherwise the uploaded object. Copy
-    /// Image, Annotate and the card's Save As… use it. The
+    /// Image, Annotate and the card's Save As… use it. Between the two, the record's drag copy
+    /// (DragFileStore), which an upload-only capture keeps while its card shows. The
     /// save folder is resolved here, on the main actor, and the file is read in a detached task,
     /// as `ThumbnailProvider` does: a temporary file in `pending` directly, a saved one through
     /// the folder's security scope.
     private func imageData(of record: CaptureRecord, downloadTitle: String = "Copying image…") async throws -> Data {
-        if let fileURL = record.fileURL {
-            let temporary = record.fileIsTemporary
-            let folder = temporary ? nil : saveLocation.currentURL
-            let local = await Task.detached(priority: .userInitiated) { () -> Data? in
-                if temporary { return try? Data(contentsOf: fileURL) }
-                guard let folder else { return nil }
-                return try? SaveLocation.readScoped(fileURL, folder: folder)
-            }.value
-            if let local { return local }
-            // The file is recorded but cannot be read; the uploaded object is the other copy. The
-            // record is read again: an upload-only capture whose upload finished during the read
-            // has lost its `pending` file and gained the key that the snapshot above lacks.
-            let current = history.record(id: record.id) ?? record
-            guard current.uploadedKey != nil, current.objectLocation != nil else { throw CopyImageError.unreadableFile }
-            return try await downloadImage(of: current, title: downloadTitle)
+        let fileURL = record.fileURL
+        let temporary = record.fileIsTemporary
+        let folder = temporary ? nil : saveLocation.currentURL
+        let drag = dragFiles
+        let id = record.id
+        let local = await Task.detached(priority: .userInitiated) { () -> Data? in
+            if let fileURL {
+                let data: Data?
+                if temporary {
+                    data = try? Data(contentsOf: fileURL)
+                } else {
+                    data = folder.flatMap { try? SaveLocation.readScoped(fileURL, folder: $0) }
+                }
+                if let data { return data }
+            }
+            // The drag copy: an upload-only capture's file kept while its card shows, or a download.
+            return drag.stagedFile(id: id).flatMap { try? Data(contentsOf: $0) }
+        }.value
+        if let local { return local }
+        // The record is read again: an upload-only capture whose upload finished during the read
+        // has lost its `pending` file and gained the key that the snapshot above lacks.
+        let current = history.record(id: record.id) ?? record
+        if record.fileURL != nil, current.uploadedKey == nil || current.objectLocation == nil {
+            // The file is recorded but cannot be read, and there is no upload to fall back on.
+            throw CopyImageError.unreadableFile
         }
-        return try await downloadImage(of: record, title: downloadTitle)
+        return try await downloadImage(of: current, title: downloadTitle)
     }
 
     /// The uploaded object's bytes, from where the record says it went, signed with the
-    /// credentials stored now.
-    private func downloadImage(of record: CaptureRecord, title: String) async throws -> Data {
+    /// credentials stored now. A nil title downloads quietly (a restored card's drag file).
+    private func downloadImage(of record: CaptureRecord, title: String?) async throws -> Data {
         guard let key = record.uploadedKey else { throw CopyImageError.nothingToCopy }
         guard let location = record.objectLocation else { throw CopyImageError.unknownLocation }
         guard let credentials = loadCredentials() else { throw UploadError.notConfigured }
-        if settings.showNotification {
+        if let title, settings.showNotification {
             notifier.notify(title: title, body: "Downloading \(key)")
         }
         return try await S3Destination(config: location.config, credentials: credentials).download(key: key)
@@ -914,6 +942,7 @@ final class AppCoordinator {
         thumbnailProvider.forget(id)
         forgetLatestCapture(id)
         overlay.close(recordID: id, reason: .deleted)
+        removeDragFolder(id)
         pushEditorState(for: id)
     }
 
@@ -1030,11 +1059,15 @@ final class AppCoordinator {
                 deleteOrphanedObject(key: key, at: location)
                 return
             }
-            // Upload-only mode: the temporary file has done its job. If it cannot be removed the
-            // record keeps pointing at it, so Delete can still remove it later.
+            // Upload-only mode: the temporary file has done its job. While a card shows the
+            // capture it moves into the drag folder under the key's name, so the card can still be
+            // dragged out (spec 2.9); otherwise it is removed. Either way the record drops it
+            // below. If it can be neither moved nor removed the record keeps pointing at it, so
+            // Delete can still remove it later.
             var removedTemporaryFile = false
             if before.fileIsTemporary, let fileURL = before.fileURL {
-                removedTemporaryFile = removePendingFile(at: fileURL, context: "after upload")
+                removedTemporaryFile = keepForDragOut(fileURL, record: before, url: url, key: key)
+                    || removePendingFile(at: fileURL, context: "after upload")
             }
             history.update(id: id) { record in
                 record.uploadState = .uploaded(url: url, key: key)
@@ -1111,6 +1144,123 @@ final class AppCoordinator {
                 NSLog("Could not delete \(key), uploaded for a record that no longer exists: \(error.localizedDescription)")
             }
         }
+    }
+
+    // MARK: Drag-out
+
+    /// How long a closed card's drag folder stays, for a receiver still reading the dropped file.
+    static let dragCleanupDelay: Duration = .seconds(60)
+
+    /// Stages the record's drag file for its card: at a press on the card, and when a restored
+    /// card appears. The name and the source are worked out here; the copy runs detached. The
+    /// card's `dragFileURL` is nil until it is done. A record with no readable file uses its kept
+    /// copy, or, uploaded, a quiet download (`prefetchDragFile`).
+    func prepareDragFile(recordID: UUID) {
+        guard let record = history.record(id: recordID), overlay.isShowing(recordID: recordID) else { return }
+        dragCleanups.removeValue(forKey: recordID)?.cancel()
+        let name = DragFileName.name(for: record, suggestion: saveAsSuggestion(recordID: recordID))
+        let generation = dragGenerations[recordID, default: 0]
+        overlay.setDragFile(nil, for: recordID)
+        let store = dragFiles
+        let source = record.fileURL
+        let scope = record.fileIsTemporary ? nil : saveLocation.currentURL
+        Task { [weak self] in
+            let staged = await Task.detached(priority: .userInitiated) { () -> URL? in
+                if let source, let url = try? store.stage(id: recordID, name: name, from: source, scope: scope) {
+                    return url
+                }
+                // An adopted or downloaded copy, or the last copy of a file that has gone since.
+                return store.stagedFile(id: recordID)
+            }.value
+            guard let self else { return }
+            guard self.dragGenerations[recordID, default: 0] == generation else {
+                self.dropStaleDragFolder(recordID)
+                return
+            }
+            if let staged {
+                self.overlay.setDragFile(staged, for: recordID)
+            } else {
+                await self.prefetchDragFile(recordID: recordID, name: name)
+            }
+        }
+    }
+
+    /// A quiet signed GET (no notification) of an uploaded capture that has no local file, into
+    /// its drag folder. A failure is only logged; the card then cannot be dragged.
+    private func prefetchDragFile(recordID: UUID, name: String) async {
+        guard !prefetchingDragIDs.contains(recordID), let record = history.record(id: recordID),
+              record.uploadedKey != nil, record.objectLocation != nil else { return }
+        prefetchingDragIDs.insert(recordID)
+        defer { prefetchingDragIDs.remove(recordID) }
+        let generation = dragGenerations[recordID, default: 0]
+        let store = dragFiles
+        do {
+            let data = try await downloadImage(of: record, title: nil)
+            let url = try await Task.detached(priority: .utility) {
+                try store.write(data, id: recordID, name: name)
+            }.value
+            guard dragGenerations[recordID, default: 0] == generation else {
+                dropStaleDragFolder(recordID)
+                return
+            }
+            overlay.setDragFile(url, for: recordID)
+        } catch {
+            NSLog("Drag-out download for \(recordID) failed: \(error.localizedDescription)")
+        }
+    }
+
+    /// `.uploaded` for an upload-only capture: when a card shows it, moves the pending file to
+    /// `Drag/<id>/<key name>` and hands it to the card. False when no card shows the record or the
+    /// move failed (logged); the caller then removes the pending file as before.
+    private func keepForDragOut(_ fileURL: URL, record: CaptureRecord, url: URL, key: String) -> Bool {
+        guard overlay.isShowing(recordID: record.id) else { return false }
+        var uploaded = record
+        uploaded.uploadState = .uploaded(url: url, key: key)
+        let name = DragFileName.name(for: uploaded, suggestion: saveAsSuggestion(recordID: record.id))
+        do {
+            let kept = try dragFiles.adopt(id: record.id, name: name, moving: fileURL)
+            dragGenerations[record.id, default: 0] += 1
+            overlay.setDragFile(kept, for: record.id)
+            return true
+        } catch {
+            NSLog("Could not keep \(fileURL.lastPathComponent) for drag-out: \(error.localizedDescription)")
+            return false
+        }
+    }
+
+    /// A drag-out ended. With `Close after dragging out` on, a drop that a receiver took closes the
+    /// card as `.draggedOut` (restorable).
+    private func dragDidEnd(recordID: UUID, accepted: Bool) {
+        guard accepted, settings.overlayCloseAfterDrag else { return }
+        overlay.close(recordID: recordID, reason: .draggedOut)
+    }
+
+    /// A card closed, for any reason: its drag folder goes after `dragCleanupDelay`, unless the
+    /// card shows again first (`prepareDragFile` cancels this).
+    private func scheduleDragCleanup(_ id: UUID) {
+        dragCleanups[id]?.cancel()
+        dragCleanups[id] = Task { [weak self] in
+            try? await Task.sleep(for: Self.dragCleanupDelay)
+            guard !Task.isCancelled, let self else { return }
+            self.dragCleanups[id] = nil
+            guard !self.overlay.isShowing(recordID: id) else { return }
+            self.removeDragFolder(id)
+        }
+    }
+
+    /// Removes the record's drag folder now (Delete, or the delayed clean-up), and makes any stage
+    /// or download still running for it drop what it makes.
+    private func removeDragFolder(_ id: UUID) {
+        dragCleanups.removeValue(forKey: id)?.cancel()
+        dragGenerations[id, default: 0] += 1
+        dragFiles.remove(id: id)
+    }
+
+    /// A stage or download finished after its folder was removed or replaced: unless a card shows
+    /// the record, the folder it recreated goes again.
+    private func dropStaleDragFolder(_ id: UUID) {
+        guard !overlay.isShowing(recordID: id) else { return }
+        dragFiles.remove(id: id)
     }
 
     // MARK: Editor

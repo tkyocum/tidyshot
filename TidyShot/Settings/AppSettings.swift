@@ -42,6 +42,7 @@ final class AppSettings {
         static let overlayAutoCloseSeconds = "overlayAutoCloseSeconds"
         static let overlayDisplay = "overlayDisplay"
         static let overlayMaxCards = "overlayMaxCards"
+        static let overlayCloseAfterDrag = "overlayCloseAfterDrag"
         static let historyRetentionDays = "historyRetentionDays"
         static let s3Config = "s3DestinationConfig"
         static let editorStrokeColor = "editorStrokeColor"
@@ -71,6 +72,8 @@ final class AppSettings {
     /// How many cards the stack shows at most (Overlay tab, `Show up to N overlays`).
     var overlayMaxCards: Int { didSet { defaults.set(overlayMaxCards, forKey: Keys.overlayMaxCards) } }
     static let overlayMaxCardsRange: ClosedRange<Int> = 1...8
+    /// Close a Quick Access card once it was dragged out and dropped (Overlay tab).
+    var overlayCloseAfterDrag: Bool { didSet { defaults.set(overlayCloseAfterDrag, forKey: Keys.overlayCloseAfterDrag) } }
     var historyRetentionDays: Int { didSet { defaults.set(historyRetentionDays, forKey: Keys.historyRetentionDays) } }
     /// Nil until the Upload tab has been saved once. Stored as JSON.
     var s3Config: S3DestinationConfig? {
@@ -122,6 +125,7 @@ final class AppSettings {
             Keys.overlayAutoCloseSeconds: 5.0,
             Keys.overlayDisplay: OverlayDisplayChoice.capture.rawValue,
             Keys.overlayMaxCards: 5,
+            Keys.overlayCloseAfterDrag: true,
             Keys.historyRetentionDays: 30,
             Keys.editorLineWidthPoints: Double(EditorDefaults.standard.lineWidthPoints),
             Keys.editorBlurRadiusPoints: Double(EditorDefaults.standard.blurRadiusPoints),
@@ -144,6 +148,7 @@ final class AppSettings {
         overlayDisplay = OverlayDisplayChoice(rawValue: defaults.string(forKey: Keys.overlayDisplay) ?? "") ?? .capture
         overlayMaxCards = min(max(defaults.integer(forKey: Keys.overlayMaxCards), Self.overlayMaxCardsRange.lowerBound),
                               Self.overlayMaxCardsRange.upperBound)
+        overlayCloseAfterDrag = defaults.bool(forKey: Keys.overlayCloseAfterDrag)
         historyRetentionDays = defaults.integer(forKey: Keys.historyRetentionDays)
         // Decoding drops `{app}` from the key template (see `S3DestinationConfig.init(from:)`).
         let storedConfig = defaults.data(forKey: Keys.s3Config)

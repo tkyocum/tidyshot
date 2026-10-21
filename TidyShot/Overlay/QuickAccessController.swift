@@ -41,6 +41,10 @@ final class QuickAccessController {
         var saveAs: (UUID) -> Void
         /// Copy Image for the card's menu item; see `AppCoordinator.copyImage(recordID:)`.
         var copyImage: (UUID) -> Void
+        /// Stages the card's drag file; see `AppCoordinator.prepareDragFile(recordID:)`.
+        var prepareDrag: (UUID) -> Void
+        /// A drag-out ended; true when a receiver took the file.
+        var dragEnded: (UUID, Bool) -> Void
     }
 
     /// One card: its panel, its model and its auto-close countdown.
@@ -146,6 +150,12 @@ final class QuickAccessController {
         }
     }
 
+    /// Hands the card showing `recordID` its staged drag file, or nil while one is being made.
+    /// Does nothing when no card shows the record.
+    func setDragFile(_ url: URL?, for recordID: UUID) {
+        cards.first { $0.id == recordID }?.model.dragFileURL = url
+    }
+
     /// Closes the card that shows `recordID`: `.deleted`, `.editorOpened`, or `.draggedOut` (Task 6).
     func close(recordID: UUID, reason: QuickAccessCloseReason) {
         guard let card = cards.first(where: { $0.id == recordID }) else { return }
@@ -163,6 +173,8 @@ final class QuickAccessController {
         model.onAnnotate = { actions.annotate(id) }
         model.onSaveAs = { actions.saveAs(id) }
         model.onCopyImage = { actions.copyImage(id) }
+        model.onPrepareDrag = { actions.prepareDrag(id) }
+        model.onDragEnded = { accepted in actions.dragEnded(id, accepted) }
         let card = Card(model: model, autoCloseSeconds: autoCloseSeconds)
         model.onClose = { [weak self, weak card] in
             // After the context menu's tracking, and outside the hosting view's own click.
@@ -281,8 +293,8 @@ final class QuickAccessController {
         layout(on: screen, animated: false)
     }
 
-    /// Waits the card's `autoCloseSeconds`; while the pointer is over the card the countdown
-    /// restarts (as `scheduleClose` did for the one panel).
+    /// Waits the card's `autoCloseSeconds`; while the pointer is over the card, or a drag-out
+    /// from it runs, the countdown restarts (as `scheduleClose` did for the one panel).
     private func scheduleClose(_ card: Card) {
         card.closeTask?.cancel()
         card.closeTask = nil
@@ -293,8 +305,10 @@ final class QuickAccessController {
                 try? await Task.sleep(for: .seconds(seconds))
                 guard !Task.isCancelled else { return }
                 // The pointer's place now, not the last hover event: a card that slid away or
-                // under a still pointer is judged where it is.
+                // under a still pointer is judged where it is. A card never closes under a
+                // running drag-out session.
                 if let panel = card?.panel, panel.frame.contains(NSEvent.mouseLocation) { continue }
+                if card?.model.isDraggingOut == true { continue }
                 break
             }
             guard !Task.isCancelled, let self, let card else { return }

@@ -28,6 +28,8 @@ struct OverlaySettingsView: View {
                 Text(settings.overlayMaxCards == 1 ? "Show up to 1 overlay" : "Show up to \(settings.overlayMaxCards) overlays")
             }
             .disabled(!settings.showOverlay)
+            Toggle("Close after dragging out", isOn: $settings.overlayCloseAfterDrag)
+                .disabled(!settings.showOverlay)
             Stepper("Keep history for \(settings.historyRetentionDays) days", value: $settings.historyRetentionDays, in: 1...365)
         }
         .formStyle(.grouped)
