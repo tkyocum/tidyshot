@@ -57,6 +57,8 @@ Two decisions in this plan go beyond 2.8's text, and Task 7 writes both into 2.8
 
 The totals come from each task's declared tests. Task 7 checks them against a real run and adds a note for any difference.
 
+Task 7 note: two review-fix commits added tests the table does not count. 20b76bf (the review follow-ups for the finder, plan, panel geometry and frame source) added 4 tests after Task 4, so the real runs read 4 more from Task 5 on: 551 tests in 70 suites after that fix, 558 after Task 5 and 569 in 72 suites after Task 6. c9d097a (a narrow scrolling column is never still) added 2 tests after Task 6. The real run at the head reads `Test run with 571 tests in 72 suites passed`; no suite was added or removed by either fix. The rows above are the declared totals and are left as written.
+
 ---
 
 ### Task 1: Stitching core
