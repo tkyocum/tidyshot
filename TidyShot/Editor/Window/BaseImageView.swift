@@ -1,17 +1,22 @@
 import AppKit
 import QuartzCore
 
-/// The capture and its effect tiles, as layers placed by `transform`: one texture for the image and
-/// one sublayer per tile, in creation order. Zoom and pan only move layer frames, and the view is
-/// viewport-sized, so there is no document-sized backing store and no `_NSTiledLayer`. Clicks pass
-/// through to the canvas above.
+/// The capture and its effect tiles, as layers placed by `transform`: the image as one layer per
+/// `ImageTiling` tile (one for any image up to 16,384 px on a side, stacked strips for a taller
+/// scrolling capture, since a GPU texture holds no more), then one sublayer per effect tile, in
+/// creation order. Zoom and pan only move layer frames, and the view is viewport-sized, so there
+/// is no document-sized backing store and no `_NSTiledLayer`. Clicks pass through to the canvas
+/// above.
 final class BaseImageView: NSView {
     var image: CGImage? {
         didSet {
-            imageLayer.contents = image
-            layoutLayers()
+            setBaseTiles(image.map { ImageTiling.crops(of: $0) } ?? [])
         }
     }
+
+    /// The image as shown: each layer's crop and the rect it covers in image pixels. The canvas's
+    /// highlighter backdrop draws these, so its copy matches the layers.
+    private(set) var baseTiles: [(rect: CGRect, image: CGImage)] = []
 
     var transform = CanvasTransform(zoom: 1, offset: .zero) {
         didSet {
@@ -19,7 +24,8 @@ final class BaseImageView: NSView {
         }
     }
 
-    private let imageLayer = CALayer()
+    /// One layer per entry of `baseTiles`, in the same order.
+    private var imageLayers: [CALayer] = []
     /// Tile layers by effect id, the image each shows and the rect it covers in image pixels.
     private var tileLayers: [UUID: CALayer] = [:]
     private var tileImages: [UUID: CGImage] = [:]
@@ -30,8 +36,6 @@ final class BaseImageView: NSView {
         super.init(frame: frameRect)
         wantsLayer = true
         layerContentsRedrawPolicy = .never
-        imageLayer.contentsGravity = .resize
-        layer?.addSublayer(imageLayer)
     }
 
     @available(*, unavailable)
@@ -72,7 +76,22 @@ final class BaseImageView: NSView {
         tileImages = images
         tileRects = rects
         tileOrder = tiles.map(\.id)
-        layer?.sublayers = [imageLayer] + tileOrder.compactMap { layers[$0] }
+        layer?.sublayers = imageLayers + tileOrder.compactMap { layers[$0] }
+        CATransaction.commit()
+        layoutLayers()
+    }
+
+    /// Replaces the image layers with one per tile, under the effect tiles.
+    private func setBaseTiles(_ tiles: [(rect: CGRect, image: CGImage)]) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        baseTiles = tiles
+        imageLayers = tiles.map { tile in
+            let imageLayer = makeTileLayer()
+            imageLayer.contents = tile.image
+            return imageLayer
+        }
+        layer?.sublayers = imageLayers + tileOrder.compactMap { tileLayers[$0] }
         CATransaction.commit()
         layoutLayers()
     }
@@ -83,18 +102,19 @@ final class BaseImageView: NSView {
         return tileLayer
     }
 
-    /// Frames every layer at `transform.viewRect` of its image-pixel rect. Nearest-neighbour
-    /// magnification from 2 device pixels per image pixel up, so redacted pixels read exactly when
-    /// zoomed in; linear below; trilinear minification.
+    /// Frames every layer at `transform.viewRect` of its image-pixel rect, so the image's layers
+    /// meet edge to edge at any zoom and pan. Nearest-neighbour magnification from 2 device pixels
+    /// per image pixel up, so redacted pixels read exactly when zoomed in; linear below; trilinear
+    /// minification.
     private func layoutLayers() {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         let filter: CALayerContentsFilter = transform.zoom * (window?.backingScaleFactor ?? 2) >= 2 ? .nearest : .linear
-        if let image {
-            imageLayer.frame = transform.viewRect(CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        for (imageLayer, tile) in zip(imageLayers, baseTiles) {
+            imageLayer.frame = transform.viewRect(tile.rect)
+            imageLayer.magnificationFilter = filter
+            imageLayer.minificationFilter = .trilinear
         }
-        imageLayer.magnificationFilter = filter
-        imageLayer.minificationFilter = .trilinear
         for id in tileOrder {
             guard let tileLayer = tileLayers[id], let rect = tileRects[id] else { continue }
             tileLayer.frame = transform.viewRect(rect)

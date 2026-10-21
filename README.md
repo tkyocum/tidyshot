@@ -83,16 +83,20 @@ unavailable. Apple Development signing (see Permissions) keeps it.
 
 **What to expect.** A header or footer that stays put (a toolbar, a sticky nav bar, a composer) is
 kept once, at the top or bottom, and a fixed sidebar is ignored. A floating element inside the area
-(a chat button, a spinner) is stitched in each time it appears. A capture ends at 16,384 pixels
-tall (8,192 points on a Retina display); at that point the panel says so and the capture finishes.
-An endless feed therefore runs to that limit. Content with no distinctive rows (a long run of
+(a chat button, a spinner) is stitched in each time it appears. A capture ends at 65,536 pixels
+tall (32,768 points on a Retina display); at that point the panel says so and the capture finishes.
+An endless feed therefore runs to that limit. At that height and about 3,000 pixels wide the image
+takes about 800 MB of memory while it is saved or annotated. Content with no distinctive rows (a long run of
 identical lines or a blank stretch taller than the area) cannot be placed, so the "Too fast" line
 shows until you scroll back. A window pick captures the window's frame from the display, so a window
 that overlaps it is in the picture. The macOS screen-recording indicator shows while a session runs.
 
 After Done the capture goes through the same path as any other: the after-capture action, the
 Quick Access overlay with Annotate and Delete, Recent Captures and the upload. A very tall capture's
-thumbnail shows the top of the page. Annotate works on captures up to the 16,384 pixel limit.
+thumbnail shows the top of the page. Annotate works on captures up to the 65,536 pixel limit (the
+editor shows a tall capture as stacked 16,384 pixel strips, the most one GPU texture holds on every
+Mac). A capture taller or wider than 16,384 pixels goes on the clipboard as PNG only, without the
+uncompressed TIFF copy, which at that size would take hundreds of megabytes more.
 Horizontal scrolling is not supported.
 
 ## Upload

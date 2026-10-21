@@ -778,14 +778,15 @@ final class CanvasView: NSView {
     // MARK: Drawing
 
     /// For each highlighter meeting `visible` (including the one in progress): clip to its stroked
-    /// outline, then draw the capture and the shown effect tiles into that clip. The copy equals
-    /// what `baseView` shows there, so the picture does not change, and the multiply that follows
-    /// in `AnnotationDrawing.draw` has real pixels to multiply. Runs before every other drawing, so
-    /// shapes made before the highlighter lie under it and shapes made after lie over it, as in the
-    /// export. The CTM is image pixels, top-left origin. The clip is stroked 1 view point wider on
-    /// each side so anti-aliased edge pixels get a whole backdrop, as in the export. Interpolation
-    /// follows `BaseImageView`: nearest from 2 device pixels per image pixel up, bilinear from 1,
-    /// and the highest quality below.
+    /// outline, then draw the capture's layer crops that meet the clip (`baseView.baseTiles`, one
+    /// for most captures, 16,384 px strips for a taller one) and the shown effect tiles into that
+    /// clip. The copy equals what `baseView` shows there, so the picture does not change, and the
+    /// multiply that follows in `AnnotationDrawing.draw` has real pixels to multiply. Runs before
+    /// every other drawing, so shapes made before the highlighter lie under it and shapes made
+    /// after lie over it, as in the export. The CTM is image pixels, top-left origin. The clip is
+    /// stroked 1 view point wider on each side so anti-aliased edge pixels get a whole backdrop, as
+    /// in the export. Interpolation follows `BaseImageView`: nearest from 2 device pixels per image
+    /// pixel up, bilinear from 1, and the highest quality below.
     private func drawHighlighterBackdrops(in context: CGContext, visible: CGRect) {
         var strokes: [Stroke] = []
         for drawing in displayedDrawings {
@@ -806,7 +807,10 @@ final class CanvasView: NSView {
             context.replacePathWithStrokedPath()
             context.clip()
             context.interpolationQuality = quality
-            drawFlipped(model.base, in: CGRect(origin: .zero, size: imagePixelSize), context: context)
+            let clip = context.boundingBoxOfClipPath
+            for base in baseView.baseTiles where base.rect.intersects(clip) {
+                drawFlipped(base.image, in: base.rect, context: context)
+            }
             for effect in displayedEffects {
                 if let tile = shownTile(for: effect) { drawFlipped(tile.image, in: tile.rect, context: context) }
             }

@@ -5,7 +5,7 @@ overlay's scrolling mode, the shortcut, the menu item), `AppCoordinator.save(_:)
 or the post-event permission. Automated tests cover the overlap finder and the stitcher on synthetic
 pages, every decision (settling, end detection, step plan, status lines, panel placement, selection
 outcome), the engine's pixels through the PNG encoder, the session with a fake frame source, the
-thumbnail crop and the new setting; everything here needs the real stream, real windows, real
+thumbnail crop, the new setting and the editor's tiling of a tall image; everything here needs the real stream, real windows, real
 apps, real scroll events, the real permission and eyes. The 4a and 4b checklists still cover the
 overlay's buttons, Annotate, Save, Upload and caches; run them too after a change to those paths.
 
@@ -50,8 +50,16 @@ if(location.hash==='#jump'){addEventListener('wheel',function(e){e.preventDefaul
 HTML
 } > long.html
 grep -v 'class="spin"' long.html > long-still.html
+{
+sed -n '1,/class="spin"/p' long.html | grep -v 'class="spin"'
+for i in $(seq 1 400); do
+  printf '<section><b>Section %03d</b><br>Each section has its own number, colour and text, so no two screens look alike. Item %03d.<div style="background:hsl(%d,70%%,60%%)"></div></section>\n' $i $i $(( (i*37) % 360 ))
+done
+echo '<footer>Footer: this site uses cookies (fixed)</footer>'
+} > tall.html
 ```
-`long-still.html` has no spinner, so it holds still for the pixel comparison. Open them with
+`long-still.html` has no spinner, so it holds still for the pixel comparison. `tall.html` has 400
+sections (about 70,000 pt) and no spinner, for the height cap. Open them with
 `open -a Safari ~/Desktop/p5/long.html` (add `"file://$HOME/Desktop/p5/long.html#lazy"` for the other
 modes). Also have ready:
 - a Terminal window about 900 by 700 pt with `seq -f "line %05g  the quick brown fox jumps over the lazy dog" 1 3000` run in it (every row differs by its number);
@@ -118,12 +126,16 @@ The chat from the setup, scrolled so a few hundred messages lie below the view.
 - [ ] A new message that appears without the list scrolling (a short conversation that does not fill the window yet, or a message sent while you hold still): the status line stays `Scroll down slowly. Click Done at the end.`, never `Too fast. Scroll back up a little.`, and the readout does not grow. Then scroll on: the capture continues.
 
 ## The height cap
-`long.html` is about 21,000 pt tall, so a Retina capture reaches 16,384 px (8,192 pt) before the end. On a 1x display the cap is 16,384 pt.
-- [ ] Capture from the top of `long.html` with a 1000 pt tall area and keep scrolling. When the height reaches the cap the status line reads `Reached the 16,384 pixel limit.`, the session ends by itself and `Stitching…` may flash. No Done click is needed. Write down whether the result appears without your input.
-- [ ] `sips -g pixelHeight -g pixelWidth <file>` reports a height of exactly 16384 and the area's width in pixels. The content stops at a row, not in the middle of a half-written one: the last section is simply cut by the bottom edge.
-- [ ] The menu bar menu opens without delay while the cap capture is encoding after Done (the encode is off the main actor), and the overlay appears within a few seconds. Write down the time from Done to the overlay.
-- [ ] Memory: Activity Monitor shows TidyShot using well under 1 GB at the cap, and back near its idle size a few seconds after the overlay appears.
-- [ ] A capture that ends just below the cap by Done, and one that ends exactly at it, both save and open.
+The cap is 65,536 px: 32,768 pt on a Retina display, about section 187 of `tall.html`, and 65,536 pt on a 1x display, about section 374. Auto-scroll saves the scrolling by hand.
+- [ ] Capture from the top of `tall.html` in Safari with an area about 1500 pt wide and 1000 pt tall, so the result is about 3000 px wide, and keep scrolling. The readout passes 16,384 without stopping. When the height reaches the cap the status line reads `Reached the 65,536 pixel limit.`, the session ends by itself and `Stitching…` may flash. No Done click is needed. Write down whether the result appears without your input, and the time per screen near the end compared with the start.
+- [ ] The panel's preview keeps showing the newest rows all the way to the cap (it never goes blank or freezes), also with a narrow area: repeat with an area 300 pt wide (600 px, so the preview is at full width).
+- [ ] `sips -g pixelHeight -g pixelWidth <file>` reports a height of exactly 65536 and the area's width in pixels. The content stops at a row, not in the middle of a half-written one: the last section is simply cut by the bottom edge. Open the file in Preview and scroll to the bottom: the sections are in order to the end.
+- [ ] The menu bar menu opens without delay while the cap capture is encoding after Done (the encode is off the main actor), and the overlay appears within several seconds. Write down the time from Done to the overlay.
+- [ ] Memory: Activity Monitor's Memory column for TidyShot peaks at about 1 GB per 3000 px of width at the cap (the image alone is 811 MB at 3094 px) and is back near its idle size a few seconds after the overlay closes (until then the image is kept for Annotate). Write down the peak.
+- [ ] Clipboard with "Save and copy image": Preview > File > New from Clipboard shows the whole 65,536 px image, and pasting into Notes or Pages works. Above 16,384 px TidyShot puts only the PNG on the clipboard, not the TIFF: `osascript -e 'clipboard info'` lists `«class PNGf»` and no `TIFF picture`. A normal capture still lists both.
+- [ ] The Recent Captures thumbnail and hover preview of the cap capture show the top of the page; the hover preview appears within about a second.
+- [ ] Upload: "Upload and copy URL" with the cap capture finishes, and `curl -s <url> -o /tmp/tall.png && sips -g pixelHeight /tmp/tall.png` reports 65536.
+- [ ] A capture that ends just below the cap by Done, one that ends exactly at it, and one stopped by Done at about 20,000 px all save and open.
 
 ## Escape and Cancel
 - [ ] Before Start, Escape closes the panel and the frame and nothing is saved. Before Start, **Cancel** does the same.
@@ -175,7 +187,10 @@ Use the three after-capture actions in turn (Settings > General), each with a Sa
 - [ ] The pencil button on the overlay opens the editor on a stitched capture of three screens. The picture shows complete at Fit, and ⌘1 (actual size) and ⌘0 (fit) work; scrolling and Space-drag pan along the whole height.
 - [ ] Draw a redaction near the top, a text in the middle and an arrow near the bottom; the strokes sit on the content under the pointer at every height. Crop to the middle third: the saved size is the crop's. ⌘S writes the file; the unsaved dot behaves as for any capture.
 - [ ] ⌘U on an uploaded stitched capture replaces the object under the same link; `curl` shows the edit at the full height.
-- [ ] Annotate on the capture at the cap (the 16,384 px one): the editor opens and shows the picture, with no blank or black canvas, at Fit and at 100%. Scroll to the very bottom at 100% and draw a rectangle there; ⌘S saves it. Write down whether the pan and the drawing keep up (this is the check behind the 16,384 px cap).
+- [ ] Annotate on the capture at the cap (the 65,536 px one from `tall.html`): the editor opens and shows the whole picture at Fit, a thin strip, with no blank, black or missing part. The editor shows it as four stacked 16,384 px layers: zoom in on the joins at 16,384, 32,768 and 49,152 px (sections 47, 94 and 140 or so at 2x) and check there is no seam, gap, doubled row or shift between them, at 100%, at 800% and while pinch-zooming.
+- [ ] At 100%, scroll and Space-drag from the top to the very bottom: the picture follows the pan without blank tiles. Write down whether the pan keeps up.
+- [ ] Near the bottom: draw a redaction, a blur and a pixelate over section text, a rectangle and a highlighter stroke across a join (the highlighter's backdrop must match the picture under it). Each effect renders within a second; the highlighter darkens the text under it with no visible box. ⌘S saves; `sips -g pixelHeight` on the file reports 65536, and in Preview the effects sit on the same rows as in the editor. Write down the time ⌘S takes and the peak memory during it.
+- [ ] ⌘C copies the edit (PNG only at this height) and ⌘U, on an uploaded capture, replaces the object; `curl` shows the edit at 65,536 px.
 - [ ] Recent Captures: the Annotate button on the row of a stitched capture opens the editor as above; "Upload only" captures that finished uploading download the object first and open it.
 
 ## Thumbnails of tall images

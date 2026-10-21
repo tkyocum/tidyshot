@@ -229,13 +229,14 @@ final class AppCoordinator {
         } else {
             copyImageNow = settings.copyImageToClipboard
         }
-        // A scrolling capture can be 16,384 px tall: encode it, and the clipboard's TIFF, off the
-        // main actor. Every capture takes this path; for a normal one the cost is one hop.
+        // A scrolling capture can be 65,536 px tall: encode it, and the clipboard's TIFF, off the
+        // main actor. Every capture takes this path; for a normal one the cost is one hop. Above
+        // 16,384 px the clipboard gets the PNG only (`Pasteboard.companionTIFF`).
         let encoded: (png: Data, tiff: Data?)
         do {
             encoded = try await Task.detached(priority: .userInitiated) { () throws -> (png: Data, tiff: Data?) in
                 (try ImageEncoder.pngData(from: image.image, scale: image.scale),
-                 copyImageNow ? Pasteboard.tiffData(of: image.image, scale: image.scale) : nil)
+                 copyImageNow ? Pasteboard.companionTIFF(of: image.image, scale: image.scale) : nil)
             }.value
         } catch {
             NSLog("Encode failed: \(error.localizedDescription)")
@@ -575,7 +576,7 @@ final class AppCoordinator {
         Pasteboard.copy(url: url)
     }
 
-    /// Copy Image: the PNG and TIFF on the clipboard, from the local file when it can be read;
+    /// Copy Image: the PNG and TIFF (`Pasteboard.companionTIFF`) on the clipboard, from the local file when it can be read;
     /// otherwise (an upload-only capture, or a file that cannot be read) downloaded with a signed
     /// GET from the bucket the record says it went to, with "Copying image…" posted while that
     /// runs. The read, the pixel decode and the TIFF encode run in detached tasks, because a
@@ -587,7 +588,7 @@ final class AppCoordinator {
             let png = try await imageData(of: record)
             let converted = await Task.detached(priority: .userInitiated) { () -> (decoded: Bool, tiff: Data?) in
                 guard let decoded = ImageEncoder.decode(png) else { return (false, nil) }
-                return (true, Pasteboard.tiffData(of: decoded.image, scale: decoded.scale))
+                return (true, Pasteboard.companionTIFF(of: decoded.image, scale: decoded.scale))
             }.value
             guard converted.decoded else { throw CopyImageError.notAnImage }
             Pasteboard.copy(pngData: png, tiffData: converted.tiff)
@@ -1434,7 +1435,7 @@ final class AppCoordinator {
         guard EditorClipboard.shouldReplace(owner: clipboardOwner, recordID: recordID,
                                             currentChangeCount: NSPasteboard.general.changeCount) else { return }
         let tiff = await Task.detached(priority: .userInitiated) {
-            Pasteboard.tiffData(of: image.image, scale: image.scale)
+            Pasteboard.companionTIFF(of: image.image, scale: image.scale)
         }.value
         guard EditorClipboard.shouldReplace(owner: clipboardOwner, recordID: recordID,
                                             currentChangeCount: NSPasteboard.general.changeCount) else { return }
@@ -1442,14 +1443,14 @@ final class AppCoordinator {
         clipboardOwner = EditorClipboard.Owner(recordID: recordID, changeCount: changeCount)
     }
 
-    /// Copy (⌘C, ⇧⌘C): the edited image as PNG and TIFF, both encoded in a detached task and
+    /// Copy (⌘C, ⇧⌘C): the edited image as PNG and TIFF (`Pasteboard.companionTIFF`), both encoded in a detached task and
     /// written here on the main actor. TidyShot then owns the clipboard for this record, so a later
     /// Save or Save As… puts the newer edit there. The window stays open.
     private func editorCopy(recordID: UUID, image: ScaledImage) async {
         do {
             let encoded = try await Task.detached(priority: .userInitiated) { () throws -> (png: Data, tiff: Data?) in
                 (try ImageEncoder.pngData(from: image.image, scale: image.scale),
-                 Pasteboard.tiffData(of: image.image, scale: image.scale))
+                 Pasteboard.companionTIFF(of: image.image, scale: image.scale))
             }.value
             let changeCount = Pasteboard.copy(pngData: encoded.png, tiffData: encoded.tiff)
             clipboardOwner = EditorClipboard.Owner(recordID: recordID, changeCount: changeCount)

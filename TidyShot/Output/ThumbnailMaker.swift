@@ -30,6 +30,19 @@ nonisolated enum ThumbnailMaker {
         return CGRect(x: 0, y: 0, width: width, height: width * 3 / 2)
     }
 
+    /// How much ImageIO may subsample (1, 2, 4 or 8) when it decodes an image of `pixelSize` whose
+    /// top `cropForThumbnail(_:)` cuts, so that the cut top is still at least as large as the result
+    /// at `maxSide`; 1 for an image it does not cut. A 3094 x 65,536 capture's hover preview then decodes 200 MB, not 811 MB.
+    static func subsampleFactor(for pixelSize: CGSize, maxSide: Int) -> Int {
+        let crop = cropForThumbnail(pixelSize)
+        guard crop.width > 0, crop.height > 0, crop.height < pixelSize.height else { return 1 }
+        let target = targetSize(for: crop.size, maxSide: maxSide)
+        return [8, 4, 2].first { factor in
+            (crop.width / CGFloat(factor)).rounded(.down) >= target.width
+                && (crop.height / CGFloat(factor)).rounded(.down) >= target.height
+        } ?? 1
+    }
+
     /// Draws `image`, cut by `cropForThumbnail(_:)`, into a smaller bitmap. Used at capture time,
     /// when the CGImage is already in memory.
     static func thumbnail(from image: CGImage, maxSide: Int = maxSide) -> CGImage? {
@@ -55,18 +68,24 @@ nonisolated enum ThumbnailMaker {
     }
 
     /// `kCGImageSourceThumbnailMaxPixelSize` bounds the longest side; ImageIO never upscales. An
-    /// image that `cropForThumbnail(_:)` would cut (a scrolling capture) is decoded, cut to its
-    /// top and drawn by `thumbnail(from:maxSide:)` instead, so it shows the top of the page here
-    /// too, not a sliver, before the capture-time thumbnail is written and in the hover preview.
+    /// image that `cropForThumbnail(_:)` would cut (a scrolling capture) is decoded, subsampled by
+    /// `subsampleFactor(for:maxSide:)`, cut to its top and drawn by `thumbnail(from:maxSide:)`
+    /// instead, so it shows the top of the page here too, not a sliver, before the capture-time
+    /// thumbnail is written and in the hover preview. Drawing the top decodes the whole image, at
+    /// the subsampled size.
     static func thumbnail(from source: CGImageSource, maxSide: Int) -> CGImage? {
         if let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
            let width = properties[kCGImagePropertyPixelWidth] as? Int,
            let height = properties[kCGImagePropertyPixelHeight] as? Int {
-            let crop = cropForThumbnail(CGSize(width: width, height: height))
-            if crop.height < CGFloat(height) {
-                let decode = [kCGImageSourceShouldCache: false] as CFDictionary
-                guard let full = CGImageSourceCreateImageAtIndex(source, 0, decode),
-                      let top = full.cropping(to: crop) else { return nil }
+            let size = CGSize(width: width, height: height)
+            if cropForThumbnail(size).height < CGFloat(height) {
+                var decode: [CFString: Any] = [kCGImageSourceShouldCache: false]
+                let factor = subsampleFactor(for: size, maxSide: maxSide)
+                if factor > 1 { decode[kCGImageSourceSubsampleFactor] = factor }
+                // The decoded size, not `size`: a format that cannot subsample ignores the factor.
+                guard let full = CGImageSourceCreateImageAtIndex(source, 0, decode as CFDictionary),
+                      let top = full.cropping(to: cropForThumbnail(CGSize(width: full.width, height: full.height)))
+                else { return nil }
                 return thumbnail(from: top, maxSide: maxSide)
             }
         }

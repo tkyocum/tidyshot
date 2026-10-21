@@ -357,11 +357,20 @@ final class ScrollCaptureSession {
     }
 }
 
-/// The preview's rows so far: each `PreviewStrip` appended below the last.
-nonisolated private struct PreviewRows {
+/// The preview's newest rows: each `PreviewStrip` appended below the last. The image is the newest
+/// `maxRows` of them; the panel shows the bottom of the preview, and a preview as tall as a narrow
+/// 65,536 px capture would exceed a GPU texture. Older rows are dropped once twice that many are
+/// held, so a drop copies at most `maxRows` rows.
+nonisolated struct PreviewRows {
+    let maxRows: Int
     private(set) var width = 0
+    /// Rows held, at most `2 * maxRows`.
     private(set) var height = 0
     private var bgra = Data()
+
+    init(maxRows: Int = ScrollCaptureLimits.previewMaxRows) {
+        self.maxRows = max(1, maxRows)
+    }
 
     var isEmpty: Bool { height == 0 }
 
@@ -371,9 +380,17 @@ nonisolated private struct PreviewRows {
         guard strip.width == width else { return }
         bgra.append(strip.bgra)
         height += strip.height
+        if height > 2 * maxRows {
+            bgra = Data(bgra.suffix(maxRows * width * 4))
+            height = maxRows
+        }
     }
 
+    /// The newest `maxRows` rows. The bytes are copied, so a later `append` never copies the held
+    /// rows because this image still shares them.
     func image(colorSpace: CGColorSpace) -> CGImage? {
-        ScrollCaptureSession.image(bgra: bgra, width: width, height: height, colorSpace: colorSpace)
+        let rows = min(height, maxRows)
+        return ScrollCaptureSession.image(bgra: Data(bgra.suffix(rows * width * 4)), width: width, height: rows,
+                                          colorSpace: colorSpace)
     }
 }

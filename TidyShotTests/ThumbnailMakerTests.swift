@@ -107,6 +107,34 @@ struct ThumbnailMakerTests {
         #expect(preview.height == 600)
     }
 
+    /// A tall PNG is decoded subsampled (ImageIO takes 1, 2, 4 or 8) by as much as keeps the cut
+    /// top at least as large as the result, so the hover preview of a 65,536 px capture does not
+    /// decode 800 MB to show its top.
+    @Test func subsampleFactorKeepsTheTopAtLeastTheTargetSize() {
+        #expect(ThumbnailMaker.subsampleFactor(for: CGSize(width: 3094, height: 65_536), maxSide: 1200) == 2)
+        #expect(ThumbnailMaker.subsampleFactor(for: CGSize(width: 3094, height: 65_536), maxSide: 320) == 8)
+        #expect(ThumbnailMaker.subsampleFactor(for: CGSize(width: 400, height: 4000), maxSide: 320) == 1)
+        #expect(ThumbnailMaker.subsampleFactor(for: CGSize(width: 400, height: 4000), maxSide: 100) == 4)
+        #expect(ThumbnailMaker.subsampleFactor(for: CGSize(width: 2560, height: 1600), maxSide: 320) == 1)
+        #expect(ThumbnailMaker.subsampleFactor(for: CGSize(width: 0, height: 0), maxSide: 320) == 1)
+    }
+
+    /// Subsampled by 4, the tall page's top still fills a 67 x 100 thumbnail, red to its last row.
+    /// ImageIO's subsampling filters across rows, so the last row, at the page's red to blue edge,
+    /// takes a trace of blue.
+    @Test func aSubsampledTallPNGStillShowsItsTop() throws {
+        let png = try ImageEncoder.pngData(from: try makeTallPage(), scale: 1)
+        let thumbnail = try #require(ThumbnailMaker.thumbnail(fromPNGData: png, maxSide: 100))
+        #expect(thumbnail.width == 67)
+        #expect(thumbnail.height == 100)
+        let data = try #require(thumbnail.dataProvider?.data) as Data
+        for (y, tolerance) in [(0, 5), (50, 5), (99, 30)] {
+            let offset = y * thumbnail.bytesPerRow + 33 * 4
+            #expect(Int(data[offset]) > 255 - tolerance && Int(data[offset + 2]) < tolerance,
+                    "row \(y) is red: \(Array(data[offset..<offset + 4]))")
+        }
+    }
+
     @Test func thumbnailPNGRoundTrip() throws {
         let source = try ImageEncoder.pngData(from: makeImage(width: 1280, height: 800), scale: 2)
         let thumbnail = try #require(ThumbnailMaker.thumbnail(fromPNGData: source, maxSide: 160))

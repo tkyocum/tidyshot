@@ -141,6 +141,25 @@ struct EditorFlattenerTests {
         #expect(output.differences(from: original) == 60)
     }
 
+    /// A capture taller than `ImageTiling.maxTileSide` is copied in strip by strip: every row,
+    /// across the seams at 16,384 and 32,768, equals the base byte for byte, and a redaction near
+    /// the bottom lands on its own rows. Red and green together number each row.
+    @Test func aTallBaseIsCopiedExactlyAcrossTheStripSeams() throws {
+        let height = 40_000
+        let base = makeImage(width: 4, height: height) { x, y in [UInt8(y / 256 % 256), UInt8(y % 256), UInt8(x), 255] }
+        let original = try Bitmap(base)
+        let rect = CGRect(x: 1, y: 39_990, width: 2, height: 5)
+        let effect = redact(rect)
+        let output = try Bitmap(flatten(base, [effect], tiles: [markedTile(for: effect, width: 2, height: 5)]))
+        #expect(output.height == height)
+        #expect(output.differences(from: original, excluding: [rect]) == 0)
+        #expect(output[1, 39_990] == Self.magentaPixel)
+        #expect(output[2, 39_994] == Self.clearPixel)
+        for y in [16_383, 16_384, 32_767, 32_768, 39_999] {
+            #expect(output[0, y] == original[0, y])
+        }
+    }
+
     /// The tile's first row lands on image row 4, the top of its rect, not on row 38 where an
     /// unflipped draw would put it. Its pixels replace the base: the clear row stays clear.
     @Test func tileBytesLandAtFlippedRows() throws {

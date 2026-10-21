@@ -54,7 +54,8 @@ nonisolated struct ScrollStitcher: Sendable {
         self.maxPixelHeight = maxPixelHeight
         self.finder = finder
         last = first
-        // Reserved for the cap; the pages are committed only as rows are written.
+        // Reserved for the cap (811 MB at 3094 px wide), so appending never reallocates and copies.
+        // Large allocations are virtual until touched: the footprint grows only as rows are written.
         output.reserveCapacity(first.width * 4 * maxPixelHeight)
     }
 

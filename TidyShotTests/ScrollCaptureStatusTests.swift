@@ -12,7 +12,7 @@ struct ScrollCaptureStatusTests {
         #expect(ScrollCaptureStatus.autoPaused.text == "Paused. Move the pointer over the area to continue.")
         #expect(ScrollCaptureStatus.autoHandedOver.text == "Auto-scroll lost its place. Scroll back up a little, or click Done.")
         #expect(ScrollCaptureStatus.autoReachedEnd.text == "Reached the end.")
-        #expect(ScrollCaptureStatus.heightLimit.text == "Reached the 16,384 pixel limit.")
+        #expect(ScrollCaptureStatus.heightLimit.text == "Reached the 65,536 pixel limit.")
         #expect(ScrollCaptureStatus.finishing.text == "Stitching…")
     }
 
@@ -22,14 +22,14 @@ struct ScrollCaptureStatusTests {
     }
 
     @Test func theHeightLimitLineNamesTheLimit() {
-        #expect(ScrollCaptureLimits.maxPixelHeight == 16_384)
+        #expect(ScrollCaptureLimits.maxPixelHeight == 65_536)
     }
 
     @Test func theSizeReadoutGroupsDigitsAndUsesATimesSign() {
         let us = Locale(identifier: "en_US")
         #expect(ScrollCaptureStatus.sizeText(width: 2560, height: 7340, locale: us) == "2,560 × 7,340 px")
         #expect(ScrollCaptureStatus.sizeText(width: 640, height: 900, locale: us) == "640 × 900 px")
-        #expect(ScrollCaptureStatus.sizeText(width: 2560, height: 16384, locale: us) == "2,560 × 16,384 px")
+        #expect(ScrollCaptureStatus.sizeText(width: 3094, height: 65536, locale: us) == "3,094 × 65,536 px")
         let german = ScrollCaptureStatus.sizeText(width: 2560, height: 7340, locale: Locale(identifier: "de_DE"))
         #expect(german == "2.560 × 7.340 px")
     }
