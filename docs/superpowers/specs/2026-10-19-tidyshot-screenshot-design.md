@@ -496,7 +496,7 @@ The Clop app itself is GPLv3. TidyShot only talks to it over the port and never 
 | Already optimised | — | unchanged | 0% | 0.01 s |
 
 **Behaviour.**
-- **Setting.** The Upload tab gains a `Section("Images")` after "Object keys":
+- **Setting.** The General tab has a `Section("Images")` between its first section and "URL commands" (moved from the Upload tab after Tim's test, 2026-10-21):
   - **Control.** `Toggle("Optimize images with Clop", isOn: $settings.optimiseWithClop)`.
   - **Caption.** "Clop is an image optimizer that greatly reduces file size. Clop keeps its own copy of each image it optimizes."
   - **Storage.** `AppSettings.optimiseWithClop` (key `optimiseWithClop`, default `false`). It is an app setting, not part of the destination draft, so it takes effect without Save.

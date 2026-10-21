@@ -1,10 +1,9 @@
 import SwiftUI
 
-/// Destination fields, credentials (saved to the Keychain), the object key template, Optimize
-/// images with Clop, and Save and Test Connection.
+/// Destination fields, credentials (saved to the Keychain), the object key template, and Save and
+/// Test Connection.
 struct UploadSettingsView: View {
     private let coordinator = AppCoordinator.shared
-    @Bindable private var settings = AppSettings.shared
 
     @State private var draft = S3DestinationConfig.empty
     @State private var accessKeyID = ""
@@ -15,9 +14,6 @@ struct UploadSettingsView: View {
     @State private var statusMessage: String?
     @State private var statusIsError = false
     @State private var isTesting = false
-    /// Whether either Clop build is installed, read once when the tab appears (the lookup asks
-    /// LaunchServices, so it does not belong in a property initialiser that runs on every rebuild).
-    @State private var clopInstalled = false
 
     var body: some View {
         Form {
@@ -81,18 +77,6 @@ struct UploadSettingsView: View {
                     }
                 }
             }
-            // An app setting, not part of the draft: it takes effect without Save (spec 2.7).
-            Section("Images") {
-                Toggle("Optimize images with Clop", isOn: $settings.optimiseWithClop)
-                    .disabled(!clopInstalled)
-                Text("Clop is an image optimizer that greatly reduces file size. Clop keeps its own copy of each image it optimizes.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                if !clopInstalled {
-                    Link("Get Clop", destination: URL(string: "https://lowtechguys.com/clop")!)
-                        .font(.caption)
-                }
-            }
             Section {
                 HStack {
                     Button("Save") { save() }
@@ -126,7 +110,6 @@ struct UploadSettingsView: View {
     /// Fills the form. No stored item leaves the credential fields empty; a keychain error is
     /// shown under them so an unreadable item is not mistaken for "never set up".
     private func load() {
-        clopInstalled = ClopApp.isInstalled
         draft = coordinator.settings.s3Config ?? .empty
         do {
             keychainError = nil

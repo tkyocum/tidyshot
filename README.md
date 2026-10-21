@@ -242,7 +242,7 @@ file; a failed upload keeps it until a retry succeeds or the capture is deleted.
 
 ### Optimise with Clop
 
-If [Clop](https://lowtechguys.com/clop) (direct or Setapp build) is installed, Settings > Upload >
+If [Clop](https://lowtechguys.com/clop) (direct or Setapp build) is installed, Settings > General >
 Images has "Optimize images with Clop". With it on and Clop running, every upload (a capture,
 upload-only, the editor's Upload, replace and Upload as New, and every Retry) is first rewritten by
 Clop as a smaller PNG, which is lossy (256 colours); 144 DPI is kept. The setting takes effect without

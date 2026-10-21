@@ -1,7 +1,7 @@
 # Phase 7 manual test checklist: Optimize images with Clop
 
 Run after any change to `TidyShot/Upload/ClopClient.swift`, `TidyShot/Upload/ClopOptimiser.swift`,
-`AppCoordinator.startUpload` and `cancelUpload`, the Images section of `UploadSettingsView`, or the
+`AppCoordinator.startUpload` and `cancelUpload`, the Images section of `GeneralSettingsView`, or the
 entitlements in `project.yml`. Automated tests cover the request and reply coding, the optimiser
 against a fake transport (every skip reason, the work file's removal, the 144 DPI read) and the
 setting's default and persistence. Nothing here runs without a real Clop, a real bucket and eyes, and
@@ -17,7 +17,7 @@ with `curl -sO <url>`; `sips -g dpiWidth -g pixelWidth <file>` reads its resolut
 Clop version (Clop > About); the fixtures come from 3.6.2.
 
 ## Settings and build
-- [ ] Settings > Upload ends with an `Images` section after `Object keys`: the toggle `Optimize images with Clop` (off by default) and the caption `Clop is an image optimizer that greatly reduces file size. Clop keeps its own copy of each image it optimizes.` With Clop installed there is no link.
+- [ ] Settings > General has an `Images` section between its first section and `URL commands`: the toggle `Optimize images with Clop` (off by default) and the caption `Clop is an image optimizer that greatly reduces file size. Clop keeps its own copy of each image it optimizes.` With Clop installed there is no link.
 - [ ] The toggle takes effect without Save: turn it on, close Settings with no Save, and `defaults read io.tky.tidyshot optimiseWithClop` reads `1`; the next upload is optimised. Turn it off again and the next upload is not.
 - [ ] Clop not installed (move Clop out of Applications, or run on a Mac without it): the toggle is greyed, and `Get Clop` follows the caption and opens https://lowtechguys.com/clop. Quit and reopen Settings with Clop installed: the toggle is enabled again.
 - [ ] `codesign -d --entitlements - .build-rel/Build/Products/Release/TidyShot.app` shows `app-sandbox`, `files.bookmarks.app-scope`, `files.user-selected.read-write`, `network.client` and `temporary-exception.mach-lookup.global-name` with exactly `com.lowtechguys.Clop.optimisationService` and `com.lowtechguys.Clop-setapp.optimisationService`, and no `get-task-allow`.
