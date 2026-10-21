@@ -49,8 +49,9 @@ frontmost.
 - [ ] Stale retained image: with the overlay on, take capture A (leave its overlay open), then take capture B. Open the editor on A from its Recent Captures row: it shows A's pixels, not B's. Then delete a row whose overlay is still open: that overlay closes, and Annotate on a different row still opens the right capture.
 
 ## Tools
-- [ ] The toolbar shows, in order: the tools (Select, Redact, Pixelate, Blur, Rectangle, Arrow), the colour button, the options button, the zoom pop-up, Copy, Save (its menu offers Save Copy…) and a prominent Upload (its menu offers Upload and Upload as New). Each tool's tooltip names its letter.
-- [ ] With the canvas focused, `V` `D` `X` `B` `R` `A` pick Select, Redact, Pixelate, Blur, Rectangle and Arrow, and the toolbar follows. Narrow the window: the tools collapse into a menu that still works.
+- [ ] The toolbar shows, in order: the tools (Select, Redact, Pixelate, Blur, Rectangle, Arrow), the colour button, the options button, the zoom pop-up, Copy, Save (a downward arrow) and a prominent Upload (a cloud with an up arrow). Copy, Save and Upload are plain buttons with no menus; their tooltips read `Copy the image (⌘C)`, `Save (⌘S)` and `Upload and copy the link (⌘U)`. Each tool's tooltip names its letter.
+- [ ] Narrow the window as far as it goes, with a small capture and with a long file name in the title: every toolbar item still shows, with no » overflow chevron at the right.
+- [ ] With the canvas focused, `V` `D` `X` `B` `R` `A` pick Select, Redact, Pixelate, Blur, Rectangle and Arrow, and the toolbar follows.
 - [ ] Redact: a drag makes a black box. Shift makes a square and Option draws from the centre; pressing or releasing either mid-drag changes the box without moving the mouse. Escape mid-drag drops the box. A click without a drag adds nothing. The new box is selected.
 - [ ] Pixelate: a drag makes a mosaic of equal squares, 10 points by default. A second region over the same text, offset by a few pixels, has squares that line up with the first. The options slider (6 to 32 pt) changes a selected mosaic live.
 - [ ] Blur: a drag blurs the area. The options slider (4 to 24 pt) changes a selected blur live.
@@ -89,14 +90,16 @@ resolution without HiDPI); skip the 1x run if neither is available and say so.
 - [ ] Saved capture: Redact, ⌘S. The same file in the save folder now shows the redaction (Quick Look), no new file appears, the unsaved dot clears, and the row's thumbnail shows the redaction the next time the menu opens. Nothing is uploaded.
 - [ ] Capture uploaded with "Upload and copy URL": ⌘S rewrites the file only. The subtitle reads `The uploaded copy still shows the original. Upload to replace it.` and the link still shows the original.
 - [ ] Capture from before Phase 3: ⌘S rewrites its file, with the same subtitle.
-- [ ] Upload-only capture that finished uploading: Save is greyed and ⌘S beeps; Save Copy and Upload are on.
+- [ ] Upload-only capture that finished uploading: Save is on. Redact, then the Save button (or ⌘S): a save panel opens as a sheet, named by the file name template plus `.png`, in the save folder. Save there: the PNG is written, a `Saved` notification names it, the unsaved dot clears, and nothing uploads (no new link on the clipboard, no new Recent Captures row).
 - [ ] Upload-only capture whose upload failed: Redact, ⌘S rewrites `pending/<UUID>.png`. Wi-Fi on, Retry Failed Uploads: the link shows the redaction.
 - [ ] Lock the saved file (Finder, Get Info, Locked), edit, ⌘S: a `Not saved` notification with the reason, the unsaved dot stays, and the edited image is on the clipboard. Unlock the file.
 
-## Save Copy
-- [ ] "Save and copy image": edit a saved capture, then ⇧⌘S (or Save Copy… in the Save button's menu). A new file `<name> edited.png` appears in the save folder with a new Recent Captures row and its overlay, and no shutter sound plays. The editor keeps the original's title, its unsaved dot clears, and the original file is unchanged. A second Save Copy makes `<name> edited 2.png`.
-- [ ] With "Upload and copy URL" the copy also uploads and its URL lands on the clipboard. With "Upload only, keep no local file" it uploads and keeps no local file.
-- [ ] With "Save and copy image", Save Copy from an upload-only capture that finished uploading writes a new file named by the file name template.
+## Save As…
+- [ ] Saved capture: edit, then ⇧⌘S. The save panel suggests the capture's own file name in the save folder. Choose the Desktop and another name: the PNG appears there with the edit, `sips -g dpiWidth` gives 144 on the 2x display, and the original file in the save folder is unchanged. No Recent Captures row is added, no overlay or shutter sound, nothing uploads, and the editor keeps its title. The unsaved dot clears.
+- [ ] With Show notification on, the `Saved` notification names the file; clicking it reveals the file in Finder. With it off, nothing is posted.
+- [ ] Cancel in the panel: nothing is written and the unsaved dot stays.
+- [ ] Settings > General, set the file name template to `shot-{counter}`. On an upload-only capture that finished uploading, ⇧⌘S suggests `shot-<n>.png` with the counter as it stands; save it, then take a capture: its name uses the next number, so none was skipped. Set the template back.
+- [ ] In the panel, pick an existing PNG and confirm Replace: it is replaced. Pick a locked file (Finder, Get Info, Locked) and confirm Replace: a `Not saved` notification with the reason, and the unsaved dot stays. Unlock it.
 
 ## Copy
 - [ ] ⌘C, ⇧⌘C and the toolbar's Copy button each post `Image copied`. Notes and Preview (File > New from Clipboard) paste the edited image at point size, not double. The window stays open.
@@ -104,23 +107,24 @@ resolution without HiDPI); skip the 1x run if neither is available and say so.
 
 ## Clipboard
 - [ ] "Save and copy image" with "Copy image to clipboard" on: capture a made-up secret, Annotate, Redact, ⌘S. Preview, File > New from Clipboard: the redacted image.
-- [ ] The same with ⇧⌘S in place of ⌘S: the clipboard holds the redacted copy.
+- [ ] The same with ⇧⌘S in place of ⌘S, saving to the Desktop: the clipboard is left alone and still holds the unredacted original (Save As… does not replace the capture's file). Copy (⌘C) puts the redacted image there.
 - [ ] Capture, copy some text in TextEdit, then Annotate, Redact, ⌘S: the clipboard still holds the text.
-- [ ] "Upload and copy URL" with no destination (Forget Credentials in Settings > Upload): capture (the image goes to the clipboard), Annotate, Redact, ⌘S: the clipboard holds the redacted image. ⌘U posts `Upload not configured` and changes nothing. Enter the credentials again.
-- [ ] "Upload and copy URL" with "Also copy image" on: capture, Annotate, Redact, ⌘U. When the upload finishes the clipboard holds the URL.
+- [ ] "Upload and copy URL" with no destination (Forget Credentials in Settings > Upload): capture (the image goes to the clipboard), Annotate, Redact, ⌘S: the clipboard holds the redacted image. ⌘U posts `Upload not configured`, changes nothing, and the editor stays open. Enter the credentials again.
+- [ ] "Upload and copy URL" with "Also copy image" on: capture, Annotate, Redact, ⌘U. The editor closes at once; when the upload finishes the clipboard holds the URL.
 
 ## Upload
-- [ ] Capture uploaded with "Upload and copy URL": Redact, ⌘U. The subtitle reads `Uploading…` at once, before any progress, and Save and Upload are greyed until it finishes. Then the clipboard holds the same URL as before, the link shows the redaction, the file in the save folder shows it too, and the unsaved dot is clear.
+- [ ] Capture uploaded with "Upload and copy URL": Redact, then the Upload button. The editor closes at once with no unsaved-changes sheet, and the row shows the upload running. When it finishes the clipboard holds the same URL as before, the link shows the redaction, and the file in the save folder shows it too.
+- [ ] Upload-only capture that finished uploading: Redact, ⌘U. The editor closes, and when the upload finishes the link to paste is on the clipboard and shows the redaction.
 - [ ] `curl -sI <url>` after that replace includes `cache-control: no-cache`; for a capture that was never replaced there is no `cache-control` line.
-- [ ] Another uploaded capture whose link was never opened: edit, then Upload as New (⌥⌘U, or the Upload button's menu). A new URL on the clipboard shows the edit, `curl -I <old url>` gives 403 or 404, and the row's link button copies the new URL.
-- [ ] Saved capture never uploaded: Upload as New is greyed and ⌥⌘U beeps. ⌘U uploads it for the first time and copies a new link.
+- [ ] Another uploaded capture whose link was never opened: edit, then Upload as New (⌥⌘U; it has no button). The editor closes, a new URL on the clipboard shows the edit, `curl -I <old url>` gives 403 or 404, and the row's link button copies the new URL.
+- [ ] Saved capture never uploaded: ⌥⌘U beeps. ⌘U uploads it for the first time, closes the editor and copies a new link.
 - [ ] Interrupted replace keeps Upload as New: after the "Quit during a replace" item below, relaunch (the row shows "· Upload failed" and its link still copies). Annotate on that row: Upload as New stays enabled and ⌥⌘U uploads to a new key, copies the new link and deletes the old object (`curl -I <old url>` gives 403 or 404).
 - [ ] Capture from before Phase 3: ⌘U shows the notice `The earlier upload stays in the bucket.` and makes a new link; `curl -I <old url>` still gives 200.
 - [ ] Optional, with a second bucket: point Settings > Upload at it, then ⌘U on a capture uploaded to the first. The notice reads `The destination changed, so this uploads as a new link.`, the link is in the second bucket, and the old object is gone from the first. Point the settings back.
-- [ ] Enter a wrong secret access key in Settings > Upload and press Save, then ⌘U on an uploaded capture. After the retries: a notification `Upload failed. The link still shows the earlier image.`, the row still copies the old URL, and the subtitle reads `The uploaded copy still shows the original. Upload to replace it.` Enter the right key, ⌘U: the same URL now shows the edit.
-- [ ] The same wrong key, ⌘U on an upload-only capture that finished uploading. After the failure `pending/<UUID>.png` exists and holds the edit. Close the editor; Annotate on the row reopens it with the edit, and the subtitle says the uploaded copy still shows the original. Right key, ⌘U: the same URL shows the edit and `pending/<UUID>.png` is gone.
-- [ ] Quit during a replace: Network Link Conditioner on a slow profile (a custom profile with a few hundred Kbps uplink), ⌘U on a large uploaded capture, and while the subtitle reads `Uploading…` choose Quit TidyShot. Relaunch: the row shows "· Upload failed", and clicking the row or its link button still copies the old URL. Network Link Conditioner off, Retry Failed Uploads: the URL is unchanged and shows the edit.
-- [ ] Slow profile again, ⌘U, then Delete on the row while the replace runs: Delete cancels the upload and removes the object (`curl -I <url>` gives 403 or 404), and the editor's subtitle reads `This capture was deleted. Copy and Save Copy still work.`
+- [ ] Enter a wrong secret access key in Settings > Upload and press Save, then ⌘U on an uploaded capture: the editor closes. After the retries: a notification `Upload failed. The link still shows the earlier image.`, and the row still copies the old URL. Annotate on the row reopens the edited image, with the subtitle `The uploaded copy still shows the original. Upload to replace it.` Enter the right key, ⌘U: the same URL now shows the edit.
+- [ ] The same wrong key, ⌘U on an upload-only capture that finished uploading. The editor closes. After the failure `pending/<UUID>.png` exists and holds the edit. Annotate on the row reopens it with the edit, and the subtitle says the uploaded copy still shows the original. Right key, ⌘U: the same URL shows the edit and `pending/<UUID>.png` is gone.
+- [ ] Quit during a replace: Network Link Conditioner on a slow profile (a custom profile with a few hundred Kbps uplink), ⌘U on a large uploaded capture (the editor closes), and while the row shows the upload running choose Quit TidyShot. Relaunch: the row shows "· Upload failed", and clicking the row or its link button still copies the old URL. Network Link Conditioner off, Retry Failed Uploads: the URL is unchanged and shows the edit.
+- [ ] Slow profile again, ⌘U, then Delete on the row while the replace runs: Delete cancels the upload and removes the object (`curl -I <url>` gives 403 or 404).
 
 ## Caches
 - [ ] Redact before sharing: capture a made-up secret with "Upload and copy URL", do not open or paste the URL, Annotate from the overlay, Redact, ⌘U. Then open the link in a browser: it shows the redaction.
@@ -130,15 +134,16 @@ resolution without HiDPI); skip the 1x run if neither is available and say so.
 - [ ] The first successful replace after launch posts `Replaced. Copies opened before now may stay cached for a while.` A second replace in the same launch does not, and neither does Upload as New or a first upload. Quit and relaunch: the next replace posts it again.
 
 ## Availability while uploading, deleting, or after a folder change
-- [ ] While an editor upload runs (slow profile): ⌘S, ⌘U and ⌥⌘U beep and do nothing, and Save and Upload are greyed in the toolbar; ⌘C, ⇧⌘C and ⇧⌘S work. When the upload finishes they turn on again.
+- [ ] Slow profile, "Upload and copy URL": capture something large and press Annotate on the overlay while it uploads. The subtitle reads `Uploading…`, ⌘S, ⌘U and ⌥⌘U beep and do nothing, and Save and Upload are greyed in the toolbar; ⌘C and ⇧⌘C work and ⇧⌘S opens the save panel. When the upload finishes they turn on again.
 - [ ] With an editor open, press Delete on its row and leave the alert open: the editor's Save and Upload grey out at once, the subtitle reads `Deleting…`, and ⌘S beeps. Cancel: they turn on again and the subtitle returns to what it was.
-- [ ] Delete again and confirm: the subtitle reads `This capture was deleted. Copy and Save Copy still work.`, Save and Upload stay greyed, ⌘C copies, and ⇧⌘S makes a new capture.
-- [ ] Editor open on a capture in the save folder: Settings > General, Choose… another folder. Save greys out at once, the subtitle gives the reason, and ⌘S beeps. ⌘U still uploads the edit and the file in the old folder is not rewritten; the edited dot stays after ⌘U, and ⌘W asks with Save Copy…. Choose the original folder again: Save turns on.
+- [ ] Delete again and confirm: the subtitle reads `This capture was deleted. Copy and Save As still work.`, Save and Upload stay greyed, ⌘C copies, and ⇧⌘S opens the save panel and writes the PNG.
+- [ ] Editor open on a capture in the save folder: Settings > General, Choose… another folder. The subtitle gives the reason at once, and ⌘S now opens the save panel instead of writing over the file (Cancel it). ⌘U still uploads the edit and the file in the old folder is not rewritten; the edited dot stays after ⌘U, the editor stays open, and ⌘W's Save opens the save panel. Choose the original folder again: ⌘S writes over the file without a panel.
 
 ## Closing and quitting
 - [ ] ⌘W on an editor with no changes closes it at once.
 - [ ] With changes, ⌘W (or the close button) shows a sheet: `Do you want to save the changes made to “<title>”?`, `Your changes will be lost if you don’t save them.`, and Save, Cancel and Don’t Save. Cancel keeps the window. Don’t Save (or ⌘D) closes it and leaves the file as it was. Save writes the file and closes.
-- [ ] On an upload-only capture that finished uploading, the first button reads Save Copy…; it makes the copy and closes the window.
+- [ ] On an upload-only capture that finished uploading, the first button reads Save; it opens the save panel, and the window closes once the PNG is written. Cancel in the panel keeps the window open with its changes.
+- [ ] While the capture uploads (slow profile, Annotate on the overlay during the upload) or after its row's Delete, the first button reads Save As… and opens the save panel.
 - [ ] Quit TidyShot from the menu with a changed editor: the sheet appears on it. Cancel: TidyShot keeps running and the editor stays open. Quit again, Don’t Save: TidyShot quits.
 - [ ] Quit with only unchanged editors open: TidyShot quits at once.
 - [ ] The green button takes the editor full screen and back.
@@ -146,4 +151,4 @@ resolution without HiDPI); skip the 1x run if neither is available and say so.
 ## History pruning (do this last)
 This drops every capture older than a day from history; files in the save folder and objects in
 the bucket stay.
-- [ ] Quit, set one record's `timestamp` in `history.json` to two days ago, relaunch, and open that capture from its row. Settings > Overlay, set Keep history to 1 day, then take a new capture: the editor's subtitle reads `This capture was deleted. Copy and Save Copy still work.`, Save and Upload are greyed, and ⇧⌘S still makes a new capture. Set the retention back.
+- [ ] Quit, set one record's `timestamp` in `history.json` to two days ago, relaunch, and open that capture from its row. Settings > Overlay, set Keep history to 1 day, then take a new capture: the editor's subtitle reads `This capture was deleted. Copy and Save As still work.`, Save and Upload are greyed, and ⇧⌘S still opens the save panel. Set the retention back.

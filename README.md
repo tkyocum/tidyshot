@@ -99,14 +99,16 @@ Shift squares a box and snaps an arrow to 45 degrees; Option draws a box from it
 to `6` set the line width to 2, 3, 4, 6, 8 or 12 points. With Select, the arrow keys move the
 selection by one pixel (ten with Shift), Delete removes it and Escape deselects. The colour and
 options buttons in the toolbar set the colour, line width, blur radius and pixel size for the tool
-and the selection, and the editor remembers them.
+and the selection, and the editor remembers them. At the right of the toolbar are Copy, Save (the
+downward arrow) and Upload (the cloud). The window is never narrower than its toolbar, so every
+button stays in view.
 
 | Action | Shortcut |
 |---|---|
-| Save (over the file) | ⌘S |
-| Save Copy | ⇧⌘S |
+| Save (over the file, or Save As… with no file) | ⌘S |
+| Save As… | ⇧⌘S |
 | Copy image | ⌘C or ⇧⌘C |
-| Upload (same link) | ⌘U |
+| Upload (same link) and close | ⌘U |
 | Upload as New | ⌥⌘U |
 | Undo, redo | ⌘Z, ⇧⌘Z |
 | Close | ⌘W |
@@ -121,12 +123,19 @@ public tools can partly recover pixelated or blurred text. A blur or pixelate dr
 redaction blurs the solid fill, never what is under it.
 
 Save writes the edit over the capture's file: the file in the save folder, or the temporary file
-of an upload-only capture whose upload has not succeeded. A capture with no local file left, or
-whose file is outside the current save folder, has no Save; use Save Copy or Upload. Save never
-uploads; on an uploaded capture the window then says the uploaded copy still shows the original.
-Save Copy makes a new capture named after the original plus " edited", which follows the
-after-capture setting, so it uploads in the upload modes. Copy puts the edited image on the
-clipboard.
+of an upload-only capture whose upload has not succeeded. For a capture with no local file left
+(an upload-only capture that finished uploading), or whose file is outside the current save folder,
+Save opens a save panel instead, as Save As… does. Save never uploads; on an uploaded capture the
+window then says the uploaded copy still shows the original. Save As… saves the edited image as a
+PNG wherever you choose, named after the capture's file (or by the file name template); it makes no
+new capture, uploads nothing and leaves the capture as it was. It works even while the capture
+uploads or after it was deleted. Copy puts the edited image on the clipboard.
+
+Upload sends the edit at once and closes the editor; the link is on the clipboard as soon as the
+upload finishes. If the upload cannot start (no destination set up, or the capture is busy), the
+editor stays open and a notification says why. If it fails later, the capture keeps the edited
+file, and Annotate on its Recent Captures row opens it again. A capture whose file is outside the
+current save folder still uploads but keeps its editor open with the edit unsaved.
 
 Upload also saves the edit over the local file first, as Save would, so the file and the uploaded
 object match; a file outside the current save folder is left as it was. On a capture that is
@@ -145,12 +154,14 @@ object is deleted, but a CDN can still serve its copy until it expires, so also 
 in the CDN, and delete the old version in a versioned bucket. The first replace after each launch
 posts a reminder.
 
-When the clipboard still holds the image TidyShot put there for a capture, Save, Save Copy and
-Upload replace it with the edited image; Upload then puts the link there as usual. Anything you
+When the clipboard still holds the image TidyShot put there for a capture, Save and Upload
+replace it with the edited image; Upload then puts the link there as usual. Anything you
 copied since is left alone. A clipboard manager may still keep the original in its history; clear
 it there.
 
-Closing an editor with unsaved changes, or quitting TidyShot, asks whether to save them.
+Closing an editor with unsaved changes, or quitting TidyShot, asks whether to save them. Save
+there does what ⌘S does; while the capture uploads or is being deleted it reads Save As….
+Cancelling the save panel keeps the editor open.
 
 ## Documents
 
