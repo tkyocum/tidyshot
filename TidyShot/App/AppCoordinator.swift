@@ -885,7 +885,7 @@ final class AppCoordinator {
         let fileURL = record.fileIsTemporary ? nil : record.fileURL
         let title = fileURL?.lastPathComponent
             ?? "Capture \(record.timestamp.formatted(date: .omitted, time: .shortened))"
-        let model = EditorModel(recordID: recordID, image: image, renderer: RedactionRenderer.shared, defaults: .standard)
+        let model = EditorModel(recordID: recordID, image: image, renderer: RedactionRenderer.shared, defaults: settings.editorDefaults)
         let controller = EditorWindowController(model: model, actions: editorActions(for: recordID), title: title,
                                                 representedURL: fileURL,
                                                 cascadeFrom: NSApp.orderedWindows.first { $0 is EditorWindow })

@@ -19,6 +19,9 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
     var onClose: ((EditorWindowController) -> Void)?
 
     private let actions: EditorActions
+    /// The toolbar's popovers (EditorToolbar.swift), kept so only one is shown at a time.
+    var colorPopover: NSPopover?
+    var optionsPopover: NSPopover?
     /// One document action at a time; another one beeps until it finishes.
     private var isPerformingAction = false
 
@@ -56,6 +59,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
         super.init(window: window)
         shouldCascadeWindows = false
         window.delegate = self
+        installToolbar()
         placeWindow(cascadeFrom: cascadeFrom)
         observeEdited()
     }

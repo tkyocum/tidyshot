@@ -19,6 +19,13 @@ struct AppSettingsTests {
         #expect(settings.overlayAutoCloseSeconds == 5)
         #expect(settings.historyRetentionDays == 30)
         #expect(settings.s3Config == nil)
+        // Phase 4: a red stroke, black redactions, 4 pt lines, an 8 pt blur and 10 pt pixel blocks.
+        #expect(settings.editorStrokeColor == EditorPalette.defaultStroke)
+        #expect(settings.editorRedactColor == EditorPalette.defaultRedact)
+        #expect(settings.editorLineWidthPoints == 4)
+        #expect(settings.editorBlurRadiusPoints == 8)
+        #expect(settings.editorPixelBlockPoints == 10)
+        #expect(settings.editorDefaults == EditorDefaults.standard)
     }
 
     @Test func s3ConfigRoundTripsThroughDefaults() {
@@ -55,5 +62,42 @@ struct AppSettingsTests {
         #expect(defaults.string(forKey: "fileNameTemplate") == "{datetime}")
         let stored = try #require(defaults.data(forKey: "s3DestinationConfig"))
         #expect(!String(decoding: stored, as: UTF8.self).contains("{app}"))
+    }
+
+    /// The five editor values persist under the keys spec 2.6 names, and a second instance (the
+    /// next launch) reads them back.
+    @Test func editorDefaultsRoundTripThroughSecondInstance() {
+        let defaults = freshDefaults()
+        let chosen = EditorDefaults(strokeColor: RGBA(red: 0, green: 0.5, blue: 1, alpha: 1),
+                                    redactColor: RGBA(red: 1, green: 1, blue: 1, alpha: 1),
+                                    lineWidthPoints: 12, blurRadiusPoints: 20, blockPoints: 6)
+        let first = AppSettings(defaults: defaults)
+        first.editorDefaults = chosen
+        #expect(first.editorDefaults == chosen)
+        #expect(defaults.double(forKey: "editorLineWidthPoints") == 12)
+        #expect(defaults.double(forKey: "editorBlurRadiusPoints") == 20)
+        #expect(defaults.double(forKey: "editorPixelBlockPoints") == 6)
+
+        let second = AppSettings(defaults: defaults)
+        #expect(second.editorDefaults == chosen)
+
+        // One value set on its own is stored too.
+        second.editorBlurRadiusPoints = 4
+        #expect(AppSettings(defaults: defaults).editorDefaults.blurRadiusPoints == 4)
+    }
+
+    /// Colours are stored as JSON `Data` that decodes as `RGBA`. Nothing is written until a colour
+    /// is set, and a value that does not decode falls back to the default.
+    @Test func rgbaStoredAsJSON() throws {
+        let defaults = freshDefaults()
+        let teal = RGBA(red: 0.2, green: 0.7, blue: 0.7, alpha: 1)
+        let settings = AppSettings(defaults: defaults)
+        settings.editorStrokeColor = teal
+        let stored = try #require(defaults.data(forKey: "editorStrokeColor"))
+        #expect(try JSONDecoder().decode(RGBA.self, from: stored) == teal)
+        #expect(defaults.data(forKey: "editorRedactColor") == nil)
+
+        defaults.set(Data("not json".utf8), forKey: "editorRedactColor")
+        #expect(AppSettings(defaults: defaults).editorRedactColor == EditorPalette.defaultRedact)
     }
 }
