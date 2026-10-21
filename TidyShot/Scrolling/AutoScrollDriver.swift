@@ -81,12 +81,19 @@ final class AutoScrollDriver {
             // synthetic deltas, the step pushed against the top. Try the other direction once,
             // as a fresh first step, before the end detector may count it as the end.
             if !decided, !triedOtherDirection, progress.step.match == .still, !progress.step.isFull {
+                #if DEBUG
+                ScrollDiag.log("auto first step posted=\(moved.posted)pt was still: trying the other direction")
+                #endif
                 triedOtherDirection = true
                 direction = -direction
                 continue
             }
             decided = true
-            switch detector.decide(after: progress.step.match, isFull: progress.step.isFull) {
+            let decision = detector.decide(after: progress.step.match, isFull: progress.step.isFull)
+            #if DEBUG
+            ScrollDiag.log("auto step posted=\(moved.posted)pt predicted=\(Int((moved.posted * session.scale).rounded()))px -> \(ScrollDiag.describe(progress.step.match)) committed=\(progress.step.committedRows) decision=\(decision) nextStep=\(step)pt direction=\(direction)")
+            #endif
+            switch decision {
             case .continue:
                 if case .moved(_, let top, let bandEnd, _) = progress.step.match {
                     step = AutoScrollPlan.nextStep(bandHeightPixels: bandEnd - top, scale: session.scale)
@@ -134,16 +141,35 @@ final class AutoScrollDriver {
             let event = points < 0 ? -size : size
             environment.poster.post(points: event)
             posted += event
+            #if DEBUG
+            ScrollDiag.log("auto post event=\(event)pt postedSoFar=\(posted)pt of \(points)pt serial=\(session.frameSerial)")
+            #endif
         }
+        #if DEBUG
+        let stepStart = ContinuousClock.now
+        var frames = 0, changes = 0
+        var lastHash = baseline
+        #endif
         var settler = FrameSettler(stepStart: clock.now, baselineHash: baseline)
         while session.phase == .capturing(.auto) {
             guard await pause(Self.pollInterval) else { return nil }
             if session.frameSerial != seen, let frame = session.latestFrame {
                 seen = session.frameSerial
-                _ = settler.observe(.frame(hash: FrameSettler.contentHash(of: frame, ignoringRightColumns: ignored),
-                                           at: session.latestFrameAt ?? clock.now))
+                let hash = FrameSettler.contentHash(of: frame, ignoringRightColumns: ignored)
+                #if DEBUG
+                frames += 1
+                if hash != lastHash { changes += 1; lastHash = hash }
+                ScrollDiag.log("settler frame serial=\(seen) changed=\(hash != baseline ? "vsBaseline" : "sameAsBaseline") changesSoFar=\(changes) sinceStep=\(ScrollDiag.ms(since: stepStart))ms")
+                #endif
+                _ = settler.observe(.frame(hash: hash, at: session.latestFrameAt ?? clock.now))
             }
-            if settler.observe(.idle(at: clock.now)) { return session.latestFrame.map { ($0, posted) } }
+            if settler.observe(.idle(at: clock.now)) {
+                #if DEBUG
+                let settledHash = session.latestFrame.map { FrameSettler.contentHash(of: $0, ignoringRightColumns: ignored) }
+                ScrollDiag.log("settler SETTLED after \(ScrollDiag.ms(since: stepStart))ms framesSeen=\(frames) contentChanges=\(changes) serial=\(session.frameSerial) settledFrameIsBaseline=\(settledHash == baseline)")
+                #endif
+                return session.latestFrame.map { ($0, posted) }
+            }
         }
         return nil
     }

@@ -63,7 +63,14 @@ nonisolated struct ScrollStitcher: Sendable {
     /// the previous accepted shift is used.
     mutating func add(_ frame: ScrollFrame, predicted: Int? = nil) -> StitchStep {
         if isFull { return StitchStep(match: .still, committedRows: 0, isFull: true) }
+        #if DEBUG
+        ScrollDiag.dumpPair(previous: last, current: frame)
+        let findStart = ContinuousClock.now
+        #endif
         let match = finder.find(previous: last, current: frame, predicted: predicted ?? lastDy)
+        #if DEBUG
+        ScrollDiag.log("stitch find=\(ScrollDiag.ms(since: findStart))ms predicted=\(predicted.map(String.init) ?? "nil") lastDy=\(lastDy.map(String.init) ?? "nil") lastOffset=\(lastOffset) committedHeight=\(committedHeight) -> \(ScrollDiag.describe(match))")
+        #endif
         var committed = 0
         if case .moved(let dy, _, let bandEnd, _) = match, dy > 0 {
             committed = commit(from: last, offset: lastOffset, upTo: bandEnd)

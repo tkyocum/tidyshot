@@ -261,6 +261,9 @@ final class ScrollCaptureSession {
     }
 
     private func take(_ frame: ScrollFrame) async {
+        #if DEBUG
+        ScrollDiag.log("session take serial=\(frameSerial + 1) \(frame.width)x\(frame.height) phase=\(phase) sincePrevious=\(latestFrameAt.map { ScrollDiag.ms(clock.now - $0) } ?? "-")ms")
+        #endif
         latestFrame = frame
         latestFrameAt = clock.now
         frameSerial += 1

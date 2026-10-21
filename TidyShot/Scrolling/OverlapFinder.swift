@@ -54,8 +54,19 @@ nonisolated struct OverlapFinder: Sendable {
         // band does not break the runs or count as movement; but a differing stripe that shows what the
         // other frame has at another row is a scroll of a narrow column, which is not equal.
         let fa = rowHashes(a, columns: usable), fb = rowHashes(b, columns: usable)
+        #if DEBUG
+        func note(_ s: @autoclosure () -> String) {
+            ScrollDiag.log("find \(a.width)x\(a.height) scrollbarColumns=\(scrollbarColumns) predicted=\(predicted.map(String.init) ?? "nil") \(s())")
+        }
+        if ScrollDiag.enabled {
+            let sameY = fa.indices.filter { fa[$0] == fb[$0] }.count
+            note("rowsEqualAtSameY=\(sameY)/\(h)")
+        }
+        #else
+        func note(_ s: @autoclosure () -> String) {}
+        #endif
         // Identical rows throughout: nothing to look at, and the stripe hashes are not worth computing.
-        if !fa.indices.contains(where: { fa[$0] != fb[$0] }) { return .still }
+        if !fa.indices.contains(where: { fa[$0] != fb[$0] }) { note("-> still (identical rows)"); return .still }
         let freqA = counts(fa[...])
         let stripeColumns = stripeGroups(usable)
         let sa = stripeColumns.map { rowHashes(a, columns: $0) }, sb = stripeColumns.map { rowHashes(b, columns: $0) }
@@ -74,7 +85,7 @@ nonisolated struct OverlapFinder: Sendable {
         }
         var lead = 0
         while lead < h && equal(lead) { lead += 1 }
-        if lead == h { return .still }
+        if lead == h { note("-> still (every row equal within tolerance)"); return .still }
         var trail = 0
         while trail < h - lead && equal(h - 1 - trail) { trail += 1 }
         var informative = 0, same = 0
@@ -82,7 +93,8 @@ nonisolated struct OverlapFinder: Sendable {
             informative += 1
             if equal(y) { same += 1 }
         }
-        if informative == 0 || Double(same) / Double(informative) >= stillFraction { return .still }
+        note("lead=\(lead) trail=\(trail) informative=\(informative) sameAtY=\(same)")
+        if informative == 0 || Double(same) / Double(informative) >= stillFraction { note("-> still (stillFraction)"); return .still }
 
         // 2. Moving columns: drop columns identical at the same position in every row (fixed sidebars).
         var moving: [Int] = []
@@ -95,7 +107,8 @@ nonisolated struct OverlapFinder: Sendable {
                 }
             }
         }
-        if moving.isEmpty { return .still }
+        note("movingColumns=\(moving.count)/\(usable.count)")
+        if moving.isEmpty { note("-> still (no moving columns)"); return .still }
         let groups = stripeGroups(moving)
         let ha = groups.map { rowHashes(a, columns: $0) }, hb = groups.map { rowHashes(b, columns: $0) }
         let whole = rowHashes(a, columns: moving), wholeB = rowHashes(b, columns: moving)
@@ -113,7 +126,7 @@ nonisolated struct OverlapFinder: Sendable {
         var bottom = 0
         while bottom < cap && whole[h - 1 - bottom] == wholeB[h - 1 - bottom] { bottom += 1 }
         let bandEnd = h - bottom
-        guard bandEnd - top >= 16 else { return unplaced }
+        guard bandEnd - top >= 16 else { note("-> \(unplaced == .still ? "still" : "lost") (band too short: top=\(top) bandEnd=\(bandEnd) cap=\(cap))"); return unplaced }
 
         // 4. Vote per stripe cell: B[y] == A[y + dy].
         var votes: [Int: Int] = [:]
@@ -148,10 +161,15 @@ nonisolated struct OverlapFinder: Sendable {
                     if ha[s][ya] == hb[s][y] { ok += 1 }
                 }
             }
+            note("candidate dy=\(dy) votes=\(votes[dy] ?? 0) informativeCells=\(inf) agreeing=\(ok) score=\(inf > 0 ? String(format: "%.3f", Double(ok) / Double(inf)) : "-")")
             guard inf >= minInformativeRows * groups.count / 2 else { continue }
             let score = Double(ok) / Double(inf)
-            if score >= acceptScore { return .moved(dy: dy, top: top, bandEnd: bandEnd, score: score) }
+            if score >= acceptScore {
+                note("-> moved dy=\(dy) top=\(top) bandEnd=\(bandEnd) score=\(String(format: "%.3f", score))")
+                return .moved(dy: dy, top: top, bandEnd: bandEnd, score: score)
+            }
         }
+        note("-> \(unplaced == .still ? "still" : "lost") (no candidate verified: top=\(top) bandEnd=\(bandEnd) candidates=\(votes.count) lead=\(lead) trail=\(trail))")
         return unplaced
     }
 

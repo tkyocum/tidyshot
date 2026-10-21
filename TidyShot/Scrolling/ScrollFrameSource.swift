@@ -93,6 +93,10 @@ nonisolated final class ScrollFrameSource: NSObject, FrameSource, SCStreamOutput
         config.pixelFormat = kCVPixelFormatType_32BGRA
         config.showsCursor = false
         config.colorSpaceName = colorSpace.name ?? CGColorSpace.sRGB
+        #if DEBUG
+        ScrollDiag.beginSession()
+        ScrollDiag.log("source start rect=\(rect) display=\(display.displayID) displayFrame=\(display.frame) sourceRect=\(config.sourceRect) out=\(pixelWidth)x\(pixelHeight) scale=\(scale) colorSpace=\(colorSpace.name.map { $0 as String } ?? "nil") streamColorSpaceName=\(config.colorSpaceName as String) tmp=\(NSTemporaryDirectory())")
+        #endif
 
         let stream = SCStream(filter: filter, configuration: config, delegate: self)
         try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
@@ -141,13 +145,31 @@ nonisolated final class ScrollFrameSource: NSObject, FrameSource, SCStreamOutput
                 as? [[SCStreamFrameInfo: Any]],
               let raw = attachments.first?[.status] as? Int,
               let status = SCFrameStatus(rawValue: raw) else { return }
+        #if DEBUG
+        let copyStart = ContinuousClock.now
+        let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+        let latency = CMTimeGetSeconds(CMTimeSubtract(CMClockGetTime(CMClockGetHostTimeClock()), pts)) * 1000
+        #endif
         switch status {
         case .complete:
-            guard let buffer = sampleBuffer.imageBuffer, let frame = Self.copyFrame(from: buffer) else { return }
+            guard let buffer = sampleBuffer.imageBuffer, let frame = Self.copyFrame(from: buffer) else {
+                #if DEBUG
+                ScrollDiag.log("source complete frame NOT copied (format \(sampleBuffer.imageBuffer.map { CVPixelBufferGetPixelFormatType($0) } ?? 0))")
+                #endif
+                return
+            }
+            #if DEBUG
+            if let buffer = sampleBuffer.imageBuffer {
+                ScrollDiag.log("source frame \(CVPixelBufferGetWidth(buffer))x\(CVPixelBufferGetHeight(buffer)) bytesPerRow=\(CVPixelBufferGetBytesPerRow(buffer)) captureToHandler=\(String(format: "%.1f", latency))ms copy=\(ScrollDiag.ms(since: copyStart))ms")
+            }
+            #endif
             Self.send(.frame(frame), to: continuation)
         case .idle:
             Self.send(.idle(.now), to: continuation)
         default:
+            #if DEBUG
+            ScrollDiag.log("source status \(raw)")
+            #endif
             break
         }
     }
@@ -185,7 +207,24 @@ nonisolated final class ScrollFrameSource: NSObject, FrameSource, SCStreamOutput
     /// has not read yet, the frame goes back in and the idle is the one dropped, so the last frame
     /// before the page goes still is never lost.
     static func send(_ event: FrameEvent, to continuation: AsyncStream<FrameEvent>.Continuation) {
-        guard case .dropped(let old) = continuation.yield(event), case .frame = old, case .idle = event else { return }
+        let result = continuation.yield(event)
+        #if DEBUG
+        if case .dropped(let old) = result {
+            ScrollDiag.log("source buffer dropped \(old.diagName) for \(event.diagName)")
+        }
+        #endif
+        guard case .dropped(let old) = result, case .frame = old, case .idle = event else { return }
         continuation.yield(old)
     }
 }
+
+#if DEBUG
+nonisolated extension FrameEvent {
+    var diagName: String {
+        switch self {
+        case .frame: "frame"
+        case .idle: "idle"
+        }
+    }
+}
+#endif
