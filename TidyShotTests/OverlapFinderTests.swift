@@ -79,6 +79,36 @@ struct OverlapFinderTests {
         #expect(match(&page, from: 600, to: 1500) == .lost)
     }
 
+    /// A change in place (Terminal output, a new chat message): `rows` of the page's columns
+    /// replaced by noise that appears nowhere else, with every other row unchanged.
+    static func changedInPlace(_ frame: ScrollFrame, rows: Range<Int>, page: SyntheticPage) -> ScrollFrame {
+        var bgra = [UInt8](frame.bgra)
+        var noise = SyntheticPage.LCG(seed: 99)
+        for y in rows {
+            for x in page.sidebar..<(page.width - page.scrollbar) {
+                let v = UInt8(truncatingIfNeeded: noise.next())
+                let i = (y * page.width + x) * 4
+                bgra[i] = v; bgra[i + 1] = v; bgra[i + 2] = v
+            }
+        }
+        return ScrollFrame(bgra: Data(bgra), width: frame.width, height: frame.height, bytesPerRow: frame.width * 4)
+    }
+
+    /// No shift explains a block of changed rows, but the equal rows above or below it are more
+    /// than a header or footer can be (0.4 of the frame), so part of the band stayed put: nothing
+    /// scrolled, and the pair is still rather than lost. A change in the middle, with equal runs
+    /// no longer than chrome can be, is still lost, as a jump past the band is.
+    @Test func aChangeInPlaceIsStillNotLost() {
+        var page = SyntheticPage()
+        let before = page.frame(at: 400, animated: false)
+        let nearTheBottom = Self.changedInPlace(before, rows: 700..<730, page: page)
+        #expect(page.finder.find(previous: before, current: nearTheBottom, predicted: nil) == .still)
+        let nearTheTop = Self.changedInPlace(before, rows: 100..<130, page: page)
+        #expect(page.finder.find(previous: before, current: nearTheTop, predicted: 40) == .still)
+        let middle = Self.changedInPlace(before, rows: 300..<600, page: page)
+        #expect(page.finder.find(previous: before, current: middle, predicted: nil) == .lost)
+    }
+
     @Test func scrollingBackUpGivesANegativeShift() {
         var page = SyntheticPage()
         #expect(dy(of: match(&page, from: 700, to: 550)) == -150)

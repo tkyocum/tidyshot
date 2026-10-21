@@ -18,10 +18,11 @@ struct AutoScrollDriverTests {
                         clock: clock, offset: offset, pointer: pointer)
     }
 
-    func makeSession(_ world: FakeScrollWorld, maxPixelHeight: Int = ScrollCaptureLimits.maxPixelHeight) -> ScrollCaptureSession {
+    func makeSession(_ world: FakeScrollWorld, maxPixelHeight: Int = ScrollCaptureLimits.maxPixelHeight,
+                     area: CGRect = Self.area) -> ScrollCaptureSession {
         ScrollCaptureSession(source: world.source,
                              engine: ScrollStitchEngine(finder: world.page.finder, maxPixelHeight: maxPixelHeight),
-                             area: Self.area, scale: 2, colorSpace: sRGB, clock: world.clock,
+                             area: area, scale: 2, colorSpace: sRGB, clock: world.clock,
                              autoScrollEnvironment: world.environment, prefersAutoScroll: true)
     }
 
@@ -90,10 +91,13 @@ struct AutoScrollDriverTests {
         let world = makeWorld(clock: clock, pointer: Self.outside)
         let session = makeSession(world)
         try await start(session, world)
+        let checks = world.permissionChecks
         try await clock.run(for: .seconds(1))
         #expect(world.posted.isEmpty)
         #expect(session.status == .autoPaused)
         #expect(session.status.text == "Paused. Move the pointer over the area to continue.")
+        // While paused the grant (a TCC preflight) is never asked: the pointer is checked first.
+        #expect(world.permissionChecks == checks)
 
         world.pointer = Self.inside
         try await clock.run(until: { world.posted.count >= 2 })
@@ -185,9 +189,47 @@ struct AutoScrollDriverTests {
         #expect(comparison.mismatched == 0)
     }
 
+    /// A step of four events (the first step of a 400 pt area is 200 pt): the pointer leaves the
+    /// area after the second, as it might onto the panel inside the area. The other two are never
+    /// posted, the part that went out settles and is stitched, and the driver pauses.
+    @Test func aBurstStopsWhenThePointerLeavesMidStep() async throws {
+        let clock = FakeScrollClock()
+        let world = makeWorld(clock: clock)
+        let area = CGRect(x: 100, y: 100, width: 80, height: 400)
+        world.afterPost = { world in
+            if world.posted.count == 2 { world.pointer = Self.outside }
+        }
+        let session = makeSession(world, area: area)
+        try await start(session, world)
+        try await clock.run(for: .seconds(2))
+        #expect(world.posted == [50, 50])
+        #expect(world.offset == 200)
+        #expect(session.status == .autoPaused)
+        // The 200 row move of the partial step is stitched.
+        #expect(session.heightPixels == 600)
+        try await clock.run(for: .seconds(2))
+        #expect(world.posted.count == 2)
+        await session.cancel()
+    }
+
+    /// The grant going mid-burst stops the burst too, and the next step hands over.
+    @Test func aBurstStopsWhenTheGrantGoesMidStep() async throws {
+        let clock = FakeScrollClock()
+        let world = makeWorld(clock: clock)
+        world.afterPost = { world in
+            if world.posted.count == 2 { world.permitted = false }
+        }
+        let session = makeSession(world, area: CGRect(x: 100, y: 100, width: 80, height: 400))
+        try await start(session, world)
+        try await clock.run(until: { session.phase == .capturing(.manual) })
+        #expect(world.posted == [50, 50])
+        #expect(session.status == .autoHandedOver)
+        await session.cancel()
+    }
+
     /// The scroll-back after a lost step waits for the pointer like a step does: with the pointer
     /// moved away after the first post, nothing more is posted, and the back goes out once it
-    /// returns.
+    /// returns, over just what went out.
     @Test func theScrollBackWaitsForThePointer() async throws {
         let clock = FakeScrollClock()
         let world = makeWorld(clock: clock)
@@ -197,15 +239,16 @@ struct AutoScrollDriverTests {
         try await clock.run(until: { world.posted.count >= 1 })
         world.pointer = Self.outside
         try await clock.run(for: .seconds(2))
-        // The step in progress finishes and loses the place; its scroll-back is owed.
-        #expect(world.posted == [50, 50])
+        // The rest of the step stays unposted; the part that went out loses the place, and its
+        // scroll-back is owed.
+        #expect(world.posted == [50])
         try await clock.run(for: .seconds(2))
-        #expect(world.posted == [50, 50])
+        #expect(world.posted == [50])
         #expect(session.status == .autoPaused)
 
         world.pointer = Self.inside
-        try await clock.run(until: { world.posted.count >= 4 })
-        #expect(Array(world.posted.prefix(4)) == [50, 50, -50, -50])
+        try await clock.run(until: { world.posted.count >= 2 })
+        #expect(Array(world.posted.prefix(2)) == [50, -50])
         await session.cancel()
     }
 

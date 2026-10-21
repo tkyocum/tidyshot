@@ -1,5 +1,6 @@
 import CoreVideo
 import Foundation
+import Synchronization
 import Testing
 @testable import TidyShot
 
@@ -77,5 +78,22 @@ struct ScrollFrameSourceTests {
         #expect(value(of: await iterator.next(isolation: #isolation)) == 4)
         let end = await iterator.next(isolation: #isolation)
         #expect(end == nil)
+    }
+
+    nonisolated struct StreamBroke: Error {}
+
+    /// A stream that stops by itself records why and finishes the events, so the frame still
+    /// buffered is delivered before the end, and the reason is there when the end is seen.
+    @Test func aStopByItselfKeepsTheBufferedFrame() async throws {
+        let (events, continuation) = AsyncStream.makeStream(of: FrameEvent.self, bufferingPolicy: .bufferingNewest(1))
+        var iterator = events.makeAsyncIterator()
+        let reason = Mutex<(any Error)?>(nil)
+
+        ScrollFrameSource.send(.frame(frame(5)), to: continuation)
+        ScrollFrameSource.stopped(by: StreamBroke(), recordingIn: reason, finishing: continuation)
+        #expect(value(of: await iterator.next(isolation: #isolation)) == 5)
+        let end = await iterator.next(isolation: #isolation)
+        #expect(end == nil)
+        #expect(reason.withLock { $0 } is StreamBroke)
     }
 }

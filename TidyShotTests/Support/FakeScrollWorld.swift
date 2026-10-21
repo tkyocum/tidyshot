@@ -22,6 +22,11 @@ final class FakeScrollWorld: ScrollEventPoster {
     /// The pointer in CoreGraphics global points.
     var pointer: CGPoint
     var permitted = true
+    /// How often the driver asked for the grant.
+    private(set) var permissionChecks = 0
+    /// Runs after each post, with the posts so far: a test moves the pointer or takes the grant
+    /// mid-burst here.
+    var afterPost: ((FakeScrollWorld) -> Void)?
     private(set) var offset: Int
     private(set) var posted: [CGFloat] = []
     /// Posts that found the page held at `loadedLimit`.
@@ -39,7 +44,10 @@ final class FakeScrollWorld: ScrollEventPoster {
     var environment: AutoScrollEnvironment {
         AutoScrollEnvironment(poster: self,
                               pointerLocation: { [unowned self] in self.pointer },
-                              isPermitted: { [unowned self] in self.permitted })
+                              isPermitted: { [unowned self] in
+                                  self.permissionChecks += 1
+                                  return self.permitted
+                              })
     }
 
     func post(points: CGFloat) {
@@ -56,6 +64,7 @@ final class FakeScrollWorld: ScrollEventPoster {
         let limit = min(page.maxOffset, loadedLimit ?? page.maxOffset)
         offset = max(0, min(limit, offset + rows))
         showFrame()
+        afterPost?(self)
     }
 
     /// Sends the frame at the current offset.

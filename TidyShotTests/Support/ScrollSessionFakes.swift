@@ -44,6 +44,16 @@ final class FakeFrameSource: FrameSource {
     func send(_ event: FrameEvent) {
         continuation?.yield(event)
     }
+
+    private(set) var stopError: (any Error)?
+
+    /// The stream stops by itself, as `ScrollFrameSource` does on `didStopWithError`: the reason is
+    /// recorded and the events end after what is buffered.
+    func stopByItself(_ error: (any Error)?) {
+        stopError = error
+        continuation?.finish()
+        continuation = nil
+    }
 }
 
 struct FakeClockTimedOut: Error {}

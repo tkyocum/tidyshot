@@ -2,7 +2,8 @@ import CoreGraphics
 
 /// How a new frame relates to the last accepted one (spec 2.8, Overlap finder).
 nonisolated enum OverlapMatch: Equatable, Sendable {
-    /// Nothing that matters moved.
+    /// Nothing that matters moved. That includes a change in place (Terminal output, a new chat
+    /// message) that no shift explains, where part of the band stayed put.
     case still
     /// The content moved up by `dy` rows: row y of the new frame shows row y + dy of the old one.
     /// A negative `dy` is a scroll back up. Rows before `top` are a sticky header and rows from
@@ -101,12 +102,16 @@ nonisolated struct OverlapFinder: Sendable {
 
         // 3. Header and footer: rows equal at the same y from each edge.
         let cap = Int(Double(h) * maxStaticFraction)
+        // A leading or trailing run of equal rows longer than any header or footer can be means part
+        // of the band stayed put: when no shift explains the rows between, they changed in place
+        // (Terminal output, a new chat message), nothing scrolled, and the pair is still, not lost.
+        let unplaced: OverlapMatch = lead > cap || trail > cap ? .still : .lost
         var top = 0
         while top < cap && whole[top] == wholeB[top] { top += 1 }
         var bottom = 0
         while bottom < cap && whole[h - 1 - bottom] == wholeB[h - 1 - bottom] { bottom += 1 }
         let bandEnd = h - bottom
-        guard bandEnd - top >= 16 else { return .lost }
+        guard bandEnd - top >= 16 else { return unplaced }
 
         // 4. Vote per stripe cell: B[y] == A[y + dy].
         var votes: [Int: Int] = [:]
@@ -145,7 +150,7 @@ nonisolated struct OverlapFinder: Sendable {
             let score = Double(ok) / Double(inf)
             if score >= acceptScore { return .moved(dy: dy, top: top, bandEnd: bandEnd, score: score) }
         }
-        return .lost
+        return unplaced
     }
 
     /// `columns` cut into at most `stripes` runs of neighbouring columns.

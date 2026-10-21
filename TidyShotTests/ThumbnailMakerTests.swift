@@ -68,9 +68,8 @@ struct ThumbnailMakerTests {
         #expect(ThumbnailMaker.cropForThumbnail(CGSize(width: 0, height: 50)) == CGRect(x: 0, y: 0, width: 0, height: 50))
     }
 
-    /// A 400 x 4000 page, red in its top 600 rows and blue below: the thumbnail is the top
-    /// 400 x 600 scaled to fit 320, so 213 x 320 and red to its last row.
-    @Test func thumbnailOfATallImageShowsItsTop() throws {
+    /// A 400 x 4000 page, red in its top 600 rows and blue below.
+    func makeTallPage() throws -> CGImage {
         let space = try #require(CGColorSpace(name: CGColorSpace.sRGB))
         let context = try #require(CGContext(data: nil, width: 400, height: 4000, bitsPerComponent: 8, bytesPerRow: 0,
                                              space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
@@ -79,9 +78,11 @@ struct ThumbnailMakerTests {
         // CGContext's y runs up, so the image's top 600 rows are the context's last 600.
         context.setFillColor(CGColor(srgbRed: 1, green: 0, blue: 0, alpha: 1))
         context.fill(CGRect(x: 0, y: 3400, width: 400, height: 600))
-        let page = try #require(context.makeImage())
+        return try #require(context.makeImage())
+    }
 
-        let thumbnail = try #require(ThumbnailMaker.thumbnail(from: page))
+    /// 213 x 320 and red, sampled down the middle column, to its last row.
+    func expectTheTopOfTheTallPage(_ thumbnail: CGImage) throws {
         #expect(thumbnail.width == 213)
         #expect(thumbnail.height == 320)
         let data = try #require(thumbnail.dataProvider?.data) as Data
@@ -89,6 +90,21 @@ struct ThumbnailMakerTests {
             let offset = y * thumbnail.bytesPerRow + 106 * 4
             #expect(data[offset] > 250 && data[offset + 2] < 5, "row \(y) is red")
         }
+    }
+
+    /// The thumbnail is the top 400 x 600 scaled to fit 320.
+    @Test func thumbnailOfATallImageShowsItsTop() throws {
+        try expectTheTopOfTheTallPage(try #require(ThumbnailMaker.thumbnail(from: try makeTallPage())))
+    }
+
+    /// The ImageIO path (a record without a stored thumbnail yet, the hover preview) cuts a tall
+    /// PNG to its top the same way, rather than scaling the whole page to a sliver.
+    @Test func thumbnailOfATallPNGShowsItsTop() throws {
+        let png = try ImageEncoder.pngData(from: try makeTallPage(), scale: 1)
+        try expectTheTopOfTheTallPage(try #require(ThumbnailMaker.thumbnail(fromPNGData: png)))
+        let preview = try #require(ThumbnailMaker.thumbnail(fromPNGData: png, maxSide: 1000))
+        #expect(preview.width == 400)
+        #expect(preview.height == 600)
     }
 
     @Test func thumbnailPNGRoundTrip() throws {

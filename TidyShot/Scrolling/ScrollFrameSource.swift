@@ -2,6 +2,7 @@ import AppKit
 import CoreMedia
 import CoreVideo
 import ScreenCaptureKit
+import Synchronization
 
 /// What a frame source reports to the scrolling-capture session.
 nonisolated enum FrameEvent: Sendable {
@@ -9,9 +10,6 @@ nonisolated enum FrameEvent: Sendable {
     case frame(ScrollFrame)
     /// The display did not change since the last frame (`SCFrameStatus.idle`).
     case idle(ContinuousClock.Instant)
-    /// The stream stopped by itself, with the reason when ScreenCaptureKit gave one. `stop()`
-    /// does not send this: it ends the events after any frame still buffered.
-    case stopped((any Error)?)
 }
 
 /// Where a session's frames come from: the stream in the app, synthetic frames in tests. One
@@ -23,6 +21,11 @@ protocol FrameSource: AnyObject {
     /// Stops capturing and finishes the events. A frame already buffered is still delivered, then
     /// the sequence ends. Safe to call more than once, and before `start()`.
     func stop() async
+    /// Why the stream stopped by itself, when ScreenCaptureKit gave a reason. A stream that stops
+    /// by itself records this and finishes the events as `stop()` does, after any frame still
+    /// buffered (an event of its own could push that frame out of the one-deep buffer), so the
+    /// session asks for it when its events end without Done or Cancel.
+    var stopError: (any Error)? { get }
 }
 
 /// One `SCStream` of a rect of one display for a scrolling capture, with all of TidyShot
@@ -45,6 +48,8 @@ nonisolated final class ScrollFrameSource: NSObject, FrameSource, SCStreamOutput
     private let events: AsyncStream<FrameEvent>
     private let continuation: AsyncStream<FrameEvent>.Continuation
     private let queue = DispatchQueue(label: "io.tky.tidyshot.scrolling-frames", qos: .userInitiated)
+    /// Written on ScreenCaptureKit's queue, read on the main actor.
+    private let stopReason = Mutex<(any Error)?>(nil)
     @MainActor private var stream: SCStream?
     @MainActor private var started = false
     @MainActor private var stopped = false
@@ -148,7 +153,18 @@ nonisolated final class ScrollFrameSource: NSObject, FrameSource, SCStreamOutput
     }
 
     func stream(_ stream: SCStream, didStopWithError error: any Error) {
-        continuation.yield(.stopped(error))
+        Self.stopped(by: error, recordingIn: stopReason, finishing: continuation)
+    }
+
+    var stopError: (any Error)? {
+        stopReason.withLock { $0 }
+    }
+
+    /// Records why the stream stopped, then finishes the events: a frame still buffered is
+    /// delivered first, and the reason is there when the consumer sees the end.
+    static func stopped(by error: any Error, recordingIn reason: borrowing Mutex<(any Error)?>,
+                        finishing continuation: AsyncStream<FrameEvent>.Continuation) {
+        reason.withLock { $0 = error }
         continuation.finish()
     }
 

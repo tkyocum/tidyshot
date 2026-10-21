@@ -54,8 +54,22 @@ nonisolated enum ThumbnailMaker {
         return thumbnail(from: source, maxSide: maxSide)
     }
 
-    /// `kCGImageSourceThumbnailMaxPixelSize` bounds the longest side; ImageIO never upscales.
+    /// `kCGImageSourceThumbnailMaxPixelSize` bounds the longest side; ImageIO never upscales. An
+    /// image that `cropForThumbnail(_:)` would cut (a scrolling capture) is decoded, cut to its
+    /// top and drawn by `thumbnail(from:maxSide:)` instead, so it shows the top of the page here
+    /// too, not a sliver, before the capture-time thumbnail is written and in the hover preview.
     static func thumbnail(from source: CGImageSource, maxSide: Int) -> CGImage? {
+        if let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+           let width = properties[kCGImagePropertyPixelWidth] as? Int,
+           let height = properties[kCGImagePropertyPixelHeight] as? Int {
+            let crop = cropForThumbnail(CGSize(width: width, height: height))
+            if crop.height < CGFloat(height) {
+                let decode = [kCGImageSourceShouldCache: false] as CFDictionary
+                guard let full = CGImageSourceCreateImageAtIndex(source, 0, decode),
+                      let top = full.cropping(to: crop) else { return nil }
+                return thumbnail(from: top, maxSide: maxSide)
+            }
+        }
         let options: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceThumbnailMaxPixelSize: maxSide,

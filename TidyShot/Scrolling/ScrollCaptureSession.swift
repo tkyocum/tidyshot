@@ -203,6 +203,13 @@ final class ScrollCaptureSession {
         await done()
     }
 
+    /// `finish(showing:)` in a task of the session's own, once, so the caller returns at once. The
+    /// driver ends this way: Done cancels the driver's task, which must not be the one finishing.
+    func finishSoon(showing line: ScrollCaptureStatus) {
+        guard case .capturing = phase, endTask == nil else { return }
+        endTask = Task { await self.finish(showing: line) }
+    }
+
     // MARK: Auto-scroll
 
     /// Checks the PostEvent grant again; the panel does once a second before Start.
@@ -246,11 +253,11 @@ final class ScrollCaptureSession {
                 await take(frame)
             case .idle:
                 break
-            case .stopped(let error):
-                await streamStopped(error)
-                return
             }
         }
+        // Done and Cancel leave `.capturing` before they stop the source; events that end while
+        // capturing mean the stream stopped by itself, and the source knows why.
+        await streamStopped(source.stopError)
     }
 
     private func take(_ frame: ScrollFrame) async {
@@ -286,9 +293,7 @@ final class ScrollCaptureSession {
         case .moved: status = .manualCapturing
         case .still: break
         }
-        if progress.step.isFull, endTask == nil {
-            endTask = Task { await self.finish(showing: .heightLimit) }
-        }
+        if progress.step.isFull { finishSoon(showing: .heightLimit) }
     }
 
     /// The stream stopped by itself: keep what was stitched, if anything, and say why.

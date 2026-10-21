@@ -217,7 +217,7 @@ struct ScrollCaptureSessionTests {
         await session.start()
         send(&page, source, offsets: [0, 100])
         try await eventually { session.heightPixels == 500 }
-        source.send(.stopped(StreamBroke()))
+        source.stopByItself(StreamBroke())
         try await eventually { session.phase == .ended }
         guard case .failed(let reason, let partial?)? = session.outcome else {
             Issue.record("no partial image")
@@ -234,7 +234,7 @@ struct ScrollCaptureSessionTests {
 
         let (empty, emptySource, _) = makeSession(page)
         await empty.start()
-        emptySource.send(.stopped(StreamBroke()))
+        emptySource.stopByItself(StreamBroke())
         try await eventually { empty.phase == .ended }
         guard case .failed(let emptyReason, nil)? = empty.outcome else {
             Issue.record("expected a failure without an image")
@@ -253,6 +253,55 @@ struct ScrollCaptureSessionTests {
             return
         }
         #expect(refused.phase == .ended)
+    }
+
+    /// A stream that stops by itself right after a frame: the frame still buffered is stitched
+    /// before the session ends with the partial image; without a reason from ScreenCaptureKit the
+    /// notice gives the session's own.
+    @Test func aFrameBufferedBeforeTheStreamStopsIsKept() async throws {
+        var page = makePage()
+        let (session, source, _) = makeSession(page)
+        await session.start()
+        send(&page, source, offsets: [0, 100, 200])
+        source.stopByItself(nil)
+        try await eventually { session.phase == .ended }
+        guard case .failed(let reason, let partial?)? = session.outcome else {
+            Issue.record("no partial image")
+            return
+        }
+        #expect(reason == ScrollCaptureSession.streamStoppedReason)
+        #expect(session.framesRead == 3)
+        let comparison = page.compare(try stitchedPixels(of: partial), reached: 200)
+        #expect(comparison.actualHeight == 600)
+        #expect(comparison.mismatched == 0)
+    }
+
+    /// A change in place that no shift explains (Terminal output, a new chat message) is not a lost
+    /// place: the status line stays, nothing is stitched from it, and scrolling goes on.
+    @Test func aChangeInPlaceDoesNotShowTheTooFastLine() async throws {
+        var page = makePage()
+        let (session, source, _) = makeSession(page)
+        await session.start()
+        send(&page, source, offsets: [0, 100])
+        try await eventually { session.heightPixels == 500 }
+        let accepted = page.frame(at: 100, animated: false)
+        source.send(.frame(OverlapFinderTests.changedInPlace(accepted, rows: 300..<320, page: page)))
+        // The read loop takes one frame at a time: once it counts the next, the change is applied.
+        send(&page, source, offsets: [100])
+        try await eventually { session.framesRead == 4 }
+        #expect(session.status == .manualCapturing)
+        #expect(session.heightPixels == 500)
+
+        send(&page, source, offsets: [200])
+        try await eventually { session.heightPixels == 600 }
+        await session.done()
+        guard case .image(let image)? = session.outcome else {
+            Issue.record("no image")
+            return
+        }
+        let comparison = page.compare(try stitchedPixels(of: image), reached: 200)
+        #expect(comparison.actualHeight == comparison.expectedHeight)
+        #expect(comparison.mismatched == 0)
     }
 
     /// The preview grows with the stitched rows, rebuilt at most every `previewInterval`, and
