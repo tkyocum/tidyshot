@@ -33,11 +33,14 @@ struct ScrollPanelGeometryTests {
     }
 
     @Test func isClampedBelowTheMenuBar() {
-        // The area reaches the top of the visible frame, and a tall panel top-aligned to it stays inside.
-        let area = CGRect(x: 200, y: 700, width: 600, height: 355)
+        // Neither side has room, so the panel goes inside the bottom right corner; this area is tall
+        // enough that the corner placement (bottom of the area + 12, 400 high) would stick out
+        // above the visible frame, so the clamp has to pull it down.
+        let area = CGRect(x: 100, y: 800, width: 1700, height: 255)
         let frame = ScrollPanelGeometry.frame(panelSize: panel, area: area, visibleFrame: screen)
         #expect(frame.maxY == screen.maxY)
-        #expect(frame.minX == 812)
+        #expect(frame.minX == 1548)
+        #expect(frame.size == panel)
     }
 
     @Test func isClampedAboveTheDock() {

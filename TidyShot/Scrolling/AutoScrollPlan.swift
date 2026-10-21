@@ -14,6 +14,7 @@ nonisolated enum AutoScrollPlan {
 
     /// A step of `points` as whole-point wheel events of at most 50: 120 gives 50, 50, 20.
     static func events(forPoints points: CGFloat) -> [CGFloat] {
+        guard points.isFinite else { return [] }
         var remaining = points.rounded()
         var events: [CGFloat] = []
         while remaining > 0 {

@@ -89,6 +89,37 @@ struct OverlapFinderTests {
         #expect(page.finder.find(previous: page.blankFrame(), current: page.blankFrame(), predicted: nil) == .still)
     }
 
+    /// Sticky chrome is equal in both frames whatever happened, so it must not count towards the
+    /// still test: a real 20 row scroll over a sparse band (about 10 informative rows between 80
+    /// header and 50 footer rows) is movement, not stillness.
+    @Test func aSmallScrollOfASparsePageUnderTallFixedChromeIsNotStill() {
+        let width = 40, height = 400, header = 80, footer = 50
+        let band = height - header - footer
+        // Page rows 60..<70 are the only informative ones; every other page row is blank.
+        func page(_ row: Int) -> [UInt8] {
+            (0..<width).map { x in
+                (60..<70).contains(row) ? UInt8((x * (row - 40) + row * 29) % 200) : 250
+            }
+        }
+        func frame(offset: Int) -> ScrollFrame {
+            var bgra = [UInt8]()
+            bgra.reserveCapacity(width * height * 4)
+            for y in 0..<height {
+                let row: [UInt8]
+                if y < header { row = (0..<width).map { UInt8(100 + ($0 * 7 + y * 13) % 120) } }
+                else if y >= height - footer { row = (0..<width).map { UInt8(60 + ($0 * 11 + y * 5) % 90) } }
+                else { row = page(offset + y - header) }
+                for v in row { bgra += [v, v, v, 255] }
+            }
+            return ScrollFrame(bgra: Data(bgra), width: width, height: height, bytesPerRow: width * 4)
+        }
+        #expect(band == 270)
+        let finder = OverlapFinder(scrollbarColumns: 0)
+        let result = finder.find(previous: frame(offset: 40), current: frame(offset: 60), predicted: nil)
+        #expect(dy(of: result) == 20, "gave \(result)")
+        #expect(finder.find(previous: frame(offset: 40), current: frame(offset: 40), predicted: nil) == .still)
+    }
+
     @Test func framesOfDifferentSizesAreLost() {
         var page = SyntheticPage()
         var other = SyntheticPage(height: 880)

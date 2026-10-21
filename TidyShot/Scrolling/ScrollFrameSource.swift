@@ -47,6 +47,7 @@ nonisolated final class ScrollFrameSource: NSObject, FrameSource, SCStreamOutput
     private let queue = DispatchQueue(label: "io.tky.tidyshot.scrolling-frames", qos: .userInitiated)
     @MainActor private var stream: SCStream?
     @MainActor private var started = false
+    @MainActor private var stopped = false
 
     /// `rect` is in CoreGraphics global points and lies on `display` (the selection clips it).
     @MainActor init(rect: CGRect, display: SCDisplay, engine: CaptureEngine) {
@@ -70,6 +71,9 @@ nonisolated final class ScrollFrameSource: NSObject, FrameSource, SCStreamOutput
         return CGColorSpace(name: CGColorSpace.sRGB)!
     }
 
+    /// A source is not restartable: after a throw (or a `stop()`) it stays spent, and the session
+    /// makes a new one. A `stop()` that runs while this is suspended wins: the capture it was
+    /// about to start is stopped again before this returns.
     @MainActor func start() async throws -> AsyncStream<FrameEvent> {
         guard !started else { return events }
         started = true
@@ -87,11 +91,17 @@ nonisolated final class ScrollFrameSource: NSObject, FrameSource, SCStreamOutput
         let stream = SCStream(filter: filter, configuration: config, delegate: self)
         try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
         try await stream.startCapture()
+        if stopped {
+            try? await stream.stopCapture()
+            try? stream.removeStreamOutput(self, type: .screen)
+            return events
+        }
         self.stream = stream
         return events
     }
 
     @MainActor func stop() async {
+        stopped = true
         if let stream {
             self.stream = nil
             try? await stream.stopCapture()

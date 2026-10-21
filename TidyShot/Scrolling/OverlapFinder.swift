@@ -18,8 +18,11 @@ nonisolated struct OverlapFinder: Sendable {
     var scrollbarColumns: Int
     /// A row hash seen more often than this in a band is uninformative (blank rows, rules, list items).
     var maxRepeat = 4
-    /// This fraction of informative rows equal at the same y means nothing moved.
+    /// This fraction of the informative rows equal at the same y, between the leading and the
+    /// trailing run of equal rows, means nothing moved.
     var stillFraction = 0.9
+    /// A row still counts as equal when at most this many of its stripes differ.
+    var stillTolerance = 2
     /// A candidate shift needs this fraction of its informative cells to agree.
     var acceptScore = 0.8
     var minInformativeRows = 8
@@ -42,13 +45,30 @@ nonisolated struct OverlapFinder: Sendable {
         let h = a.height
         let usable = Array(0..<max(1, a.width - scrollbarColumns))
 
-        // 1. Still: informative rows equal at the same y.
+        // 1. Still: informative rows equal at the same y, counted only between the leading and the
+        // trailing run of equal rows. A sticky header or footer is equal in both frames whatever
+        // happened, so counting it would read a small scroll of a sparse page as still. A row is
+        // equal when all but `stillTolerance` of its stripes are, so a spinner, caret or GIF in the
+        // band does not break the runs or count as movement.
         let fa = rowHashes(a, columns: usable), fb = rowHashes(b, columns: usable)
         let freqA = counts(fa[...])
+        let stripeColumns = stripeGroups(usable)
+        let sa = stripeColumns.map { rowHashes(a, columns: $0) }, sb = stripeColumns.map { rowHashes(b, columns: $0) }
+        func equal(_ y: Int) -> Bool {
+            if fa[y] == fb[y] { return true }
+            var differing = 0
+            for g in 0..<sa.count where sa[g][y] != sb[g][y] { differing += 1 }
+            return differing <= stillTolerance
+        }
+        var lead = 0
+        while lead < h && equal(lead) { lead += 1 }
+        if lead == h { return .still }
+        var trail = 0
+        while trail < h - lead && equal(h - 1 - trail) { trail += 1 }
         var informative = 0, same = 0
-        for y in 0..<h where freqA[fa[y]]! <= maxRepeat {
+        for y in lead..<(h - trail) where freqA[fa[y]]! <= maxRepeat {
             informative += 1
-            if fa[y] == fb[y] { same += 1 }
+            if equal(y) { same += 1 }
         }
         if informative == 0 || Double(same) / Double(informative) >= stillFraction { return .still }
 
@@ -64,8 +84,7 @@ nonisolated struct OverlapFinder: Sendable {
             }
         }
         if moving.isEmpty { return .still }
-        let per = max(1, (moving.count + stripes - 1) / stripes)
-        let groups = stride(from: 0, to: moving.count, by: per).map { Array(moving[$0..<min(moving.count, $0 + per)]) }
+        let groups = stripeGroups(moving)
         let ha = groups.map { rowHashes(a, columns: $0) }, hb = groups.map { rowHashes(b, columns: $0) }
         let whole = rowHashes(a, columns: moving), wholeB = rowHashes(b, columns: moving)
 
@@ -116,6 +135,12 @@ nonisolated struct OverlapFinder: Sendable {
             if score >= acceptScore { return .moved(dy: dy, top: top, bandEnd: bandEnd, score: score) }
         }
         return .lost
+    }
+
+    /// `columns` cut into at most `stripes` runs of neighbouring columns.
+    private func stripeGroups(_ columns: [Int]) -> [[Int]] {
+        let per = max(1, (columns.count + stripes - 1) / stripes)
+        return stride(from: 0, to: columns.count, by: per).map { Array(columns[$0..<min(columns.count, $0 + per)]) }
     }
 
     /// FNV-1a (64 bit) of each row over `columns` of the grey plane.

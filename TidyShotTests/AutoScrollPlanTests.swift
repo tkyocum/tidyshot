@@ -22,6 +22,8 @@ struct AutoScrollPlanTests {
         #expect(AutoScrollPlan.events(forPoints: 0).isEmpty)
         #expect(AutoScrollPlan.events(forPoints: -30).isEmpty)
         #expect(AutoScrollPlan.events(forPoints: 0.4).isEmpty)
+        #expect(AutoScrollPlan.events(forPoints: .infinity).isEmpty)
+        #expect(AutoScrollPlan.events(forPoints: .nan).isEmpty)
     }
 
     @Test func eventsArePostedTenMillisecondsApart() {

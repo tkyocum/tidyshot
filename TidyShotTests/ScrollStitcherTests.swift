@@ -166,6 +166,83 @@ struct ScrollStitcherTests {
         #expect(stitcher.isFull)
     }
 
+    // MARK: Start row, prediction and width
+
+    /// Commits start at `committedHeight - offset`, not at the pair's header height. This small page
+    /// has blank rows under the header and above the footer in both frames of every pair, so the
+    /// finder reads a header and a footer taller than the real ones; the output must still be the
+    /// header, every page row once, and the footer.
+    @Test func commitsStartWhereTheOutputStopsEvenWhenAPairOverReadsTheHeaderAndFooter() {
+        let width = 40, height = 200, header = 20, footer = 20
+        let bands = [70..<80, 175..<185, 300..<312, 420..<430, 560..<572]
+        func pageRow(_ r: Int) -> [UInt8] {
+            bands.contains { $0.contains(r) }
+                ? (0..<width).map { UInt8(($0 * (r % 97 + 3) + r * 29) % 200) } : [UInt8](repeating: 250, count: width)
+        }
+        func headerRow(_ y: Int) -> [UInt8] { (0..<width).map { UInt8(100 + ($0 * 7 + y * 13) % 120) } }
+        func footerRow(_ y: Int) -> [UInt8] { (0..<width).map { UInt8(60 + ($0 * 11 + y * 5) % 90) } }
+        func frame(offset: Int) -> ScrollFrame {
+            var bgra = [UInt8]()
+            for y in 0..<height {
+                let row = y < header ? headerRow(y) : y >= height - footer ? footerRow(y) : pageRow(offset + y - header)
+                for v in row { bgra += [v, v, v, 255] }
+            }
+            return ScrollFrame(bgra: Data(bgra), width: width, height: height, bytesPerRow: width * 4)
+        }
+        var stitcher = ScrollStitcher(first: frame(offset: 0), finder: OverlapFinder(scrollbarColumns: 0))
+        let first = stitcher.add(frame(offset: 60))
+        guard case .moved(let dy, let top, let bandEnd, _) = first.match else {
+            Issue.record("not moved: \(first.match)")
+            return
+        }
+        #expect(dy == 60)
+        #expect(top > header)
+        #expect(bandEnd < height - footer)
+        // The first commit still starts at row 0, so the real header is kept.
+        #expect(first.committedRows == bandEnd)
+        let second = stitcher.add(frame(offset: 120))
+        #expect(second.match != .lost)
+        #expect(stitcher.committedHeight == 60 + bandEnd)
+        let image = stitcher.finish()
+        let total = header + 120 + (height - header - footer) + footer
+        #expect(image.height == total)
+        var ideal = [UInt8]()
+        for y in 0..<total {
+            let row = y < header ? headerRow(y) : y >= total - footer ? footerRow(height - (total - y)) : pageRow(y - header)
+            for v in row { ideal += [v, v, v, 255] }
+        }
+        #expect(image.bgra == Data(ideal))
+    }
+
+    /// Without a prediction the forward shift wins a tie; the posted step settles it the other way.
+    @Test func addUsesThePredictedShiftToResolveRepeatedContent() {
+        var page = SyntheticPage(header: 0, footer: 0, sidebar: 0, scrollbar: 0, period: 230)
+        var forward = ScrollStitcher(first: page.frame(at: 0, animated: false), finder: page.finder)
+        let up = forward.add(page.frame(at: 115, animated: false), predicted: 115)
+        guard case .moved(let upDy, _, _, _) = up.match else { Issue.record("not moved: \(up.match)"); return }
+        #expect(upDy == 115)
+        #expect(up.committedRows > 0)
+
+        var back = ScrollStitcher(first: page.frame(at: 0, animated: false), finder: page.finder)
+        let down = back.add(page.frame(at: 115, animated: false), predicted: -115)
+        guard case .moved(let downDy, _, _, _) = down.match else { Issue.record("not moved: \(down.match)"); return }
+        #expect(downDy == -115)
+        #expect(down.committedRows == 0)
+        #expect(back.committedHeight == 0)
+    }
+
+    @Test func aFrameOfADifferentWidthIsLostAndCommitsNothing() {
+        var page = SyntheticPage()
+        var narrow = SyntheticPage(width: 150)
+        var stitcher = ScrollStitcher(first: page.frame(at: 0, animated: false), finder: page.finder)
+        let step = stitcher.add(narrow.frame(at: 100, animated: false))
+        #expect(step == StitchStep(match: .lost, committedRows: 0, isFull: false))
+        #expect(stitcher.committedHeight == 0)
+        // The last accepted frame is unchanged, so the next frame of the right size still matches.
+        let next = stitcher.add(page.frame(at: 100, animated: false))
+        if case .moved(let dy, _, _, _) = next.match { #expect(dy == 100) } else { Issue.record("not moved: \(next.match)") }
+    }
+
     // MARK: Preview
 
     @Test func previewRowsAreTheBoxAverageOfWhatWasCommittedSinceTheLastCall() {
