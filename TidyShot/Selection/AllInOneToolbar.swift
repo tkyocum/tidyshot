@@ -64,6 +64,7 @@ final class AllInOneToolbar: NSVisualEffectView, NSTextFieldDelegate {
             stack.trailingAnchor.constraint(equalTo: trailingAnchor),
             stack.topAnchor.constraint(equalTo: topAnchor),
             stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+            separator.widthAnchor.constraint(equalToConstant: 1),
             separator.heightAnchor.constraint(equalToConstant: 20),
         ])
     }

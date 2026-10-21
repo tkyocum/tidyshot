@@ -118,7 +118,12 @@ final class SelectionController {
         view.onAllInOneAction = { [weak self] action, appKitRect in
             Task { self?.finishAllInOne(action, appKitRect: appKitRect) }
         }
-        view.onAspectLockChanged = { [weak self] locked in self?.settings.allInOneAspectLock = locked }
+        // One lock for every display's view, so it survives the selection moving to another display.
+        view.onAspectLockChanged = { [weak self] locked in
+            guard let self else { return }
+            settings.allInOneAspectLock = locked
+            for other in views { other.isAspectLocked = locked }
+        }
     }
 
     /// The preselected rect on the screen holding its centre, as that view's adjustable rect.

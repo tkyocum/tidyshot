@@ -528,10 +528,13 @@ extension SelectionView {
             window?.makeFirstResponder(self)
             layoutToolbar()
         }
+        // Layout runs after editing ends, so `update` writes the clamped or moved size back.
         toolbar.onFieldDone = { [weak self] in
             guard let self else { return }
             window?.makeFirstResponder(self)
+            layoutToolbar()
         }
+        toolbar.frame.size = toolbar.fittingSize
         addSubview(toolbar)
         self.toolbar = toolbar
         return toolbar
@@ -556,7 +559,8 @@ extension SelectionView {
             resizeCursor(for: handle).set()
             return
         case nil:
-            break
+            // A new rect is being drawn over the old one: keep the crosshair.
+            if dragRect != nil { NSCursor.crosshair.set(); return }
         }
         if let point, let toolbar, !toolbar.isHidden, toolbar.frame.contains(point) { NSCursor.arrow.set(); return }
         guard let point, let adjustRect,
