@@ -1,8 +1,8 @@
 # TidyShot
 
-A macOS menu bar screenshot tool. Capture an area, a window, or a display; it is saved as a
-Retina-correct PNG, copied to the clipboard, and uploaded to your own S3-compatible bucket
-with the URL on your clipboard.
+A macOS menu bar screenshot tool. Capture an area, a window, a display, or content taller than the
+screen; it is saved as a Retina-correct PNG, copied to the clipboard, and uploaded to your own
+S3-compatible bucket with the URL on your clipboard.
 
 Requires macOS 26 or later.
 
@@ -12,9 +12,14 @@ Requires macOS 26 or later.
 brew install xcodegen
 xcodebuild -runFirstLaunch
 xcodegen generate
-xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -configuration Debug -derivedDataPath .build build
-open .build/Build/Products/Debug/TidyShot.app
+xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -configuration Release -derivedDataPath .build-rel build
+open .build-rel/Build/Products/Release/TidyShot.app
 ```
+
+Run the Release build: scrolling capture compares frames as they arrive, and an unoptimised Debug
+build is about 40 times slower and cannot keep up. The tests use the Debug configuration. Scrolling
+capture diagnostics (`ScrollDiag`, written to `scrolldiag.log` in the app container's temporary
+folder) exist only in Debug builds.
 
 Or open `TidyShot.xcodeproj` in Xcode after `xcodegen generate`.
 
@@ -37,6 +42,11 @@ cp Config/Local.xcconfig.example Config/Local.xcconfig
 Edit `Config/Local.xcconfig` to set `CODE_SIGN_IDENTITY = Apple Development` and your
 `DEVELOPMENT_TEAM`, then run `xcodegen generate` again.
 
+Auto-scroll in Scrolling capture needs a second, optional permission: Accessibility (the "post
+event" privilege that lets TidyShot send scroll-wheel events), under the same Privacy & Security
+pane. Without it you scroll yourself and everything else works. See Scrolling capture below; ad-hoc
+rebuilds lose this grant like they lose Screen Recording.
+
 ## Default shortcuts
 
 | Action | Shortcut |
@@ -44,8 +54,50 @@ Edit `Config/Local.xcconfig` to set `CODE_SIGN_IDENTITY = Apple Development` and
 | Capture area | ⌃⇧4 |
 | Capture window | ⌃⇧2 |
 | Capture fullscreen | ⌃⇧3 |
+| Capture scrolling | ⌃⇧5 |
 
 Change them in Settings > Shortcuts.
+
+## Scrolling capture
+
+Capture Scrolling (⌃⇧5, or the menu bar item) captures content taller than the screen: a long web
+page, a terminal's scrollback, a chat channel. Drag an area at least 100 points tall, or click a
+window to take its frame. A dashed outline marks the area and a small panel shows a live preview of
+the stitched image, its size in pixels and a status line. Nothing is saved or uploaded until you
+click Done; Cancel or Escape (which works from any app while a session runs) throws everything away.
+
+**Manual mode.** Click Start (or press Return, or ⌃⇧5 again), scroll down slowly yourself, and click
+Done (Return, or ⌃⇧5 again) at the end. If you scroll so fast that two screens no longer overlap,
+the panel says "Too fast. Scroll back up a little."; scroll back until it clears and go on. Scrolling
+up a little is harmless. Done straight after Start saves the area as an ordinary capture.
+
+**Auto-scroll.** With "Scroll automatically" checked, hold the pointer over the area after Start and
+TidyShot sends the scroll-wheel events itself, waits for the page to settle, and finishes when two
+screens in a row show no change (after a short wait for lazy loading). Move the pointer out of the
+area to pause; TidyShot never moves it. If it loses its place three times, it hands over to manual
+mode. Auto-scroll needs the Accessibility permission (the "post event" privilege). The Allow
+Auto-Scroll… link in the panel opens a window that requests it and opens System Settings. The grant
+is tied to the app's code signature, so with ad-hoc signing every rebuild loses it: remove TidyShot
+from the Accessibility list, add it again, and quit and reopen TidyShot if it still reads as
+unavailable. Apple Development signing (see Permissions) keeps it.
+
+**What to expect.** A header or footer that stays put (a toolbar, a sticky nav bar, a composer) is
+kept once, at the top or bottom, and a fixed sidebar is ignored. A floating element inside the area
+(a chat button, a spinner) is stitched in each time it appears. A capture ends at 65,536 pixels
+tall (32,768 points on a Retina display); at that point the panel says so and the capture finishes.
+An endless feed therefore runs to that limit. At that height and about 3,000 pixels wide the image
+takes about 800 MB of memory, and about 1.7 GB while an annotated copy is saved. Content with no distinctive rows (a long run of
+identical lines or a blank stretch taller than the area) cannot be placed, so the "Too fast" line
+shows until you scroll back. A window pick captures the window's frame from the display, so a window
+that overlaps it is in the picture. The macOS screen-recording indicator shows while a session runs.
+
+After Done the capture goes through the same path as any other: the after-capture action, the
+Quick Access overlay with Annotate and Delete, Recent Captures and the upload. A very tall capture's
+thumbnail shows the top of the page. Annotate works on captures up to the 65,536 pixel limit (the
+editor shows a tall capture as stacked 16,384 pixel strips, the most one GPU texture holds on every
+Mac). A capture taller or wider than 16,384 pixels goes on the clipboard as PNG only, without the
+uncompressed TIFF copy, which at that size would take hundreds of megabytes more.
+Horizontal scrolling is not supported.
 
 ## Upload
 
@@ -197,3 +249,4 @@ Cancelling the save panel keeps the editor open.
 - Phase 3.1 manual test checklist: `docs/testing/phase-3-1-manual-checklist.md`
 - Phase 4a manual test checklist: `docs/testing/phase-4a-manual-checklist.md`
 - Phase 4b manual test checklist: `docs/testing/phase-4b-manual-checklist.md`
+- Phase 5 manual test checklist: `docs/testing/phase-5-manual-checklist.md`

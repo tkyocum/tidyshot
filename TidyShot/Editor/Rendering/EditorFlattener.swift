@@ -25,9 +25,13 @@ nonisolated enum EditorFlattener {
         logColourSpaceOnce(base: base, output: context)
         context.interpolationQuality = .none
 
-        // 1. The base, copied in. CoreGraphics coordinates here: origin bottom left.
+        // 1. The base, copied in, in `ImageTiling` strips: drawing converts the pixels through a
+        // buffer the size of what is drawn, so a 65,536 px capture drawn whole would briefly need
+        // another 811 MB. CoreGraphics coordinates here: origin bottom left.
         context.setBlendMode(.copy)
-        context.draw(base, in: CGRect(origin: .zero, size: size))
+        for strip in ImageTiling.crops(of: base) {
+            context.draw(strip.image, in: ImageRects.bottomLeft(strip.rect, imageHeight: height))
+        }
 
         // 2. The tiles in creation order, each replacing its rect.
         let tileByID = Dictionary(tiles.map { ($0.effect.id, $0) }, uniquingKeysWith: { _, last in last })

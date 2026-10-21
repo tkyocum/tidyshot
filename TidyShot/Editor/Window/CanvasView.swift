@@ -778,14 +778,15 @@ final class CanvasView: NSView {
     // MARK: Drawing
 
     /// For each highlighter meeting `visible` (including the one in progress): clip to its stroked
-    /// outline, then draw the capture and the shown effect tiles into that clip. The copy equals
-    /// what `baseView` shows there, so the picture does not change, and the multiply that follows
-    /// in `AnnotationDrawing.draw` has real pixels to multiply. Runs before every other drawing, so
-    /// shapes made before the highlighter lie under it and shapes made after lie over it, as in the
-    /// export. The CTM is image pixels, top-left origin. The clip is stroked 1 view point wider on
-    /// each side so anti-aliased edge pixels get a whole backdrop, as in the export. Interpolation
-    /// follows `BaseImageView`: nearest from 2 device pixels per image pixel up, bilinear from 1,
-    /// and the highest quality below.
+    /// outline, then draw the capture's layer crops that meet the clip (`baseView.baseTiles`, one
+    /// for most captures, 16,384 px strips for a taller one) and the shown effect tiles into that
+    /// clip. The copy equals what `baseView` shows there, so the picture does not change, and the
+    /// multiply that follows in `AnnotationDrawing.draw` has real pixels to multiply. Runs before
+    /// every other drawing, so shapes made before the highlighter lie under it and shapes made
+    /// after lie over it, as in the export. The CTM is image pixels, top-left origin. The clip is
+    /// stroked 1 view point wider on each side so anti-aliased edge pixels get a whole backdrop, as
+    /// in the export. Interpolation follows `BaseImageView`: nearest from 2 device pixels per image
+    /// pixel up, bilinear from 1, and the highest quality below.
     private func drawHighlighterBackdrops(in context: CGContext, visible: CGRect) {
         var strokes: [Stroke] = []
         for drawing in displayedDrawings {
@@ -806,22 +807,13 @@ final class CanvasView: NSView {
             context.replacePathWithStrokedPath()
             context.clip()
             context.interpolationQuality = quality
-            drawFlipped(model.base, in: CGRect(origin: .zero, size: imagePixelSize), context: context)
+            var layers = baseView.baseTiles
             for effect in displayedEffects {
-                if let tile = shownTile(for: effect) { drawFlipped(tile.image, in: tile.rect, context: context) }
+                if let tile = shownTile(for: effect) { layers.append((rect: tile.rect, image: tile.image)) }
             }
+            HighlighterBackdrop.draw(layers, in: context)
             context.restoreGState()
         }
-    }
-
-    /// `CGContext.draw` assumes a y-up space and the CTM here is y-down, so the image is drawn
-    /// through a local flip about `rect`; without it the copy would be upside down.
-    private func drawFlipped(_ image: CGImage, in rect: CGRect, context: CGContext) {
-        context.saveGState()
-        context.translateBy(x: rect.minX, y: rect.maxY)
-        context.scaleBy(x: 1, y: -1)
-        context.draw(image, in: CGRect(x: 0, y: 0, width: rect.width, height: rect.height))
-        context.restoreGState()
     }
 
     /// Spec 2.6 Rendering: (1) image-pixel CTM; (2) placeholders for effects with no tile yet;

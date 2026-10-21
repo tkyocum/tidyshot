@@ -28,6 +28,7 @@ final class AppCoordinator {
     private let permissionWindow = PermissionWindowController()
     private let overlay = QuickAccessController()
     @ObservationIgnored private lazy var selector = SelectionController(engine: engine)
+    @ObservationIgnored private lazy var scrollCapture = ScrollCaptureController(engine: engine, settings: settings)
     /// Thumbnails and previews for Recent Captures.
     @ObservationIgnored private(set) lazy var thumbnailProvider = ThumbnailProvider(
         store: thumbnails, history: history, saveFolder: { [unowned self] in self.saveLocation.currentURL },
@@ -106,6 +107,15 @@ final class AppCoordinator {
         KeyboardShortcuts.onKeyUp(for: .captureWindow) { [weak self] in
             Task { await self?.captureWindow() }
         }
+        KeyboardShortcuts.onKeyUp(for: .captureScrolling) { [weak self] in
+            Task { await self?.captureScrolling() }
+        }
+        // Escape must never be swallowed outside a scrolling capture; the session enables it.
+        KeyboardShortcuts.disable(.cancelScrollingCapture)
+        // Live only while a scrolling session runs: the controller enables and disables it.
+        KeyboardShortcuts.onKeyUp(for: .cancelScrollingCapture) { [weak self] in
+            self?.scrollCapture.cancel()
+        }
     }
 
     func captureFullscreen() async {
@@ -123,6 +133,38 @@ final class AppCoordinator {
 
     func captureWindow() async {
         await runSelection(mode: .window)
+    }
+
+    /// Capture Scrolling: select an area or a window's frame, run the scrolling session, and save
+    /// the stitched image like any capture. During a session the shortcut is Start, then Done.
+    func captureScrolling() async {
+        // During a session the shortcut is Start, then Done (the lock is held meanwhile).
+        if scrollCapture.isRunning {
+            scrollCapture.advance()
+            return
+        }
+        await withCaptureLock {
+            guard let content = await loadContent() else { return }
+            guard let selection = await selector.select(mode: .scrolling, content: content) else { return }
+            guard case .area(let rect, let display) = selection else {
+                selector.dismiss()
+                return
+            }
+            guard rect.height >= CGFloat(ScrollCaptureLimits.minimumAreaHeightPoints) else {
+                selector.dismiss()
+                notifier.notifyError("Select an area at least 100 points tall.", title: "Scrolling capture")
+                return
+            }
+            selector.dismiss()
+            let outcome = await scrollCapture.run(rect: rect, display: display)
+            if let notice = outcome.failureNotice {
+                notifier.notifyError(notice.body, title: notice.title)
+            }
+            if let image = outcome.imageToSave {
+                await save(CaptureResult(image: image.image, scale: image.scale,
+                                         target: .area(rect: rect, display: display)))
+            }
+        }
     }
 
     /// Show the overlay, capture with the overlay excluded, dismiss, then save.
@@ -169,21 +211,12 @@ final class AppCoordinator {
     /// in history, start the thumbnail, show the overlay, and start the upload. A file is always
     /// written before the upload starts; if it cannot be written the image stays on the clipboard,
     /// so a capture is never dropped. When the image goes on the clipboard, `clipboardOwner`
-    /// records it for this capture, so an edit can replace it later.
+    /// records it for this capture, so an edit can replace it later. The PNG, and the TIFF when the
+    /// image goes on the clipboard now, are made in a detached task, so a tall capture does not hold
+    /// up the main actor.
     func save(_ result: CaptureResult) async {
         latestCapture = nil
         let image = result.scaled
-        let png: Data
-        do {
-            png = try ImageEncoder.pngData(from: image.image, scale: image.scale)
-        } catch {
-            NSLog("Encode failed: \(error.localizedDescription)")
-            // Never drop a capture: without PNG data the clipboard still gets the image as TIFF.
-            Pasteboard.copy(image: image.image, scale: image.scale)
-            notifier.notifyError(error.localizedDescription)
-            return
-        }
-
         let action = settings.afterCaptureAction
         // One keychain read per capture; persist passes the result to startUpload.
         let destination = action.uploads ? makeDestination() : nil
@@ -196,8 +229,27 @@ final class AppCoordinator {
         } else {
             copyImageNow = settings.copyImageToClipboard
         }
-        let copiedChangeCount: Int? = copyImageNow
-            ? Pasteboard.copy(image: image.image, pngData: png, scale: image.scale) : nil
+        // A scrolling capture can be 65,536 px tall: encode it, and the clipboard's TIFF, off the
+        // main actor. Every capture takes this path; for a normal one the cost is one hop. Above
+        // 16,384 px the clipboard gets the PNG only (`Pasteboard.companionTIFF`).
+        let encoded: (png: Data, tiff: Data?)
+        do {
+            encoded = try await Task.detached(priority: .userInitiated) { () throws -> (png: Data, tiff: Data?) in
+                (try ImageEncoder.pngData(from: image.image, scale: image.scale),
+                 copyImageNow ? Pasteboard.companionTIFF(of: image.image, scale: image.scale) : nil)
+            }.value
+        } catch {
+            NSLog("Encode failed: \(error.localizedDescription)")
+            // Never drop a capture: without PNG data the clipboard still gets the image as TIFF.
+            let tiff = await Task.detached(priority: .userInitiated) {
+                Pasteboard.tiffData(of: image.image, scale: image.scale)
+            }.value
+            Pasteboard.copy(tiffData: tiff)
+            notifier.notifyError(error.localizedDescription)
+            return
+        }
+        let png = encoded.png
+        let copiedChangeCount: Int? = copyImageNow ? Pasteboard.copy(pngData: png, tiffData: encoded.tiff) : nil
 
         guard let record = await persist(png: png, image: image, action: action, destination: destination,
                                          alreadyOnClipboard: copyImageNow) else { return }
@@ -341,7 +393,11 @@ final class AppCoordinator {
 
     private func showOverlay(for record: CaptureRecord, image: CGImage?, scale: CGFloat) {
         guard settings.showOverlay else { return }
-        let thumbnail = image.map { NSImage(cgImage: $0, size: NSSize(width: CGFloat($0.width) / scale, height: CGFloat($0.height) / scale)) }
+        // The well shows the top of a tall capture, as its thumbnail does. The crop shares the pixels.
+        let shown = image.map { full in
+            full.cropping(to: ThumbnailMaker.cropForThumbnail(CGSize(width: full.width, height: full.height))) ?? full
+        }
+        let thumbnail = shown.map { NSImage(cgImage: $0, size: NSSize(width: CGFloat($0.width) / scale, height: CGFloat($0.height) / scale)) }
         overlay.show(record: record, thumbnail: thumbnail, corner: settings.overlayCorner,
                      autoCloseSeconds: settings.overlayAutoCloseSeconds,
                      actions: QuickAccessController.Actions(
@@ -523,7 +579,7 @@ final class AppCoordinator {
         Pasteboard.copy(url: url)
     }
 
-    /// Copy Image: the PNG and TIFF on the clipboard, from the local file when it can be read;
+    /// Copy Image: the PNG and TIFF (`Pasteboard.companionTIFF`) on the clipboard, from the local file when it can be read;
     /// otherwise (an upload-only capture, or a file that cannot be read) downloaded with a signed
     /// GET from the bucket the record says it went to, with "Copying image…" posted while that
     /// runs. The read, the pixel decode and the TIFF encode run in detached tasks, because a
@@ -535,7 +591,7 @@ final class AppCoordinator {
             let png = try await imageData(of: record)
             let converted = await Task.detached(priority: .userInitiated) { () -> (decoded: Bool, tiff: Data?) in
                 guard let decoded = ImageEncoder.decode(png) else { return (false, nil) }
-                return (true, Pasteboard.tiffData(of: decoded.image, scale: decoded.scale))
+                return (true, Pasteboard.companionTIFF(of: decoded.image, scale: decoded.scale))
             }.value
             guard converted.decoded else { throw CopyImageError.notAnImage }
             Pasteboard.copy(pngData: png, tiffData: converted.tiff)
@@ -1104,7 +1160,7 @@ final class AppCoordinator {
                 try ImageEncoder.pngData(from: image.image, scale: image.scale)
             }.value
         } catch {
-            keepFailedEditOnClipboard(image, png: nil, recordID: recordID, error: error)
+            await keepFailedEditOnClipboard(image, png: nil, recordID: recordID, error: error)
             return false
         }
         return await applyLocalEdit(recordID: recordID, png: png, image: image)
@@ -1139,7 +1195,7 @@ final class AppCoordinator {
                 return false
             }
         } catch {
-            keepFailedEditOnClipboard(image, png: png, recordID: recordID, error: error)
+            await keepFailedEditOnClipboard(image, png: png, recordID: recordID, error: error)
             return false
         }
         let editedAt = Date()
@@ -1155,12 +1211,17 @@ final class AppCoordinator {
     /// A save that failed: the edit goes on the clipboard, so it is never lost, and `Not saved`
     /// says why. TidyShot put it there for this record, so the record owns the clipboard and a
     /// later successful save may replace it (the clipboard rule).
-    private func keepFailedEditOnClipboard(_ image: ScaledImage, png: Data?, recordID: UUID, error: any Error) {
+    private func keepFailedEditOnClipboard(_ image: ScaledImage, png: Data?, recordID: UUID, error: any Error) async {
         NSLog("Save over failed: \(error.localizedDescription)")
-        let changeCount = if let png {
-            Pasteboard.copy(image: image.image, pngData: png, scale: image.scale)
+        let changeCount: Int
+        if let png {
+            changeCount = Pasteboard.copy(image: image.image, pngData: png, scale: image.scale)
         } else {
-            Pasteboard.copy(image: image.image, scale: image.scale)
+            // No PNG: the TIFF is the only copy, at any size, made off the main actor.
+            let tiff = await Task.detached(priority: .userInitiated) {
+                Pasteboard.tiffData(of: image.image, scale: image.scale)
+            }.value
+            changeCount = Pasteboard.copy(tiffData: tiff)
         }
         clipboardOwner = EditorClipboard.Owner(recordID: recordID, changeCount: changeCount)
         notifier.notifyError("\(error.localizedDescription) The edited image is on the clipboard.", title: "Not saved")
@@ -1382,7 +1443,7 @@ final class AppCoordinator {
         guard EditorClipboard.shouldReplace(owner: clipboardOwner, recordID: recordID,
                                             currentChangeCount: NSPasteboard.general.changeCount) else { return }
         let tiff = await Task.detached(priority: .userInitiated) {
-            Pasteboard.tiffData(of: image.image, scale: image.scale)
+            Pasteboard.companionTIFF(of: image.image, scale: image.scale)
         }.value
         guard EditorClipboard.shouldReplace(owner: clipboardOwner, recordID: recordID,
                                             currentChangeCount: NSPasteboard.general.changeCount) else { return }
@@ -1390,14 +1451,14 @@ final class AppCoordinator {
         clipboardOwner = EditorClipboard.Owner(recordID: recordID, changeCount: changeCount)
     }
 
-    /// Copy (⌘C, ⇧⌘C): the edited image as PNG and TIFF, both encoded in a detached task and
+    /// Copy (⌘C, ⇧⌘C): the edited image as PNG and TIFF (`Pasteboard.companionTIFF`), both encoded in a detached task and
     /// written here on the main actor. TidyShot then owns the clipboard for this record, so a later
     /// Save or Save As… puts the newer edit there. The window stays open.
     private func editorCopy(recordID: UUID, image: ScaledImage) async {
         do {
             let encoded = try await Task.detached(priority: .userInitiated) { () throws -> (png: Data, tiff: Data?) in
                 (try ImageEncoder.pngData(from: image.image, scale: image.scale),
-                 Pasteboard.tiffData(of: image.image, scale: image.scale))
+                 Pasteboard.companionTIFF(of: image.image, scale: image.scale))
             }.value
             let changeCount = Pasteboard.copy(pngData: encoded.png, tiffData: encoded.tiff)
             clipboardOwner = EditorClipboard.Owner(recordID: recordID, changeCount: changeCount)

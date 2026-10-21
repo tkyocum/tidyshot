@@ -250,4 +250,39 @@ struct RedactionRendererTests {
         let survived = grid(16..<48, 16..<48).filter { tile.pixel($0.x - 8, $0.y - 8)[0..<3] == source.pixel($0.x, $0.y)[0..<3] }
         #expect(survived.isEmpty, "source value survived at \(survived.prefix(3))")
     }
+
+    /// Core Image takes a base taller than any GPU texture (16 x 40,000, red above row 39,000 and
+    /// blue from it) and renders a region near either end from the right rows.
+    @Test func tilesRenderOverABaseTallerThanATexture() async throws {
+        let renderer = RedactionRenderer()
+        let width = 16
+        let height = 40_000
+        var bytes = [UInt8](repeating: 255, count: width * height * 4)
+        for y in 0..<height {
+            for x in 0..<width {
+                let index = (y * width + x) * 4
+                bytes[index] = y < 39_000 ? 255 : 0
+                bytes[index + 1] = 0
+                bytes[index + 2] = y < 39_000 ? 0 : 255
+            }
+        }
+        let base = try #require(CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32,
+                                        bytesPerRow: width * 4, space: sRGB,
+                                        bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+                                        provider: CGDataProvider(data: Data(bytes) as CFData)!, decode: nil,
+                                        shouldInterpolate: false, intent: .defaultIntent))
+        let size = CGSize(width: width, height: height)
+        for (effect, expected) in [(Annotation.blur(region(0, 39_900, 16, 90), radius: 4), [UInt8(0), 0, 255, 255]),
+                                   (.pixelate(region(0, 39_500, 16, 64), block: 8), [0, 0, 255, 255]),
+                                   (.blur(region(0, 100, 16, 90), radius: 4), [255, 0, 0, 255]),
+                                   (.pixelate(region(0, 16_360, 16, 48), block: 8), [255, 0, 0, 255])] {
+            let tile = Pixels(try #require(await renderer.tile(for: effect, over: base, beneath: [])))
+            let rect = try #require(EffectTile.rect(for: effect, imageSize: size))
+            #expect(tile.width == Int(rect.width) && tile.height == Int(rect.height))
+            let wrong = grid(0..<tile.width, 0..<tile.height).filter { point in
+                zip(tile.pixel(point.x, point.y), expected).contains { abs(Int($0) - Int($1)) > 1 }
+            }
+            #expect(wrong.isEmpty, "\(effect): not \(expected) at \(wrong.prefix(3))")
+        }
+    }
 }

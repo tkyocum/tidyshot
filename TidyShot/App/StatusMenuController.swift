@@ -72,6 +72,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         menu.addItem(captureItem("Capture Area", .captureArea, #selector(captureArea)))
         menu.addItem(captureItem("Capture Window", .captureWindow, #selector(captureWindow)))
         menu.addItem(captureItem("Capture Fullscreen", .captureFullscreen, #selector(captureFullscreen)))
+        menu.addItem(captureItem("Capture Scrolling", .captureScrolling, #selector(captureScrolling)))
         menu.addItem(.separator())
         recentCaptures.rebuild()
         menu.addItem(recentCaptures.item)
@@ -108,6 +109,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     @objc private func captureArea() { Task { await coordinator.captureArea() } }
     @objc private func captureWindow() { Task { await coordinator.captureWindow() } }
     @objc private func captureFullscreen() { Task { await coordinator.captureFullscreen() } }
+    @objc private func captureScrolling() { Task { await coordinator.captureScrolling() } }
     @objc private func retryFailedUploads() { coordinator.retryFailedUploads() }
     @objc private func revealLastCapture() { coordinator.revealLastCapture() }
     @objc private func openSettings() { settingsOpener.open() }

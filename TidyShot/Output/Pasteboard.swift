@@ -1,22 +1,39 @@
 import AppKit
 
 enum Pasteboard {
-    /// Puts the image on the general pasteboard as PNG and TIFF. The TIFF rep's size is set in
-    /// points so Retina images paste at their on-screen size. Like every `copy` here, returns the
+    /// Puts the image on the general pasteboard as PNG and, up to `tiffMaxSide`, TIFF. The TIFF
+    /// rep's size is set in points so Retina images paste at their on-screen size. Like every `copy` here, returns the
     /// pasteboard's `changeCount` after the write, which the editor's clipboard rule compares
     /// later (`EditorClipboard`).
     @discardableResult
     static func copy(image: CGImage, pngData: Data, scale: CGFloat) -> Int {
         let item = NSPasteboardItem()
         item.setData(pngData, forType: .png)
-        if let tiff = tiffData(of: image, scale: scale) {
+        if let tiff = companionTIFF(of: image, scale: scale) {
             item.setData(tiff, forType: .tiff)
         }
         return write([item])
     }
 
+    /// The longest side, in pixels, of an image whose PNG on the clipboard gets a TIFF beside it.
+    /// The TIFF is uncompressed: for a 3094 x 65,536 scrolling capture it is about 580 MB, and
+    /// making it peaks at about 1.2 GB over the image, so a longer image goes on as PNG only,
+    /// which every current Mac app reads. 16,384 was the scrolling capture's cap before it rose.
+    nonisolated static let tiffMaxSide = 16_384
+
+    /// Whether an image of this size gets a TIFF beside its PNG on the clipboard.
+    nonisolated static func includesTIFF(pixelWidth: Int, pixelHeight: Int) -> Bool {
+        pixelWidth <= tiffMaxSide && pixelHeight <= tiffMaxSide
+    }
+
+    /// The TIFF to put beside the image's PNG: `tiffData(of:scale:)`, or nil above `tiffMaxSide`.
+    nonisolated static func companionTIFF(of image: CGImage, scale: CGFloat) -> Data? {
+        guard includesTIFF(pixelWidth: image.width, pixelHeight: image.height) else { return nil }
+        return tiffData(of: image, scale: scale)
+    }
+
     /// Puts already encoded PNG and TIFF data on the general pasteboard; the TIFF comes from
-    /// `tiffData(of:scale:)`, made off the main actor. A nil `tiffData` leaves the PNG alone.
+    /// `companionTIFF(of:scale:)`, made off the main actor. A nil `tiffData` leaves the PNG alone.
     @discardableResult
     static func copy(pngData: Data, tiffData: Data?) -> Int {
         let item = NSPasteboardItem()
@@ -27,13 +44,14 @@ enum Pasteboard {
         return write([item])
     }
 
-    /// Puts the image on the general pasteboard as TIFF only, for when PNG encoding failed.
-    /// The rep's size is set in points, as above.
+    /// Puts TIFF data on the general pasteboard alone, for when PNG encoding failed. It is the
+    /// only copy of the image there, so callers make it at any size, off the main actor
+    /// (`tiffData(of:scale:)`). Nil data leaves an empty pasteboard item out.
     @discardableResult
-    static func copy(image: CGImage, scale: CGFloat) -> Int {
+    static func copy(tiffData: Data?) -> Int {
         let item = NSPasteboardItem()
-        if let tiff = tiffData(of: image, scale: scale) {
-            item.setData(tiff, forType: .tiff)
+        if let tiffData {
+            item.setData(tiffData, forType: .tiff)
         }
         return write([item])
     }
