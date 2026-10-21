@@ -67,6 +67,9 @@ nonisolated enum AnnotationGeometry {
             painted = shaft.union(enclosing([head.tip, head.left, head.right]))
         case .pencil(let stroke), .highlighter(let stroke):
             painted = strokeBounds(of: stroke)
+        case .text(let box):
+            // The padding holds the glyphs' overhang.
+            painted = TextLayout.frame(for: box)
         case .redact(let region, _), .blur(let region, _), .pixelate(let region, _):
             painted = region.rect.standardized
         }

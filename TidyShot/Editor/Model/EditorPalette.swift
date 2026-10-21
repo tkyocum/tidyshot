@@ -21,6 +21,10 @@ nonisolated enum EditorPalette {
     static let defaultRedact = black
     /// The options popover's widths, also on keys 1 to 6.
     static let lineWidthsPoints: [CGFloat] = [2, 3, 4, 6, 8, 12]
+    /// Text sizes in points, on keys 1 to 6 while the Text tool is active.
+    static let textSizesPoints: [CGFloat] = [12, 16, 20, 28, 40, 56]
+    /// New text starts at this size. It is not persisted: AppSettings keeps its five editor keys.
+    static let defaultTextSizePoints: CGFloat = 20
     /// A highlighter stroke's alpha. Any colour picked for the highlighter keeps it, so text stays
     /// readable under the multiply.
     static let highlighterAlpha: Double = 0.45

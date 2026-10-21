@@ -12,10 +12,14 @@ final class CanvasView: NSView {
         var transient: Annotation?
         var selection: UUID?
         var transform: CanvasTransform
+        /// The text being typed. A change repaints the whole view, which hides or shows the
+        /// committed copy of a re-edited text.
+        var editingID: UUID?
     }
 
-    /// True while a text annotation is being edited (4b). Always false in 4a.
-    var isEditingText = false
+    /// True while a text annotation is being typed. EditorWindow reads it to let the clipboard and
+    /// undo chords through to the text view; KeyRouting reads it to leave every key to it.
+    var isEditingText: Bool { model.isEditingText }
 
     private let model: EditorModel
     private let baseView: BaseImageView
@@ -38,7 +42,7 @@ final class CanvasView: NSView {
         activeToolKind = model.tool
         activeTool = makeTool(for: model.tool)
         shown = Shown(document: model.document, transient: model.transient, selection: model.selection,
-                      transform: model.transform)
+                      transform: model.transform, editingID: model.textEditing?.box.id)
         super.init(frame: .zero)
         wantsLayer = true
         layerContentsRedrawPolicy = .onSetNeedsDisplay
@@ -130,6 +134,11 @@ final class CanvasView: NSView {
     // MARK: Pointer
 
     override func mouseDown(with event: NSEvent) {
+        // A click outside the text view while typing commits the text and does nothing else.
+        if model.isEditingText {
+            endTextEditing(commit: true)
+            return
+        }
         window?.makeFirstResponder(self)
         isTrackingMouse = true
         gestureCancelled = false
@@ -184,7 +193,7 @@ final class CanvasView: NSView {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         switch KeyRouting.action(characters: event.charactersIgnoringModifiers, command: flags.contains(.command),
                                  control: flags.contains(.control), option: flags.contains(.option),
-                                 isEditingText: isEditingText) {
+                                 isEditingText: isEditingText, tool: model.tool) {
         case .selectTool(let tool):
             guard !isTrackingMouse else { return }
             model.tool = tool
@@ -193,6 +202,11 @@ final class CanvasView: NSView {
             let widths = EditorPalette.lineWidthsPoints
             guard widths.indices.contains(index) else { return }
             model.applyLineWidth(points: widths[index])
+            refresh()
+        case .textSize(let index):
+            let sizes = EditorPalette.textSizesPoints
+            guard sizes.indices.contains(index) else { return }
+            model.applyTextSize(points: sizes[index])
             refresh()
         case .none:
             interpretKeyEvents([event])
@@ -252,6 +266,7 @@ final class CanvasView: NSView {
             _ = model.selection
             _ = model.transform
             _ = model.tool
+            _ = model.textEditing
         } onChange: { [weak self] in
             Task { @MainActor in
                 self?.observeModel()
@@ -268,8 +283,9 @@ final class CanvasView: NSView {
             activeTool = makeTool(for: activeToolKind)
             window?.invalidateCursorRects(for: self)
         }
+        syncTextView()
         let now = Shown(document: model.document, transient: model.transient, selection: model.selection,
-                        transform: model.transform)
+                        transform: model.transform, editingID: model.textEditing?.box.id)
         guard now != shown else { return }
         let previous = shown
         shown = now
@@ -360,10 +376,12 @@ final class CanvasView: NSView {
 
     /// Drawings in creation order, with `transient` in place of its document copy and drawn last
     /// (spec 2.6: the shape in progress is drawn after the drawings). Drawings always sit above
-    /// effects, so their order cannot expose a redaction.
+    /// effects, so their order cannot expose a redaction. A text being re-edited is left out: the
+    /// text view shows it instead.
     private var displayedDrawings: [Annotation] {
         let transient = model.transient
-        var drawings = model.document.drawings.filter { $0.id != transient?.id }
+        let editingID = model.textEditing?.box.id
+        var drawings = model.document.drawings.filter { $0.id != transient?.id && $0.id != editingID }
         if let transient, !transient.isEffect { drawings.append(transient) }
         return drawings
     }
@@ -372,6 +390,148 @@ final class CanvasView: NSView {
         guard let id = model.selection else { return nil }
         if let transient = model.transient, transient.id == id { return transient }
         return model.document.annotation(id: id)
+    }
+
+    // MARK: Text editing
+
+    /// The text view for `model.textEditing`: a subview placed by the transform, nil when nothing is typed.
+    private var textView: NSTextView?
+    /// The id of the box the text view edits, so a new edit gets a new view.
+    private var textViewID: UUID?
+    /// The edit's UndoManager, held from install to removal. `undoManager(for:)` must never return
+    /// nil while the view lives: NSTextView would then fall back to the next responder's manager,
+    /// the model's groupsByEvent = false one.
+    private var textViewUndoManager: UndoManager?
+    /// The colour the text view shows, so a palette change restyles it once.
+    private var textViewColor: RGBA?
+
+    /// For EditorWindowController's Save, Upload, Close and Zoom actions: commits the text and
+    /// removes the text view at once, so the export and the close sheet see the committed text.
+    func commitTextEditing() {
+        endTextEditing(commit: true)
+    }
+
+    private func endTextEditing(commit: Bool) {
+        guard model.isEditingText else { return }
+        if let textView {
+            // An input-method composition still open becomes part of the text.
+            if textView.hasMarkedText() { textView.unmarkText() }
+            model.updateEditingText(textView.string)
+        }
+        if commit {
+            model.commitTextEditing()
+        } else {
+            model.cancelTextEditing()
+        }
+        refresh()
+    }
+
+    /// Brings the text view in line with `model.textEditing`: installs one for a new edit, removes
+    /// it when the edit ended (also when the model ended it, as a tool change does), and otherwise
+    /// re-applies the colour and the frame.
+    private func syncTextView() {
+        guard let editing = model.textEditing else {
+            removeTextView()
+            return
+        }
+        guard let view = textView, textViewID == editing.box.id else {
+            removeTextView()
+            installTextView(for: editing)
+            return
+        }
+        if textViewColor != editing.box.color {
+            textViewColor = editing.box.color
+            let attributes = textAttributes(for: editing.box)
+            if let storage = view.textStorage, let colour = attributes[.foregroundColor] {
+                storage.addAttribute(.foregroundColor, value: colour, range: NSRange(location: 0, length: storage.length))
+            }
+            view.typingAttributes = attributes
+            view.insertionPointColor = attributes[.foregroundColor] as? NSColor ?? .labelColor
+        }
+        layoutTextView(view, for: editing.box)
+    }
+
+    /// TextKit 2 only: reading `view.layoutManager` would switch the view to TextKit 1, whose
+    /// baselines differ from TextLayout's. Plain text, no substitutions or spelling marks, so the
+    /// string typed is the string committed.
+    private func installTextView(for editing: TextEditing) {
+        let view = NSTextView(usingTextLayoutManager: true)
+        view.delegate = self
+        view.isRichText = false
+        view.importsGraphics = false
+        view.allowsUndo = true
+        view.drawsBackground = false
+        view.isHorizontallyResizable = false
+        view.isVerticallyResizable = false
+        view.isAutomaticQuoteSubstitutionEnabled = false
+        view.isAutomaticDashSubstitutionEnabled = false
+        view.isAutomaticTextReplacementEnabled = false
+        view.isAutomaticSpellingCorrectionEnabled = false
+        view.isContinuousSpellCheckingEnabled = false
+        view.isGrammarCheckingEnabled = false
+        view.usesFontPanel = false
+        view.usesFindBar = false
+        let padding = TextLayout.padding(fontSize: editing.box.fontSize)
+        view.textContainerInset = NSSize(width: padding, height: padding)
+        if let container = view.textContainer {
+            container.lineFragmentPadding = 0
+            container.widthTracksTextView = false
+            container.heightTracksTextView = false
+            container.size = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        }
+        let attributes = textAttributes(for: editing.box)
+        view.defaultParagraphStyle = attributes[.paragraphStyle] as? NSParagraphStyle
+        view.typingAttributes = attributes
+        view.insertionPointColor = attributes[.foregroundColor] as? NSColor ?? .labelColor
+        view.textStorage?.setAttributedString(NSAttributedString(string: editing.box.string, attributes: attributes))
+        textView = view
+        textViewID = editing.box.id
+        textViewUndoManager = model.textUndoManager
+        textViewColor = editing.box.color
+        addSubview(view)
+        layoutTextView(view, for: editing.box)
+        window?.makeFirstResponder(view)
+        view.setSelectedRange(NSRange(location: (view.string as NSString).length, length: 0))
+    }
+
+    /// TextLayout's font, colour and fixed line height, in image pixels.
+    private func textAttributes(for box: TextBox) -> [NSAttributedString.Key: Any] {
+        let lineHeight = TextLayout.lineHeight(fontSize: box.fontSize)
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.minimumLineHeight = lineHeight
+        paragraph.maximumLineHeight = lineHeight
+        return [.font: TextLayout.font(size: box.fontSize) as NSFont,
+                .foregroundColor: NSColor(cgColor: box.color.cgColor) ?? NSColor.systemRed,
+                .paragraphStyle: paragraph]
+    }
+
+    /// The frame is `TextLayout.frame` in view points; the bounds stay that frame's size in image
+    /// pixels. AppKit scales the drawing by the zoom and TextKit lays the text out at the model's
+    /// font size, exactly where CoreText will draw it. The bounds are set after the frame, which
+    /// resets them.
+    private func layoutTextView(_ view: NSTextView, for box: TextBox) {
+        let frame = TextLayout.frame(for: box)
+        let zoom = model.transform.zoom
+        view.setFrameOrigin(model.transform.viewPoint(frame.origin))
+        view.setFrameSize(NSSize(width: frame.width * zoom, height: frame.height * zoom))
+        view.setBoundsSize(frame.size)
+    }
+
+    /// In this order, so nothing typed from here on registers undo anywhere.
+    private func removeTextView() {
+        guard let view = textView else { return }
+        let wasFirstResponder = window?.firstResponder === view
+        textView = nil
+        textViewID = nil
+        textViewColor = nil
+        view.allowsUndo = false
+        view.isEditable = false
+        view.delegate = nil
+        textViewUndoManager = nil
+        view.removeFromSuperview()
+        if wasFirstResponder {
+            window?.makeFirstResponder(self)
+        }
     }
 
     // MARK: Drawing
@@ -441,6 +601,44 @@ final class CanvasView: NSView {
             // The view's backing scale snaps the outline and handles to device pixels; the drawings
             // above take the capture scale (`model.scale`).
             AnnotationDrawing.drawSelection(for: selected, transform: transform, scale: backingScale, in: context)
+        }
+    }
+}
+
+extension CanvasView: NSTextViewDelegate {
+    /// Typing registers in the edit's own manager, never in the model's (spec 2.6, Phase 4b).
+    func undoManager(for view: NSTextView) -> UndoManager? {
+        textViewUndoManager
+    }
+
+    func textDidChange(_ notification: Notification) {
+        guard let textView, notification.object as? NSTextView === textView else { return }
+        model.updateEditingText(textView.string)
+        if let box = model.textEditing?.box {
+            layoutTextView(textView, for: box)
+        }
+    }
+
+    /// Return, Enter and Tab commit, Escape and ⌘. cancel. Shift-Return arrives as the same
+    /// `insertNewline:` as Return, so the current event tells them apart; ⌥Return arrives as
+    /// `insertNewlineIgnoringFieldEditor:` and inserts a newline as usual.
+    func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        switch commandSelector {
+        case #selector(NSResponder.insertNewline(_:)):
+            if NSApp.currentEvent?.modifierFlags.contains(.shift) == true {
+                textView.insertNewlineIgnoringFieldEditor(nil)
+            } else {
+                endTextEditing(commit: true)
+            }
+            return true
+        case #selector(NSResponder.insertTab(_:)), #selector(NSResponder.insertBacktab(_:)):
+            endTextEditing(commit: true)
+            return true
+        case #selector(NSResponder.cancelOperation(_:)):
+            endTextEditing(commit: false)
+            return true
+        default:
+            return false
         }
     }
 }

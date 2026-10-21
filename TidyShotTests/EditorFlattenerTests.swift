@@ -1,4 +1,5 @@
 import CoreGraphics
+import CoreText
 import Foundation
 import Testing
 @testable import TidyShot
@@ -368,5 +369,34 @@ struct EditorFlattenerTests {
         let outside = redact(CGRect(x: 100, y: 100, width: 10, height: 10))
         #expect(EditorFlattener.flatten(base: base, tiles: [], document: AnnotationDocument(annotations: [outside]),
                                         scale: 1) != nil)
+    }
+
+    /// Text burns in with CoreText under a flipped text matrix: upright, a line height apart, and
+    /// only inside its frame. "HI" has no descenders, so on each line the fully red pixels lie
+    /// between the cap height and the baseline. Text drawn upside down would hang below the
+    /// baseline instead, and a missing flip of the bitmap would put it near the bottom rows.
+    @Test func flattenedTextInkInsideFrameOnly() throws {
+        let base = makeImage()
+        let original = try Bitmap(base)
+        let box = TextBox(id: UUID(), string: "HI\nHI", origin: CGPoint(x: 6, y: 4), fontSize: 14, color: red)
+        let frame = TextLayout.frame(for: box)
+        try #require(frame.maxX < 64 && frame.maxY < 48)
+        let output = try Bitmap(flatten(base, [.text(box)]))
+        #expect(output.differences(from: original, excluding: [frame]) == 0)
+
+        let capHeight = CTFontGetCapHeight(TextLayout.font(size: 14))
+        let baselines = TextLayout.baselineOrigins(for: box).map(\.y)
+        try #require(baselines.count == 2)
+        var rowsPerLine: [Set<Int>] = [[], []]
+        for y in 0..<48 {
+            for x in 0..<64 where output[x, y] == Self.redPixel {
+                let centre = CGFloat(y) + 0.5
+                let line = baselines.firstIndex { centre > $0 - capHeight - 1 && centre < $0 + 1 }
+                #expect(line != nil, "red at \(x), \(y) is on neither line")
+                if let line { rowsPerLine[line].insert(y) }
+            }
+        }
+        #expect(rowsPerLine[0].count >= 5)
+        #expect(rowsPerLine[1].count >= 5)
     }
 }

@@ -1,4 +1,5 @@
 import CoreGraphics
+import CoreText
 
 /// The one CoreGraphics routine for annotations. The canvas and the export both draw through it,
 /// so the export equals the preview. `draw` and `drawPlaceholder` work in image pixels with a
@@ -28,6 +29,8 @@ nonisolated enum AnnotationDrawing {
             drawStroke(stroke, blend: .normal, in: context)
         case .highlighter(let stroke):
             drawStroke(stroke, blend: .multiply, in: context)
+        case .text(let box):
+            drawText(box, in: context)
         case .redact, .blur, .pixelate:
             break
         }
@@ -54,7 +57,8 @@ nonisolated enum AnnotationDrawing {
     /// Selection chrome in view space, so it keeps its size at every zoom. A selected effect gets
     /// a dashed outline of its rect, white under black so it shows on any background, because a
     /// blur has no edge of its own. A selected stroke gets the same dashed outline around its
-    /// bounds (it has no handles). Every selection then gets an 8 pt white square with a dark
+    /// bounds (it has no handles), and a selected text the same around its frame (text has no
+    /// handles either). Every selection then gets an 8 pt white square with a dark
     /// border at each point of `HitTester.handles(for:)`. `scale` is the view's backing scale
     /// factor: edges snap to device pixels so the 1 pt lines stay sharp.
     static func drawSelection(for annotation: Annotation, transform: CanvasTransform, scale: CGFloat, in context: CGContext) {
@@ -63,7 +67,7 @@ nonisolated enum AnnotationDrawing {
         context.saveGState()
         defer { context.restoreGState() }
         context.setLineWidth(1)
-        if let rect = annotation.effectRect ?? AnnotationGeometry.strokeOutline(of: annotation) {
+        if let rect = annotation.effectRect ?? AnnotationGeometry.strokeOutline(of: annotation) ?? textFrame(of: annotation) {
             let view = transform.viewRect(rect)
             let outline = CGRect(x: snap(view.minX), y: snap(view.minY),
                                  width: snap(view.maxX) - snap(view.minX),
@@ -84,6 +88,12 @@ nonisolated enum AnnotationDrawing {
             context.setStrokeColor(CGColor(gray: 0, alpha: 0.6))
             context.stroke(square.insetBy(dx: 0.5, dy: 0.5))
         }
+    }
+
+    /// A text annotation's frame, outlined when it is selected because text has no handles.
+    private static func textFrame(of annotation: Annotation) -> CGRect? {
+        guard case .text(let box) = annotation else { return nil }
+        return TextLayout.frame(for: box)
     }
 
     /// Stroked inset by half the line width, so the stroke sits inside the rect. A box no wider
@@ -125,6 +135,27 @@ nonisolated enum AnnotationDrawing {
         context.addLine(to: head.right)
         context.closePath()
         context.fillPath()
+    }
+
+    /// CoreText on the bare context, which is in image pixels with a top-left origin (y down), so
+    /// the text matrix flips the glyphs upright. Each line starts at its baseline origin from
+    /// TextLayout, where CanvasView's NSTextView also put it while the text was typed. The text
+    /// matrix is not part of the graphics state, so it is put back by hand.
+    private static func drawText(_ box: TextBox, in context: CGContext) {
+        guard box.fontSize > 0, !box.string.isEmpty else { return }
+        let font = TextLayout.font(size: box.fontSize)
+        let colour = box.color.cgColor
+        let savedTextMatrix = context.textMatrix
+        context.saveGState()
+        defer {
+            context.restoreGState()
+            context.textMatrix = savedTextMatrix
+        }
+        context.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
+        for (text, origin) in zip(TextLayout.lines(of: box.string), TextLayout.baselineOrigins(for: box)) where !text.isEmpty {
+            context.textPosition = origin
+            CTLineDraw(TextLayout.line(text, font: font, color: colour), context)
+        }
     }
 
     /// The smoothed path stroked once with round caps and joins. A single stroke operation paints

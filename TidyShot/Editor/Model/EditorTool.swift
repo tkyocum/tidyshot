@@ -1,7 +1,7 @@
 /// The editor's tools. `toolbarOrder` is the only source for the toolbar's tools group, and
 /// `makeTool(for:)` switches over every case with no default, so a new case is wired in both.
 nonisolated enum EditorTool: String, CaseIterable, Sendable {
-    case select, redact, pixelate, blur, rectangle, arrow, ellipse, line, pencil, highlighter
+    case select, redact, pixelate, blur, rectangle, arrow, ellipse, line, pencil, highlighter, text
 
     /// The unmodified key that picks the tool, in upper case.
     var letter: Character {
@@ -16,6 +16,7 @@ nonisolated enum EditorTool: String, CaseIterable, Sendable {
         case .line: "L"
         case .pencil: "P"
         case .highlighter: "H"
+        case .text: "T"
         }
     }
 
@@ -31,6 +32,7 @@ nonisolated enum EditorTool: String, CaseIterable, Sendable {
         case .line: "Line"
         case .pencil: "Pencil"
         case .highlighter: "Highlighter"
+        case .text: "Text"
         }
     }
 
@@ -47,6 +49,7 @@ nonisolated enum EditorTool: String, CaseIterable, Sendable {
         case .line: "line.diagonal"
         case .pencil: "pencil"
         case .highlighter: "highlighter"
+        case .text: "textformat"
         }
     }
 
@@ -57,14 +60,14 @@ nonisolated enum EditorTool: String, CaseIterable, Sendable {
     var isEffect: Bool {
         switch self {
         case .redact, .pixelate, .blur: true
-        case .select, .rectangle, .arrow, .ellipse, .line, .pencil, .highlighter: false
+        case .select, .rectangle, .arrow, .ellipse, .line, .pencil, .highlighter, .text: false
         }
     }
 
     /// Select, then Redact first among the drawing tools, because it is the only safe redaction.
     /// 4b appends its tools here, in toolbar order.
     static var toolbarOrder: [EditorTool] {
-        [.select, .redact, .pixelate, .blur, .rectangle, .arrow, .ellipse, .line, .pencil, .highlighter]
+        [.select, .redact, .pixelate, .blur, .rectangle, .arrow, .ellipse, .line, .pencil, .highlighter, .text]
     }
 
     /// The tool whose letter is `key`, in either case; nil for any other key.

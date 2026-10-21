@@ -411,4 +411,107 @@ struct EditorModelTests {
         add(redaction(), to: model)
         #expect(await model.renderExport() == nil)
     }
+
+    /// Typing lives in the edit's own UndoManager. The editor's manager sees one step, on commit.
+    @Test func textEditCommitsOnceWithoutEditorUndo() throws {
+        let model = makeModel()
+        model.tool = .text
+        let click = CGPoint(x: 6, y: 5)
+        model.beginTextEditing(at: click, existing: nil)
+        #expect(model.isEditingText)
+        let typing = try #require(model.textUndoManager)
+        #expect(typing !== model.undoManager)
+        #expect(typing.groupsByEvent)
+        let editing = try #require(model.textEditing)
+        #expect(editing.original == nil)
+        #expect(editing.box.string.isEmpty)
+        #expect(editing.box.fontSize == EditorPalette.defaultTextSizePoints * 2)
+        #expect(editing.box.color == model.strokeColor)
+        #expect(editing.box.origin == TextLayout.origin(forClickAt: click, fontSize: editing.box.fontSize))
+        #expect(!model.hasUnsavedChanges)
+
+        model.updateEditingText("Hi")
+        model.updateEditingText("Hi\nthere\n")
+        #expect(model.document.annotations.isEmpty)
+        #expect(!model.undoManager.canUndo)
+        // Typed text counts as unsaved, so ⌘W and Quit ask before it is lost.
+        #expect(model.hasUnsavedChanges)
+
+        model.commitTextEditing()
+        #expect(!model.isEditingText)
+        #expect(model.textUndoManager == nil)
+        guard case .text(let box)? = model.document.annotations.first else {
+            Issue.record("no text")
+            return
+        }
+        #expect(model.document.annotations.count == 1)
+        #expect(box.id == editing.box.id)
+        #expect(box.string == "Hi\nthere")
+        #expect(box.origin == editing.box.origin)
+        #expect(model.selection == box.id)
+        #expect(model.undoManager.undoActionName == "Add Text")
+        // Committing again does nothing, and one undo removes the whole edit.
+        model.commitTextEditing()
+        #expect(undoAll(model) == [AnnotationDocument(annotations: [])])
+    }
+
+    @Test func reEditReplacesInPlaceAndBlankDeletes() throws {
+        let model = makeModel()
+        let shape = add(box(), to: model)
+        let text = add(.text(TextBox(id: UUID(), string: "Old", origin: CGPoint(x: 2, y: 2), fontSize: 24, color: red)),
+                       to: model)
+
+        model.beginTextEditing(at: .zero, existing: text.id)
+        #expect(model.textEditing?.box.string == "Old")
+        #expect(model.textEditing?.original?.id == text.id)
+        model.updateEditingText("New")
+        model.commitTextEditing()
+        #expect(model.document.annotations.map(\.id) == [shape.id, text.id])
+        #expect(model.undoManager.undoActionName == "Edit Text")
+        guard case .text(let edited)? = model.document.annotation(id: text.id) else {
+            Issue.record("no text")
+            return
+        }
+        #expect(edited.string == "New")
+        #expect(edited.origin == CGPoint(x: 2, y: 2))
+        #expect(edited.fontSize == 24)
+        let afterEdit = model.document
+
+        // Escape keeps what was committed and adds no step.
+        model.beginTextEditing(at: .zero, existing: text.id)
+        model.updateEditingText("Discarded")
+        model.cancelTextEditing()
+        #expect(model.document == afterEdit)
+        #expect(model.undoManager.undoActionName == "Edit Text")
+        #expect(model.selection == text.id)
+        #expect(model.textUndoManager == nil)
+
+        // The size keys resize the selected text as one step, in image pixels.
+        model.applyTextSize(points: 28)
+        model.applyTextSize(points: 40)
+        #expect(model.textSizePoints == 40)
+        guard case .text(let resized)? = model.document.annotation(id: text.id) else {
+            Issue.record("no text")
+            return
+        }
+        #expect(resized.fontSize == 80)
+        #expect(model.undoManager.undoActionName == "Text Size")
+        model.undoManager.undo()
+        #expect(model.document == afterEdit)
+
+        // Clearing the text deletes it in one step, and undo brings it back.
+        model.beginTextEditing(at: .zero, existing: text.id)
+        model.updateEditingText(" \n ")
+        model.commitTextEditing()
+        #expect(model.document.annotation(id: text.id) == nil)
+        #expect(model.undoManager.undoActionName == "Delete")
+        model.undoManager.undo()
+        #expect(model.document == afterEdit)
+
+        // A new box left blank adds nothing.
+        model.beginTextEditing(at: CGPoint(x: 8, y: 8), existing: nil)
+        model.commitTextEditing()
+        #expect(model.document == afterEdit)
+        #expect(!model.isEditingText)
+    }
 }

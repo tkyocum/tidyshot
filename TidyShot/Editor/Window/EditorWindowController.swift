@@ -154,12 +154,14 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
 
     /// ⌘S: writes over the record's file, or runs Save As… when there is none to write over.
     @objc func saveDocument(_ sender: Any?) {
+        canvasView.commitTextEditing()
         guard permits(#selector(saveDocument(_:))) else { return }
         runDocumentTask { await self.performSave() }
     }
 
     /// ⇧⌘S: always available, also while the record uploads or is deleted.
     @objc func saveDocumentAs(_ sender: Any?) {
+        canvasView.commitTextEditing()
         guard permits(#selector(saveDocumentAs(_:))) else { return }
         runDocumentTask { await self.performSaveAs() }
     }
@@ -172,6 +174,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
     }
 
     @objc func copyImage(_ sender: Any?) {
+        canvasView.commitTextEditing()
         guard permits(#selector(copyImage(_:))) else { return }
         runDocumentTask {
             await self.exportAndDeliver(marksSaved: false) { image in
@@ -184,12 +187,14 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
     /// ⌘U: uploads the edit at once. Once the upload is enqueued the window closes; the link
     /// reaches the clipboard when the upload finishes.
     @objc func uploadDocument(_ sender: Any?) {
+        canvasView.commitTextEditing()
         guard permits(#selector(uploadDocument(_:))) else { return }
         runDocumentTask { await self.performUpload(asNew: false) }
     }
 
     /// ⌥⌘U, a shortcut only: as ⌘U, under a new link.
     @objc func uploadDocumentAsNew(_ sender: Any?) {
+        canvasView.commitTextEditing()
         guard permits(#selector(uploadDocumentAsNew(_:))) else { return }
         runDocumentTask { await self.performUpload(asNew: true) }
     }
@@ -278,10 +283,25 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
 
     // MARK: Zoom
 
-    @objc func zoomToFit(_ sender: Any?) { canvasView.fitToView() }
-    @objc func zoomToActualSize(_ sender: Any?) { canvasView.zoom(to: 1 / model.scale) }
-    @objc func zoomIn(_ sender: Any?) { canvasView.zoom(by: 1.25) }
-    @objc func zoomOut(_ sender: Any?) { canvasView.zoom(by: 1 / 1.25) }
+    @objc func zoomToFit(_ sender: Any?) {
+        canvasView.commitTextEditing()
+        canvasView.fitToView()
+    }
+
+    @objc func zoomToActualSize(_ sender: Any?) {
+        canvasView.commitTextEditing()
+        canvasView.zoom(to: 1 / model.scale)
+    }
+
+    @objc func zoomIn(_ sender: Any?) {
+        canvasView.commitTextEditing()
+        canvasView.zoom(by: 1.25)
+    }
+
+    @objc func zoomOut(_ sender: Any?) {
+        canvasView.commitTextEditing()
+        canvasView.zoom(by: 1 / 1.25)
+    }
 
     // MARK: NSUserInterfaceValidations
 
@@ -304,6 +324,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
     // MARK: Closing
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
+        canvasView.commitTextEditing()
         guard model.hasUnsavedChanges else { return true }
         Task {
             if await askToSaveBeforeClosing() {
@@ -319,6 +340,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
     /// there is nothing to write over); it becomes Save As… when this controller's own validation
     /// refuses Save.
     func askToSaveBeforeClosing() async -> Bool {
+        canvasView.commitTextEditing()
         guard model.hasUnsavedChanges else { return true }
         guard let window, window.attachedSheet == nil, !isPerformingAction else {
             NSSound.beep()

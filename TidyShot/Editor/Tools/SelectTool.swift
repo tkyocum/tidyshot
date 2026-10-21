@@ -5,7 +5,8 @@ import AppKit
 /// effect, and that annotation becomes the selection. A hit on another annotation's handle selects
 /// and moves it. A press on empty space deselects. A drag moves the selection (Shift keeps the
 /// dominant axis) or resizes it by the pressed handle (Shift squares a box). The changed copy lives
-/// in `canvas.transient`, with the annotation's own id, until mouseUp commits it once.
+/// in `canvas.transient`, with the annotation's own id, until mouseUp commits it once. A
+/// double-click on a text edits it again.
 final class SelectTool: CanvasTool {
     private enum Gesture {
         case move(original: Annotation)
@@ -50,6 +51,11 @@ final class SelectTool: CanvasTool {
         guard let top = HitTester.topmost(in: canvas.document, at: input.point, tolerance: tolerance),
               let annotation = canvas.document.annotation(id: top.id) else {
             canvas.selection = nil
+            return
+        }
+        // A double-click on a text annotation edits it again (spec 2.6, Phase 4b).
+        if input.clickCount >= 2, case .text = annotation {
+            canvas.beginTextEditing(at: input.point, existing: annotation.id)
             return
         }
         canvas.selection = annotation.id

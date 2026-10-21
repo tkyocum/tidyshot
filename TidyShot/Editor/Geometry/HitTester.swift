@@ -23,7 +23,7 @@ nonisolated enum HitTester {
     /// top-left corner: 0 top-left, 1 top-middle, 2 top-right, 3 middle-right, 4 bottom-right,
     /// 5 bottom-middle, 6 bottom-left, 7 middle-left. Top is minY. A segment (arrow or line) has
     /// two: 0 the tail (`from`) and 1 the head (`to`). A stroke has none: it moves and does not
-    /// resize.
+    /// resize. Text has none: its size comes from the size keys.
     static func handles(for annotation: Annotation) -> [CGPoint] {
         switch annotation {
         case .rectangle(let shape), .ellipse(let shape):
@@ -33,6 +33,8 @@ nonisolated enum HitTester {
         case .arrow(let segment), .line(let segment):
             [segment.from, segment.to]
         case .pencil, .highlighter:
+            []
+        case .text:
             []
         }
     }
@@ -86,7 +88,7 @@ nonisolated enum HitTester {
             default: break
             }
             return .line(segment)
-        case .pencil, .highlighter:
+        case .pencil, .highlighter, .text:
             return annotation
         case .redact(var region, let fill):
             region.rect = resizedRect(region.rect, handle: handle, to: point, square: square)
@@ -199,6 +201,8 @@ nonisolated enum HitTester {
             return distance(from: point, toSegment: segment.from, segment.to) <= segment.lineWidth / 2 + tolerance
         case .pencil(let stroke), .highlighter(let stroke):
             return strokeContains(stroke, point, tolerance: tolerance)
+        case .text(let box):
+            return TextLayout.frame(for: box).insetBy(dx: -tolerance, dy: -tolerance).contains(point)
         case .redact(let region, _), .blur(let region, _), .pixelate(let region, _):
             return region.rect.standardized.insetBy(dx: -tolerance, dy: -tolerance).contains(point)
         }

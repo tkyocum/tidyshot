@@ -1,13 +1,15 @@
 import Foundation
 
 /// The tool object behind each `EditorTool`. The switch is exhaustive with no default, so a new
-/// case does not compile until it is wired here.
+/// case does not compile until it is wired here. Text's tool only starts typing; the model commits
+/// the text when the edit ends.
 func makeTool(for tool: EditorTool) -> any CanvasTool {
     switch tool {
     case .select: return SelectTool()
     case .redact, .pixelate, .blur, .rectangle, .ellipse: return RectDragTool(tool: tool)
     case .arrow, .line: return TwoPointTool(tool: tool)
     case .pencil, .highlighter: return PencilTool(tool: tool)
+    case .text: return TextTool()
     }
 }
 

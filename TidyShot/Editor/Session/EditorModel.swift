@@ -8,6 +8,15 @@ nonisolated enum EffectParameter: Sendable {
     case block
 }
 
+/// A text annotation being typed (spec 2.6, Phase 4b). The string follows the text view on every
+/// change, so the commit needs nothing from AppKit.
+nonisolated struct TextEditing: Equatable, Sendable {
+    /// The box as it would be committed now. A re-edit keeps the annotation's id.
+    var box: TextBox
+    /// The committed text being edited again; nil for a new box.
+    let original: TextBox?
+}
+
 /// One editor's state: the capture, the annotation document and the one path that changes it.
 ///
 /// `commit(_:actionName:coalescingKey:)` is the only write. Each call is one explicit undo group
@@ -25,6 +34,8 @@ final class EditorModel: CanvasEditing {
         static let lineWidth = "Line Width"
         static let blurRadius = "Blur Radius"
         static let block = "Block Size"
+        static let editText = "Edit Text"
+        static let textSize = "Text Size"
     }
 
     let recordID: UUID
@@ -36,7 +47,9 @@ final class EditorModel: CanvasEditing {
     private(set) var document = AnnotationDocument(annotations: [])
     /// The document as last saved; empty when the editor opens.
     private var savedDocument = AnnotationDocument(annotations: [])
-    var hasUnsavedChanges: Bool { document != savedDocument }
+    /// Also true while typed text would change the document, so ⌘W and Quit ask before it is lost
+    /// (`AppCoordinator.hasUnsavedEditors` reads this).
+    var hasUnsavedChanges: Bool { document != savedDocument || textEditChangesDocument }
 
     var selection: UUID? {
         didSet { if selection != oldValue { coalescingKey = nil } }
@@ -49,9 +62,14 @@ final class EditorModel: CanvasEditing {
             tileCache.reconcile(document: document, transient: transient)
         }
     }
-    /// Redaction is the reason the editor exists, so it opens with Redact.
+    /// Redaction is the reason the editor exists, so it opens with Redact. A tool change commits the
+    /// text being typed.
     var tool: EditorTool = .redact {
-        didSet { if tool != oldValue { transient = nil } }
+        didSet {
+            guard tool != oldValue else { return }
+            transient = nil
+            commitTextEditing()
+        }
     }
     var strokeColor: RGBA
     var redactColor: RGBA
@@ -62,10 +80,19 @@ final class EditorModel: CanvasEditing {
     var highlightWidthPoints = EditorPalette.highlighterWidthPoints
     var blurRadiusPoints: CGFloat
     var blockPoints: CGFloat
+    /// The size for new text, in points; keys 1 to 6 with the Text tool change it.
+    var textSizePoints: CGFloat = EditorPalette.defaultTextSizePoints
+    /// The text being typed, or nil. While it is set, CanvasView shows an NSTextView over it.
+    private(set) var textEditing: TextEditing?
+    var isEditingText: Bool { textEditing != nil }
     var transform: CanvasTransform
     var zoom: CGFloat { transform.zoom }
 
     @ObservationIgnored let undoManager: UndoManager
+    /// The edit's own UndoManager, made by `beginTextEditing` and emptied and dropped when the edit
+    /// ends. The text view's delegate returns it from `undoManager(for:)`, so typing never registers
+    /// in `undoManager` (groupsByEvent = false). It groups by event, as NSTextView's typing needs.
+    @ObservationIgnored private(set) var textUndoManager: UndoManager?
     @ObservationIgnored let tileCache: RedactionTileCache
     /// The last commit's key. Cleared by any other commit, by undo, by redo and by a selection change.
     @ObservationIgnored private var coalescingKey: String?
@@ -166,6 +193,8 @@ final class EditorModel: CanvasEditing {
             return .line(Segment(id: id, from: start, to: end, color: strokeColor, lineWidth: lineWidthPoints * scale))
         case .pencil, .highlighter:
             return nil  // Strokes come from `makeStroke`.
+        case .text:
+            return nil  // Text is placed by `beginTextEditing`, not by a drag.
         }
     }
 
@@ -211,6 +240,74 @@ final class EditorModel: CanvasEditing {
         selection = (document.drawings.last ?? document.effects.last)?.id
     }
 
+    // MARK: Text
+
+    /// Starts typing (the Text tool's click, or a double-click on a text with Select): the text
+    /// annotation `existing` again, or else a new box whose first line is centred on `point`, in
+    /// the stroke colour at `textSizePoints`. An edit already running is committed first.
+    func beginTextEditing(at point: CGPoint, existing id: UUID?) {
+        commitTextEditing()
+        transient = nil
+        if let id, case .text(let box)? = document.annotation(id: id) {
+            textEditing = TextEditing(box: box, original: box)
+        } else {
+            let fontSize = textSizePoints * scale
+            let box = TextBox(id: UUID(), string: "", origin: TextLayout.origin(forClickAt: point, fontSize: fontSize),
+                              fontSize: fontSize, color: strokeColor)
+            textEditing = TextEditing(box: box, original: nil)
+        }
+        selection = nil
+        textUndoManager = UndoManager()
+    }
+
+    /// The text view's string after each change.
+    func updateEditingText(_ string: String) {
+        guard let editing = textEditing, editing.box.string != string else { return }
+        textEditing?.box.string = string
+    }
+
+    /// One editor commit for the whole edit: `Add Text` for a new box, `Edit Text` for a re-edit
+    /// (replaced in place, so the creation order is kept), `Delete` for a re-edit left blank, and
+    /// nothing for a new box left blank. Trailing newlines are dropped. The edit's UndoManager is
+    /// emptied and dropped first, so nothing typed can be undone after the commit.
+    func commitTextEditing() {
+        guard let editing = textEditing else { return }
+        endTextEditing()
+        guard let string = TextLayout.committedString(editing.box.string) else {
+            if let original = editing.original {
+                commit(document.removing(id: original.id), actionName: ActionName.delete)
+            }
+            return
+        }
+        var box = editing.box
+        box.string = string
+        if editing.original != nil {
+            commit(document.replacing(.text(box)), actionName: ActionName.editText)
+            selection = box.id
+        } else {
+            commitNewShape(.text(box))
+        }
+    }
+
+    /// Escape: the typing is dropped. A re-edited annotation stays as committed, selected.
+    func cancelTextEditing() {
+        guard let editing = textEditing else { return }
+        endTextEditing()
+        selection = editing.original?.id
+    }
+
+    private func endTextEditing() {
+        textUndoManager?.removeAllActions()
+        textUndoManager = nil
+        textEditing = nil
+    }
+
+    private var textEditChangesDocument: Bool {
+        guard let editing = textEditing else { return false }
+        if let original = editing.original { return editing.box != original }
+        return TextLayout.committedString(editing.box.string) != nil
+    }
+
     func markSaved() {
         savedDocument = document
     }
@@ -220,7 +317,7 @@ final class EditorModel: CanvasEditing {
     /// The colour the toolbar circle shows: the selected annotation's, else the default
     /// `applyColor` would change.
     var activeColor: RGBA {
-        Self.color(of: selectedAnnotation) ?? (editsRedactColor ? redactColor : editsHighlighter ? highlightColor : strokeColor)
+        textEditing?.box.color ?? Self.color(of: selectedAnnotation) ?? (editsRedactColor ? redactColor : editsHighlighter ? highlightColor : strokeColor)
     }
 
     /// Redact, or Select with a redaction selected, edits the fill; everything else the stroke.
@@ -251,6 +348,7 @@ final class EditorModel: CanvasEditing {
         } else {
             strokeColor = color
         }
+        if textEditing != nil { textEditing?.box.color = color }
         guard let selected = selectedAnnotation else { return }
         commit(document.replacing(selected.withColor(color)), actionName: ActionName.color,
                coalescingKey: "\(ActionName.color)-\(selected.id.uuidString)")
@@ -261,6 +359,15 @@ final class EditorModel: CanvasEditing {
         guard let selected = selectedAnnotation else { return }
         commit(document.replacing(selected.withLineWidth(points * scale)), actionName: ActionName.lineWidth,
                coalescingKey: "\(ActionName.lineWidth)-\(selected.id.uuidString)")
+    }
+
+    /// Keys 1 to 6 with the Text tool: the size for new text, and for the selected text as one
+    /// coalesced step.
+    func applyTextSize(points: CGFloat) {
+        textSizePoints = points
+        guard let selected = selectedAnnotation, case .text = selected else { return }
+        commit(document.replacing(selected.withFontSize(points * scale)), actionName: ActionName.textSize,
+               coalescingKey: "\(ActionName.textSize)-\(selected.id.uuidString)")
     }
 
     func applyEffectParameter(_ parameter: EffectParameter, points: CGFloat) {
@@ -290,6 +397,7 @@ final class EditorModel: CanvasEditing {
         case .rectangle(let box)?, .ellipse(let box)?: return box.color
         case .arrow(let segment)?, .line(let segment)?: return segment.color
         case .pencil(let stroke)?, .highlighter(let stroke)?: return stroke.color
+        case .text(let box)?: return box.color
         case .redact(_, let fill)?: return fill
         default: return nil
         }

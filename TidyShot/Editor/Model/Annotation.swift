@@ -37,8 +37,20 @@ nonisolated struct Region: Codable, Equatable, Sendable {
     var rect: CGRect
 }
 
+/// A text annotation. `origin` is the top-left corner of its frame (`TextLayout.frame(for:)`), and
+/// `fontSize` is in image pixels: the points chosen in the UI times the capture scale. Lines are
+/// split at newlines only; nothing wraps.
+nonisolated struct TextBox: Codable, Equatable, Sendable {
+    let id: UUID
+    var string: String
+    var origin: CGPoint
+    var fontSize: CGFloat
+    var color: RGBA
+}
+
 /// One edit on a capture. Effects (redact, blur, pixelate) belong to the base layer and render
-/// beneath every drawing; drawings (rectangle, ellipse, arrow, line) render above them.
+/// beneath every drawing; drawings (rectangle, ellipse, arrow, line, pencil, highlighter, text)
+/// render above them.
 nonisolated enum Annotation: Identifiable, Codable, Equatable, Sendable {
     case rectangle(ShapeBox)
     case arrow(Segment)
@@ -48,6 +60,7 @@ nonisolated enum Annotation: Identifiable, Codable, Equatable, Sendable {
     case pencil(Stroke)
     /// Freehand in a translucent colour that multiplies with what is beneath it.
     case highlighter(Stroke)
+    case text(TextBox)
     case redact(Region, fill: RGBA)
     /// `radius` is the Gaussian sigma.
     case blur(Region, radius: CGFloat)
@@ -58,13 +71,14 @@ nonisolated enum Annotation: Identifiable, Codable, Equatable, Sendable {
         case .rectangle(let box), .ellipse(let box): box.id
         case .arrow(let segment), .line(let segment): segment.id
         case .pencil(let stroke), .highlighter(let stroke): stroke.id
+        case .text(let box): box.id
         case .redact(let region, _), .blur(let region, _), .pixelate(let region, _): region.id
         }
     }
 
     var isEffect: Bool {
         switch self {
-        case .rectangle, .ellipse, .arrow, .line, .pencil, .highlighter: false
+        case .rectangle, .ellipse, .arrow, .line, .pencil, .highlighter, .text: false
         case .redact, .blur, .pixelate: true
         }
     }
@@ -72,7 +86,7 @@ nonisolated enum Annotation: Identifiable, Codable, Equatable, Sendable {
     /// The region an effect covers; nil for a drawing.
     var effectRect: CGRect? {
         switch self {
-        case .rectangle, .ellipse, .arrow, .line, .pencil, .highlighter: nil
+        case .rectangle, .ellipse, .arrow, .line, .pencil, .highlighter, .text: nil
         case .redact(let region, _), .blur(let region, _), .pixelate(let region, _): region.rect
         }
     }
@@ -86,6 +100,7 @@ nonisolated enum Annotation: Identifiable, Codable, Equatable, Sendable {
         case .line: "Line"
         case .pencil: "Pencil"
         case .highlighter: "Highlighter"
+        case .text: "Text"
         case .redact: "Redact"
         case .blur: "Blur"
         case .pixelate: "Pixelate"
@@ -115,6 +130,9 @@ nonisolated enum Annotation: Identifiable, Codable, Equatable, Sendable {
         case .highlighter(var stroke):
             stroke.points = stroke.points.map { CGPoint(x: $0.x + delta.dx, y: $0.y + delta.dy) }
             return .highlighter(stroke)
+        case .text(var box):
+            box.origin = CGPoint(x: box.origin.x + delta.dx, y: box.origin.y + delta.dy)
+            return .text(box)
         case .redact(var region, let fill):
             region.rect = region.rect.offsetBy(dx: delta.dx, dy: delta.dy)
             return .redact(region, fill: fill)
@@ -149,6 +167,9 @@ nonisolated enum Annotation: Identifiable, Codable, Equatable, Sendable {
         case .highlighter(var stroke):
             stroke.color = EditorPalette.highlighterColor(from: color)
             return .highlighter(stroke)
+        case .text(var box):
+            box.color = color
+            return .text(box)
         case .redact(let region, _):
             return .redact(region, fill: color)
         case .blur, .pixelate:
@@ -156,7 +177,8 @@ nonisolated enum Annotation: Identifiable, Codable, Equatable, Sendable {
         }
     }
 
-    /// The line width of a shape, in image pixels. Effects come back unchanged.
+    /// The line width of a shape, in image pixels. Effects and text come back unchanged: text has a
+    /// size, not a line width.
     func withLineWidth(_ width: CGFloat) -> Annotation {
         switch self {
         case .rectangle(var box):
@@ -177,7 +199,7 @@ nonisolated enum Annotation: Identifiable, Codable, Equatable, Sendable {
         case .highlighter(var stroke):
             stroke.lineWidth = width
             return .highlighter(stroke)
-        case .redact, .blur, .pixelate:
+        case .text, .redact, .blur, .pixelate:
             return self
         }
     }
@@ -190,8 +212,16 @@ nonisolated enum Annotation: Identifiable, Codable, Equatable, Sendable {
             return .blur(region, radius: value)
         case .pixelate(let region, _):
             return .pixelate(region, block: value)
-        case .rectangle, .ellipse, .arrow, .line, .pencil, .highlighter, .redact:
+        case .rectangle, .ellipse, .arrow, .line, .pencil, .highlighter, .text, .redact:
             return self
         }
+    }
+
+    /// A text annotation at `size` image pixels, keeping its top-left corner. Everything else comes
+    /// back unchanged.
+    func withFontSize(_ size: CGFloat) -> Annotation {
+        guard case .text(var box) = self else { return self }
+        box.fontSize = size
+        return .text(box)
     }
 }

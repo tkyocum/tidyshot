@@ -177,6 +177,7 @@ extension EditorWindowController: NSToolbarDelegate, NSToolbarItemValidation {
     /// view centre, through `CanvasView` like ⌘=, so the canvas stops refitting on resize and
     /// redraws at once.
     @objc func zoomToPercent(_ sender: NSMenuItem) {
+        canvasView.commitTextEditing()
         canvasView.zoom(to: CGFloat(sender.tag) / 100 / model.scale)
     }
 

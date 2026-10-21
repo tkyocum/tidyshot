@@ -8,8 +8,9 @@ struct KeyRoutingTests {
     let ignored = KeyRouting.Action.none
 
     func action(_ characters: String?, command: Bool = false, control: Bool = false, option: Bool = false,
-                editing: Bool = false) -> KeyRouting.Action {
-        KeyRouting.action(characters: characters, command: command, control: control, option: option, isEditingText: editing)
+                editing: Bool = false, tool: EditorTool = .select) -> KeyRouting.Action {
+        KeyRouting.action(characters: characters, command: command, control: control, option: option,
+                          isEditingText: editing, tool: tool)
     }
 
     func matched(_ characters: String, shift: Bool = false, option: Bool = false, command: Bool = true,
@@ -143,5 +144,50 @@ struct KeyRoutingTests {
         #expect(matched("0", editing: true) == .zoomToFit)
         // ⌘X has no row, so it reaches the text view as well.
         #expect(matched("x", editing: true) == nil)
+    }
+
+    /// With the Text tool active the digits pick text sizes instead of line widths.
+    @Test func digitsPickTextSizesForTextTool() {
+        #expect(EditorPalette.textSizesPoints == [12, 16, 20, 28, 40, 56])
+        #expect(EditorPalette.textSizesPoints.count == EditorPalette.lineWidthsPoints.count)
+        #expect(EditorPalette.defaultTextSizePoints == 20)
+        for digit in 1...6 {
+            #expect(action(String(digit), tool: .text) == .textSize(index: digit - 1))
+            #expect(action(String(digit), tool: .rectangle) == .lineWidth(index: digit - 1))
+            #expect(action(String(digit), tool: .select) == .lineWidth(index: digit - 1))
+        }
+        #expect(EditorPalette.textSizesPoints[3] == 28)
+        // Letters still pick tools, T among them, and other keys stay ignored.
+        #expect(action("v", tool: .text) == .selectTool(.select))
+        #expect(action("t") == .selectTool(.text))
+        for key in ["0", "7", "!"] {
+            #expect(action(key, tool: .text) == ignored)
+        }
+        #expect(action("1", command: true, tool: .text) == ignored)
+        // While typing, every key belongs to the text view.
+        #expect(action("3", editing: true, tool: .text) == ignored)
+        #expect(action("t", editing: true, tool: .text) == ignored)
+    }
+
+    /// While typing, EditorWindow sends these to the text view itself, so they work whether or not
+    /// the never-drawn main menu has an Edit menu. The table leaves every one of them alone.
+    @Test func textEditingChordsGoToTheTextView() {
+        let expected: [(characters: String, shift: Bool, selector: String)] = [
+            ("c", false, "copy:"), ("x", false, "cut:"), ("v", false, "paste:"),
+            ("a", false, "selectAll:"), ("z", false, "undo:"), ("Z", true, "redo:"),
+        ]
+        for row in expected {
+            #expect(TextEditingChord.selectorName(characters: row.characters, command: true, shift: row.shift,
+                                                  option: false, control: false) == row.selector)
+            #expect(matched(row.characters, shift: row.shift, editing: true) == nil)
+        }
+        // Command is required; Option, Control or another key is something else.
+        #expect(TextEditingChord.selectorName(characters: "c", command: false, shift: false, option: false, control: false) == nil)
+        #expect(TextEditingChord.selectorName(characters: "c", command: true, shift: false, option: true, control: false) == nil)
+        #expect(TextEditingChord.selectorName(characters: "c", command: true, shift: false, option: false, control: true) == nil)
+        #expect(TextEditingChord.selectorName(characters: "s", command: true, shift: false, option: false, control: false) == nil)
+        // ⇧⌘C stays Copy Image, which commits the text and copies the picture.
+        #expect(TextEditingChord.selectorName(characters: "C", command: true, shift: true, option: false, control: false) == nil)
+        #expect(matched("C", shift: true, editing: true) == .copyImage)
     }
 }

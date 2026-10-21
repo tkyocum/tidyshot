@@ -20,6 +20,8 @@ final class FakeCanvasEditing: CanvasEditing {
     var selection: UUID?
     private(set) var commits: [Commit] = []
     private(set) var made: [(tool: EditorTool, from: CGPoint, to: CGPoint)] = []
+    /// Each `beginTextEditing` call.
+    private(set) var textBegun: [(point: CGPoint, existing: UUID?)] = []
     private(set) var strokes: [(tool: EditorTool, points: [CGPoint])] = []
 
     init(_ annotations: [Annotation] = []) {
@@ -60,6 +62,10 @@ final class FakeCanvasEditing: CanvasEditing {
         case .highlighter: return .highlighter(stroke)
         default: return nil
         }
+    }
+
+    func beginTextEditing(at point: CGPoint, existing id: UUID?) {
+        textBegun.append((point: point, existing: id))
     }
 }
 
@@ -490,5 +496,42 @@ struct CanvasToolTests {
         #expect(canvas.transient == nil)
         #expect(canvas.commits.isEmpty)
         #expect(canvas.document.annotations == [original])
+    }
+
+    /// The Text tool starts typing on a click and never commits; the edit commits when it ends.
+    @Test func textToolClickPlacesOrReEditsText() throws {
+        let box = TextBox(id: UUID(), string: "Hello", origin: CGPoint(x: 100, y: 100), fontSize: 40, color: red)
+        let canvas = FakeCanvasEditing([.text(box)])
+        let tool = makeTool(for: .text)
+        #expect(tool is TextTool)
+        #expect(tool.cursor == NSCursor.iBeam)
+        let inside = CGPoint(x: TextLayout.frame(for: box).midX, y: TextLayout.frame(for: box).midY)
+
+        // A click on empty canvas starts a new box at the press, within the tiny-drag rule.
+        tool.mouseDown(at(10, 10), on: canvas)
+        tool.mouseUp(at(10.5, 10), on: canvas)
+        // A click on a text edits it again.
+        tool.mouseDown(at(inside.x, inside.y), on: canvas)
+        tool.mouseUp(at(inside.x, inside.y), on: canvas)
+        // A drag places nothing.
+        tool.mouseDown(at(10, 10), on: canvas)
+        tool.mouseDragged(at(40, 40), on: canvas)
+        tool.mouseUp(at(40, 40), on: canvas)
+        #expect(canvas.textBegun.map(\.point) == [CGPoint(x: 10, y: 10), inside])
+        #expect(canvas.textBegun.map(\.existing) == [nil, box.id])
+        #expect(canvas.commits.isEmpty)
+        #expect(canvas.transient == nil)
+
+        // With Select, a click selects the text and a double-click edits it again.
+        let select = makeTool(for: .select)
+        select.mouseDown(ToolInput(point: inside, clickCount: 1), on: canvas)
+        select.mouseUp(ToolInput(point: inside, clickCount: 1), on: canvas)
+        #expect(canvas.selection == box.id)
+        #expect(canvas.textBegun.count == 2)
+        select.mouseDown(ToolInput(point: inside, clickCount: 2), on: canvas)
+        select.mouseUp(ToolInput(point: inside, clickCount: 2), on: canvas)
+        #expect(canvas.textBegun.count == 3)
+        #expect(canvas.textBegun.last?.existing == box.id)
+        #expect(canvas.commits.isEmpty)
     }
 }
