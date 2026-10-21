@@ -18,4 +18,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
     }
+
+    /// Quitting does not call `windowShouldClose`, so an editor with unsaved changes is reviewed
+    /// here: the quit waits (`.terminateLater`) while `reviewEditorsBeforeQuit()` shows the close
+    /// sheet in each one, and goes ahead only when none was cancelled.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard !Self.isRunningTests, AppCoordinator.shared.hasUnsavedEditors else { return .terminateNow }
+        Task {
+            let proceed = await AppCoordinator.shared.reviewEditorsBeforeQuit()
+            sender.reply(toApplicationShouldTerminate: proceed)
+        }
+        return .terminateLater
+    }
 }

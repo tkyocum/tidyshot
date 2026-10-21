@@ -839,6 +839,107 @@ final class AppCoordinator {
         }
     }
 
+    // MARK: Editor
+
+    /// Open annotation editors, one per record.
+    @ObservationIgnored private var editors: [UUID: EditorWindowController] = [:]
+
+    /// True while any open editor has changes that were not saved.
+    var hasUnsavedEditors: Bool {
+        editors.values.contains { $0.model.hasUnsavedChanges }
+    }
+
+    /// Opens the annotation editor for `recordID`, or brings its open editor forward. The PNG is
+    /// read as Copy Image reads it (`imageData(of:)`: the local file, else the uploaded object),
+    /// and decoded in a detached task, which also recovers the capture's scale from its DPI.
+    /// Task 16 adds the in-memory image of the capture just taken (`EditorInput`).
+    func openEditor(recordID: UUID) {
+        if let open = editors[recordID] {
+            open.present()
+            return
+        }
+        guard let record = history.record(id: recordID) else { return }
+        Task {
+            do {
+                let png = try await imageData(of: record)
+                let decoded = await Task.detached(priority: .userInitiated) { ImageEncoder.decode(png) }.value
+                guard let decoded else { throw CopyImageError.notAnImage }
+                showEditor(recordID: recordID, image: ScaledImage(image: decoded.image, scale: decoded.scale))
+            } catch {
+                notifier.notifyError(error.localizedDescription, title: "Could not open the capture")
+            }
+        }
+    }
+
+    /// Builds the model and the window and shows them. Re-checked after the load's awaits: an
+    /// editor opened meanwhile is brought forward instead, and a record deleted meanwhile opens
+    /// nothing.
+    private func showEditor(recordID: UUID, image: ScaledImage) {
+        if let open = editors[recordID] {
+            open.present()
+            return
+        }
+        guard let record = history.record(id: recordID) else { return }
+        // A save-folder file names the window and gives it a proxy icon; a pending file in the
+        // container is not shown.
+        let fileURL = record.fileIsTemporary ? nil : record.fileURL
+        let title = fileURL?.lastPathComponent
+            ?? "Capture \(record.timestamp.formatted(date: .omitted, time: .shortened))"
+        let model = EditorModel(recordID: recordID, image: image, renderer: RedactionRenderer.shared, defaults: .standard)
+        let controller = EditorWindowController(model: model, actions: editorActions(for: recordID), title: title,
+                                                representedURL: fileURL,
+                                                cascadeFrom: NSApp.orderedWindows.first { $0 is EditorWindow })
+        controller.onClose = { [weak self] closed in self?.editorDidClose(closed) }
+        editors[recordID] = controller
+        Task { await RedactionRenderer.shared.warmUp(with: image.image) }
+        controller.present()
+    }
+
+    /// Stubs that only log, so the window, tools and undo can be used before the actions exist:
+    /// Task 12 wires Save Copy and Copy, Task 13 Save, Task 15 Upload. A stub reports failure, so
+    /// nothing is marked saved and the close sheet's Save keeps the window open.
+    private func editorActions(for recordID: UUID) -> EditorActions {
+        EditorActions(
+            save: { image in
+                NSLog("Editor: Save of \(recordID) (\(image.image.width)x\(image.image.height) @\(image.scale)x) is not wired yet")
+                return false
+            },
+            saveCopy: { _ in
+                NSLog("Editor: Save Copy of \(recordID) is not wired yet")
+                return false
+            },
+            copy: { _ in
+                NSLog("Editor: Copy of \(recordID) is not wired yet")
+            },
+            upload: { _, asNew in
+                NSLog("Editor: Upload\(asNew ? " as New" : "") of \(recordID) is not wired yet")
+                return false
+            })
+    }
+
+    /// Drops a closed editor. When the last one closes, the renderer frees its caches.
+    private func editorDidClose(_ controller: EditorWindowController) {
+        let id = controller.model.recordID
+        guard editors[id] === controller else { return }
+        editors[id] = nil
+        if editors.isEmpty {
+            Task { await RedactionRenderer.shared.clearCaches() }
+        }
+    }
+
+    /// Quitting does not call `windowShouldClose`, so AppDelegate calls this while it holds the
+    /// quit (`.terminateLater`). Each editor with unsaved changes comes forward and shows the
+    /// close sheet in turn. False (Cancel, or a Save that failed) stops the quit; editors already
+    /// answered stay as they are.
+    func reviewEditorsBeforeQuit() async -> Bool {
+        for controller in Array(editors.values) where controller.model.hasUnsavedChanges {
+            guard editors[controller.model.recordID] === controller else { continue }
+            controller.present()
+            guard await controller.askToSaveBeforeClosing() else { return false }
+        }
+        return true
+    }
+
     // MARK: Helpers
 
     /// Fetches shareable content, or shows the permission window and returns nil.

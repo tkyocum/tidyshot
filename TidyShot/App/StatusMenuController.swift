@@ -81,6 +81,12 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         let reveal = item("Reveal Last Capture", #selector(revealLastCapture))
         reveal.isEnabled = coordinator.lastCaptureURL != nil
         menu.addItem(reveal)
+        #if DEBUG
+        // Temporary entry point to the editor until the overlay's Annotate button (Task 16).
+        let annotate = item("Annotate Last Capture (debug)", #selector(annotateLastCapture))
+        annotate.isEnabled = !coordinator.history.records.isEmpty
+        menu.addItem(annotate)
+        #endif
         menu.addItem(.separator())
         menu.addItem(item("Settings…", #selector(openSettings), key: ","))
         menu.addItem(item("Quit TidyShot", #selector(quit), key: "q"))
@@ -110,6 +116,13 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     @objc private func captureFullscreen() { Task { await coordinator.captureFullscreen() } }
     @objc private func retryFailedUploads() { coordinator.retryFailedUploads() }
     @objc private func revealLastCapture() { coordinator.revealLastCapture() }
+    #if DEBUG
+    /// Opens the editor on the newest record (`history.records` is newest first).
+    @objc private func annotateLastCapture() {
+        guard let id = coordinator.history.records.first?.id else { return }
+        coordinator.openEditor(recordID: id)
+    }
+    #endif
     @objc private func openSettings() { settingsOpener.open() }
     @objc private func quit() { NSApplication.shared.terminate(nil) }
 }
