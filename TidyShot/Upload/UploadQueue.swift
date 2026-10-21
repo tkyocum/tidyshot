@@ -1,8 +1,9 @@
 import Foundation
 
-/// Uploads jobs one at a time, in order, with HEAD-before-PUT key reservation and retry with
-/// backoff. Reports progress and results through `events`, which runs on the main actor. A job
-/// can be cancelled while pending or in flight; it then ends with a single `.cancelled` event.
+/// Uploads jobs one at a time, in order, with retry and backoff. A template job's key is reserved
+/// with HEAD before its PUT; a fixed-key job PUTs its key as is. Reports progress and results
+/// through `events`, which runs on the main actor. A job can be cancelled while pending or in
+/// flight; it then ends with a single `.cancelled` event.
 actor UploadQueue {
     typealias EventHandler = @MainActor @Sendable (UploadEvent) -> Void
     typealias Sleeper = @Sendable (Duration) async throws -> Void
@@ -13,9 +14,10 @@ actor UploadQueue {
         /// `.failed` event has been delivered) or was never enqueued.
         case notFound
         /// The job has ended and its `.cancelled` event has been delivered. `reservedKey` is the
-        /// object key the job had claimed with HEAD-before-PUT, nil when it was cancelled before
-        /// that. The PUT for that key may have completed on the server just as it was cancelled,
-        /// so a caller that is deleting the capture deletes this key too.
+        /// object key the job had claimed (its fixed key, or one reserved with HEAD-before-PUT),
+        /// nil when it was cancelled before that. The PUT for that key may have completed on the
+        /// server just as it was cancelled, so a caller that is deleting the capture deletes this
+        /// key too.
         case stopped(reservedKey: String?)
     }
 
@@ -38,7 +40,8 @@ actor UploadQueue {
     /// The job being processed and the task running it, so `cancel` can stop it and wait for it.
     private var current: (id: UUID, task: Task<JobOutcome, Never>)?
     private var cancelledIDs: Set<UUID> = []
-    /// Key reserved by the in-flight job, reported in its `.cancelled` event if it is cancelled.
+    /// The in-flight job's key (its fixed key, or one reserved with HEAD), reported in its
+    /// `.cancelled` event if it is cancelled.
     private var reservedKeys: [UUID: String] = [:]
 
     init(destination: any Destination,
@@ -102,11 +105,12 @@ actor UploadQueue {
         while true {
             await events(.started(id: job.id, attempt: attempt))
             do {
-                let key = try await reserveKey(ext: job.fileExtension, context: job.naming)
+                let key = try await objectKey(for: job)
                 reservedKeys[job.id] = key
                 let id = job.id
                 let events = events
-                try await destination.upload(job.data, key: key, contentType: job.contentType) { fraction in
+                try await destination.upload(job.data, key: key, contentType: job.contentType,
+                                             cacheControl: job.cacheControl) { fraction in
                     Task { await events(.progress(id: id, fraction: fraction)) }
                 }
                 let url = try destination.publicURL(for: key)
@@ -144,6 +148,19 @@ actor UploadQueue {
         let key = reservedKeys[id]
         await events(.cancelled(id: id, reservedKey: key))
         return .cancelled(reservedKey: key)
+    }
+
+    /// The key for this attempt. A template key is named afresh and reserved with HEAD. A fixed key
+    /// is the record's own key at its own location, and no other record points at it (the
+    /// coordinator's shared-key rule checks that), so it is PUT as is on every attempt. A HEAD
+    /// would find the record's own object and steer away from it.
+    private func objectKey(for job: UploadJob) async throws -> String {
+        switch job.key {
+        case .template(let context):
+            return try await reserveKey(ext: job.fileExtension, context: context)
+        case .fixed(let key):
+            return key
+        }
     }
 
     /// Generates keys until HEAD reports one unused.

@@ -69,8 +69,7 @@ nonisolated enum EditorAvailability {
             if action == .save, case .unavailable(let reason) = EditorSaveTarget.plan(for: record, saveFolder: saveFolder) {
                 return reason
             }
-            // Task 14 changes this to `record.linkURL == nil` (`priorUpload` keeps the link of an interrupted replace).
-            if action == .uploadAsNew, record.uploadedURL == nil { return notUploadedRefusal }
+            if action == .uploadAsNew, record.linkURL == nil { return notUploadedRefusal }
             return nil
         }
     }

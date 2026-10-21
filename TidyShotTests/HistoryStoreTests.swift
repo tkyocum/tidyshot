@@ -178,6 +178,29 @@ struct HistoryStoreTests {
         #expect(reloaded.records.map(\.id) == [staleEdit.id])
     }
 
+    /// A quit or crash during an editor replace: the record loads as failed, and the link it had
+    /// stays on disk, also after load saves the rewrite, so Copy URL and Delete still find it.
+    @Test func interruptedReplaceKeepsPriorUpload() throws {
+        let location = ObjectLocation(endpoint: "https://s3.us-west-2.amazonaws.com", region: "us-west-2",
+                                      bucket: "snap", usePathStyle: false)
+        let prior = PriorUpload(url: URL(string: "https://snap.tky.io/a.png")!, key: "a.png", location: location, isReplace: true)
+        var item = record(state: .uploading(fraction: 0.4))
+        item.objectLocation = location
+        item.priorUpload = prior
+        store().add(item)
+
+        let second = store()
+        second.load()
+        let loaded = try #require(second.record(id: item.id))
+        #expect(loaded.uploadState == .failed(message: "Upload was interrupted."))
+        #expect(loaded.priorUpload == prior)
+        #expect(loaded.linkURL == prior.url)
+
+        let third = store()
+        third.load()
+        #expect(third.record(id: item.id)?.priorUpload == prior)
+    }
+
     @Test func missingFileLoadsEmpty() {
         let fresh = store()
         fresh.load()

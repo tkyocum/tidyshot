@@ -6,8 +6,10 @@ nonisolated protocol Destination: Sendable {
     /// True when an object already exists at `key` (HTTP 200 on HEAD), false when it does not
     /// (404, or 403 from AWS S3 when the caller lacks `s3:ListBucket`; see `S3Destination.exists`).
     func exists(key: String) async throws -> Bool
-    /// Uploads `data` to `key`. `progress` receives fractions in 0...1 from the transport thread.
-    func upload(_ data: Data, key: String, contentType: String,
+    /// Uploads `data` to `key`. A non-nil `cacheControl` goes with the PUT as a signed
+    /// `Cache-Control` header, which S3 stores with the object and returns on every GET.
+    /// `progress` receives fractions in 0...1 from the transport thread.
+    func upload(_ data: Data, key: String, contentType: String, cacheControl: String?,
                 progress: @escaping @Sendable (Double) -> Void) async throws
     /// Removes the object at `key`. Used by Delete (the capture's object, and any key its
     /// cancelled upload had reserved), by the cleanup of an object uploaded for a record that no
@@ -17,23 +19,57 @@ nonisolated protocol Destination: Sendable {
     func publicURL(for key: String) throws -> URL
 }
 
+extension Destination {
+    /// Uploads with no `Cache-Control`: every template upload and the connection test's probe.
+    nonisolated func upload(_ data: Data, key: String, contentType: String,
+                            progress: @escaping @Sendable (Double) -> Void) async throws {
+        try await upload(data, key: key, contentType: contentType, cacheControl: nil, progress: progress)
+    }
+}
+
 nonisolated struct UploadJob: Sendable, Identifiable {
+    /// How the queue picks the object key.
+    enum KeyPolicy: Sendable, Equatable {
+        /// Named from the destination's key template when the upload starts, expanded against
+        /// this context afresh for every key attempt (only `{random}` changes on a collision),
+        /// and reserved with HEAD.
+        case template(TemplateContext)
+        /// Exactly this key, with no HEAD and nothing drawn from the template: the editor's
+        /// replace of the record's own object at its own location. Every retry PUTs it again.
+        case fixed(String)
+    }
+
     /// Matches the `CaptureRecord.id` this upload belongs to.
     let id: UUID
     let data: Data
     let contentType: String
-    /// Without a dot, for example `png`.
+    /// Without a dot, for example `png`. Only template keys use it.
     let fileExtension: String
-    /// What the object key template is expanded against (capture time, counter, hostname).
-    /// The queue expands it afresh for every key attempt, so only `{random}` changes on a collision.
-    let naming: TemplateContext
+    let key: KeyPolicy
+    /// Sent as a signed `Cache-Control` header on the PUT; nil sends none.
+    let cacheControl: String?
 
+    /// A job whose key is named from the template. It sends no `Cache-Control`.
     init(id: UUID, data: Data, contentType: String, fileExtension: String, naming: TemplateContext = TemplateContext()) {
         self.id = id
         self.data = data
         self.contentType = contentType
         self.fileExtension = fileExtension
-        self.naming = naming
+        self.key = .template(naming)
+        self.cacheControl = nil
+    }
+
+    /// A job that PUTs `fixedKey` as is. By default it sends `Cache-Control: no-cache`, so a cache
+    /// that honours it revalidates the replaced object from now on. A copy a cache already holds
+    /// stays until its own TTL expires.
+    init(id: UUID, data: Data, contentType: String, fileExtension: String, fixedKey: String,
+         cacheControl: String? = "no-cache") {
+        self.id = id
+        self.data = data
+        self.contentType = contentType
+        self.fileExtension = fileExtension
+        self.key = .fixed(fixedKey)
+        self.cacheControl = cacheControl
     }
 }
 
@@ -43,8 +79,9 @@ nonisolated enum UploadEvent: Sendable, Equatable {
     case uploaded(id: UUID, url: URL, key: String)
     case failed(id: UUID, message: String)
     /// Terminal, like `.failed`, after `UploadQueue.cancel(recordID:)`. Never followed by `.failed`.
-    /// `reservedKey` is the key the job had claimed, nil when it was cancelled before HEAD
-    /// found one; its PUT may have completed on the server, so a delete removes it too.
+    /// `reservedKey` is the key the job had claimed (its fixed key, or the template key HEAD
+    /// found free), nil when it was cancelled before it had one. Its PUT may have completed on
+    /// the server, so a delete removes it too.
     case cancelled(id: UUID, reservedKey: String?)
 }
 

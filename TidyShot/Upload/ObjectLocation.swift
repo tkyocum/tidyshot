@@ -3,7 +3,7 @@ import Foundation
 /// Where a capture's object was written: enough of the destination to address the object again
 /// after the Upload tab has been edited. Credentials are not part of it; a delete signs with
 /// whatever credentials are stored at the time.
-nonisolated struct ObjectLocation: Codable, Equatable, Sendable {
+nonisolated struct ObjectLocation: Codable, Hashable, Sendable {
     var endpoint: String
     var region: String
     var bucket: String
@@ -28,4 +28,12 @@ nonisolated struct ObjectLocation: Codable, Equatable, Sendable {
     var config: S3DestinationConfig {
         S3DestinationConfig(endpoint: endpoint, region: region, bucket: bucket, usePathStyle: usePathStyle, publicURLTemplate: "")
     }
+}
+
+/// One object in a bucket: a key and where it lives. Used for objects a capture no longer links to
+/// but still owns (`CaptureRecord.supersededObjects`), and for everything Delete removes
+/// (`CaptureDeletion.objects(for:)`).
+nonisolated struct ObjectRef: Codable, Hashable, Sendable {
+    var key: String
+    var location: ObjectLocation
 }

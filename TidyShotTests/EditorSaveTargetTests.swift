@@ -107,7 +107,7 @@ struct EditorSaveTargetTests {
         #expect(actions(record, deleting: true) == [.copy, .saveCopy])
     }
 
-    /// Keyed on `uploadedURL` here; Task 14 re-keys it on `linkURL` and adds the interrupted-replace case.
+    /// Keyed on `linkURL`; `uploadAsNewKeepsInterruptedReplace` covers a link held only in `priorUpload`.
     @Test func uploadAsNewNeedsALink() {
         let never = saved()
         #expect(actions(never) == [.save, .saveCopy, .copy, .upload])
@@ -115,6 +115,28 @@ struct EditorSaveTargetTests {
                 == "This capture has no link yet. Use Upload.")
         #expect(!actions(saved(state: .failed(message: "offline"))).contains(.uploadAsNew))
         #expect(actions(saved(state: .uploaded(url: link, key: "a.png"))).contains(.uploadAsNew))
+    }
+
+    /// A replace killed by a quit leaves `.failed` with the link in `priorUpload`. The link still
+    /// exists, so Upload as New stays available (Upload as New to a new key, then delete the old).
+    @Test func uploadAsNewKeepsInterruptedReplace() {
+        var interrupted = saved(state: .failed(message: "Upload was interrupted."), stale: true)
+        interrupted.objectLocation = location
+        interrupted.priorUpload = PriorUpload(url: link, key: "a.png", location: location, isReplace: true)
+        #expect(actions(interrupted).contains(.uploadAsNew))
+        #expect(EditorAvailability.refusal(for: .uploadAsNew, record: interrupted, saveFolder: folder, isDeleting: false) == nil)
+
+        // The same record, still without a link, is refused.
+        var linkless = interrupted
+        linkless.priorUpload = nil
+        #expect(!actions(linkless).contains(.uploadAsNew))
+        #expect(EditorAvailability.refusal(for: .uploadAsNew, record: linkless, saveFolder: folder, isDeleting: false)
+                == "This capture has no link yet. Use Upload.")
+
+        // While the replace runs, the uploading refusal still wins.
+        interrupted.uploadState = .uploading(fraction: 0.2)
+        #expect(EditorAvailability.refusal(for: .uploadAsNew, record: interrupted, saveFolder: folder, isDeleting: false)
+                == "This capture is still uploading.")
     }
 
     @Test func everyActionShortcutMapsToAnAvailabilityAction() {

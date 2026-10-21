@@ -24,9 +24,10 @@ nonisolated enum RecentCaptureFormatting {
         }
     }
 
-    /// Copy URL needs an uploaded object.
+    /// Copy URL needs a link: an uploaded object, or the earlier link of an editor upload that is
+    /// running or was interrupted (`CaptureRecord.linkURL`).
     static func canCopyLink(_ record: CaptureRecord) -> Bool {
-        record.uploadedURL != nil
+        record.linkURL != nil
     }
 
     /// Copy Image needs a local file, or an uploaded object whose bucket is known (signed GET).

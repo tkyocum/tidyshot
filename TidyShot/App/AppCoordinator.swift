@@ -485,20 +485,21 @@ final class AppCoordinator {
         return record.fileIsTemporary ? try Data(contentsOf: fileURL) : try saveLocation.read(contentsOf: fileURL)
     }
 
-    /// Copies the public URL, or the local file for a capture that was never uploaded.
+    /// Copies the link (`linkURL`, which also covers an editor upload that is running or was
+    /// interrupted), or the local file for a capture that has no link.
     func copyLinkOrFile(recordID: UUID) {
         guard let record = history.record(id: recordID) else { return }
-        if let url = record.uploadedURL {
+        if let url = record.linkURL {
             Pasteboard.copy(url: url)
         } else if let fileURL = record.fileURL {
             Pasteboard.copy(fileURL: fileURL)
         }
     }
 
-    /// Copy URL: the public URL of an uploaded capture. A capture that was never uploaded has none,
-    /// and its row's button is disabled.
+    /// Copy URL: the capture's link (`linkURL`). A capture that was never uploaded has none, and
+    /// its row's button is disabled.
     func copyLink(recordID: UUID) {
-        guard let url = history.record(id: recordID)?.uploadedURL else { return }
+        guard let url = history.record(id: recordID)?.linkURL else { return }
         Pasteboard.copy(url: url)
     }
 
@@ -572,11 +573,11 @@ final class AppCoordinator {
     // MARK: Delete
 
     /// The one delete path, shared by the overlay and Recent Captures. One confirmation, Delete or
-    /// Cancel. Delete stops an in-flight upload, removes the object from the bucket the record says
-    /// it went to, then the local file, the thumbnail and the record. When the storage `DELETE`
-    /// fails (or there are no credentials to sign it), or the file in the save folder cannot be
-    /// removed, a second alert offers to remove the record from history anyway, so a capture whose
-    /// object or file cannot be deleted is never stuck. A local file that is already gone is not an
+    /// Cancel. Delete stops an in-flight upload, removes its objects, each from the bucket the
+    /// record names for it (`CaptureDeletion.objects(for:)`), then the local file, the thumbnail
+    /// and the record. When the storage `DELETE` fails (or there are no credentials to sign it),
+    /// or the file in the save folder cannot be removed, a second alert offers to remove the record
+    /// from history anyway, so a capture whose object or file cannot be deleted is never stuck. A local file that is already gone is not an
     /// error; a temporary file in `pending` that cannot be removed keeps the record, with a
     /// notification.
     func deleteCapture(recordID: UUID) async {
@@ -596,15 +597,18 @@ final class AppCoordinator {
         await cancelUpload(of: recordID)
         guard let current = history.record(id: recordID) else { return }
 
+        // The record's own keys, its prior upload and its superseded objects, one location at a
+        // time: an object left by an earlier destination lives in that destination's bucket.
         var sharedKeys: [String] = []
-        let keys = CaptureDeletion.objectKeys(for: current)
-        if !keys.isEmpty, let location = current.objectLocation {
+        for group in CaptureDeletion.grouped(CaptureDeletion.objects(for: current)) {
             // Never delete an object another capture still points at.
             // A record whose own delete is still pending (its alert open) counts as a sharer: if
-            // that delete is cancelled, its URL must keep working.
+            // that delete is cancelled, its URL must keep working. Read per group, because each
+            // group's DELETEs await the network.
             let others = history.records.filter { $0.id != recordID }
-            sharedKeys = CaptureDeletion.sharedKeys(keys, at: location, with: others)
-            if let reason = await deleteObjects(keys.filter { !sharedKeys.contains($0) }, at: location) {
+            let shared = CaptureDeletion.sharedKeys(group.keys, at: group.location, with: others)
+            sharedKeys += shared
+            if let reason = await deleteObjects(group.keys.filter { !shared.contains($0) }, at: group.location) {
                 if await confirmRemoveFromHistory(message: CaptureDeletion.storageFailureMessage(reason: reason),
                                                   informativeText: CaptureDeletion.storageFailureText) {
                     removeFromHistoryOnly(recordID)
@@ -1059,15 +1063,8 @@ final class AppCoordinator {
             return false
         }
         let editedAt = Date()
-        history.update(id: recordID) { record in
-            record.pixelWidth = image.image.width
-            record.pixelHeight = image.image.height
-            record.editedAt = editedAt
-            // Task 14 changes this to `record.linkURL != nil`, so a record whose replace was
-            // interrupted (link in `priorUpload`) is marked stale too (spec 2.6 step 4).
-            if record.uploadedURL != nil {
-                record.uploadIsStale = true
-            }
+        history.update(id: recordID) {
+            $0.recordLocalEdit(pixelWidth: image.image.width, pixelHeight: image.image.height, at: editedAt)
         }
         replaceThumbnail(for: recordID, from: image.image, editedAt: editedAt)
         await replaceClipboardIfStillOriginal(recordID: recordID, png: png, image: image)

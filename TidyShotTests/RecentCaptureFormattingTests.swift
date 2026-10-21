@@ -55,4 +55,19 @@ struct RecentCaptureFormattingTests {
         #expect(RecentCaptureFormatting.canCopyLink(noFileNoLocation))
         #expect(!RecentCaptureFormatting.canCopyImage(noFileNoLocation))
     }
+
+    /// A replace keeps its link in `priorUpload` while it runs and after a quit or crash
+    /// interrupted it, so Copy URL stays enabled.
+    @Test func canCopyLinkForInterruptedReplace() {
+        let url = URL(string: "https://snap.tky.io/aB3dE9.png")!
+        var replacing = record(.uploading(fraction: 0.4), location: location)
+        replacing.priorUpload = PriorUpload(url: url, key: "aB3dE9.png", location: location, isReplace: true)
+        #expect(RecentCaptureFormatting.canCopyLink(replacing))
+
+        replacing.uploadState = .failed(message: "Upload was interrupted.")
+        #expect(RecentCaptureFormatting.canCopyLink(replacing))
+
+        replacing.priorUpload = nil
+        #expect(!RecentCaptureFormatting.canCopyLink(replacing))
+    }
 }

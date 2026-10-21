@@ -127,6 +127,37 @@ struct S3DestinationTests {
         #expect(request.value(forHTTPHeaderField: "authorization")?.hasSuffix("SignedHeaders=content-type;host;x-amz-acl;x-amz-content-sha256;x-amz-date, Signature=5a73cf67b570cbc19fd956f9a79769a4e94ba9415f3ff138609de89785481d5f") == true)
     }
 
+    /// A replace asks caches to revalidate. The header is signed like the ACL. Expected signature
+    /// computed independently with a reference implementation.
+    @Test func cacheControlHeaderIsSignedWhenSet() async throws {
+        let (session, stub) = StubSession.make { _ in (200, Data()) }
+        try await destination(config, session: session).upload(body, key: "aSIS7.png", contentType: "image/png",
+                                                               cacheControl: "no-cache") { _ in }
+
+        let request = try #require(stub.requests.first)
+        #expect(request.httpMethod == "PUT")
+        #expect(request.value(forHTTPHeaderField: "cache-control") == "no-cache")
+        #expect(request.value(forHTTPHeaderField: "content-type") == "image/png")
+        #expect(request.value(forHTTPHeaderField: "authorization") == "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20261019/us-east-1/s3/aws4_request, SignedHeaders=cache-control;content-type;host;x-amz-content-sha256;x-amz-date, Signature=fe15f0f7a62489905cb08be4bc4e9e1e48bbfe919082923c2815b55b122d49ed")
+    }
+
+    /// The four-argument call (template uploads, the connection test) and an explicit nil send no
+    /// Cache-Control and do not sign one.
+    @Test func noCacheControlByDefault() async throws {
+        let (session, stub) = StubSession.make { _ in (200, Data()) }
+        try await destination(config, session: session).upload(body, key: "aSIS7.png", contentType: "image/png") { _ in }
+        let request = try #require(stub.requests.first)
+        #expect(request.value(forHTTPHeaderField: "cache-control") == nil)
+        #expect(request.value(forHTTPHeaderField: "authorization")?.contains("SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date,") == true)
+
+        let (explicitSession, explicitStub) = StubSession.make { _ in (200, Data()) }
+        try await destination(config, session: explicitSession).upload(body, key: "aSIS7.png", contentType: "image/png",
+                                                                       cacheControl: nil) { _ in }
+        let explicit = try #require(explicitStub.requests.first)
+        #expect(explicit.value(forHTTPHeaderField: "cache-control") == nil)
+        #expect(explicit.value(forHTTPHeaderField: "authorization") == request.value(forHTTPHeaderField: "authorization"))
+    }
+
     @Test func headUsesPathStyleAndPortedHost() async throws {
         var minio = config
         minio.endpoint = "http://localhost:9000"
