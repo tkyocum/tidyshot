@@ -47,6 +47,29 @@ struct AppSettingsTests {
         #expect(AppSettings(defaults: defaults).s3Config == nil)
     }
 
+    @Test func lastAreaRectIsNilUntilAnAreaIsCaptured() {
+        #expect(AppSettings(defaults: freshDefaults()).lastAreaRect == nil)
+    }
+
+    @Test func lastAreaRectRoundTripsThroughASecondInstanceAndClears() {
+        let defaults = freshDefaults()
+        let rect = StoredRect(CGRect(x: -300, y: 120.5, width: 640, height: 480))
+        let first = AppSettings(defaults: defaults)
+        first.lastAreaRect = rect
+        #expect(AppSettings(defaults: defaults).lastAreaRect == rect)
+        #expect(defaults.data(forKey: "lastAreaRect") != nil)
+
+        first.lastAreaRect = nil
+        #expect(AppSettings(defaults: defaults).lastAreaRect == nil)
+        #expect(defaults.object(forKey: "lastAreaRect") == nil)
+    }
+
+    @Test func anUnreadableLastAreaRectReadsAsNil() {
+        let defaults = freshDefaults()
+        defaults.set(Data("not json".utf8), forKey: "lastAreaRect")
+        #expect(AppSettings(defaults: defaults).lastAreaRect == nil)
+    }
+
     /// `{app}` was removed in Phase 3.1. Templates saved before that lose it on load, and the
     /// rewritten values are stored, so the next launch reads them as they are.
     @Test func storedTemplatesLoseTheRemovedAppToken() throws {

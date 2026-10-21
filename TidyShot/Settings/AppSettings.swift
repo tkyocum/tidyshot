@@ -51,6 +51,7 @@ final class AppSettings {
         static let editorBlurRadiusPoints = "editorBlurRadiusPoints"
         static let editorPixelBlockPoints = "editorPixelBlockPoints"
         static let scrollingAutoScroll = "scrollingAutoScroll"
+        static let lastAreaRect = "lastAreaRect"
         static let windowShadow = "windowShadow"
         static let freezeScreen = "freezeScreen"
     }
@@ -88,6 +89,9 @@ final class AppSettings {
     var editorPixelBlockPoints: Double { didSet { defaults.set(editorPixelBlockPoints, forKey: Keys.editorPixelBlockPoints) } }
     /// The scrolling panel's Scroll automatically checkbox. Effective only with the PostEvent grant.
     var scrollingAutoScroll: Bool { didSet { defaults.set(scrollingAutoScroll, forKey: Keys.scrollingAutoScroll) } }
+    /// The rect of the last area capture (Capture Area, Capture Scrolling, and the later area
+    /// kinds), for Capture Previous Area. Stored as JSON; nil until an area has been captured.
+    var lastAreaRect: StoredRect? { didSet { storeLastAreaRect() } }
     /// The Capture tab's Include window shadow. Off keeps window shots without a shadow.
     var windowShadow: Bool { didSet { defaults.set(windowShadow, forKey: Keys.windowShadow) } }
     /// The Capture tab's Freeze screen while selecting (spec 2.9). Area selections then show a still image.
@@ -160,6 +164,8 @@ final class AppSettings {
         editorBlurRadiusPoints = defaults.double(forKey: Keys.editorBlurRadiusPoints)
         editorPixelBlockPoints = defaults.double(forKey: Keys.editorPixelBlockPoints)
         scrollingAutoScroll = defaults.bool(forKey: Keys.scrollingAutoScroll)
+        // Not registered: a missing or unreadable value means no previous area.
+        lastAreaRect = defaults.data(forKey: Keys.lastAreaRect).flatMap { try? JSONDecoder().decode(StoredRect.self, from: $0) }
         windowShadow = defaults.bool(forKey: Keys.windowShadow)
         freezeScreen = defaults.bool(forKey: Keys.freezeScreen)
 
@@ -186,6 +192,20 @@ final class AppSettings {
             defaults.set(try JSONEncoder().encode(s3Config), forKey: Keys.s3Config)
         } catch {
             NSLog("Upload settings could not be encoded, so the stored ones are kept: \(error.localizedDescription)")
+        }
+    }
+
+    /// Writes `lastAreaRect` as JSON, or removes it when nil. An encoding failure is logged and
+    /// leaves the stored value as it was.
+    private func storeLastAreaRect() {
+        guard let lastAreaRect else {
+            defaults.removeObject(forKey: Keys.lastAreaRect)
+            return
+        }
+        do {
+            defaults.set(try JSONEncoder().encode(lastAreaRect), forKey: Keys.lastAreaRect)
+        } catch {
+            NSLog("The last area could not be encoded, so the stored one is kept: \(error.localizedDescription)")
         }
     }
 

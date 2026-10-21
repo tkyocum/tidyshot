@@ -128,6 +128,9 @@ final class AppCoordinator {
         KeyboardShortcuts.onKeyUp(for: .captureScrolling) { [weak self] in
             Task { await self?.captureScrolling() }
         }
+        KeyboardShortcuts.onKeyUp(for: .capturePreviousArea) { [weak self] in
+            Task { await self?.capturePreviousArea() }
+        }
         KeyboardShortcuts.onKeyUp(for: .restoreOverlay) { [weak self] in
             Task { await self?.restoreClosedOverlay() }
         }
@@ -176,6 +179,7 @@ final class AppCoordinator {
                 notifier.notifyError("Select an area at least 100 points tall.", title: "Scrolling capture")
                 return
             }
+            settings.lastAreaRect = StoredRect(rect)
             selector.dismiss()
             let outcome = await scrollCapture.run(rect: rect, display: display)
             if let notice = outcome.failureNotice {
@@ -184,6 +188,28 @@ final class AppCoordinator {
             if let image = outcome.imageToSave {
                 await save(CaptureResult(image: image.image, scale: image.scale,
                                          target: .area(rect: rect, display: display)))
+            }
+        }
+    }
+
+    /// Capture Previous Area: the last area capture's rect again, live, with no selection overlay.
+    /// `PreviousArea.resolve` clips the stored rect to the display under its centre. The cards are
+    /// excluded and the pointer follows Show cursor, as for a fullscreen capture. It does not
+    /// write `lastAreaRect`: a clipped rect would shrink the memory.
+    func capturePreviousArea() async {
+        await withCaptureLock {
+            guard let content = await loadContent() else { return }
+            let displays = content.displays.map { PreviousArea.Display(id: $0.displayID, frame: $0.frame) }
+            switch PreviousArea.resolve(rect: settings.lastAreaRect?.cgRect, displays: displays) {
+            case .none:
+                notifier.notifyError("Capture an area first.", title: "No previous area")
+            case .offScreen:
+                notifier.notifyError("The previous area is not on a connected display.", title: "No previous area")
+            case .area(let rect, let displayID):
+                guard let display = content.displays.first(where: { $0.displayID == displayID }) else { return }
+                let cards = await cardWindows()
+                guard let result = await capture(.area(rect: rect, display: display), excludingWindows: cards) else { return }
+                await save(result)
             }
         }
     }
@@ -201,6 +227,7 @@ final class AppCoordinator {
             let result: CaptureResult?
             switch selection {
             case .area(let rect, let display):
+                settings.lastAreaRect = StoredRect(rect)
                 if let frozen = frozenResult(for: rect, display: display) {
                     result = frozen
                 } else {
