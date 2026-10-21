@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import Foundation
 import ImageIO
@@ -10,6 +11,17 @@ nonisolated enum ClopSkipReason: Equatable, Sendable {
     case converted
     case notSmaller
     case invalidResult
+
+    /// For the `Clop: <reason>, uploading the original` log line.
+    var summary: String {
+        switch self {
+        case .notRunning: "Clop is not running"
+        case .failed(let detail): detail
+        case .converted: "Clop converted the image to another format"
+        case .notSmaller: "the result is not smaller"
+        case .invalidResult: "the result is not a PNG of the same pixel size"
+        }
+    }
 }
 
 nonisolated enum ClopOutcome: Equatable, Sendable {
@@ -96,5 +108,36 @@ nonisolated struct ClopOptimiser: Sendable {
               let width = properties[kCGImagePropertyPixelWidth] as? Int,
               let height = properties[kCGImagePropertyPixelHeight] as? Int else { return nil }
         return CGSize(width: width, height: height)
+    }
+}
+
+/// Finding Clop (spec 2.7). TidyShot never launches it: a Clop that is not running means the
+/// original uploads.
+nonisolated enum ClopApp {
+    /// The direct build and the Setapp build, in that order.
+    static let bundleIDs = ["com.lowtechguys.Clop", "com.lowtechguys.Clop-setapp"]
+
+    /// True when either build is installed, for the Upload tab's toggle.
+    static var isInstalled: Bool {
+        bundleIDs.contains { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) != nil }
+    }
+
+    /// The bundle id of a running Clop, or nil when neither build runs.
+    static func runningBundleID() -> String? {
+        bundleIDs.first { !NSRunningApplication.runningApplications(withBundleIdentifier: $0).isEmpty }
+    }
+
+    /// The container's `tmp/Clop`, where `ClopOptimiser` writes its throwaway copies.
+    static var workDirectory: URL {
+        FileManager.default.temporaryDirectory.appending(path: "Clop", directoryHint: .isDirectory)
+    }
+
+    /// The coordinator's optimiser: each request goes to whichever build is running when it is
+    /// sent. A Clop that quit since the check throws `portUnavailable`, so the original uploads.
+    static func makeOptimiser() -> ClopOptimiser {
+        ClopOptimiser(workDirectory: workDirectory) { url in
+            guard let bundleID = runningBundleID() else { throw ClopClientError.portUnavailable }
+            return try ClopClient(bundleID: bundleID).optimise(url)
+        }
     }
 }

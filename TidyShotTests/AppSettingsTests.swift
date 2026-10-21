@@ -202,6 +202,16 @@ struct AppSettingsTests {
         #expect(AppSettings(defaults: defaults).allInOneAspectLock)
     }
 
+    /// Optimize images with Clop is off by default and persists (spec 2.7).
+    @Test func optimiseWithClopDefaultsOffAndPersists() {
+        let defaults = freshDefaults()
+        let first = AppSettings(defaults: defaults)
+        #expect(!first.optimiseWithClop)
+        first.optimiseWithClop = true
+        #expect(defaults.object(forKey: "optimiseWithClop") as? Bool == true)
+        #expect(AppSettings(defaults: defaults).optimiseWithClop)
+    }
+
     /// Phase 6b: Self-timer counts 5 seconds unless the Capture tab says 3 or 10 (spec 2.9).
     @Test func selfTimerSecondsDefaultsToFiveAndPersists() {
         let defaults = freshDefaults()
