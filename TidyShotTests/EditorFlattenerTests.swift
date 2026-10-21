@@ -199,6 +199,56 @@ struct EditorFlattenerTests {
         #expect(output[61, 12] == original[61, 12])
     }
 
+    /// A level pencil stroke along row 12 (width 4) covers rows 10 to 13 and nothing else. Row 12
+    /// is far from the middle row, so a missing or doubled flip would move it to row 35.
+    @Test func pencilStrokePixels() throws {
+        let base = makeImage()
+        let original = try Bitmap(base)
+        let line = [CGPoint(x: 8, y: 12), CGPoint(x: 32, y: 12), CGPoint(x: 56, y: 12)]
+        let pencil = Annotation.pencil(Stroke(id: UUID(), points: line, color: red, lineWidth: 4))
+        let output = try Bitmap(flatten(base, [pencil]))
+        for (x, y) in [(30, 10), (30, 11), (30, 12), (30, 13), (9, 11), (55, 12)] {
+            #expect(output[x, y] == Self.redPixel, "stroke at \(x), \(y)")
+        }
+        for (x, y) in [(30, 9), (30, 14), (30, 35), (3, 12), (60, 12)] {
+            #expect(output[x, y] == original[x, y], "untouched at \(x), \(y)")
+        }
+    }
+
+    /// Multiply never lightens. The left half is black and the right half white: a normal blend of
+    /// translucent yellow would lift the black to (115, 92, 0); multiply leaves it black and tints
+    /// the white to yellow x 0.45 + white x 0.55, about (255, 232, 140). Outside the band nothing
+    /// changes, and the tint is the same along the whole band.
+    @Test func highlighterDarkensNeverLightens() throws {
+        let base = makeImage { x, _ in x < 32 ? Self.blackPixel : [255, 255, 255, 255] }
+        let original = try Bitmap(base)
+        let line = [CGPoint(x: 8, y: 24), CGPoint(x: 32, y: 24), CGPoint(x: 56, y: 24)]
+        let marker = Annotation.highlighter(Stroke(id: UUID(), points: line, color: EditorPalette.defaultHighlight,
+                                                   lineWidth: 12))
+        let output = try Bitmap(flatten(base, [marker]))
+
+        var lighter: [String] = []
+        for y in 0..<output.height {
+            for x in 0..<output.width {
+                for channel in 0..<4 where output[x, y][channel] > original[x, y][channel] {
+                    lighter.append("\(x),\(y),\(channel)")
+                }
+            }
+        }
+        #expect(lighter.isEmpty, "lightened: \(lighter.prefix(5))")
+
+        #expect(output[16, 24] == Self.blackPixel)
+        let tinted = output[48, 24]
+        #expect(tinted[0] == 255)
+        #expect((230...234).contains(Int(tinted[1])), "green \(tinted[1])")
+        #expect((138...142).contains(Int(tinted[2])), "blue \(tinted[2])")
+        #expect(tinted[3] == 255)
+        // The band is rows 18 to 29.
+        #expect(output[48, 17] == original[48, 17])
+        #expect(output[48, 30] == original[48, 30])
+        #expect(output[48, 24] == output[48, 19])
+    }
+
     /// A 4 px stroke on the ellipse in (10, 8, 40, 24) sits inside the rect: the centre line is the
     /// ellipse in (12, 10, 36, 20), centre (30, 20) with radii 18 and 10, so the band runs from radii
     /// (16, 8) to (20, 12). The bounding box's corners and the hollow are untouched, which tells an

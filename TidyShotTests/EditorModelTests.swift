@@ -344,6 +344,55 @@ struct EditorModelTests {
         #expect(model.makeAnnotation(.redact, from: from, to: to)?.id != id)
     }
 
+    /// The Pencil follows the stroke colour and line width; the Highlighter has its own colour at
+    /// alpha 0.45 and its own 12 pt width, and the model's scale 2 turns points into pixels.
+    @Test func strokeToolsKeepTheirOwnColourAndWidth() {
+        let model = makeModel()
+        let points = [CGPoint(x: 1, y: 1), CGPoint(x: 8, y: 5), CGPoint(x: 12, y: 9)]
+
+        if case .pencil(let stroke)? = model.makeStroke(.pencil, points: points) {
+            #expect(stroke.points == points)
+            #expect(stroke.color == model.strokeColor)
+            #expect(stroke.lineWidth == model.lineWidthPoints * 2)
+        } else {
+            Issue.record("no pencil stroke")
+        }
+        if case .highlighter(let stroke)? = model.makeStroke(.highlighter, points: points) {
+            #expect(stroke.color == EditorPalette.defaultHighlight)
+            #expect(stroke.color.alpha == 0.45)
+            #expect(stroke.lineWidth == CGFloat(12) * 2)
+        } else {
+            Issue.record("no highlighter stroke")
+        }
+        #expect(model.makeStroke(.pencil, points: [points[0]]) == nil)
+        #expect(model.makeStroke(.rectangle, points: points) == nil)
+        #expect(model.makeAnnotation(.pencil, from: points[0], to: points[2]) == nil)
+        #expect(model.makeAnnotation(.highlighter, from: points[0], to: points[2]) == nil)
+
+        // With the Highlighter active, colour and width go to the highlighter's own settings.
+        model.tool = .highlighter
+        model.applyColor(blue)
+        #expect(model.highlightColor == RGBA(red: 0, green: 0, blue: 1, alpha: EditorPalette.highlighterAlpha))
+        #expect(model.strokeColor == EditorPalette.defaultStroke)
+        model.applyLineWidth(points: 8)
+        #expect(model.highlightWidthPoints == 8)
+        #expect(model.lineWidthPoints == EditorDefaults.standard.lineWidthPoints)
+        #expect(model.activeLineWidthPoints == 8)
+        model.tool = .pencil
+        #expect(model.activeLineWidthPoints == EditorDefaults.standard.lineWidthPoints)
+
+        // Select with a highlighter selected recolours it and keeps alpha 0.45.
+        let marked = Annotation.highlighter(Stroke(id: UUID(), points: points, color: EditorPalette.defaultHighlight, lineWidth: 24))
+        model.commit(model.document.appending(marked), actionName: "Add Highlighter")
+        model.tool = .select
+        model.selection = marked.id
+        model.applyColor(red)
+        #expect(model.document.annotation(id: marked.id)
+                == Annotation.highlighter(Stroke(id: marked.id, points: points,
+                                                 color: RGBA(red: 1, green: 0, blue: 0, alpha: 0.45), lineWidth: 24)))
+        #expect(model.activeColor.alpha == 0.45)
+    }
+
     @Test func renderExportReturnsCaptureScale() async throws {
         let model = makeModel()
         add(box(), to: model)

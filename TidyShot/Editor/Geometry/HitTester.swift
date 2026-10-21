@@ -22,7 +22,8 @@ nonisolated enum HitTester {
     /// Boxes (the rectangle, the ellipse and every effect) have eight handles, clockwise from the
     /// top-left corner: 0 top-left, 1 top-middle, 2 top-right, 3 middle-right, 4 bottom-right,
     /// 5 bottom-middle, 6 bottom-left, 7 middle-left. Top is minY. A segment (arrow or line) has
-    /// two: 0 the tail (`from`) and 1 the head (`to`).
+    /// two: 0 the tail (`from`) and 1 the head (`to`). A stroke has none: it moves and does not
+    /// resize.
     static func handles(for annotation: Annotation) -> [CGPoint] {
         switch annotation {
         case .rectangle(let shape), .ellipse(let shape):
@@ -31,6 +32,8 @@ nonisolated enum HitTester {
             boxHandles(region.rect)
         case .arrow(let segment), .line(let segment):
             [segment.from, segment.to]
+        case .pencil, .highlighter:
+            []
         }
     }
 
@@ -83,6 +86,8 @@ nonisolated enum HitTester {
             default: break
             }
             return .line(segment)
+        case .pencil, .highlighter:
+            return annotation
         case .redact(var region, let fill):
             region.rect = resizedRect(region.rect, handle: handle, to: point, square: square)
             return .redact(region, fill: fill)
@@ -136,6 +141,19 @@ nonisolated enum HitTester {
         return hypot(point.x - (a.x + t * abx), point.y - (a.y + t * aby))
     }
 
+    /// Whether `point` lies on `stroke`: the smoothed path stroked at the line width plus the
+    /// tolerance on each side, with round caps and joins, tested for containment. The path and its
+    /// outline are built here and dropped. A point outside the path's bounds grown by the same
+    /// reach is refused before the outline is made.
+    static func strokeContains(_ stroke: Stroke, _ point: CGPoint, tolerance: CGFloat) -> Bool {
+        guard !stroke.points.isEmpty else { return false }
+        let reach = stroke.lineWidth / 2 + tolerance
+        let path = StrokeSmoothing.path(for: stroke.points)
+        guard path.boundingBoxOfPath.insetBy(dx: -reach, dy: -reach).contains(point) else { return false }
+        let outline = path.copy(strokingWithWidth: 2 * reach, lineCap: .round, lineJoin: .round, miterLimit: 1)
+        return outline.contains(point)
+    }
+
     private static func boxHandles(_ rect: CGRect) -> [CGPoint] {
         let r = rect.standardized
         return [
@@ -162,7 +180,8 @@ nonisolated enum HitTester {
     /// `lineWidth + tolerance` inside it (the stroke sits inside the rect). An ellipse is hollow
     /// likewise: its body is the ring between the ellipse grown by `tolerance` and the ellipse of
     /// the rect inset by `lineWidth + tolerance`. An arrow's body is its shaft line, and a line's
-    /// the whole segment, within `lineWidth / 2 + tolerance`. An effect is filled: its rect grown
+    /// the whole segment, within `lineWidth / 2 + tolerance`. A stroke's body is its smoothed path
+    /// stroked at its width plus the tolerance on each side. An effect is filled: its rect grown
     /// by `tolerance`.
     private static func bodyContains(_ annotation: Annotation, _ point: CGPoint, tolerance: CGFloat) -> Bool {
         switch annotation {
@@ -178,6 +197,8 @@ nonisolated enum HitTester {
             return ellipseContains(outer, point) && !ellipseContains(inner, point)
         case .arrow(let segment), .line(let segment):
             return distance(from: point, toSegment: segment.from, segment.to) <= segment.lineWidth / 2 + tolerance
+        case .pencil(let stroke), .highlighter(let stroke):
+            return strokeContains(stroke, point, tolerance: tolerance)
         case .redact(let region, _), .blur(let region, _), .pixelate(let region, _):
             return region.rect.standardized.insetBy(dx: -tolerance, dy: -tolerance).contains(point)
         }

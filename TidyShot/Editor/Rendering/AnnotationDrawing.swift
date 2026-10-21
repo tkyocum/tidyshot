@@ -24,6 +24,10 @@ nonisolated enum AnnotationDrawing {
             strokeEllipse(box, in: context)
         case .line(let segment):
             strokeLine(segment, in: context)
+        case .pencil(let stroke):
+            drawStroke(stroke, blend: .normal, in: context)
+        case .highlighter(let stroke):
+            drawStroke(stroke, blend: .multiply, in: context)
         case .redact, .blur, .pixelate:
             break
         }
@@ -49,7 +53,8 @@ nonisolated enum AnnotationDrawing {
 
     /// Selection chrome in view space, so it keeps its size at every zoom. A selected effect gets
     /// a dashed outline of its rect, white under black so it shows on any background, because a
-    /// blur has no edge of its own. Every selection then gets an 8 pt white square with a dark
+    /// blur has no edge of its own. A selected stroke gets the same dashed outline around its
+    /// bounds (it has no handles). Every selection then gets an 8 pt white square with a dark
     /// border at each point of `HitTester.handles(for:)`. `scale` is the view's backing scale
     /// factor: edges snap to device pixels so the 1 pt lines stay sharp.
     static func drawSelection(for annotation: Annotation, transform: CanvasTransform, scale: CGFloat, in context: CGContext) {
@@ -58,7 +63,7 @@ nonisolated enum AnnotationDrawing {
         context.saveGState()
         defer { context.restoreGState() }
         context.setLineWidth(1)
-        if let rect = annotation.effectRect {
+        if let rect = annotation.effectRect ?? AnnotationGeometry.strokeOutline(of: annotation) {
             let view = transform.viewRect(rect)
             let outline = CGRect(x: snap(view.minX), y: snap(view.minY),
                                  width: snap(view.maxX) - snap(view.minX),
@@ -120,6 +125,24 @@ nonisolated enum AnnotationDrawing {
         context.addLine(to: head.right)
         context.closePath()
         context.fillPath()
+    }
+
+    /// The smoothed path stroked once with round caps and joins. A single stroke operation paints
+    /// the stroked outline as one shape, so a translucent highlighter that crosses itself is not
+    /// painted twice. `.multiply` multiplies the colour with what is already in the context, so
+    /// the highlighter can only darken: black stays black, white becomes the colour. The flattener
+    /// draws into the capture's bitmap, where that is exactly what multiplies.
+    private static func drawStroke(_ stroke: Stroke, blend: CGBlendMode, in context: CGContext) {
+        guard !stroke.points.isEmpty, stroke.lineWidth > 0 else { return }
+        context.saveGState()
+        defer { context.restoreGState() }
+        context.setBlendMode(blend)
+        context.setStrokeColor(stroke.color.cgColor)
+        context.setLineWidth(stroke.lineWidth)
+        context.setLineCap(.round)
+        context.setLineJoin(.round)
+        context.addPath(StrokeSmoothing.path(for: stroke.points))
+        context.strokePath()
     }
 
     /// Stroked inset by half the line width, so the stroke sits inside the rect, as the rectangle's

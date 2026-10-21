@@ -21,6 +21,18 @@ nonisolated enum EditorPalette {
     static let defaultRedact = black
     /// The options popover's widths, also on keys 1 to 6.
     static let lineWidthsPoints: [CGFloat] = [2, 3, 4, 6, 8, 12]
+    /// A highlighter stroke's alpha. Any colour picked for the highlighter keeps it, so text stays
+    /// readable under the multiply.
+    static let highlighterAlpha: Double = 0.45
+    /// The highlighter's colour until another is picked: the palette's yellow at `highlighterAlpha`.
+    static let defaultHighlight = yellow.withAlpha(highlighterAlpha)
+    /// The highlighter's width in points; also the last stop of `lineWidthsPoints`.
+    static let highlighterWidthPoints: CGFloat = 12
+
+    /// `color` at the highlighter's alpha.
+    static func highlighterColor(from color: RGBA) -> RGBA {
+        color.withAlpha(highlighterAlpha)
+    }
 
     private static func rgb(_ red: Int, _ green: Int, _ blue: Int) -> RGBA {
         RGBA(red: Double(red) / 255, green: Double(green) / 255, blue: Double(blue) / 255)

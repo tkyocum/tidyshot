@@ -56,6 +56,10 @@ final class EditorModel: CanvasEditing {
     var strokeColor: RGBA
     var redactColor: RGBA
     var lineWidthPoints: CGFloat
+    /// The Highlighter's own colour and width (the Pencil uses `strokeColor` and `lineWidthPoints`).
+    /// Not persisted: every editor starts from yellow at alpha 0.45 and 12 pt.
+    var highlightColor = EditorPalette.defaultHighlight
+    var highlightWidthPoints = EditorPalette.highlighterWidthPoints
     var blurRadiusPoints: CGFloat
     var blockPoints: CGFloat
     var transform: CanvasTransform
@@ -160,6 +164,21 @@ final class EditorModel: CanvasEditing {
         case .line:
             guard start != end else { return nil }
             return .line(Segment(id: id, from: start, to: end, color: strokeColor, lineWidth: lineWidthPoints * scale))
+        case .pencil, .highlighter:
+            return nil  // Strokes come from `makeStroke`.
+        }
+    }
+
+    func makeStroke(_ tool: EditorTool, points: [CGPoint]) -> Annotation? {
+        guard points.count >= 2 else { return nil }
+        let id = transient?.id ?? UUID()
+        switch tool {
+        case .pencil:
+            return .pencil(Stroke(id: id, points: points, color: strokeColor, lineWidth: lineWidthPoints * scale))
+        case .highlighter:
+            return .highlighter(Stroke(id: id, points: points, color: highlightColor, lineWidth: highlightWidthPoints * scale))
+        default:
+            return nil  // No other tool draws freehand; this switch needs no case per tool.
         }
     }
 
@@ -201,7 +220,7 @@ final class EditorModel: CanvasEditing {
     /// The colour the toolbar circle shows: the selected annotation's, else the default
     /// `applyColor` would change.
     var activeColor: RGBA {
-        Self.color(of: selectedAnnotation) ?? (editsRedactColor ? redactColor : strokeColor)
+        Self.color(of: selectedAnnotation) ?? (editsRedactColor ? redactColor : editsHighlighter ? highlightColor : strokeColor)
     }
 
     /// Redact, or Select with a redaction selected, edits the fill; everything else the stroke.
@@ -211,15 +230,34 @@ final class EditorModel: CanvasEditing {
         return true
     }
 
+    /// The Highlighter, or Select with a highlighter selected, edits the highlight colour and
+    /// width; the same rule as `editsRedactColor`.
+    private var editsHighlighter: Bool {
+        if tool == .highlighter { return true }
+        guard tool == .select, case .highlighter? = selectedAnnotation else { return false }
+        return true
+    }
+
+    /// The width the line-width control shows: the highlighter's while it is being edited.
+    var activeLineWidthPoints: CGFloat {
+        editsHighlighter ? highlightWidthPoints : lineWidthPoints
+    }
+
     func applyColor(_ color: RGBA) {
-        if editsRedactColor { redactColor = color } else { strokeColor = color }
+        if editsRedactColor {
+            redactColor = color
+        } else if editsHighlighter {
+            highlightColor = EditorPalette.highlighterColor(from: color)
+        } else {
+            strokeColor = color
+        }
         guard let selected = selectedAnnotation else { return }
         commit(document.replacing(selected.withColor(color)), actionName: ActionName.color,
                coalescingKey: "\(ActionName.color)-\(selected.id.uuidString)")
     }
 
     func applyLineWidth(points: CGFloat) {
-        lineWidthPoints = points
+        if editsHighlighter { highlightWidthPoints = points } else { lineWidthPoints = points }
         guard let selected = selectedAnnotation else { return }
         commit(document.replacing(selected.withLineWidth(points * scale)), actionName: ActionName.lineWidth,
                coalescingKey: "\(ActionName.lineWidth)-\(selected.id.uuidString)")
@@ -251,6 +289,7 @@ final class EditorModel: CanvasEditing {
         switch annotation {
         case .rectangle(let box)?, .ellipse(let box)?: return box.color
         case .arrow(let segment)?, .line(let segment)?: return segment.color
+        case .pencil(let stroke)?, .highlighter(let stroke)?: return stroke.color
         case .redact(_, let fill)?: return fill
         default: return nil
         }

@@ -7,6 +7,7 @@ func makeTool(for tool: EditorTool) -> any CanvasTool {
     case .select: return SelectTool()
     case .redact, .pixelate, .blur, .rectangle, .ellipse: return RectDragTool(tool: tool)
     case .arrow, .line: return TwoPointTool(tool: tool)
+    case .pencil, .highlighter: return PencilTool(tool: tool)
     }
 }
 

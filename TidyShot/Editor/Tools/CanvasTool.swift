@@ -29,6 +29,10 @@ protocol CanvasEditing: AnyObject {
     var selection: UUID? { get set }
     func commit(_ new: AnnotationDocument, actionName: String, coalescingKey: String?)
     func makeAnnotation(_ tool: EditorTool, from: CGPoint, to: CGPoint) -> Annotation?
+    /// Builds the freehand stroke for Pencil or Highlighter from the decimated points with the
+    /// current colour and width, reusing the transient's id. Nil for fewer than two points and for
+    /// any other tool.
+    func makeStroke(_ tool: EditorTool, points: [CGPoint]) -> Annotation?
 }
 
 /// Turns pointer events into a transient shape and one commit per gesture. `makeTool(for:)` in

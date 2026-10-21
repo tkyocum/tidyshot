@@ -20,6 +20,7 @@ final class FakeCanvasEditing: CanvasEditing {
     var selection: UUID?
     private(set) var commits: [Commit] = []
     private(set) var made: [(tool: EditorTool, from: CGPoint, to: CGPoint)] = []
+    private(set) var strokes: [(tool: EditorTool, points: [CGPoint])] = []
 
     init(_ annotations: [Annotation] = []) {
         document = AnnotationDocument(annotations: annotations)
@@ -49,6 +50,17 @@ final class FakeCanvasEditing: CanvasEditing {
         default: return nil
         }
     }
+
+    func makeStroke(_ tool: EditorTool, points: [CGPoint]) -> Annotation? {
+        strokes.append((tool: tool, points: points))
+        guard points.count >= 2 else { return nil }
+        let stroke = Stroke(id: transient?.id ?? UUID(), points: points, color: EditorPalette.defaultStroke, lineWidth: 8)
+        switch tool {
+        case .pencil: return .pencil(stroke)
+        case .highlighter: return .highlighter(stroke)
+        default: return nil
+        }
+    }
 }
 
 @MainActor
@@ -71,6 +83,13 @@ struct CanvasToolTests {
         switch annotation {
         case .arrow(let segment)?, .line(let segment)?: return segment
         default: return nil
+        }
+    }
+
+    func stroke(of annotation: Annotation?) -> Stroke? {
+        switch annotation {
+        case .pencil(let stroke)?, .highlighter(let stroke)?: stroke
+        default: nil
         }
     }
 
@@ -170,6 +189,80 @@ struct CanvasToolTests {
         rectangle.mouseDragged(at(11, 40), on: canvas)
         rectangle.mouseUp(at(11, 40), on: canvas)
         #expect(canvas.commits.count == 2)
+    }
+
+    /// The stroke grows in `transient` under one id, keeps the pointer as its last point, drops
+    /// samples closer than 2 px (at 100 %), and commits once on mouseUp.
+    @Test func pencilDragsOneStrokeAndCommitsOnMouseUp() throws {
+        let canvas = FakeCanvasEditing()
+        let tool = makeTool(for: .pencil)
+        #expect(tool is PencilTool)
+
+        tool.mouseDown(at(10, 10), on: canvas)
+        #expect(canvas.transient == nil)
+        tool.mouseDragged(at(20, 14), on: canvas)
+        let first = try #require(stroke(of: canvas.transient))
+        #expect(first.points == [CGPoint(x: 10, y: 10), CGPoint(x: 20, y: 14)])
+
+        tool.mouseDragged(at(30, 18), on: canvas)
+        tool.mouseDragged(at(30.5, 18.2), on: canvas)
+        let near = try #require(stroke(of: canvas.transient))
+        #expect(near.id == first.id)
+        #expect(near.points.last == CGPoint(x: 30.5, y: 18.2))
+
+        tool.mouseDragged(at(50, 12), on: canvas)
+        #expect(canvas.commits.isEmpty)
+        tool.mouseUp(at(50, 12), on: canvas)
+
+        #expect(canvas.commits.count == 1)
+        let commit = try #require(canvas.commits.first)
+        #expect(commit.actionName == "Add Pencil")
+        #expect(commit.coalescingKey == nil)
+        let committed = try #require(canvas.document.annotations.last)
+        #expect(commit.transient == committed)
+        let result = try #require(stroke(of: committed))
+        #expect(result.id == first.id)
+        #expect(result.points == [CGPoint(x: 10, y: 10), CGPoint(x: 20, y: 14), CGPoint(x: 30, y: 18), CGPoint(x: 50, y: 12)])
+        #expect(canvas.transient == nil)
+        #expect(canvas.selection == committed.id)
+        #expect(canvas.strokes.allSatisfy { $0.tool == .pencil })
+    }
+
+    /// A click and a 1 px jiggle leave nothing; Escape mid-stroke (the model clears `transient`)
+    /// ends the gesture; a real drag with the Highlighter commits `Add Highlighter`.
+    @Test func tinyOrCancelledStrokeLeavesNothing() throws {
+        let canvas = FakeCanvasEditing()
+        let tool = makeTool(for: .highlighter)
+
+        tool.mouseDown(at(10, 10), on: canvas)
+        tool.mouseUp(at(10, 10), on: canvas)
+        #expect(canvas.commits.isEmpty)
+        #expect(canvas.transient == nil)
+
+        tool.mouseDown(at(10, 10), on: canvas)
+        tool.mouseDragged(at(11, 10.5), on: canvas)
+        #expect(canvas.transient == nil)
+        tool.mouseUp(at(11, 10.5), on: canvas)
+        #expect(canvas.commits.isEmpty)
+
+        tool.mouseDown(at(10, 10), on: canvas)
+        tool.mouseDragged(at(40, 10), on: canvas)
+        #expect(canvas.transient != nil)
+        canvas.transient = nil
+        tool.mouseDragged(at(80, 10), on: canvas)
+        #expect(canvas.transient == nil)
+        tool.mouseUp(at(80, 10), on: canvas)
+        #expect(canvas.commits.isEmpty)
+
+        tool.mouseDown(at(10, 10), on: canvas)
+        tool.mouseDragged(at(60, 10), on: canvas)
+        tool.mouseUp(at(60, 10), on: canvas)
+        #expect(canvas.commits.count == 1)
+        #expect(canvas.commits.first?.actionName == "Add Highlighter")
+        guard case .highlighter? = canvas.document.annotations.last else {
+            Issue.record("no highlighter")
+            return
+        }
     }
 
     @Test func shiftViaFlagsChangedSquares() throws {

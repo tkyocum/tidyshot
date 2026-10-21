@@ -21,6 +21,16 @@ nonisolated struct Segment: Codable, Equatable, Sendable {
     var lineWidth: CGFloat
 }
 
+/// A freehand stroke: Pencil and Highlighter. `points` are the pointer samples after
+/// `StrokeSmoothing.decimated`, in image pixels. The smoothed curve is rebuilt from them each time
+/// it is drawn or hit (`StrokeSmoothing.path(for:)`); no CGPath is stored.
+nonisolated struct Stroke: Codable, Equatable, Sendable {
+    let id: UUID
+    var points: [CGPoint]
+    var color: RGBA
+    var lineWidth: CGFloat
+}
+
 /// The area an effect covers.
 nonisolated struct Region: Codable, Equatable, Sendable {
     let id: UUID
@@ -34,6 +44,10 @@ nonisolated enum Annotation: Identifiable, Codable, Equatable, Sendable {
     case arrow(Segment)
     case ellipse(ShapeBox)
     case line(Segment)
+    /// Freehand in the stroke colour.
+    case pencil(Stroke)
+    /// Freehand in a translucent colour that multiplies with what is beneath it.
+    case highlighter(Stroke)
     case redact(Region, fill: RGBA)
     /// `radius` is the Gaussian sigma.
     case blur(Region, radius: CGFloat)
@@ -43,13 +57,14 @@ nonisolated enum Annotation: Identifiable, Codable, Equatable, Sendable {
         switch self {
         case .rectangle(let box), .ellipse(let box): box.id
         case .arrow(let segment), .line(let segment): segment.id
+        case .pencil(let stroke), .highlighter(let stroke): stroke.id
         case .redact(let region, _), .blur(let region, _), .pixelate(let region, _): region.id
         }
     }
 
     var isEffect: Bool {
         switch self {
-        case .rectangle, .ellipse, .arrow, .line: false
+        case .rectangle, .ellipse, .arrow, .line, .pencil, .highlighter: false
         case .redact, .blur, .pixelate: true
         }
     }
@@ -57,7 +72,7 @@ nonisolated enum Annotation: Identifiable, Codable, Equatable, Sendable {
     /// The region an effect covers; nil for a drawing.
     var effectRect: CGRect? {
         switch self {
-        case .rectangle, .ellipse, .arrow, .line: nil
+        case .rectangle, .ellipse, .arrow, .line, .pencil, .highlighter: nil
         case .redact(let region, _), .blur(let region, _), .pixelate(let region, _): region.rect
         }
     }
@@ -69,6 +84,8 @@ nonisolated enum Annotation: Identifiable, Codable, Equatable, Sendable {
         case .arrow: "Arrow"
         case .ellipse: "Ellipse"
         case .line: "Line"
+        case .pencil: "Pencil"
+        case .highlighter: "Highlighter"
         case .redact: "Redact"
         case .blur: "Blur"
         case .pixelate: "Pixelate"
@@ -92,6 +109,12 @@ nonisolated enum Annotation: Identifiable, Codable, Equatable, Sendable {
             segment.from = CGPoint(x: segment.from.x + delta.dx, y: segment.from.y + delta.dy)
             segment.to = CGPoint(x: segment.to.x + delta.dx, y: segment.to.y + delta.dy)
             return .line(segment)
+        case .pencil(var stroke):
+            stroke.points = stroke.points.map { CGPoint(x: $0.x + delta.dx, y: $0.y + delta.dy) }
+            return .pencil(stroke)
+        case .highlighter(var stroke):
+            stroke.points = stroke.points.map { CGPoint(x: $0.x + delta.dx, y: $0.y + delta.dy) }
+            return .highlighter(stroke)
         case .redact(var region, let fill):
             region.rect = region.rect.offsetBy(dx: delta.dx, dy: delta.dy)
             return .redact(region, fill: fill)
@@ -104,8 +127,8 @@ nonisolated enum Annotation: Identifiable, Codable, Equatable, Sendable {
         }
     }
 
-    /// The stroke colour of a shape or the fill of a redaction. Blur and pixelate have no colour
-    /// and come back unchanged.
+    /// The stroke colour of a shape or the fill of a redaction. A highlighter keeps its alpha of
+    /// 0.45 whatever the colour's own. Blur and pixelate have no colour and come back unchanged.
     func withColor(_ color: RGBA) -> Annotation {
         switch self {
         case .rectangle(var box):
@@ -120,6 +143,12 @@ nonisolated enum Annotation: Identifiable, Codable, Equatable, Sendable {
         case .line(var segment):
             segment.color = color
             return .line(segment)
+        case .pencil(var stroke):
+            stroke.color = color
+            return .pencil(stroke)
+        case .highlighter(var stroke):
+            stroke.color = EditorPalette.highlighterColor(from: color)
+            return .highlighter(stroke)
         case .redact(let region, _):
             return .redact(region, fill: color)
         case .blur, .pixelate:
@@ -142,6 +171,12 @@ nonisolated enum Annotation: Identifiable, Codable, Equatable, Sendable {
         case .line(var segment):
             segment.lineWidth = width
             return .line(segment)
+        case .pencil(var stroke):
+            stroke.lineWidth = width
+            return .pencil(stroke)
+        case .highlighter(var stroke):
+            stroke.lineWidth = width
+            return .highlighter(stroke)
         case .redact, .blur, .pixelate:
             return self
         }
@@ -155,7 +190,7 @@ nonisolated enum Annotation: Identifiable, Codable, Equatable, Sendable {
             return .blur(region, radius: value)
         case .pixelate(let region, _):
             return .pixelate(region, block: value)
-        case .rectangle, .ellipse, .arrow, .line, .redact:
+        case .rectangle, .ellipse, .arrow, .line, .pencil, .highlighter, .redact:
             return self
         }
     }

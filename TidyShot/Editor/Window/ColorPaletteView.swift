@@ -23,7 +23,7 @@ struct ColorPaletteView: View {
     }
 
     private func swatchButton(_ swatch: RGBA, name: String) -> some View {
-        let isCurrent = model.activeColor == swatch
+        let isCurrent = model.activeColor.withAlpha(1) == swatch
         return Button {
             model.applyColor(swatch)
         } label: {
@@ -42,7 +42,7 @@ struct ColorPaletteView: View {
 
     /// The colour panel can hand back Display P3 or grey colours; they are converted to sRGB.
     private var customColor: Binding<CGColor> {
-        Binding(get: { model.activeColor.cgColor },
+        Binding(get: { model.activeColor.withAlpha(1).cgColor },
                 set: { color in
                     if let rgba = RGBA(srgbConverting: color) { model.applyColor(rgba) }
                 })

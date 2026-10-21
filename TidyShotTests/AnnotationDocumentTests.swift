@@ -50,6 +50,35 @@ struct AnnotationDocumentTests {
         #expect(two.annotations.map(\.id) == [boxID, redactID])
     }
 
+    /// Strokes are drawings; they move by shifting every point, recolour (a highlighter keeps its
+    /// alpha), change width, ignore effect parameters, and survive an encode and decode.
+    @Test func strokesMoveRecolourAndRoundTrip() throws {
+        let id = UUID()
+        let points = [CGPoint(x: 0, y: 0), CGPoint(x: 10, y: 5), CGPoint(x: 20, y: 0)]
+        let pencil = Annotation.pencil(Stroke(id: id, points: points, color: red, lineWidth: 6))
+        let marker = Annotation.highlighter(Stroke(id: id, points: points, color: EditorPalette.defaultHighlight, lineWidth: 24))
+
+        #expect(!pencil.isEffect)
+        #expect(!marker.isEffect)
+        #expect(pencil.effectRect == nil)
+        #expect(pencil.id == id)
+        #expect(pencil.title == "Pencil")
+        #expect(marker.title == "Highlighter")
+
+        let shifted = points.map { CGPoint(x: $0.x + 3, y: $0.y - 2) }
+        #expect(pencil.moved(by: CGVector(dx: 3, dy: -2)) == .pencil(Stroke(id: id, points: shifted, color: red, lineWidth: 6)))
+        #expect(pencil.withColor(blue) == .pencil(Stroke(id: id, points: points, color: blue, lineWidth: 6)))
+        #expect(marker.withColor(blue)
+                == .highlighter(Stroke(id: id, points: points, color: RGBA(red: 0, green: 0, blue: 1, alpha: 0.45), lineWidth: 24)))
+        #expect(pencil.withLineWidth(12) == .pencil(Stroke(id: id, points: points, color: red, lineWidth: 12)))
+        #expect(marker.withEffectParameter(9) == marker)
+
+        let document = AnnotationDocument(annotations: [pencil, box(), marker.withColor(blue)])
+        #expect(document.drawings.count == 3)
+        let decoded = try JSONDecoder().decode(AnnotationDocument.self, from: JSONEncoder().encode(document))
+        #expect(decoded == document)
+    }
+
     @Test func effectsAndDrawingsSplitInOrder() {
         #expect(mixed.effects == [redact(), blur(), pixelate()])
         #expect(mixed.drawings == [box(), arrow()])

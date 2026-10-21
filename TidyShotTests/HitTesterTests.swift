@@ -25,6 +25,10 @@ struct HitTesterTests {
         .line(Segment(id: id, from: from, to: to, color: red, lineWidth: lineWidth))
     }
 
+    func pencil(_ points: [CGPoint], width: CGFloat = 8, id: UUID = UUID()) -> Annotation {
+        .pencil(Stroke(id: id, points: points, color: red, lineWidth: width))
+    }
+
     func blur(_ rect: CGRect, id: UUID = UUID()) -> Annotation {
         .blur(Region(id: id, rect: rect), radius: 16)
     }
@@ -80,6 +84,32 @@ struct HitTesterTests {
         #expect(HitTester.distance(from: CGPoint(x: 50, y: 6), toSegment: CGPoint(x: 0, y: 0), CGPoint(x: 100, y: 0)) == 6)
         #expect(HitTester.distance(from: CGPoint(x: 103, y: 4), toSegment: CGPoint(x: 0, y: 0), CGPoint(x: 100, y: 0)) == 5)
         #expect(HitTester.distance(from: CGPoint(x: 8, y: 9), toSegment: CGPoint(x: 5, y: 5), CGPoint(x: 5, y: 5)) == 5)
+    }
+
+    /// A stroke is hit within half its width plus the tolerance of its smoothed path, with round
+    /// caps, and not in the hollow of a curve. It has no handles, so a drag can only move it.
+    @Test func strokeHitWithinWidth() {
+        let level = pencil([CGPoint(x: 100, y: 100), CGPoint(x: 150, y: 100), CGPoint(x: 200, y: 100)])
+        #expect(HitTester.handles(for: level).isEmpty)
+        // Width 8: 3 px off the path is inside, 5 px is not until the tolerance reaches it.
+        #expect(HitTester.hit(level, at: CGPoint(x: 150, y: 103), tolerance: 0) == .body)
+        #expect(HitTester.hit(level, at: CGPoint(x: 150, y: 105), tolerance: 0) == nil)
+        #expect(HitTester.hit(level, at: CGPoint(x: 150, y: 105), tolerance: 4) == .body)
+        #expect(HitTester.hit(level, at: CGPoint(x: 150, y: 109), tolerance: 4) == nil)
+        // The round cap reaches 4 px past the last point along the path.
+        #expect(HitTester.hit(level, at: CGPoint(x: 203, y: 100), tolerance: 0) == .body)
+        #expect(HitTester.hit(level, at: CGPoint(x: 206, y: 100), tolerance: 0) == nil)
+
+        // The smoothed curve passes through its points; the space under the arch is not the body.
+        let arch = pencil([CGPoint(x: 0, y: 0), CGPoint(x: 50, y: 50), CGPoint(x: 100, y: 0)])
+        #expect(HitTester.hit(arch, at: CGPoint(x: 50, y: 50), tolerance: 0) == .body)
+        #expect(HitTester.hit(arch, at: CGPoint(x: 50, y: 10), tolerance: 4) == nil)
+
+        // A highlighter is hit the same way.
+        let marker = Annotation.highlighter(Stroke(id: UUID(), points: [CGPoint(x: 0, y: 0), CGPoint(x: 40, y: 0), CGPoint(x: 80, y: 0)],
+                                                   color: EditorPalette.defaultHighlight, lineWidth: 24))
+        #expect(HitTester.hit(marker, at: CGPoint(x: 40, y: 11), tolerance: 0) == .body)
+        #expect(HitTester.hit(marker, at: CGPoint(x: 40, y: 13), tolerance: 0) == nil)
     }
 
     /// Effects render beneath every drawing, so a drawing wins even over a later effect.

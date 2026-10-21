@@ -376,6 +376,49 @@ final class CanvasView: NSView {
 
     // MARK: Drawing
 
+    /// For each highlighter meeting `visible` (including the one in progress): clip to its stroked
+    /// outline, then draw the capture and the shown effect tiles into that clip. The copy equals
+    /// what `baseView` shows there, so the picture does not change, and the multiply that follows
+    /// in `AnnotationDrawing.draw` has real pixels to multiply. Runs before every other drawing, so
+    /// shapes made before the highlighter lie under it and shapes made after lie over it, as in the
+    /// export. The CTM is image pixels, top-left origin. Interpolation follows `BaseImageView`:
+    /// nearest from 2 device pixels per image pixel up.
+    private func drawHighlighterBackdrops(in context: CGContext, visible: CGRect) {
+        var strokes: [Stroke] = []
+        for drawing in displayedDrawings {
+            if case .highlighter(let stroke) = drawing, AnnotationGeometry.strokeBounds(of: stroke).intersects(visible) {
+                strokes.append(stroke)
+            }
+        }
+        guard !strokes.isEmpty else { return }
+        let nearest = model.transform.zoom * backingScale >= 2
+        for stroke in strokes {
+            context.saveGState()
+            context.addPath(StrokeSmoothing.path(for: stroke.points))
+            context.setLineWidth(stroke.lineWidth)
+            context.setLineCap(.round)
+            context.setLineJoin(.round)
+            context.replacePathWithStrokedPath()
+            context.clip()
+            context.interpolationQuality = nearest ? .none : .high
+            drawFlipped(model.base, in: CGRect(origin: .zero, size: imagePixelSize), context: context)
+            for effect in displayedEffects {
+                if let tile = shownTile(for: effect) { drawFlipped(tile.image, in: tile.rect, context: context) }
+            }
+            context.restoreGState()
+        }
+    }
+
+    /// `CGContext.draw` assumes a y-up space and the CTM here is y-down, so the image is drawn
+    /// through a local flip about `rect`; without it the copy would be upside down.
+    private func drawFlipped(_ image: CGImage, in rect: CGRect, context: CGContext) {
+        context.saveGState()
+        context.translateBy(x: rect.minX, y: rect.maxY)
+        context.scaleBy(x: 1, y: -1)
+        context.draw(image, in: CGRect(x: 0, y: 0, width: rect.width, height: rect.height))
+        context.restoreGState()
+    }
+
     /// Spec 2.6 Rendering: (1) image-pixel CTM; (2) placeholders for effects with no tile yet;
     /// (3) drawings meeting the dirty rect, then the transient shape; (4) back in view space, the
     /// selection handles or dashed outline. No Core Image or GPU work happens here.
@@ -385,6 +428,7 @@ final class CanvasView: NSView {
         let visible = transform.imageRect(dirtyRect)
         context.saveGState()
         context.concatenate(transform.affine)
+        drawHighlighterBackdrops(in: context, visible: visible)
         for effect in displayedEffects where pendingIDs.contains(effect.id) {
             guard let rect = effect.effectRect, rect.intersects(visible) else { continue }
             AnnotationDrawing.drawPlaceholder(for: effect, in: context)

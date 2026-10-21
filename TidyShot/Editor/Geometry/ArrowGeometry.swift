@@ -65,10 +65,29 @@ nonisolated enum AnnotationGeometry {
             let cap = segment.lineWidth / 2
             let shaft = enclosing([segment.from, end]).insetBy(dx: -cap, dy: -cap)
             painted = shaft.union(enclosing([head.tip, head.left, head.right]))
+        case .pencil(let stroke), .highlighter(let stroke):
+            painted = strokeBounds(of: stroke)
         case .redact(let region, _), .blur(let region, _), .pixelate(let region, _):
             painted = region.rect.standardized
         }
         return painted.insetBy(dx: -antialiasMargin, dy: -antialiasMargin)
+    }
+
+    /// A stroke's smoothed path grown by half its width. The path is built here and dropped.
+    /// Catmull-Rom can overshoot its points a little, so the bounds come from the curve, not from
+    /// the points.
+    static func strokeBounds(of stroke: Stroke) -> CGRect {
+        guard !stroke.points.isEmpty else { return .null }
+        let box = StrokeSmoothing.path(for: stroke.points).boundingBoxOfPath
+        return box.insetBy(dx: -stroke.lineWidth / 2, dy: -stroke.lineWidth / 2)
+    }
+
+    /// The box the selection outline draws around a stroke; nil for every other annotation.
+    static func strokeOutline(of annotation: Annotation) -> CGRect? {
+        switch annotation {
+        case .pencil(let stroke), .highlighter(let stroke): strokeBounds(of: stroke)
+        default: nil
+        }
     }
 
     /// The smallest rect holding `points`; it may have zero width or height.
