@@ -56,9 +56,10 @@ final class AppCoordinator {
     @ObservationIgnored private var drainingQueues: [UploadLane] = []
     /// Optimize images with Clop (spec 2.7): one optimiser, sending to whichever Clop build runs.
     private let clopOptimiser = ClopApp.makeOptimiser()
-    /// Records whose upload waits for Clop. Delete's cancel takes the id out, and the upload is
-    /// then never enqueued.
-    @ObservationIgnored private var optimisingIDs: Set<UUID> = []
+    /// Records whose upload waits for Clop, each with the token of the attempt that waits. Delete's
+    /// cancel takes the record out, and the upload is then never enqueued; a retry started after
+    /// that gets a new token, so the first attempt's task cannot enqueue its stale bytes.
+    @ObservationIgnored private var optimisingIDs: [UUID: UUID] = [:]
     /// Per lane (by queue identity), the uploads still waiting for Clop or being enqueued, so a lane
     /// the Upload tab replaced is not dropped from `drainingQueues` before their jobs reach it.
     @ObservationIgnored private var clopWaitsPerLane: [ObjectIdentifier: Int] = [:]
@@ -897,7 +898,8 @@ final class AppCoordinator {
         // Clop rewrites a throwaway copy: the save-folder file, the pending file and the editor's
         // file stay as captured, so a Retry optimises the original again. The record stays
         // `.uploading(fraction: 0)` meanwhile.
-        optimisingIDs.insert(recordID)
+        let token = UUID()
+        optimisingIDs[recordID] = token
         let laneID = ObjectIdentifier(lane.queue)
         clopWaitsPerLane[laneID, default: 0] += 1
         Task {
@@ -907,7 +909,8 @@ final class AppCoordinator {
             }
             let bytes = await optimisedForUpload(data)
             // Delete cancelled the upload while Clop ran (`cancelUpload` did the bookkeeping).
-            guard optimisingIDs.remove(recordID) != nil else { return }
+            guard optimisingIDs[recordID] == token else { return }
+            optimisingIDs[recordID] = nil
             guard history.record(id: recordID) != nil else {
                 // Removed from history meanwhile: nothing would point at the object.
                 uploadingIDs.remove(recordID)
@@ -1258,7 +1261,7 @@ final class AppCoordinator {
         guard uploadingIDs.contains(recordID) else { return }
         // Still waiting for Clop: nothing is enqueued and no key is reserved, so this is the
         // whole cancel, as the queue's `.cancelled` event would do it.
-        if optimisingIDs.remove(recordID) != nil {
+        if optimisingIDs.removeValue(forKey: recordID) != nil {
             uploadingIDs.remove(recordID)
             history.update(id: recordID) { $0.uploadState = .failed(message: "Upload cancelled.") }
             refreshOverlay(for: recordID)

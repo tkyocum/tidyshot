@@ -15,8 +15,9 @@ struct UploadSettingsView: View {
     @State private var statusMessage: String?
     @State private var statusIsError = false
     @State private var isTesting = false
-    /// Whether either Clop build is installed, read when the tab appears.
-    @State private var clopInstalled = ClopApp.isInstalled
+    /// Whether either Clop build is installed, read once when the tab appears (the lookup asks
+    /// LaunchServices, so it does not belong in a property initialiser that runs on every rebuild).
+    @State private var clopInstalled = false
 
     var body: some View {
         Form {
