@@ -261,10 +261,12 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
         let dontSave = alert.addButton(withTitle: "Don’t Save")
         dontSave.keyEquivalent = "d"
         dontSave.keyEquivalentModifierMask = .command
+        // Held from the moment the sheet shows until its choice is carried out, so a shortcut that
+        // reaches this window behind the sheet is refused and no other action clears the flag early.
+        isPerformingAction = true
+        defer { isPerformingAction = false }
         switch await alert.beginSheetModal(for: window) {
         case .alertFirstButtonReturn:
-            isPerformingAction = true
-            defer { isPerformingAction = false }
             return await exportAndDeliver(marksSaved: true) { image in
                 canSave ? await self.actions.save(image) : await self.actions.saveCopy(image)
             }

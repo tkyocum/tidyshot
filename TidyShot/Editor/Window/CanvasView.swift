@@ -103,7 +103,10 @@ final class CanvasView: NSView {
         }
     }
 
+    /// A zero magnification (a pinch's begin and end events) moves nothing, so it leaves the fit
+    /// following window resizes. The same holds for zero-delta scroll events below.
     override func magnify(with event: NSEvent) {
+        guard event.magnification != 0 else { return }
         zoom(by: 1 + event.magnification, around: convert(event.locationInWindow, from: nil))
     }
 
@@ -117,6 +120,7 @@ final class CanvasView: NSView {
             let factor = precise ? exp(delta / 100) : (delta > 0 ? 1.25 : 1 / 1.25)
             zoom(by: factor, around: convert(event.locationInWindow, from: nil))
         } else {
+            guard event.scrollingDeltaX != 0 || event.scrollingDeltaY != 0 else { return }
             let line: CGFloat = precise ? 1 : 10
             apply(model.transform.panned(by: CGPoint(x: event.scrollingDeltaX * line, y: event.scrollingDeltaY * line)),
                   fits: false)

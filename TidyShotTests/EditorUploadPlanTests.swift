@@ -258,6 +258,34 @@ struct EditorUploadPlanTests {
         #expect(first.supersededObjects.isEmpty)
     }
 
+    /// The clean-up after `.uploaded` never deletes a link: not the live one, and not the prior
+    /// link of a newer upload of the same record that is still running (spec 2.6).
+    @Test func supersededCleanupNeverDeletesALink() {
+        let old = ObjectRef(key: key, location: here)
+        let stale = ObjectRef(key: "Old111.png", location: elsewhere)
+        // Upload as New finished as "Qx12Zz.png": the old key goes, the live one is only dropped.
+        var done = record(.uploaded(url: URL(string: "https://snap.tky.io/Qx12Zz.png")!, key: "Qx12Zz.png"), at: here)
+        done.supersededObjects = [old, stale]
+        #expect(EditorUploadPlan.supersededStep(for: old, of: done) == .delete)
+        #expect(EditorUploadPlan.supersededStep(for: stale, of: done) == .delete)
+        #expect(EditorUploadPlan.supersededStep(for: ObjectRef(key: "Qx12Zz.png", location: here), of: done) == .drop)
+
+        // A second Upload as New of the record began before the clean-up read it: its prior link
+        // (the Qx12Zz.png object) is listed as superseded but is still the link, so nothing goes.
+        let live = ObjectRef(key: "Qx12Zz.png", location: here)
+        let again = EditorUploadPlan.startingUpload(done, plan: .newObject(supersede: live, notice: nil))
+        #expect(again.supersededObjects.contains(live))
+        for ref in again.supersededObjects {
+            #expect(EditorUploadPlan.supersededStep(for: ref, of: again) == .keep)
+        }
+
+        // After a quit cut that upload short, its prior link stays listed and is not deleted.
+        var interrupted = again
+        interrupted.uploadState = .failed(message: "Upload was interrupted.")
+        #expect(EditorUploadPlan.supersededStep(for: live, of: interrupted) == .keep)
+        #expect(EditorUploadPlan.supersededStep(for: stale, of: interrupted) == .delete)
+    }
+
     @Test func cacheNoteOnlyOnFirstSameKeyReplace() {
         let replace = PriorUpload(url: link, key: key, location: here, isReplace: true)
         #expect(EditorUploadPlan.cacheNote == "Replaced. Copies opened before now may stay cached for a while.")

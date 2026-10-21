@@ -1341,15 +1341,23 @@ final class AppCoordinator {
     /// After a successful upload: deletes each superseded object at its own location, signed with
     /// the credentials stored now. A key another capture points at is kept and dropped from the
     /// list (that capture's own Delete removes it). A key that cannot be deleted stays listed, so
-    /// Delete tries it again through `CaptureDeletion.objects(for:)`.
+    /// Delete tries it again through `CaptureDeletion.objects(for:)`. Nothing is deleted while a
+    /// newer upload of the record runs (`EditorUploadPlan.supersededStep`): the record is read
+    /// again before each DELETE, because that upload may start during an earlier one.
     private func deleteSupersededObjects(of id: UUID) async {
-        guard !deletingIDs.contains(id), let record = history.record(id: id), !record.supersededObjects.isEmpty else { return }
-        let live = record.uploadedKey.flatMap { key in record.objectLocation.map { ObjectRef(key: key, location: $0) } }
+        guard !deletingIDs.contains(id), let record = history.record(id: id), !record.isUploading,
+              !record.supersededObjects.isEmpty else { return }
         var settled: [ObjectRef] = []
         for ref in record.supersededObjects {
-            if ref == live {
+            guard let current = history.record(id: id) else { break }
+            switch EditorUploadPlan.supersededStep(for: ref, of: current) {
+            case .keep:
+                continue
+            case .drop:
                 settled.append(ref) // never delete the link itself
                 continue
+            case .delete:
+                break
             }
             let others = history.records.filter { $0.id != id }
             if !CaptureDeletion.sharedKeys([ref.key], at: ref.location, with: others).isEmpty {
@@ -1361,7 +1369,12 @@ final class AppCoordinator {
                 settled.append(ref)
             }
         }
-        history.update(id: id) { $0.supersededObjects.removeAll { settled.contains($0) } }
+        // An upload that started meanwhile may have listed the dropped link again as its prior
+        // link; that entry stays for its own clean-up.
+        history.update(id: id) { record in
+            let prior = record.priorUpload.map { ObjectRef(key: $0.key, location: $0.location) }
+            record.supersededObjects.removeAll { settled.contains($0) && $0 != prior }
+        }
     }
 
     /// The clipboard rule (spec 2.6), after a Save Copy or (from Task 13) a local edit. Puts the

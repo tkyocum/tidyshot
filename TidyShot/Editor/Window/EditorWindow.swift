@@ -12,7 +12,8 @@ final class EditorWindow: NSWindow {
     /// validated against the target that would receive it first: a refusal beeps and consumes the
     /// event. Anything the table does not match (⌘X, ⌘Q, ⌘,) goes on to super and the main menu.
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        guard event.type == .keyDown, let characters = event.charactersIgnoringModifiers else {
+        // Behind the unsaved-changes sheet, editor shortcuts do nothing.
+        guard attachedSheet == nil, event.type == .keyDown, let characters = event.charactersIgnoringModifiers else {
             return super.performKeyEquivalent(with: event)
         }
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)

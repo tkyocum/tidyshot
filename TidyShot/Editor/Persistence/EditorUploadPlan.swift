@@ -175,6 +175,28 @@ nonisolated enum EditorUploadPlan {
         return next
     }
 
+    /// What `AppCoordinator.deleteSupersededObjects` does with a superseded object.
+    enum SupersededStep: Equatable, Sendable {
+        /// DELETE it (unless another capture shares its key), then drop it from the list.
+        case delete
+        /// Drop it from the list without a DELETE: it is the live link.
+        case drop
+        /// Leave it listed and untouched.
+        case keep
+    }
+
+    /// The step for `ref` on `record` as the record stands now. While an upload runs, nothing is
+    /// deleted: its prior link sits on the list (an Upload as New lists it there) but is still the
+    /// link, and that upload's own `.uploaded` runs the clean-up again. The link kept in
+    /// `priorUpload` is never deleted either.
+    static func supersededStep(for ref: ObjectRef, of record: CaptureRecord) -> SupersededStep {
+        if record.isUploading { return .keep }
+        if let prior = record.priorUpload, ref == ObjectRef(key: prior.key, location: prior.location) { return .keep }
+        if let key = record.uploadedKey, let location = record.objectLocation,
+           ref == ObjectRef(key: key, location: location) { return .drop }
+        return .delete
+    }
+
     /// True for the first upload in this launch that replaced its own key: `prior` was a replace
     /// of `uploadedKey` at `location`.
     static func shouldPostCacheNote(prior: PriorUpload?, uploadedKey: String, at location: ObjectLocation,

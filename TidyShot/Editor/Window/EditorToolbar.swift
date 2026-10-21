@@ -129,7 +129,7 @@ extension EditorWindowController: NSToolbarDelegate, NSToolbarItemValidation {
         let canSave = available.contains(.save)
         item.action = canSave ? #selector(saveDocument(_:)) : #selector(saveDocumentCopy(_:))
         item.label = canSave ? "Save" : "Save Copy…"
-        item.toolTip = canSave ? "Save" : "Save Copy…"
+        item.toolTip = canSave ? "Save (⌘S)" : "Save Copy… (⇧⌘S)"
     }
 
     private func reflectColor(_ color: RGBA) {

@@ -31,7 +31,7 @@ Each task gives the exact Swift interfaces it produces, complete Swift Testing t
 - Model geometry is in image pixels with a top-left origin (CGImage row 0). Line widths, blur radii and pixel blocks are stored in image pixels (points chosen in the UI times the capture scale at creation). The model never stores CGColor, CGPath, NSColor or CIFilter.
 - Concurrency: any `nonisolated async` function that must run off the main actor is marked `@concurrent`. `RedactionRenderer` is an actor and owns the only `CIContext`; CIFilters are built inside each call. No GPU or Core Image work runs inside `draw(_:)`. Tests never block the main actor with a semaphore; fakes wait on an async gate.
 - Exact user-visible strings (from spec 2.6), used verbatim:
-  - Notification titles: `Not saved`, `Not uploaded`, `Could not open the capture`; bodies `Image copied`, `Upload failed. The link still shows the earlier image.`, `Replaced. Copies opened before now may stay cached for a while.` (posted once per app session, on the first successful same-key replace).
+  - Notification titles: `Not saved`, `Not uploaded`, `Could not open the capture`, `Image copied`; bodies `Upload failed. The link still shows the earlier image.`, `Replaced. Copies opened before now may stay cached for a while.` (posted once per app session, on the first successful same-key replace).
   - Window subtitles: `Uploading…`, `Deleting…`, `The uploaded copy still shows the original. Upload to replace it.`, `This capture was deleted. Copy and Save Copy still work.`
   - Upload notices: `The destination changed, so this uploads as a new link.`, `Another capture shares this link, so this uploads as a new link.`, `The earlier upload stays in the bucket.`
   - Close sheet: message `Do you want to save the changes made to “<title>”?`, informative text `Your changes will be lost if you don’t save them.`, buttons Save (or Save Copy… when Save is unavailable), Cancel, Don’t Save.
@@ -72,6 +72,8 @@ The totals come from each task's declared tests. Task 17 checks them against a r
 Task 17 correction: the review fix 60d63ea (tile cache fails closed) added one test to Task 6, so Task 6 is 9 new tests and every row from Task 6 on is one higher; the real run reads 400 tests in 51 suites.
 
 Whole-branch review fix: `uploadWritesLocallyWhenASaveTargetExists` and `uploadWritesNothingLocallyOutsideTheSaveFolder` in `EditorSaveTargetTests` bring the real run to 402 tests in 51 suites.
+
+Review follow-ups: `supersededCleanupNeverDeletesALink` in `EditorUploadPlanTests` and the new `CanvasFitTests` suite (2 tests) bring the real run to 405 tests in 52 suites.
 
 ---
 
@@ -11625,7 +11627,7 @@ Run:
 ```bash
 xcodegen generate && xcodebuild test -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build 2>&1 | grep -E "Test run with|error:|TEST"
 ```
-Expected: no `error:` lines, and `Test run with 399 tests in 51 suites passed`.
+Expected: no `error:` lines, and `Test run with 400 tests in 51 suites passed`.
 
 - [ ] **Step 5: Annotate on the overlay**
 
@@ -11948,7 +11950,7 @@ Run:
 ```bash
 xcodegen generate && xcodebuild test -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build 2>&1 | grep -E "Test run with|error:|TEST"
 ```
-Expected: no `error:` lines, and `Test run with 399 tests in 51 suites passed`. OverlayGeometryTests are unchanged.
+Expected: no `error:` lines, and `Test run with 400 tests in 51 suites passed`. OverlayGeometryTests are unchanged.
 
 - [ ] **Step 10: Check by hand**
 
@@ -12260,7 +12262,7 @@ Run:
 ```bash
 xcodegen generate && xcodebuild test -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=macOS' -derivedDataPath .build 2>&1 | grep -E "Test run with|error:|TEST"
 ```
-Expected: no `error:` lines, `** TEST SUCCEEDED **`, and `Test run with 399 tests in 51 suites passed`.
+Expected: no `error:` lines, `** TEST SUCCEEDED **`, and `Test run with 400 tests in 51 suites passed`.
 
 That count must equal the Task 17 row of the "Test totals" table in the plan's header section (`task-00-header.md` in the plan files, and in `docs/superpowers/plans/2026-10-20-phase-4a-annotation-editor.md`, which is those files concatenated). Reconcile the table against the repo first:
 ```bash
@@ -12327,6 +12329,6 @@ The plan and the spec are in the list so that Step 3 and Step 4 amendments land 
 
 - [ ] **Step 7: Stop here**
 
-Phase 4a is done when the last test run reads `Test run with 399 tests in 51 suites passed` and the checklist passes. Do not push and do not open a PR: the controller pushes and opens PR 1 after the whole-branch review. Report the final test line, which checklist items were run (and whether the 1x and second-bucket items were skipped), and any amendment made in Step 3 or Step 4.
+Phase 4a is done when the last test run reads `Test run with 400 tests in 51 suites passed` and the checklist passes. Do not push and do not open a PR: the controller pushes and opens PR 1 after the whole-branch review. Report the final test line, which checklist items were run (and whether the 1x and second-bucket items were skipped), and any amendment made in Step 3 or Step 4.
 
 ---
