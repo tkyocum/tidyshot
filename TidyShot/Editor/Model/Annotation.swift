@@ -145,6 +145,84 @@ nonisolated enum Annotation: Identifiable, Codable, Equatable, Sendable {
         }
     }
 
+    /// The same annotation under another id, for duplicate and paste. Every other field is kept.
+    func withID(_ id: UUID) -> Annotation {
+        switch self {
+        case .rectangle(let box):
+            .rectangle(ShapeBox(id: id, rect: box.rect, color: box.color, lineWidth: box.lineWidth))
+        case .ellipse(let box):
+            .ellipse(ShapeBox(id: id, rect: box.rect, color: box.color, lineWidth: box.lineWidth))
+        case .arrow(let segment):
+            .arrow(Segment(id: id, from: segment.from, to: segment.to, color: segment.color, lineWidth: segment.lineWidth))
+        case .line(let segment):
+            .line(Segment(id: id, from: segment.from, to: segment.to, color: segment.color, lineWidth: segment.lineWidth))
+        case .pencil(let stroke):
+            .pencil(Stroke(id: id, points: stroke.points, color: stroke.color, lineWidth: stroke.lineWidth))
+        case .highlighter(let stroke):
+            .highlighter(Stroke(id: id, points: stroke.points, color: stroke.color, lineWidth: stroke.lineWidth))
+        case .text(let box):
+            .text(TextBox(id: id, string: box.string, origin: box.origin, fontSize: box.fontSize, color: box.color))
+        case .redact(let region, let fill):
+            .redact(Region(id: id, rect: region.rect), fill: fill)
+        case .blur(let region, let radius):
+            .blur(Region(id: id, rect: region.rect), radius: radius)
+        case .pixelate(let region, let block):
+            .pixelate(Region(id: id, rect: region.rect), block: block)
+        }
+    }
+
+    /// Every position and size times `factor`, around image pixel (0, 0): a paste from a capture
+    /// at another scale keeps the annotation's size in points. A pixel block stays a whole pixel
+    /// count of at least 1. Unchanged for a factor of 1 or a factor that is not a positive number.
+    func scaled(by factor: CGFloat) -> Annotation {
+        guard factor != 1, factor > 0, factor.isFinite else { return self }
+        func point(_ p: CGPoint) -> CGPoint { CGPoint(x: p.x * factor, y: p.y * factor) }
+        func rect(_ r: CGRect) -> CGRect {
+            CGRect(x: r.minX * factor, y: r.minY * factor, width: r.width * factor, height: r.height * factor)
+        }
+        switch self {
+        case .rectangle(var box):
+            box.rect = rect(box.rect)
+            box.lineWidth *= factor
+            return .rectangle(box)
+        case .ellipse(var box):
+            box.rect = rect(box.rect)
+            box.lineWidth *= factor
+            return .ellipse(box)
+        case .arrow(var segment):
+            segment.from = point(segment.from)
+            segment.to = point(segment.to)
+            segment.lineWidth *= factor
+            return .arrow(segment)
+        case .line(var segment):
+            segment.from = point(segment.from)
+            segment.to = point(segment.to)
+            segment.lineWidth *= factor
+            return .line(segment)
+        case .pencil(var stroke):
+            stroke.points = stroke.points.map(point)
+            stroke.lineWidth *= factor
+            return .pencil(stroke)
+        case .highlighter(var stroke):
+            stroke.points = stroke.points.map(point)
+            stroke.lineWidth *= factor
+            return .highlighter(stroke)
+        case .text(var box):
+            box.origin = point(box.origin)
+            box.fontSize *= factor
+            return .text(box)
+        case .redact(var region, let fill):
+            region.rect = rect(region.rect)
+            return .redact(region, fill: fill)
+        case .blur(var region, let radius):
+            region.rect = rect(region.rect)
+            return .blur(region, radius: radius * factor)
+        case .pixelate(var region, let block):
+            region.rect = rect(region.rect)
+            return .pixelate(region, block: max(1, (block * factor).rounded()))
+        }
+    }
+
     /// The stroke colour of a shape or the fill of a redaction. A highlighter keeps its alpha of
     /// 0.45 whatever the colour's own. Blur and pixelate have no colour and come back unchanged.
     func withColor(_ color: RGBA) -> Annotation {

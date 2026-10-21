@@ -2,6 +2,15 @@ import AppKit
 import Observation
 import UniformTypeIdentifiers
 
+/// The pasteboard as object copy and paste see it (4b). AppCoordinator implements it, because the
+/// editor never touches the pasteboard.
+struct EditorObjectClipboard {
+    var copy: (Data) -> Void
+    var paste: () -> Data?
+    /// A type check only; validation calls it often.
+    var canPaste: () -> Bool
+}
+
 /// What the editor's document actions do, provided by AppCoordinator: the editor never writes
 /// files, never touches the pasteboard and never enqueues uploads. For Save and Save As… the Bool
 /// says whether the edit was written, which is when the editor marks itself saved; Upload reports
@@ -13,6 +22,7 @@ struct EditorActions {
     /// The save panel's suggested name and folder, read when the panel opens.
     var saveAsSuggestion: () -> EditorNaming.SaveAsSuggestion
     var copy: (ScaledImage) async -> Void
+    var objectClipboard: EditorObjectClipboard
     var upload: (ScaledImage, _ asNew: Bool) async -> EditorUploadOutcome
 }
 
@@ -47,6 +57,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
         baseView.image = model.base
         let canvasView = CanvasView(model: model, baseView: baseView)
         self.canvasView = canvasView
+        canvasView.objectClipboard = actions.objectClipboard
 
         let window = EditorWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 420),
                                   styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -166,8 +177,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
         runDocumentTask { await self.performSaveAs() }
     }
 
-    /// ⌘C. In 4a it copies the flattened image, like ⇧⌘C; 4b gives CanvasView an object copy that
-    /// passes this up when nothing is selected.
+    /// ⌘C with nothing selected: copies the flattened image, like ⇧⌘C. With a selection CanvasView
+    /// takes copy: first (object copy) and this is not reached.
     @objc func copy(_ sender: Any?) {
         guard permits(#selector(copy(_:))) else { return }
         copyImage(sender)
@@ -381,5 +392,10 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
 
     func windowWillClose(_ notification: Notification) {
         onClose?(self)
+    }
+
+    /// Space's key-up goes elsewhere once the window is not key, so the pan key is let go here.
+    func windowDidResignKey(_ notification: Notification) {
+        canvasView.endSpacePan()
     }
 }

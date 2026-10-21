@@ -40,6 +40,14 @@ final class CanvasView: NSView {
     private var gestureCancelled = false
     /// The last pointer input, re-sent with new modifiers by `flagsChanged`.
     private var lastInput: ToolInput?
+    /// Object copy and paste through the coordinator; set by EditorWindowController.
+    var objectClipboard: EditorObjectClipboard?
+    /// Space is down: the next press pans instead of reaching the tool.
+    private var spaceHeld = false
+    /// The press that started a Space-drag pan, in view points, and the transform at that moment.
+    private var panStart: (viewPoint: CGPoint, transform: CanvasTransform)?
+    /// One element per annotation id, kept so VoiceOver focus survives a refresh.
+    private var accessibilityElements: [UUID: AnnotationAccessibilityElement] = [:]
 
     init(model: EditorModel, baseView: BaseImageView) {
         self.model = model
@@ -154,6 +162,12 @@ final class CanvasView: NSView {
             return
         }
         window?.makeFirstResponder(self)
+        // Space held: this press pans and the tool never sees it.
+        if spaceHeld, !isTrackingMouse {
+            panStart = (convert(event.locationInWindow, from: nil), model.transform)
+            updatePanCursor()
+            return
+        }
         isTrackingMouse = true
         gestureCancelled = false
         activeTool.mouseDown(input(for: event), on: model)
@@ -161,12 +175,25 @@ final class CanvasView: NSView {
     }
 
     override func mouseDragged(with event: NSEvent) {
+        // From the press-time transform each time, so device-pixel snapping does not add up.
+        if let panStart {
+            let point = convert(event.locationInWindow, from: nil)
+            apply(panStart.transform.panned(by: CGPoint(x: point.x - panStart.viewPoint.x,
+                                                        y: point.y - panStart.viewPoint.y)), fits: false)
+            return
+        }
         guard isTrackingMouse, !gestureCancelled else { return }
         activeTool.mouseDragged(input(for: event), on: model)
         refresh()
     }
 
     override func mouseUp(with event: NSEvent) {
+        // A pan ends here even when Space was let go first.
+        if panStart != nil {
+            panStart = nil
+            updatePanCursor()
+            return
+        }
         defer {
             isTrackingMouse = false
             gestureCancelled = false
@@ -203,13 +230,23 @@ final class CanvasView: NSView {
     }
 
     override func resetCursorRects() {
-        addCursorRect(bounds, cursor: activeTool.cursor)
+        addCursorRect(bounds, cursor: currentCursor)
     }
 
     // MARK: Keys (unmodified keys; ⌘ chords are EditorWindow's)
 
     override func keyDown(with event: NSEvent) {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if KeyRouting.isPanKey(characters: event.charactersIgnoringModifiers, command: flags.contains(.command),
+                               control: flags.contains(.control), option: flags.contains(.option),
+                               isEditingText: isEditingText) {
+            // Repeats are swallowed too, so they never reach interpretKeyEvents (which beeps).
+            if !event.isARepeat, !isTrackingMouse {
+                spaceHeld = true
+                updatePanCursor()
+            }
+            return
+        }
         switch KeyRouting.action(characters: event.charactersIgnoringModifiers, command: flags.contains(.command),
                                  control: flags.contains(.control), option: flags.contains(.option),
                                  isEditingText: isEditingText, tool: model.tool) {
@@ -230,6 +267,37 @@ final class CanvasView: NSView {
         case .none:
             interpretKeyEvents([event])
         }
+    }
+
+    override func keyUp(with event: NSEvent) {
+        if event.charactersIgnoringModifiers == " " {
+            endSpacePan()
+        } else {
+            super.keyUp(with: event)
+        }
+    }
+
+    override func resignFirstResponder() -> Bool {
+        endSpacePan()
+        return super.resignFirstResponder()
+    }
+
+    /// Lets go of Space. A pan already under way finishes on mouseUp.
+    func endSpacePan() {
+        guard spaceHeld else { return }
+        spaceHeld = false
+        updatePanCursor()
+    }
+
+    private var currentCursor: NSCursor {
+        if panStart != nil { return .closedHand }
+        return spaceHeld ? .openHand : activeTool.cursor
+    }
+
+    /// Cursor rects change only when the pointer moves, so the new cursor is also set at once.
+    private func updatePanCursor() {
+        window?.invalidateCursorRects(for: self)
+        currentCursor.set()
     }
 
     /// Escape and ⌘.: abandons a drag in progress (the tool is replaced, so its gesture state goes
@@ -284,6 +352,103 @@ final class CanvasView: NSView {
         refresh()
     }
 
+    // MARK: Object copy, paste and duplicate
+
+    /// The canvas takes `copy:`, `duplicate:` and `paste:` only when there is something to act on.
+    /// `NSApp.target(forAction:)` asks each responder, so with nothing selected `copy:` goes on to
+    /// EditorWindowController (the image copy), and `duplicate:` or `paste:` finds no target and
+    /// EditorWindow beeps. NSObject declares this nonisolated; the responder chain asks on the main
+    /// thread, and any other thread gets NSObject's answer.
+    nonisolated override func responds(to aSelector: Selector!) -> Bool {
+        let isCopy = aSelector == #selector(copy(_:))
+        let isDuplicate = aSelector == #selector(duplicate(_:))
+        let isPaste = aSelector == #selector(paste(_:))
+        guard isCopy || isDuplicate || isPaste, Thread.isMainThread else { return super.responds(to: aSelector) }
+        return MainActor.assumeIsolated {
+            if isCopy { return hasSelectedAnnotation }
+            if isDuplicate { return !isTrackingMouse && hasSelectedAnnotation }
+            // Cropping shows no selection (Task 4), so a paste waits until Crop ends.
+            return !isTrackingMouse && model.tool != .crop && objectClipboard?.canPaste() == true
+        }
+    }
+
+    private var hasSelectedAnnotation: Bool {
+        model.selection.flatMap { model.document.annotation(id: $0) } != nil
+    }
+
+    /// ⌘C with a selection: the selected annotation goes on the pasteboard under the private type
+    /// only. No notification, and the coordinator's clipboard owner is left alone.
+    @objc func copy(_ sender: Any?) {
+        guard let data = model.objectClip()?.encoded() else {
+            nextResponder?.tryToPerform(#selector(copy(_:)), with: sender)
+            return
+        }
+        objectClipboard?.copy(data)
+    }
+
+    /// ⌘V: the copied annotation, placed by `AnnotationClip.placed`, as one step `Paste <title>`.
+    /// A clip this build cannot read beeps, as nothing to paste does.
+    @objc func paste(_ sender: Any?) {
+        guard !isTrackingMouse, model.tool != .crop, let data = objectClipboard?.paste(),
+              let clip = AnnotationClip.decoded(from: data) else {
+            NSSound.beep()
+            return
+        }
+        model.paste(clip)
+        refresh()
+    }
+
+    /// ⌘D: a copy of the selection 10 pt down and to the right, as one step `Duplicate <title>`.
+    @objc func duplicate(_ sender: Any?) {
+        guard !isTrackingMouse else { return }
+        model.duplicateSelection()
+        refresh()
+    }
+
+    // MARK: Accessibility
+
+    override func isAccessibilityElement() -> Bool { true }
+    override func accessibilityRole() -> NSAccessibility.Role? { .layoutArea }
+    override func accessibilityLabel() -> String? { CanvasAccessibility.canvasLabel }
+
+    /// One element per annotation, in painting order. Elements are reused by id, so VoiceOver
+    /// focus survives a refresh; the label and value are brought up to date here.
+    override func accessibilityChildren() -> [Any]? {
+        let items = CanvasAccessibility.items(in: model.document)
+        let ids = Set(items.map(\.id))
+        accessibilityElements = accessibilityElements.filter { ids.contains($0.key) }
+        return items.map { item -> AnnotationAccessibilityElement in
+            let element = accessibilityElements[item.id] ?? AnnotationAccessibilityElement(annotationID: item.id, canvas: self)
+            accessibilityElements[item.id] = element
+            element.setAccessibilityLabel(item.label)
+            element.setAccessibilityValue(item.value)
+            return element
+        }
+    }
+
+    override func accessibilitySelectedChildren() -> [Any]? {
+        guard let id = model.selection, model.document.annotation(id: id) != nil else { return [] }
+        _ = accessibilityChildren()
+        return accessibilityElements[id].map { [$0] } ?? []
+    }
+
+    /// The annotation's painted bounds on screen, at the current zoom and pan.
+    func accessibilityScreenFrame(of id: UUID) -> NSRect {
+        guard let annotation = model.document.annotation(id: id) else { return .zero }
+        return NSAccessibility.screenRect(fromView: self, rect: model.transform.viewRect(imageBounds(of: annotation)))
+    }
+
+    func isAccessibilitySelected(_ id: UUID) -> Bool { model.selection == id }
+
+    /// AXPress on an annotation selects it. Nothing while a drag runs or while cropping, which shows
+    /// no selection.
+    func selectFromAccessibility(_ id: UUID) -> Bool {
+        guard !isTrackingMouse, model.tool != .crop, model.document.annotation(id: id) != nil else { return false }
+        model.selection = id
+        refresh()
+        return true
+    }
+
     // MARK: Model to screen
 
     /// Re-registers on every change (Observation reports one change per registration, before it
@@ -321,6 +486,12 @@ final class CanvasView: NSView {
         guard now != shown else { return }
         let previous = shown
         shown = now
+        if now.document != previous.document {
+            NSAccessibility.post(element: self, notification: .layoutChanged)
+        }
+        if now.selection != previous.selection {
+            NSAccessibility.post(element: self, notification: .selectedChildrenChanged)
+        }
         baseView.transform = now.transform
         // The effect being dragged is rendered on every change; commits reconcile in the model.
         if now.transient != previous.transient, now.transient?.isEffect == true || previous.transient?.isEffect == true {

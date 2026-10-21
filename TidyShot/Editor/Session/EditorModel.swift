@@ -246,6 +246,35 @@ final class EditorModel: CanvasEditing {
                coalescingKey: "Nudge-\(selected.id.uuidString)")
     }
 
+    /// ⌘D, and a paste that lands on an identical annotation, move the copy this far down and to
+    /// the right.
+    static let duplicateOffsetPoints: CGFloat = 10
+
+    /// `duplicateOffsetPoints` in image pixels.
+    var duplicateOffset: CGVector {
+        CGVector(dx: Self.duplicateOffsetPoints * scale, dy: Self.duplicateOffsetPoints * scale)
+    }
+
+    /// ⌘D: a copy of the selection, `duplicateOffset` away, appended and selected. One step,
+    /// `Duplicate <title>`. Nothing selected: nothing happens.
+    func duplicateSelection() {
+        guard let selected = selectedAnnotation else { return }
+        commitNewShape(selected.moved(by: duplicateOffset).withID(UUID()), actionName: "Duplicate \(selected.title)")
+    }
+
+    /// ⌘C with a selection: the selected annotation as it is in the document, with this capture's
+    /// scale. Nil with nothing selected (⌘C then copies the image).
+    func objectClip() -> AnnotationClip? {
+        selectedAnnotation.map { AnnotationClip(annotation: $0, scale: scale) }
+    }
+
+    /// ⌘V: the clip placed by `AnnotationClip.placed`, appended and selected. One step,
+    /// `Paste <title>`.
+    func paste(_ clip: AnnotationClip) {
+        let pasted = clip.placed(in: document, imageSize: imageSize, scale: scale, step: duplicateOffset, id: UUID())
+        commitNewShape(pasted, actionName: "Paste \(pasted.title)")
+    }
+
     /// Escape and ⌘.: while cropping, drop the draft (`cancelCrop()`); otherwise abandon the shape
     /// being drawn, else deselect. Never closes the window.
     func cancelCurrentOperation() {

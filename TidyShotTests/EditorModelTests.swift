@@ -14,14 +14,15 @@ struct EditorModelTests {
     let black = RGBA(red: 0, green: 0, blue: 0, alpha: 1)
     let white = RGBA(red: 1, green: 1, blue: 1, alpha: 1)
 
-    /// A model over a 16x16 opaque grey capture at scale 2, with the standard defaults.
-    func makeModel(renderer: any TileRendering = FakeTileRenderer()) -> EditorModel {
-        let context = CGContext(data: nil, width: 16, height: 16, bitsPerComponent: 8, bytesPerRow: 0,
+    /// A model over a `side` x `side` opaque grey capture at `scale` (16 px at 2x unless a test
+    /// needs room or another scale), with the standard defaults.
+    func makeModel(renderer: any TileRendering = FakeTileRenderer(), scale: CGFloat = 2, side: Int = 16) -> EditorModel {
+        let context = CGContext(data: nil, width: side, height: side, bitsPerComponent: 8, bytesPerRow: 0,
                                 space: CGColorSpace(name: CGColorSpace.sRGB)!,
                                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
         context.setFillColor(CGColor(srgbRed: 0.5, green: 0.5, blue: 0.5, alpha: 1))
-        context.fill(CGRect(x: 0, y: 0, width: 16, height: 16))
-        return EditorModel(recordID: UUID(), image: ScaledImage(image: context.makeImage()!, scale: 2),
+        context.fill(CGRect(x: 0, y: 0, width: side, height: side))
+        return EditorModel(recordID: UUID(), image: ScaledImage(image: context.makeImage()!, scale: scale),
                            renderer: renderer, defaults: .standard)
     }
 
@@ -602,5 +603,86 @@ struct EditorModelTests {
         model.commitTextEditing()
         #expect(model.document == afterEdit)
         #expect(!model.isEditingText)
+    }
+
+    @Test func duplicateOffsetsAndSelects() throws {
+        let model = makeModel(side: 64)
+        let shape = add(box(x: 2), to: model)
+        // Nothing selected: nothing to duplicate, and no step.
+        model.duplicateSelection()
+        #expect(model.document.annotations == [shape])
+        #expect(model.undoManager.undoActionName == "Add")
+
+        model.selection = shape.id
+        model.duplicateSelection()
+        // 10 pt down and to the right at scale 2.
+        #expect(model.duplicateOffset == CGVector(dx: 20, dy: 20))
+        let copy = try #require(model.document.annotations.last)
+        #expect(model.document.annotations.count == 2)
+        #expect(copy.id != shape.id)
+        #expect(copy == shape.moved(by: CGVector(dx: 20, dy: 20)).withID(copy.id))
+        #expect(model.selection == copy.id)
+        #expect(model.undoManager.undoActionName == "Duplicate Rectangle")
+
+        // ⌘D again duplicates the copy, one more step down and to the right.
+        model.duplicateSelection()
+        let third = try #require(model.document.annotations.last)
+        #expect(third == shape.moved(by: CGVector(dx: 40, dy: 40)).withID(third.id))
+        #expect(model.selection == third.id)
+        #expect(Set(model.document.annotations.map(\.id)).count == 3)
+    }
+
+    @Test func duplicateIsOneUndoStep() {
+        let model = makeModel(side: 64)
+        let effect = add(redaction(), to: model)
+        model.selection = effect.id
+        model.duplicateSelection()
+        #expect(model.document.effects.count == 2)
+        model.undoManager.undo()
+        #expect(model.document.annotations == [effect])
+        // The copy is gone, so the selection is too.
+        #expect(model.selection == nil)
+        model.undoManager.redo()
+        #expect(model.document.effects.count == 2)
+        #expect(undoAll(model).count == 2)
+    }
+
+    /// A copy from a 2x editor pasted into a 1x editor keeps its size in points.
+    @Test func pasteIntoAnotherEditorKeepsPointSize() throws {
+        let source = makeModel()
+        let shape = add(box(x: 2), to: source)
+        #expect(source.objectClip() == nil)
+        source.selection = shape.id
+        let data = try #require(source.objectClip()?.encoded())
+        let clip = try #require(AnnotationClip.decoded(from: data))
+        #expect(clip.scale == 2)
+
+        let target = makeModel(scale: 1)
+        target.paste(clip)
+        let pasted = try #require(target.document.annotations.first)
+        #expect(pasted.id != shape.id)
+        #expect(pasted == .rectangle(ShapeBox(id: pasted.id, rect: CGRect(x: 1, y: 1, width: 3, height: 2),
+                                              color: red, lineWidth: 2)))
+        #expect(target.selection == pasted.id)
+        #expect(target.undoManager.undoActionName == "Paste Rectangle")
+        target.undoManager.undo()
+        #expect(target.document.annotations.isEmpty)
+        #expect(source.document.annotations == [shape])
+    }
+
+    /// Pasting back into the same editor steps aside from the original, like ⌘D.
+    @Test func pasteOntoItsOriginalCascades() throws {
+        let model = makeModel(side: 200)
+        let shape = add(box(x: 2), to: model)
+        model.selection = shape.id
+        let clip = try #require(model.objectClip())
+        model.paste(clip)
+        let first = try #require(model.document.annotations.last)
+        #expect(first == shape.moved(by: CGVector(dx: 20, dy: 20)).withID(first.id))
+        model.paste(clip)
+        let second = try #require(model.document.annotations.last)
+        #expect(second == shape.moved(by: CGVector(dx: 40, dy: 40)).withID(second.id))
+        #expect(model.selection == second.id)
+        #expect(undoAll(model).count == 3)
     }
 }

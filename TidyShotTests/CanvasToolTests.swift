@@ -572,4 +572,59 @@ struct CanvasToolTests {
         #expect(canvas.cropDraft == nil)
         #expect(canvas.commits.isEmpty)
     }
+
+    @Test func optionDragDuplicates() throws {
+        let original = arrow(CGPoint(x: 20, y: 100), CGPoint(x: 180, y: 100))
+        let canvas = FakeCanvasEditing([original])
+        let tool = makeTool(for: .select)
+
+        // An Option-click that never passes the tiny-drag rule changes nothing.
+        tool.mouseDown(at(100, 100, option: true), on: canvas)
+        tool.mouseUp(at(100, 100, option: true), on: canvas)
+        #expect(canvas.commits.isEmpty)
+        #expect(canvas.selection == original.id)
+
+        tool.mouseDown(at(100, 100, option: true), on: canvas)
+        tool.mouseDragged(at(130, 120, option: true), on: canvas)
+        let shown = try #require(canvas.transient)
+        #expect(shown.id != original.id)
+        #expect(shown == original.moved(by: CGVector(dx: 30, dy: 20)).withID(shown.id))
+        #expect(canvas.document.annotations == [original])
+        #expect(canvas.selection == original.id)
+
+        tool.mouseUp(at(130, 120, option: true), on: canvas)
+        #expect(canvas.commits.count == 1)
+        let commit = try #require(canvas.commits.first)
+        #expect(commit.actionName == "Duplicate \(original.title)")
+        #expect(commit.coalescingKey == nil)
+        #expect(commit.document.annotations == [original, shown])
+        #expect(canvas.selection == shown.id)
+        #expect(canvas.transient == nil)
+    }
+
+    /// Option is live: released mid-drag the gesture is a move, pressed again the same copy returns.
+    @Test func optionReleasedMidDragMoves() throws {
+        let original = arrow(CGPoint(x: 20, y: 100), CGPoint(x: 180, y: 100))
+        let canvas = FakeCanvasEditing([original])
+        let tool = makeTool(for: .select)
+        let moved = original.moved(by: CGVector(dx: 30, dy: 20))
+
+        tool.mouseDown(at(100, 100, option: true), on: canvas)
+        tool.mouseDragged(at(130, 120, option: true), on: canvas)
+        let copyID = try #require(canvas.transient?.id)
+        #expect(copyID != original.id)
+
+        tool.flagsChanged(at(130, 120), on: canvas)
+        #expect(canvas.transient == moved)
+        tool.flagsChanged(at(130, 120, option: true), on: canvas)
+        #expect(canvas.transient == moved.withID(copyID))
+        tool.flagsChanged(at(130, 120), on: canvas)
+
+        tool.mouseUp(at(130, 120), on: canvas)
+        #expect(canvas.commits.count == 1)
+        #expect(canvas.commits.first?.actionName == "Move \(original.title)")
+        #expect(canvas.document.annotations == [moved])
+        #expect(canvas.selection == original.id)
+        #expect(canvas.transient == nil)
+    }
 }

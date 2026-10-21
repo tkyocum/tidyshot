@@ -15,11 +15,12 @@ func makeTool(for tool: EditorTool) -> any CanvasTool {
 }
 
 extension CanvasEditing {
-    /// Ends a creation gesture with one commit named `Add <title>`, then clears the transient and
-    /// selects the new shape. The commit runs while the transient still holds the same value, so the
-    /// tile cache sees one key throughout and the live tile carries over (spec 2.6, Tiles).
-    func commitNewShape(_ shape: Annotation) {
-        commit(document.appending(shape), actionName: "Add \(shape.title)", coalescingKey: nil)
+    /// Ends a gesture that adds `shape` with one commit, named `actionName` or else `Add <title>`,
+    /// then clears the transient and selects the new shape. The commit runs while the transient
+    /// still holds the same value, so the tile cache sees one key throughout and the live tile
+    /// carries over (spec 2.6, Tiles). ⌥-drag, ⌘D and ⌘V use it too.
+    func commitNewShape(_ shape: Annotation, actionName: String? = nil) {
+        commit(document.appending(shape), actionName: actionName ?? "Add \(shape.title)", coalescingKey: nil)
         transient = nil
         selection = shape.id
     }

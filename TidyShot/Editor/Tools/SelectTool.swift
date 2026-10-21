@@ -6,16 +6,19 @@ import AppKit
 /// and moves it. A press on empty space deselects. A drag moves the selection (Shift keeps the
 /// dominant axis) or resizes it by the pressed handle (Shift squares a box). The changed copy lives
 /// in `canvas.transient`, with the annotation's own id, until mouseUp commits it once. A
-/// double-click on a text edits it again.
+/// double-click on a text edits it again. With Option held (at the press or later; flagsChanged
+/// re-reads it), a move drags a copy with its own id and leaves the original; mouseUp commits it
+/// once as Duplicate <title> and selects it.
 final class SelectTool: CanvasTool {
     private enum Gesture {
-        case move(original: Annotation)
+        /// `copyID` is the id a copy gets when Option is held; one per gesture.
+        case move(original: Annotation, copyID: UUID)
         /// `from` is where the handle sat at the press, so the handle keeps the grab offset.
         case resize(original: Annotation, handle: Int, from: CGPoint)
 
         var original: Annotation {
             switch self {
-            case .move(let original), .resize(let original, _, _): original
+            case .move(let original, _), .resize(let original, _, _): original
             }
         }
 
@@ -59,7 +62,7 @@ final class SelectTool: CanvasTool {
             return
         }
         canvas.selection = annotation.id
-        gesture = .move(original: annotation)
+        gesture = .move(original: annotation, copyID: UUID())
     }
 
     func mouseDragged(_ input: ToolInput, on canvas: any CanvasEditing) {
@@ -83,6 +86,11 @@ final class SelectTool: CanvasTool {
             canvas.transient = nil
             return
         }
+        if changed.id != ended.original.id {
+            // An ⌥-drag: the copy is new, the original stays.
+            canvas.commitNewShape(changed, actionName: "Duplicate \(changed.title)")
+            return
+        }
         canvas.commit(canvas.document.replacing(changed), actionName: "\(ended.verb) \(changed.title)",
                       coalescingKey: nil)
         canvas.transient = nil
@@ -98,8 +106,9 @@ final class SelectTool: CanvasTool {
         let delta = CGVector(dx: current.x - start.x, dy: current.y - start.y)
         guard shown != nil || DragGeometry.isLongEnough(from: start, to: current, zoom: canvas.zoom) else { return }
         switch gesture {
-        case .move(let original):
-            shown = original.moved(by: input.shift ? DragGeometry.axisLocked(delta) : delta)
+        case .move(let original, let copyID):
+            let moved = original.moved(by: input.shift ? DragGeometry.axisLocked(delta) : delta)
+            shown = input.option ? moved.withID(copyID) : moved
         case .resize(let original, let handle, let from):
             let to = CGPoint(x: from.x + delta.dx, y: from.y + delta.dy)
             shown = HitTester.resized(original, handle: handle, to: to, square: input.shift)
