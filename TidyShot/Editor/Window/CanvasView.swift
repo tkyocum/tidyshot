@@ -28,6 +28,9 @@ final class CanvasView: NSView {
     private var shown: Shown
     /// Effects drawn as placeholders because they have no tile to show yet (see `shownTile(for:)`).
     private var pendingIDs: Set<UUID> = []
+    /// The tile each effect showed at the last `syncTiles`, as `BaseImageView` keeps its own. The
+    /// highlighter backdrop copies these, so a replaced or moved tile repaints the area it covered.
+    private var shownTiles: [UUID: TileRepaint.Shown] = [:]
     /// Fit zoom is kept across window resizes until the user zooms or pans.
     private var fitsOnResize = true
     private var isTrackingMouse = false
@@ -351,6 +354,16 @@ final class CanvasView: NSView {
             }
         }
         pendingIDs = pending
+        var current: [UUID: TileRepaint.Shown] = [:]
+        for (id, tile) in tiles {
+            current[id] = TileRepaint.Shown(image: tile.image, rect: tile.rect)
+        }
+        for id in Set(shownTiles.keys).union(current.keys) {
+            if let dirty = TileRepaint.dirtyRect(old: shownTiles[id], new: current[id]) {
+                setNeedsDisplay(model.transform.viewRect(dirty).insetBy(dx: -8, dy: -8))
+            }
+        }
+        shownTiles = current
     }
 
     /// The tile to show for `effect` and the image-pixel rect it covers, or nil for the placeholder.
@@ -541,8 +554,10 @@ final class CanvasView: NSView {
     /// what `baseView` shows there, so the picture does not change, and the multiply that follows
     /// in `AnnotationDrawing.draw` has real pixels to multiply. Runs before every other drawing, so
     /// shapes made before the highlighter lie under it and shapes made after lie over it, as in the
-    /// export. The CTM is image pixels, top-left origin. Interpolation follows `BaseImageView`:
-    /// nearest from 2 device pixels per image pixel up.
+    /// export. The CTM is image pixels, top-left origin. The clip is stroked 1 view point wider on
+    /// each side so anti-aliased edge pixels get a whole backdrop, as in the export. Interpolation
+    /// follows `BaseImageView`: nearest from 2 device pixels per image pixel up, bilinear from 1,
+    /// and the highest quality below.
     private func drawHighlighterBackdrops(in context: CGContext, visible: CGRect) {
         var strokes: [Stroke] = []
         for drawing in displayedDrawings {
@@ -551,16 +566,18 @@ final class CanvasView: NSView {
             }
         }
         guard !strokes.isEmpty else { return }
-        let nearest = model.transform.zoom * backingScale >= 2
+        let devicePixelsPerImagePixel = model.transform.zoom * backingScale
+        let quality: CGInterpolationQuality = devicePixelsPerImagePixel >= 2 ? .none
+            : devicePixelsPerImagePixel >= 1 ? .low : .high
         for stroke in strokes {
             context.saveGState()
             context.addPath(StrokeSmoothing.path(for: stroke.points))
-            context.setLineWidth(stroke.lineWidth)
+            context.setLineWidth(stroke.lineWidth + 2 / model.transform.zoom)
             context.setLineCap(.round)
             context.setLineJoin(.round)
             context.replacePathWithStrokedPath()
             context.clip()
-            context.interpolationQuality = nearest ? .none : .high
+            context.interpolationQuality = quality
             drawFlipped(model.base, in: CGRect(origin: .zero, size: imagePixelSize), context: context)
             for effect in displayedEffects {
                 if let tile = shownTile(for: effect) { drawFlipped(tile.image, in: tile.rect, context: context) }
