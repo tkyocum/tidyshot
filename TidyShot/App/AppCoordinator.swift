@@ -321,7 +321,7 @@ final class AppCoordinator {
     /// Makes and writes the 320 px thumbnail on a detached task, off the main actor, and stores
     /// its file name on the record when that finishes. Until then `ThumbnailProvider` makes one
     /// from the file itself; a failure is logged and it falls back the same way. If the record was
-    /// deleted in the meantime the new file is removed again.
+    /// deleted in the meantime, or an edit was saved since, the new file is removed again.
     private func makeThumbnail(from image: CGImage, for id: UUID) {
         let store = thumbnails
         Task { [weak self] in
@@ -335,7 +335,9 @@ final class AppCoordinator {
                 }
             }.value
             guard let name else { return }
-            guard let self, self.history.record(id: id) != nil else {
+            // Deleted meanwhile, or edited already: an edit names its own thumbnail
+            // (`replaceThumbnail`), and this one shows the original.
+            guard let self, let record = self.history.record(id: id), record.editedAt == nil else {
                 store.remove(fileName: name)
                 return
             }
@@ -580,7 +582,13 @@ final class AppCoordinator {
     func deleteCapture(recordID: UUID) async {
         guard !deletingIDs.contains(recordID), let record = history.record(id: recordID) else { return }
         deletingIDs.insert(recordID)
-        defer { deletingIDs.remove(recordID) }
+        // The record's editor drops Save and Upload before the alert shows, through
+        // `cancelUpload`, `deleteObjects` and the second alert, and learns the outcome either way.
+        pushEditorState(for: recordID)
+        defer {
+            deletingIDs.remove(recordID)
+            pushEditorState(for: recordID)
+        }
         guard confirmDelete(of: record) else { return }
 
         // After this the record holds any key the cancelled job had reserved (`pendingObjectKey`),
@@ -707,6 +715,7 @@ final class AppCoordinator {
         history.remove(id: id)
         thumbnailProvider.forget(id)
         overlay.close(recordID: id)
+        pushEditorState(for: id)
     }
 
     /// Removes a temporary file from `pending`. A file that is already gone counts as removed.
@@ -764,8 +773,10 @@ final class AppCoordinator {
         }
     }
 
-    /// Thumbnails and temporary files of records dropped by retention. Files in the save folder
-    /// are left alone. (A record whose temporary file is its only copy is never pruned.)
+    /// Thumbnails and temporary files of records dropped by retention, and their editors told the
+    /// record is gone (`didPrune` runs after the store dropped them). Files in the save folder are
+    /// left alone. (A record whose temporary file is its only copy, or holds an edit its link does
+    /// not show yet, is never pruned.)
     private func removeFiles(ofPruned records: [CaptureRecord]) {
         for record in records {
             thumbnailProvider.forget(record.id)
@@ -775,6 +786,7 @@ final class AppCoordinator {
             if record.fileIsTemporary, let fileURL = record.fileURL {
                 removePendingFile(at: fileURL, context: "after pruning")
             }
+            pushEditorState(for: record.id)
         }
     }
 
@@ -787,11 +799,13 @@ final class AppCoordinator {
         notifier.notifyError(message, title: "Upload failed")
     }
 
-    /// Pushes the record's current state into the overlay, if the overlay is showing it.
+    /// Pushes the record's current state into the overlay, if the overlay is showing it, and into
+    /// the record's editor, so every upload progress, success, failure and retry reaches both.
     private func refreshOverlay(for id: UUID) {
         if let record = history.record(id: id) {
             overlay.update(record: record)
         }
+        pushEditorState(for: id)
     }
 
     /// `location` is where the queue that sent `event` uploads to.
@@ -887,6 +901,8 @@ final class AppCoordinator {
 
     /// Open annotation editors, one per record.
     @ObservationIgnored private var editors: [UUID: EditorWindowController] = [:]
+    /// True while a save-folder observation is registered (`observeSaveFolderForEditors`).
+    @ObservationIgnored private var isObservingSaveFolder = false
 
     /// True while any open editor has changes that were not saved.
     var hasUnsavedEditors: Bool {
@@ -935,19 +951,18 @@ final class AppCoordinator {
                                                 cascadeFrom: NSApp.orderedWindows.first { $0 is EditorWindow })
         controller.onClose = { [weak self] closed in self?.editorDidClose(closed) }
         editors[recordID] = controller
+        pushEditorState(for: recordID)
+        observeSaveFolderForEditors()
         Task { await RedactionRenderer.shared.warmUp(with: image.image) }
         controller.present()
     }
 
-    /// The editor's actions for `recordID`. Save Copy and Copy go through the coordinator; Save
-    /// and Upload are still stubs that only log (Task 13 wires Save, Task 15 Upload). A stub
-    /// reports failure, so nothing is marked saved and the close sheet's Save keeps the window open.
+    /// The editor's actions for `recordID`. Save, Save Copy and Copy go through the coordinator;
+    /// Upload is still a stub that only logs (Task 15 wires it). The stub reports failure, so
+    /// nothing is marked saved.
     private func editorActions(for recordID: UUID) -> EditorActions {
         EditorActions(
-            save: { image in
-                NSLog("Editor: Save of \(recordID) (\(image.image.width)x\(image.image.height) @\(image.scale)x) is not wired yet")
-                return false
-            },
+            save: { [weak self] image in await self?.editorSave(recordID: recordID, image: image) ?? false },
             saveCopy: { [weak self] image in
                 await self?.editorSaveCopy(of: recordID, image: image) ?? false
             },
@@ -960,6 +975,154 @@ final class AppCoordinator {
             })
     }
 
+    /// Tells the record's open editor, if any, what it may do now: the record as it is (nil once
+    /// deleted or pruned), the save folder and whether a delete is running.
+    private func pushEditorState(for id: UUID) {
+        editors[id]?.recordDidChange(history.record(id: id), saveFolder: saveLocation.currentURL,
+                                     isDeleting: deletingIDs.contains(id))
+    }
+
+    /// While any editor is open, pushes every editor's state when the save folder changes, so Save
+    /// and the subtitle follow a folder chosen in Settings. Observation calls `onChange` once per
+    /// registration, before the value changes, so the push is scheduled and registers again (as
+    /// StatusMenuController.updateIcon does). With no editor left it stops re-registering; the flag
+    /// keeps an editor opened while a registration is pending from adding a second one. Save stays
+    /// safe without this push, because `applyLocalEdit` plans from the folder at write time.
+    private func observeSaveFolderForEditors() {
+        guard !isObservingSaveFolder, !editors.isEmpty else { return }
+        isObservingSaveFolder = true
+        withObservationTracking {
+            _ = saveLocation.currentURL
+        } onChange: { [weak self] in
+            Task { @MainActor in
+                guard let self else { return }
+                self.isObservingSaveFolder = false
+                for id in self.editors.keys {
+                    self.pushEditorState(for: id)
+                }
+                self.observeSaveFolderForEditors()
+            }
+        }
+    }
+
+    /// ⌘S: encodes the edit off the main actor and saves it over the capture's own file through
+    /// `applyLocalEdit`. Never touches the network.
+    private func editorSave(recordID: UUID, image: ScaledImage) async -> Bool {
+        if let reason = EditorAvailability.refusal(for: .save, record: history.record(id: recordID),
+                                                   saveFolder: saveLocation.currentURL,
+                                                   isDeleting: deletingIDs.contains(recordID)) {
+            notifier.notifyError(reason, title: "Not saved")
+            return false
+        }
+        let png: Data
+        do {
+            png = try await Task.detached(priority: .userInitiated) {
+                try ImageEncoder.pngData(from: image.image, scale: image.scale)
+            }.value
+        } catch {
+            keepFailedEditOnClipboard(image, png: nil, recordID: recordID, error: error)
+            return false
+        }
+        return await applyLocalEdit(recordID: recordID, png: png, image: image)
+    }
+
+    /// The one local-edit path, for Save and for the local write before an editor Upload. It
+    /// re-checks the live record and `deletingIDs` (a Save racing a delete writes nothing), writes
+    /// the PNG to the target `EditorSaveTarget.plan` picks now, records the edit, replaces the
+    /// thumbnail, applies the clipboard rule and pushes the editor's state. Returns false, with
+    /// `Not saved` posted, when nothing was written.
+    private func applyLocalEdit(recordID: UUID, png: Data, image: ScaledImage) async -> Bool {
+        let folder = saveLocation.currentURL
+        let live = history.record(id: recordID)
+        if let reason = EditorAvailability.refusal(for: .save, record: live, saveFolder: folder,
+                                                   isDeleting: deletingIDs.contains(recordID)) {
+            notifier.notifyError(reason, title: "Not saved")
+            return false
+        }
+        guard let live else { return false }
+        do {
+            switch EditorSaveTarget.plan(for: live, saveFolder: folder) {
+            case .saveFolderFile(let fileURL, let scope):
+                try await Task.detached(priority: .userInitiated) {
+                    try SaveLocation.overwriteScoped(png, at: fileURL, folder: scope)
+                }.value
+            case .pendingFile:
+                // Always `pending/<id>.png`, replaced in place, so a retry uploads the edit.
+                _ = try pendingFiles.write(png, id: recordID, ext: "png")
+            case .unavailable(let reason):
+                // The refusal above already covers this; kept so the switch stays total.
+                notifier.notifyError(reason, title: "Not saved")
+                return false
+            }
+        } catch {
+            keepFailedEditOnClipboard(image, png: png, recordID: recordID, error: error)
+            return false
+        }
+        let editedAt = Date()
+        history.update(id: recordID) { record in
+            record.pixelWidth = image.image.width
+            record.pixelHeight = image.image.height
+            record.editedAt = editedAt
+            // Task 14 changes this to `record.linkURL != nil`, so a record whose replace was
+            // interrupted (link in `priorUpload`) is marked stale too (spec 2.6 step 4).
+            if record.uploadedURL != nil {
+                record.uploadIsStale = true
+            }
+        }
+        replaceThumbnail(for: recordID, from: image.image, editedAt: editedAt)
+        await replaceClipboardIfStillOriginal(recordID: recordID, png: png, image: image)
+        pushEditorState(for: recordID)
+        return true
+    }
+
+    /// A save that failed: the edit goes on the clipboard, so it is never lost, and `Not saved`
+    /// says why. TidyShot put it there for this record, so the record owns the clipboard and a
+    /// later successful save may replace it (the clipboard rule).
+    private func keepFailedEditOnClipboard(_ image: ScaledImage, png: Data?, recordID: UUID, error: any Error) {
+        NSLog("Save over failed: \(error.localizedDescription)")
+        let changeCount = if let png {
+            Pasteboard.copy(image: image.image, pngData: png, scale: image.scale)
+        } else {
+            Pasteboard.copy(image: image.image, scale: image.scale)
+        }
+        clipboardOwner = EditorClipboard.Owner(recordID: recordID, changeCount: changeCount)
+        notifier.notifyError("\(error.localizedDescription) The edited image is on the clipboard.", title: "Not saved")
+    }
+
+    /// Makes the edited capture's thumbnail on a detached task and names it on the record under a
+    /// new name, so Recent Captures rows reload; then drops the provider's cached images and
+    /// removes the previous file. `forget` runs here, as the name changes, not before: a row that
+    /// reloaded earlier would cache the old thumbnail again. A later save, a delete or a prune that
+    /// got there first wins, and the new file is removed. When no thumbnail could be made the
+    /// record names none, so `ThumbnailProvider` makes one from the edited file instead of showing
+    /// the original.
+    private func replaceThumbnail(for id: UUID, from image: CGImage, editedAt: Date) {
+        let store = thumbnails
+        let name = store.fileName(for: id, editedAt: editedAt)
+        Task { [weak self] in
+            let written = await Task.detached(priority: .utility) { () -> Bool in
+                do {
+                    guard let small = ThumbnailMaker.thumbnail(from: image) else { return false }
+                    _ = try store.write(try ThumbnailMaker.pngData(small), fileName: name)
+                    return true
+                } catch {
+                    NSLog("Edited thumbnail failed: \(error.localizedDescription)")
+                    return false
+                }
+            }.value
+            guard let self, let record = self.history.record(id: id), record.editedAt == editedAt else {
+                if written { store.remove(fileName: name) }
+                return
+            }
+            let previous = record.thumbnailFileName
+            self.history.update(id: id) { $0.thumbnailFileName = written ? name : nil }
+            self.thumbnailProvider.forget(id)
+            if let previous, previous != name {
+                store.remove(fileName: previous)
+            }
+        }
+    }
+
     /// Save Copy (⇧⌘S): the edited image becomes a new capture through `persist`, as if just taken
     /// with the current after-capture action. It gets a file in the save folder named by
     /// `EditorNaming.copyBaseName(for:)` (or by the template), or a pending file that uploads, plus
@@ -968,6 +1131,12 @@ final class AppCoordinator {
     /// clipboard gets the edited image only if it still holds what TidyShot put there for the
     /// original. Returns false when nothing was written; the edited image is then on the clipboard.
     private func editorSaveCopy(of recordID: UUID, image: ScaledImage) async -> Bool {
+        if let reason = EditorAvailability.refusal(for: .saveCopy, record: history.record(id: recordID),
+                                                   saveFolder: saveLocation.currentURL,
+                                                   isDeleting: deletingIDs.contains(recordID)) {
+            notifier.notifyError(reason, title: "Not saved")
+            return false
+        }
         let png: Data
         do {
             png = try await Task.detached(priority: .userInitiated) {

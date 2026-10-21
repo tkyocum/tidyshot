@@ -92,4 +92,61 @@ struct CaptureRecordTests {
         uploadOnly.uploadState = .uploaded(url: URL(string: "https://snap.tky.io/a.png")!, key: "a.png")
         #expect(!uploadOnly.isPendingOnly)
     }
+
+    /// A record as Phase 3 wrote it: temporary flag, thumbnail and location, but no edit fields.
+    let phase3JSON = """
+    [
+      {
+        "fileIsTemporary" : true,
+        "fileURL" : "file:///Users/tim/Library/Containers/io.tky.tidyshot/Data/Library/Application%20Support/TidyShot/pending/5D1C2B3A-4E5F-4A6B-8C7D-9E0F1A2B3C4D.png",
+        "id" : "5D1C2B3A-4E5F-4A6B-8C7D-9E0F1A2B3C4D",
+        "objectLocation" : {
+          "bucket" : "snap.tky.io",
+          "endpoint" : "https://s3.us-west-2.amazonaws.com",
+          "region" : "us-west-2",
+          "usePathStyle" : true
+        },
+        "pixelHeight" : 100,
+        "pixelWidth" : 200,
+        "thumbnailFileName" : "5D1C2B3A-4E5F-4A6B-8C7D-9E0F1A2B3C4D.png",
+        "timestamp" : "2026-10-19T16:56:03.000Z",
+        "uploadState" : {
+          "failed" : {
+            "message" : "offline"
+          }
+        }
+      }
+    ]
+    """
+
+    @Test func editedAtAndStaleFlagDecodeFromPhaseThreeJSON() throws {
+        try Data(phase3JSON.utf8).write(to: dir.appending(path: "history.json"))
+        let history = store()
+        history.load()
+
+        let record = try #require(history.record(id: UUID(uuidString: "5D1C2B3A-4E5F-4A6B-8C7D-9E0F1A2B3C4D")!))
+        #expect(record.fileIsTemporary)
+        #expect(record.thumbnailFileName == "5D1C2B3A-4E5F-4A6B-8C7D-9E0F1A2B3C4D.png")
+        #expect(record.editedAt == nil)
+        #expect(record.uploadIsStale == false)
+        #expect(!record.keepsUnuploadedEdit)
+    }
+
+    /// Timestamps are stored with millisecond precision, so the fixture uses whole seconds.
+    @Test func editedAtAndStaleFlagRoundTrip() throws {
+        let now = Date(timeIntervalSince1970: 1_792_411_200)
+        let edited = CaptureRecord(timestamp: now, fileURL: dir.appending(path: "pending/x.png"), fileIsTemporary: true,
+                                   pixelWidth: 40, pixelHeight: 30, appName: nil,
+                                   uploadState: .uploaded(url: URL(string: "https://snap.tky.io/x.png")!, key: "x.png"),
+                                   editedAt: now.addingTimeInterval(90), uploadIsStale: true)
+        store().add(edited)
+
+        let reloaded = store()
+        reloaded.load()
+        let record = try #require(reloaded.record(id: edited.id))
+        #expect(record == edited)
+        #expect(record.editedAt == now.addingTimeInterval(90))
+        #expect(record.uploadIsStale)
+        #expect(record.keepsUnuploadedEdit)
+    }
 }

@@ -121,6 +121,17 @@ extension EditorWindowController: NSToolbarDelegate, NSToolbarItemValidation {
         group.selectedIndex = index
     }
 
+    /// Disabling the `.save` menu item would also disable its Save Copy… entry, which must stay. So
+    /// while Save is unavailable the item's button runs Save Copy… instead, and is named for it;
+    /// `saveDocumentCopy:` is always permitted, so validation keeps it enabled.
+    func reflectSaveAvailability() {
+        guard let item = toolbarItem(.save) as? NSMenuToolbarItem else { return }
+        let canSave = available.contains(.save)
+        item.action = canSave ? #selector(saveDocument(_:)) : #selector(saveDocumentCopy(_:))
+        item.label = canSave ? "Save" : "Save Copy…"
+        item.toolTip = canSave ? "Save" : "Save Copy…"
+    }
+
     private func reflectColor(_ color: RGBA) {
         toolbarItem(.color)?.image = swatchImage(color)
     }

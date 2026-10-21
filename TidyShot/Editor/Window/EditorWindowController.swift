@@ -24,6 +24,9 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
     var optionsPopover: NSPopover?
     /// One document action at a time; another one beeps until it finishes.
     private var isPerformingAction = false
+    /// What the editor may do now. Empty until the coordinator's first push, which showEditor
+    /// sends before the window shows.
+    private(set) var available: Set<EditorAction> = []
 
     #if DEBUG
     private static var loggedMainMenu = false
@@ -113,23 +116,50 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
         #endif
     }
 
+    // MARK: Record state
+
+    /// The coordinator's push (`pushEditorState`): the record as it is now (nil once deleted or
+    /// pruned), the save folder, and whether a delete is running.
+    func recordDidChange(_ record: CaptureRecord?, saveFolder: URL?, isDeleting: Bool) {
+        let allowed = EditorAvailability.actions(record: record, saveFolder: saveFolder, isDeleting: isDeleting)
+        if allowed != available {
+            available = allowed
+            reflectSaveAvailability()
+            window?.toolbar?.validateVisibleItems()
+        }
+        let status = EditorAvailability.status(record: record, saveFolder: saveFolder, isDeleting: isDeleting) ?? ""
+        if window?.subtitle != status {
+            window?.subtitle = status
+        }
+    }
+
+    /// The second guard: an action whose EditorAction is not available returns at once, whatever
+    /// sent it (a menu, a toolbar item, or a shortcut that got past validation).
+    private func permits(_ selector: Selector) -> Bool {
+        EditorCommandGate.permits(NSStringFromSelector(selector), available: available)
+    }
+
     // MARK: Document actions
 
     @objc func saveDocument(_ sender: Any?) {
+        guard permits(#selector(saveDocument(_:))) else { return }
         runDocumentAction(marksSaved: true) { await self.actions.save($0) }
     }
 
     @objc func saveDocumentCopy(_ sender: Any?) {
+        guard permits(#selector(saveDocumentCopy(_:))) else { return }
         runDocumentAction(marksSaved: true) { await self.actions.saveCopy($0) }
     }
 
     /// ⌘C. In 4a it copies the flattened image, like ⇧⌘C; 4b gives CanvasView an object copy that
     /// passes this up when nothing is selected.
     @objc func copy(_ sender: Any?) {
+        guard permits(#selector(copy(_:))) else { return }
         copyImage(sender)
     }
 
     @objc func copyImage(_ sender: Any?) {
+        guard permits(#selector(copyImage(_:))) else { return }
         runDocumentAction(marksSaved: false) { image in
             await self.actions.copy(image)
             return true
@@ -137,10 +167,12 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
     }
 
     @objc func uploadDocument(_ sender: Any?) {
+        guard permits(#selector(uploadDocument(_:))) else { return }
         runDocumentAction(marksSaved: true) { await self.actions.upload($0, false) }
     }
 
     @objc func uploadDocumentAsNew(_ sender: Any?) {
+        guard permits(#selector(uploadDocumentAsNew(_:))) else { return }
         runDocumentAction(marksSaved: true) { await self.actions.upload($0, true) }
     }
 
@@ -183,6 +215,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
     // MARK: NSUserInterfaceValidations
 
     func validateUserInterfaceItem(_ item: any NSValidatedUserInterfaceItem) -> Bool {
+        if let action = item.action, !permits(action) { return false }
         let limits = CanvasTransform.zoomLimits(captureScale: model.scale)
         switch item.action {
         case #selector(saveDocument(_:)), #selector(saveDocumentCopy(_:)), #selector(copy(_:)),

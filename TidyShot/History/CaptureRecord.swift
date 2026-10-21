@@ -32,10 +32,18 @@ nonisolated struct CaptureRecord: Codable, Identifiable, Equatable, Sendable {
     /// The key a cancelled upload had reserved. Its PUT may have completed on the server as it
     /// was cancelled, so Delete removes this key too, also when a first attempt failed.
     var pendingObjectKey: String?
+    /// When an edit from the editor was last written over this capture's file (Save, or the
+    /// local write before an Upload). Nil for a capture never edited. A capture-time thumbnail
+    /// that finishes late is not named on an edited record, because it shows the original.
+    var editedAt: Date?
+    /// True once an edit was written locally while the link still serves the earlier upload.
+    /// The editor's subtitle then says so. Cleared when an upload of the edit succeeds.
+    var uploadIsStale: Bool
 
     init(id: UUID = UUID(), timestamp: Date = Date(), fileURL: URL?, fileIsTemporary: Bool = false,
          thumbnailFileName: String? = nil, pixelWidth: Int, pixelHeight: Int, appName: String?,
-         uploadState: UploadState = .none, objectLocation: ObjectLocation? = nil, pendingObjectKey: String? = nil) {
+         uploadState: UploadState = .none, objectLocation: ObjectLocation? = nil, pendingObjectKey: String? = nil,
+         editedAt: Date? = nil, uploadIsStale: Bool = false) {
         self.id = id
         self.timestamp = timestamp
         self.fileURL = fileURL
@@ -47,16 +55,18 @@ nonisolated struct CaptureRecord: Codable, Identifiable, Equatable, Sendable {
         self.uploadState = uploadState
         self.objectLocation = objectLocation
         self.pendingObjectKey = pendingObjectKey
+        self.editedAt = editedAt
+        self.uploadIsStale = uploadIsStale
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, timestamp, fileURL, fileIsTemporary, thumbnailFileName, pixelWidth, pixelHeight, appName, uploadState
-        case objectLocation, pendingObjectKey
+        case objectLocation, pendingObjectKey, editedAt, uploadIsStale
     }
 
     /// Phase 2 history files have no `fileIsTemporary`, `thumbnailFileName`, `objectLocation` or
-    /// `pendingObjectKey`, and always have a `fileURL`; they decode with the defaults. Encoding
-    /// is synthesised.
+    /// `pendingObjectKey`, and always have a `fileURL`; Phase 3 files have no `editedAt` or
+    /// `uploadIsStale`. They decode with the defaults. Encoding is synthesised.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(UUID.self, forKey: .id)
@@ -70,6 +80,8 @@ nonisolated struct CaptureRecord: Codable, Identifiable, Equatable, Sendable {
         uploadState = try container.decode(UploadState.self, forKey: .uploadState)
         objectLocation = try container.decodeIfPresent(ObjectLocation.self, forKey: .objectLocation)
         pendingObjectKey = try container.decodeIfPresent(String.self, forKey: .pendingObjectKey)
+        editedAt = try container.decodeIfPresent(Date.self, forKey: .editedAt)
+        uploadIsStale = try container.decodeIfPresent(Bool.self, forKey: .uploadIsStale) ?? false
     }
 
     var uploadedURL: URL? {
@@ -88,6 +100,10 @@ nonisolated struct CaptureRecord: Codable, Identifiable, Equatable, Sendable {
     /// An upload-only capture that has not been uploaded: its PNG in `pending` is the only copy,
     /// so retention never prunes it.
     var isPendingOnly: Bool { fileIsTemporary && fileURL != nil && uploadedKey == nil }
+
+    /// An upload-only capture whose `pending` file holds an edit its link does not show yet (a
+    /// replace that failed). The file is the edit's only copy, so retention never prunes it.
+    var keepsUnuploadedEdit: Bool { fileIsTemporary && fileURL != nil && uploadIsStale }
 
     var isFailed: Bool {
         if case .failed = uploadState { return true }

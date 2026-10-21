@@ -10,9 +10,9 @@ final class HistoryStore {
 
     private(set) var records: [CaptureRecord] = []
 
-    /// Called with the records dropped by retention on `load()` and `add(_:)`, so their
-    /// thumbnails and temporary files can be removed. Files in the user's save folder are never
-    /// touched.
+    /// Called with the records dropped by retention on `load()` and `add(_:)`, once `records` no
+    /// longer holds them, so their thumbnails and temporary files can be removed and their
+    /// editors told. Files in the user's save folder are never touched.
     @ObservationIgnored var didPrune: (([CaptureRecord]) -> Void)?
     @ObservationIgnored let fileURL: URL
     @ObservationIgnored private let retentionDays: () -> Int
@@ -57,24 +57,31 @@ final class HistoryStore {
             loaded[index].uploadState = .failed(message: "Upload was interrupted.")
             interrupted = true
         }
-        records = Self.sortedNewestFirst(prune(loaded))
+        let (kept, dropped) = prune(loaded)
+        records = Self.sortedNewestFirst(kept)
         if interrupted { save() }
+        report(pruned: dropped)
     }
 
     func add(_ record: CaptureRecord) {
-        records.insert(record, at: 0)
-        records = Self.sortedNewestFirst(prune(records))
+        let (kept, dropped) = prune([record] + records)
+        records = Self.sortedNewestFirst(kept)
         save()
+        report(pruned: dropped)
     }
 
-    /// Drops expired records and reports them through `didPrune`.
-    private func prune(_ input: [CaptureRecord]) -> [CaptureRecord] {
+    /// Splits `input` into the records retention keeps and the ones it drops.
+    private func prune(_ input: [CaptureRecord]) -> (kept: [CaptureRecord], dropped: [CaptureRecord]) {
         let kept = Self.pruned(input, retentionDays: retentionDays(), now: now())
-        if kept.count != input.count, let didPrune {
-            let keptIDs = Set(kept.map(\.id))
-            didPrune(input.filter { !keptIDs.contains($0.id) })
-        }
-        return kept
+        let keptIDs = Set(kept.map(\.id))
+        return (kept, input.filter { !keptIDs.contains($0.id) })
+    }
+
+    /// Tells `didPrune` about dropped records. Called after `records` was assigned, so a handler
+    /// that looks one up finds it gone.
+    private func report(pruned dropped: [CaptureRecord]) {
+        guard !dropped.isEmpty else { return }
+        didPrune?(dropped)
     }
 
     func record(id: UUID) -> CaptureRecord? {
@@ -111,10 +118,12 @@ final class HistoryStore {
 
     /// Records newer than the retention cutoff, plus every upload-only capture that has not been
     /// uploaded (its PNG in `pending` is the only copy, so it stays until it is uploaded or
-    /// deleted) and every record with an upload in flight (its `.uploaded` event needs the record).
+    /// deleted), every upload-only capture whose `pending` file holds an edit its link does not
+    /// show yet (`keepsUnuploadedEdit`), and every record with an upload in flight (its
+    /// `.uploaded` event needs the record).
     static func pruned(_ records: [CaptureRecord], retentionDays: Int, now: Date) -> [CaptureRecord] {
         let cutoff = now.addingTimeInterval(-Double(retentionDays) * 86_400)
-        return records.filter { $0.timestamp >= cutoff || $0.isPendingOnly || $0.isUploading }
+        return records.filter { $0.timestamp >= cutoff || $0.isPendingOnly || $0.keepsUnuploadedEdit || $0.isUploading }
     }
 
     /// Newest first; equal timestamps keep their current relative order.
