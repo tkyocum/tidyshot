@@ -565,6 +565,15 @@ Update the Distribution row of section 4 to list it.
   - With Clop not installed, the toggle is disabled and the link shows.
   - No Clop floating result appears and the clipboard is unchanged.
 
+**Built 2026-10-21** on `phase-7-clop`, as specified apart from these differences and additions:
+- **Clop version.** The fixtures and the recorded reply are from Clop 3.6.2, which keeps `pHYs`; 3.4.3 (the probe version) dropped it. The `eXIf`-only DPI test stays as the worst case.
+- **Order inside `startUpload`.** The key and counter are settled first: a fixed key is used as is, otherwise `{counter}` is drawn when the upload starts, before Clop runs, so counters follow the order uploads start. Then the setting and the running check run on the main actor; with the setting off or no Clop running the job is enqueued at once (the log line for "not running" is written there). Only when Clop will run does a `Task` wait for it.
+- **Delete during optimisation cancels the upload.** `optimisingIDs` maps each waiting record to the token of its attempt. `cancelUpload` removes the record, marks it failed with "Upload cancelled." and refreshes the overlay: nothing is enqueued and no key was reserved. A retry started before the first Clop call returns gets a new token, so the first task finds its token gone and drops its bytes. A record deleted from history meanwhile is not enqueued either.
+- **Changing upload settings during optimisation is safe.** The coordinator counts, per lane (queue identity), the uploads still waiting for Clop (`clopWaitsPerLane`); a lane the Upload tab replaced is not dropped from `drainingQueues` before those jobs reach it, on every path including the cancelled one.
+- **Settings tab.** `clopInstalled` starts false and `load()` sets it when the tab appears, so LaunchServices is asked once per appearance and not on every view rebuild.
+- **Release entitlements.** The Release build carries exactly the `mach-lookup.global-name` exception for the two port names plus the four earlier entitlements (`app-sandbox`, `network.client`, `files.user-selected.read-write`, `files.bookmarks.app-scope`), and no `get-task-allow`.
+- **Tests.** 839 tests in 98 suites pass. The manual checklist is `docs/testing/phase-7-clop-manual-checklist.md`; it has not been run.
+
 **Placement.** About a day. It sits with the Phase 7 extras.
 
 ### 2.8 Phase 5 design: scrolling capture (2026-10-21)
@@ -1025,7 +1034,7 @@ Design in 2.9.
 Delivered: 6a on 2026-10-21 on `phase-6-polish` (PR 13); 6b on 2026-10-21 on `phase-6b-polish`. Phase 6 is released when the 6b PR merges. Design and what was built: 2.9.
 
 ### Phase 7: extras (as wanted)
-- Optimise images with Clop before upload (see 2.7), built first, on branch phase-7-clop.
+- Optimise images with Clop before upload (see 2.7), built 2026-10-21 on branch phase-7-clop; its manual checklist is not yet run.
 - Background tool and window-with-background.
 - OCR via Vision, QR codes.
 - Hide desktop icons during capture.
