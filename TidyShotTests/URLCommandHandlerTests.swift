@@ -18,6 +18,8 @@ final class URLTargetRecorder: URLCommandTarget {
         case restore
         case text
         case textAt(ScreenRect)
+        case desktopIconsHidden(Bool)
+        case toggleDesktopIcons
     }
 
     var isCapturing = false
@@ -36,6 +38,8 @@ final class URLTargetRecorder: URLCommandTarget {
     func restoreClosedOverlay() async { calls.append(.restore) }
     func captureText() async { calls.append(.text) }
     func captureText(at area: ScreenRect) async { calls.append(.textAt(area)) }
+    func setDesktopIconsHidden(_ hidden: Bool) async { calls.append(.desktopIconsHidden(hidden)) }
+    func toggleDesktopIconsHidden() async { calls.append(.toggleDesktopIcons) }
 }
 
 /// The notices a handler posted.
@@ -95,7 +99,8 @@ struct URLCommandHandlerTests {
                        "capture-fullscreen", "capture-previous-area", "all-in-one",
                        "all-in-one?x=10&y=10&width=300&height=200&display=2", "self-timer", "capture-scrolling",
                        "scrolling-capture?x=0&y=0&width=400&height=600", "restore-recently-closed",
-                       "capture-text", "capture-text?x=100&y=100&width=200&height=50&action=copy"] {
+                       "capture-text", "capture-text?x=100&y=100&width=200&height=50&action=copy",
+                       "hide-desktop-icons", "show-desktop-icons", "toggle-desktop-icons?action=copy"] {
             try await send(handler, "tidyshot://\(string)")
         }
         let small = ScreenRect(rect: CGRect(x: 100, y: 930, width: 200, height: 50), displayID: 1)
@@ -104,7 +109,8 @@ struct URLCommandHandlerTests {
         #expect(target.calls == [.area(standard), .areaAt(small, standard), .window(standard), .fullscreen(standard),
                                  .previousArea(standard), .allInOne(standard, nil), .allInOne(standard, second),
                                  .selfTimer(standard), .scrolling(standard, nil), .scrolling(standard, tall), .restore,
-                                 .text, .textAt(small)])
+                                 .text, .textAt(small), .desktopIconsHidden(true), .desktopIconsHidden(false),
+                                 .toggleDesktopIcons])
         #expect(log.notices.isEmpty)
     }
 
@@ -142,14 +148,14 @@ struct URLCommandHandlerTests {
         let handler = await makeHandler()
         for string in ["capture-area?action=copy", "capture-window", "all-in-one?x=100&y=100&width=200&height=50",
                        "self-timer", "capture-scrolling?x=0&y=0&width=400&height=600", "restore-recently-closed",
-                       "capture-text"] {
+                       "capture-text", "toggle-desktop-icons"] {
             try await send(handler, "tidyshot://\(string)")
         }
         let small = ScreenRect(rect: CGRect(x: 100, y: 930, width: 200, height: 50), displayID: 1)
         let tall = ScreenRect(rect: CGRect(x: 0, y: 480, width: 400, height: 600), displayID: 1)
         #expect(target.calls == [.area(CaptureIntent(action: .uploadOnly, copyOnly: true, sender: "Raycast")),
                                  .window(standard), .allInOne(standard, small), .selfTimer(standard),
-                                 .scrolling(standard, tall), .restore, .text])
+                                 .scrolling(standard, tall), .restore, .text, .toggleDesktopIcons])
         #expect(log.notices.isEmpty)
     }
 
@@ -158,11 +164,12 @@ struct URLCommandHandlerTests {
         settings.urlCommandsEnabled = false
         settings.urlCommandsAllowSilent = true
         let handler = await makeHandler()
-        for string in ["capture-area", "restore-recently-closed", "capture-everything", "capture-area?action=print"] {
+        for string in ["capture-area", "restore-recently-closed", "capture-everything", "capture-area?action=print",
+                       "hide-desktop-icons"] {
             try await send(handler, "tidyshot://\(string)")
         }
         #expect(target.calls.isEmpty)
-        #expect(log.notices == Array(repeating: notice("URL commands are off. Turn them on in Settings > General."), count: 4))
+        #expect(log.notices == Array(repeating: notice("URL commands are off. Turn them on in Settings > General."), count: 5))
     }
 
     @Test func errorsArePostedAndRunNothing() async throws {
@@ -193,8 +200,11 @@ struct URLCommandHandlerTests {
         }
         #expect(target.calls.isEmpty)
         #expect(log.notices.isEmpty)
-        try await send(handler, "tidyshot://restore-recently-closed")
-        #expect(target.calls == [.restore])
+        // Restore and the desktop-icon commands capture nothing, so they still run.
+        for string in ["restore-recently-closed", "hide-desktop-icons", "show-desktop-icons", "toggle-desktop-icons"] {
+            try await send(handler, "tidyshot://\(string)")
+        }
+        #expect(target.calls == [.restore, .desktopIconsHidden(true), .desktopIconsHidden(false), .toggleDesktopIcons])
     }
 
     @Test func urlsWaitUntilTheAppHasStartedThenRunInOrder() async throws {

@@ -19,7 +19,7 @@ struct URLCommandTests {
     }
 
     @Test func everyCommandParsesFromTheHost() throws {
-        #expect(URLCommand.Kind.allCases.count == 9)
+        #expect(URLCommand.Kind.allCases.count == 12)
         for kind in URLCommand.Kind.allCases {
             #expect(try parse("tidyshot://\(kind.rawValue)") == .success(URLCommand(kind: kind)))
         }
@@ -107,14 +107,34 @@ struct URLCommandTests {
     }
 
     /// Capture Text is a capture, so a running capture drops it, but it takes no action: its
-    /// result always goes to the clipboard. Restore captures nothing and takes no action.
+    /// result always goes to the clipboard. Restore and the desktop-icon commands capture nothing
+    /// and take no action.
     @Test func everyCaptureButCaptureTextTakesAnAction() {
+        let capturesNothing: [URLCommand.Kind] = [.restoreRecentlyClosed, .hideDesktopIcons, .showDesktopIcons,
+                                                  .toggleDesktopIcons]
         for kind in URLCommand.Kind.allCases {
-            #expect(kind.isCapture == (kind != .restoreRecentlyClosed), "\(kind)")
-            #expect(kind.takesAction == (kind != .restoreRecentlyClosed && kind != .captureText), "\(kind)")
+            #expect(kind.isCapture == !capturesNothing.contains(kind), "\(kind)")
+            #expect(kind.takesAction == (!capturesNothing.contains(kind) && kind != .captureText), "\(kind)")
         }
         #expect(URLCommand.Kind.captureText.rawValue == "capture-text")
         #expect(URLCommand.Kind.captureText.takesArea)
+    }
+
+    /// CleanShot's names (spec 2.10). They capture nothing and take no parameters, so an action, a
+    /// rect or a display is ignored, even a malformed or repeated one.
+    @Test func theDesktopIconCommandsParseAndIgnoreParameters() throws {
+        let kinds: [(String, URLCommand.Kind)] = [("hide-desktop-icons", .hideDesktopIcons),
+                                                  ("show-desktop-icons", .showDesktopIcons),
+                                                  ("toggle-desktop-icons", .toggleDesktopIcons)]
+        for (name, kind) in kinds {
+            #expect(kind.rawValue == name)
+            #expect(!kind.isCapture && !kind.takesAction && !kind.takesArea, "\(kind)")
+            #expect(try parse("tidyshot://\(name)") == .success(URLCommand(kind: kind)))
+            #expect(try parse("tidyshot://\(name.uppercased())") == .success(URLCommand(kind: kind)))
+            #expect(try parse("tidyshot://\(name)?action=bogus&action=pin&x=1&y=2&width=-3&display=0&display=0")
+                    == .success(URLCommand(kind: kind)))
+            #expect(try parse("tidyshot://\(name)").get().capturesWithoutSelection == false, "\(name)")
+        }
     }
 
     @Test func theFourRectValuesAndTheDisplayParse() throws {
@@ -205,7 +225,7 @@ struct URLCommandTests {
                       "capture-text?\(rect)"]
         let selecting = ["capture-area", "capture-area?action=copy", "capture-text", "capture-window", "all-in-one", "all-in-one?\(rect)",
                          "self-timer", "capture-scrolling", "capture-scrolling?\(rect)", "scrolling-capture?\(rect)",
-                         "restore-recently-closed"]
+                         "restore-recently-closed", "hide-desktop-icons", "show-desktop-icons", "toggle-desktop-icons"]
         for string in silent {
             #expect(try parse("tidyshot://\(string)").get().capturesWithoutSelection == true, "\(string)")
         }

@@ -15,6 +15,8 @@ protocol URLCommandTarget: AnyObject {
     func restoreClosedOverlay() async
     func captureText() async
     func captureText(at area: ScreenRect) async
+    func setDesktopIconsHidden(_ hidden: Bool) async
+    func toggleDesktopIconsHidden() async
 }
 
 /// A notification the URL scheme posts. The subtitle names the sending app when it is known.
@@ -155,6 +157,9 @@ final class URLCommandHandler {
                 await target.captureText()
             }
         case .restoreRecentlyClosed: await target.restoreClosedOverlay()
+        case .hideDesktopIcons: await target.setDesktopIconsHidden(true)
+        case .showDesktopIcons: await target.setDesktopIconsHidden(false)
+        case .toggleDesktopIcons: await target.toggleDesktopIconsHidden()
         }
         return command.kind.isCapture
     }

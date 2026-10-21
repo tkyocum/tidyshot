@@ -13,14 +13,22 @@ nonisolated struct URLCommand: Equatable, Sendable {
         case captureScrolling = "capture-scrolling"
         case captureText = "capture-text"
         case restoreRecentlyClosed = "restore-recently-closed"
+        case hideDesktopIcons = "hide-desktop-icons"
+        case showDesktopIcons = "show-desktop-icons"
+        case toggleDesktopIcons = "toggle-desktop-icons"
 
         /// CleanShot's names that mean the same command.
         static let aliases: [String: Kind] = ["scrolling-capture": .captureScrolling]
 
-        /// Dropped while a capture runs. Restore captures nothing.
-        var isCapture: Bool { self != .restoreRecentlyClosed }
-        /// Takes `action`. Capture Text always copies its result, and restore captures nothing.
-        var takesAction: Bool { self != .restoreRecentlyClosed && self != .captureText }
+        /// Dropped while a capture runs. Restore and the desktop-icon commands capture nothing.
+        var isCapture: Bool {
+            switch self {
+            case .restoreRecentlyClosed, .hideDesktopIcons, .showDesktopIcons, .toggleDesktopIcons: false
+            default: true
+            }
+        }
+        /// Takes `action`. Capture Text always copies its result, and the others capture nothing.
+        var takesAction: Bool { isCapture && self != .captureText }
         /// Takes `x`, `y`, `width`, `height` and `display`.
         var takesArea: Bool {
             self == .captureArea || self == .allInOne || self == .captureScrolling || self == .captureText
@@ -51,7 +59,8 @@ nonisolated struct URLCommand: Equatable, Sendable {
         switch kind {
         case .captureFullscreen, .capturePreviousArea: true
         case .captureArea, .captureText: area != nil
-        case .captureWindow, .allInOne, .selfTimer, .captureScrolling, .restoreRecentlyClosed: false
+        case .captureWindow, .allInOne, .selfTimer, .captureScrolling, .restoreRecentlyClosed,
+             .hideDesktopIcons, .showDesktopIcons, .toggleDesktopIcons: false
         }
     }
 

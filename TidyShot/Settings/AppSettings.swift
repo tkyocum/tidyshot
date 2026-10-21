@@ -59,6 +59,8 @@ final class AppSettings {
         static let selfTimerSeconds = "selfTimerSeconds"
         static let allInOneAspectLock = "allInOneAspectLock"
         static let optimiseWithClop = "optimiseWithClop"
+        static let hideDesktopIconsWhileCapturing = "hideDesktopIconsWhileCapturing"
+        static let desktopIconsHidden = "desktopIconsHidden"
     }
 
     @ObservationIgnored private let defaults: UserDefaults
@@ -114,6 +116,14 @@ final class AppSettings {
     /// The General tab's Optimize images with Clop (spec 2.7). Takes effect without Save; used only
     /// while Clop is running.
     var optimiseWithClop: Bool { didSet { defaults.set(optimiseWithClop, forKey: Keys.optimiseWithClop) } }
+    /// The Capture tab's Hide desktop icons while capturing (spec 2.10): the desktop is covered with
+    /// its picture during area, window, fullscreen, previous-area, All-in-One and self-timer captures.
+    var hideDesktopIconsWhileCapturing: Bool {
+        didSet { defaults.set(hideDesktopIconsWhileCapturing, forKey: Keys.hideDesktopIconsWhileCapturing) }
+    }
+    /// The status menu's Hide Desktop Icons (spec 2.10): the desktop stays covered until turned off,
+    /// also across launches. Set through `AppCoordinator.setDesktopIconsHidden(_:)`.
+    var desktopIconsHidden: Bool { didSet { defaults.set(desktopIconsHidden, forKey: Keys.desktopIconsHidden) } }
 
     /// The five editor values as one value. Setting it writes all five keys.
     var editorDefaults: EditorDefaults {
@@ -160,6 +170,8 @@ final class AppSettings {
             Keys.selfTimerSeconds: 5,
             Keys.allInOneAspectLock: false,
             Keys.optimiseWithClop: false,
+            Keys.hideDesktopIconsWhileCapturing: false,
+            Keys.desktopIconsHidden: false,
         ])
         showsCursor = defaults.bool(forKey: Keys.showsCursor)
         copyImageToClipboard = defaults.bool(forKey: Keys.copyImageToClipboard)
@@ -197,6 +209,8 @@ final class AppSettings {
         selfTimerSeconds = Self.selfTimerChoices.contains(storedSelfTimer) ? storedSelfTimer : 5
         allInOneAspectLock = defaults.bool(forKey: Keys.allInOneAspectLock)
         optimiseWithClop = defaults.bool(forKey: Keys.optimiseWithClop)
+        hideDesktopIconsWhileCapturing = defaults.bool(forKey: Keys.hideDesktopIconsWhileCapturing)
+        desktopIconsHidden = defaults.bool(forKey: Keys.desktopIconsHidden)
 
         // Property observers do not run during init, so templates rewritten by
         // `TemplateMigration` are stored here, once.
