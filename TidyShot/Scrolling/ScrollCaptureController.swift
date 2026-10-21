@@ -8,6 +8,8 @@ import ScreenCaptureKit
 /// continuation, as `SelectionController` is.
 final class ScrollCaptureController {
     private let engine: CaptureEngine
+    private let settings: AppSettings
+    private let permissionWindow = AutoScrollPermissionWindowController()
     private var session: ScrollCaptureSession?
     private var panel: ScrollCapturePanel?
     private var frameWindow: ScrollAreaFrameWindow?
@@ -16,8 +18,9 @@ final class ScrollCaptureController {
     private var appKitArea: CGRect = .zero
     private var visibleFrame: CGRect = .zero
 
-    init(engine: CaptureEngine) {
+    init(engine: CaptureEngine, settings: AppSettings) {
         self.engine = engine
+        self.settings = settings
     }
 
     /// A session is on screen. The Capture Scrolling shortcut then means Start or Done.
@@ -39,10 +42,12 @@ final class ScrollCaptureController {
         // the application exclusion covers both.
         let source = ScrollFrameSource(rect: rect, display: display, engine: engine)
         let session = ScrollCaptureSession(source: source, engine: ScrollStitchEngine(finder: OverlapFinder(scale: source.scale)),
-                                           area: rect, scale: source.scale, colorSpace: source.colorSpace)
+                                           area: rect, scale: source.scale, colorSpace: source.colorSpace,
+                                           autoScrollEnvironment: .live(), prefersAutoScroll: settings.scrollingAutoScroll)
         session.onEnd = { [weak self] outcome in self?.close(with: outcome) }
+        session.onAutoScrollChanged = { [settings] value in settings.scrollingAutoScroll = value }
 
-        let panel = ScrollCapturePanel(session: session)
+        let panel = ScrollCapturePanel(session: session, onAllowAutoScroll: { [weak self] in self?.permissionWindow.show() })
         self.frameWindow = frameWindow
         self.session = session
         self.panel = panel

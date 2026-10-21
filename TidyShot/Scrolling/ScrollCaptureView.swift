@@ -17,6 +17,7 @@ struct ScrollCaptureView: View {
     }
 
     let session: ScrollCaptureSession
+    let onAllowAutoScroll: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -28,11 +29,27 @@ struct ScrollCaptureView: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityAddTraits(.updatesFrequently)
+            if session.phase == .ready {
+                Toggle("Scroll automatically", isOn: Binding(get: { session.usesAutoScroll },
+                                                              set: { session.autoScroll = $0 }))
+                    .disabled(!session.isAutoScrollPermitted)
+                if !session.isAutoScrollPermitted {
+                    Button("Allow Auto-Scroll…", action: onAllowAutoScroll)
+                        .buttonStyle(.link)
+                }
+            }
             buttons
         }
         .padding(Self.padding)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+        // Notices the grant while the panel waits for Start.
+        .task {
+            while !Task.isCancelled, session.phase == .ready {
+                session.refreshAutoScrollPermission()
+                try? await Task.sleep(for: .seconds(1))
+            }
+        }
     }
 
     private var preview: some View {

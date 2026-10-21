@@ -28,7 +28,7 @@ final class AppCoordinator {
     private let permissionWindow = PermissionWindowController()
     private let overlay = QuickAccessController()
     @ObservationIgnored private lazy var selector = SelectionController(engine: engine)
-    @ObservationIgnored private lazy var scrollCapture = ScrollCaptureController(engine: engine)
+    @ObservationIgnored private lazy var scrollCapture = ScrollCaptureController(engine: engine, settings: settings)
     /// Thumbnails and previews for Recent Captures.
     @ObservationIgnored private(set) lazy var thumbnailProvider = ThumbnailProvider(
         store: thumbnails, history: history, saveFolder: { [unowned self] in self.saveLocation.currentURL },

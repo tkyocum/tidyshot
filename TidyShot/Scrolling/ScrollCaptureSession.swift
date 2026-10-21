@@ -87,29 +87,51 @@ final class ScrollCaptureSession {
     @ObservationIgnored private(set) var frameSerial = 0
     /// Called once, when the session ends.
     @ObservationIgnored var onEnd: ((ScrollCaptureOutcome) -> Void)?
+    /// The Scroll automatically checkbox (`AppSettings.scrollingAutoScroll`). It takes effect
+    /// only while `isAutoScrollPermitted`; a change is reported through `onAutoScrollChanged`.
+    var autoScroll: Bool {
+        didSet {
+            if phase == .ready { status = .ready(autoScroll: usesAutoScroll) }
+            onAutoScrollChanged?(autoScroll)
+        }
+    }
+    /// The PostEvent grant as last checked; always false without an environment.
+    private(set) var isAutoScrollPermitted: Bool
+    @ObservationIgnored var onAutoScrollChanged: ((Bool) -> Void)?
+    /// Start begins in auto mode.
+    var usesAutoScroll: Bool { autoScroll && isAutoScrollPermitted }
 
     private let source: any FrameSource
     private let engine: ScrollStitchEngine
     private let colorSpace: CGColorSpace
+    private let autoScrollEnvironment: AutoScrollEnvironment?
     @ObservationIgnored private var readTask: Task<Void, Never>?
+    @ObservationIgnored private var driverTask: Task<Void, Never>?
     @ObservationIgnored private var endTask: Task<Void, Never>?
     @ObservationIgnored private var previewTask: Task<Void, Never>?
     @ObservationIgnored private var previewRows = PreviewRows()
     @ObservationIgnored private var lastPreviewAt: ContinuousClock.Instant?
 
     /// `area` is in CoreGraphics global points on one display of backing scale `scale`;
-    /// `colorSpace` is the space the source delivers frames in.
+    /// `colorSpace` is the space the source delivers frames in. Without `autoScrollEnvironment`
+    /// the session is manual only.
     init(source: any FrameSource, engine: ScrollStitchEngine, area: CGRect, scale: CGFloat, colorSpace: CGColorSpace,
-         clock: any ScrollClock = SystemScrollClock()) {
+         clock: any ScrollClock = SystemScrollClock(), autoScrollEnvironment: AutoScrollEnvironment? = nil,
+         prefersAutoScroll: Bool = false) {
         self.source = source
         self.engine = engine
         self.area = area
         self.scale = scale
         self.colorSpace = colorSpace
         self.clock = clock
+        self.autoScrollEnvironment = autoScrollEnvironment
         let pixels = Geometry.pixelSize(points: area.size, scale: scale)
         widthPixels = pixels.width
         heightPixels = pixels.height
+        let permitted = autoScrollEnvironment?.isPermitted() ?? false
+        autoScroll = prefersAutoScroll
+        isAutoScrollPermitted = permitted
+        status = .ready(autoScroll: prefersAutoScroll && permitted)
     }
 
     // MARK: Commands
@@ -117,8 +139,10 @@ final class ScrollCaptureSession {
     /// Starts the stream. The first frame is the page as the user arranged it.
     func start() async {
         guard phase == .ready else { return }
-        phase = .capturing(.manual)
-        status = .manualCapturing
+        let mode: ScrollMode = usesAutoScroll ? .auto : .manual
+        phase = .capturing(mode)
+        // Auto mode waits for the pointer over the area.
+        status = mode == .auto ? .autoPaused : .manualCapturing
         do {
             let events = try await source.start()
             // Cancelled while the stream was starting: stop it again.
@@ -127,6 +151,10 @@ final class ScrollCaptureSession {
                 return
             }
             readTask = Task { await self.read(events) }
+            if mode == .auto, let autoScrollEnvironment {
+                let driver = AutoScrollDriver(environment: autoScrollEnvironment, clock: clock)
+                driverTask = Task { await driver.run(session: self) }
+            }
         } catch {
             guard phase != .ended else { return }
             end(.failed(error.localizedDescription, partial: nil))
@@ -137,6 +165,7 @@ final class ScrollCaptureSession {
     /// before the first frame and outside `.capturing`.
     func done() async {
         guard case .capturing = phase, hasFirstFrame else { return }
+        driverTask?.cancel()
         phase = .finishing
         status = .finishing
         await source.stop()
@@ -172,6 +201,38 @@ final class ScrollCaptureSession {
         await done()
     }
 
+    // MARK: Auto-scroll
+
+    /// Checks the PostEvent grant again; the panel does once a second before Start.
+    func refreshAutoScrollPermission() {
+        let permitted = autoScrollEnvironment?.isPermitted() ?? false
+        guard permitted != isAutoScrollPermitted else { return }
+        isAutoScrollPermitted = permitted
+        if phase == .ready { status = .ready(autoScroll: usesAutoScroll) }
+    }
+
+    /// Auto mode: stitches a settled frame, `predicted` being the posted step in pixels. Nil once
+    /// the session has left auto mode.
+    func integrate(_ frame: ScrollFrame, predicted: Int) async -> StitchProgress? {
+        guard phase == .capturing(.auto) else { return nil }
+        let progress = await engine.add(frame, predicted: predicted)
+        apply(progress)
+        return phase == .capturing(.auto) ? progress : nil
+    }
+
+    /// Auto-scroll gives up: the user scrolls from here, and frames go to the engine again.
+    func handOver() {
+        guard phase == .capturing(.auto) else { return }
+        phase = .capturing(.manual)
+        status = .autoHandedOver
+    }
+
+    /// The driver's line while it scrolls or waits for the pointer.
+    func showAutoStatus(_ line: ScrollCaptureStatus) {
+        guard phase == .capturing(.auto), status != line else { return }
+        status = line
+    }
+
     // MARK: Frames
 
     private func read(_ events: AsyncStream<FrameEvent>) async {
@@ -203,6 +264,8 @@ final class ScrollCaptureSession {
             preview = Self.image(bgra: frame.bgra, width: frame.width, height: frame.height, colorSpace: colorSpace)
             return
         }
+        // In auto mode the driver stitches the settled frames itself (`integrate`).
+        guard phase != .capturing(.auto) else { return }
         apply(await engine.add(frame))
     }
 
@@ -216,7 +279,8 @@ final class ScrollCaptureSession {
         }
         guard phase == .capturing(.manual) else { return }
         switch progress.step.match {
-        case .lost: status = .manualLost
+        // After a hand-over the hand-over line stays until the user finds the overlap again.
+        case .lost: if status != .autoHandedOver { status = .manualLost }
         case .moved: status = .manualCapturing
         case .still: break
         }
@@ -243,6 +307,7 @@ final class ScrollCaptureSession {
         guard self.outcome == nil else { return }
         self.outcome = outcome
         phase = .ended
+        driverTask?.cancel()
         endTask?.cancel()
         previewTask?.cancel()
         onEnd?(outcome)

@@ -100,4 +100,14 @@ struct AppSettingsTests {
         defaults.set(Data("not json".utf8), forKey: "editorRedactColor")
         #expect(AppSettings(defaults: defaults).editorRedactColor == EditorPalette.defaultRedact)
     }
+
+    /// The Scroll automatically checkbox is on by default and persists (spec 2.8).
+    @Test func scrollingAutoScrollDefaultsOnAndPersists() {
+        let defaults = freshDefaults()
+        let first = AppSettings(defaults: defaults)
+        #expect(first.scrollingAutoScroll)
+        first.scrollingAutoScroll = false
+        #expect(defaults.object(forKey: "scrollingAutoScroll") as? Bool == false)
+        #expect(!AppSettings(defaults: defaults).scrollingAutoScroll)
+    }
 }

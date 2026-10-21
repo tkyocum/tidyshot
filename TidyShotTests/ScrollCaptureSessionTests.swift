@@ -251,4 +251,41 @@ struct ScrollCaptureSessionTests {
         try await eventually { session.preview?.height == 430 }
         await session.cancel()
     }
+
+    /// The checkbox counts only with the grant: without it the ready line is manual's and Start
+    /// starts manual mode; the grant arriving while the panel shows enables it, and unticking
+    /// the box is reported for `AppSettings`.
+    @Test func autoScrollNeedsTheGrantAndTheCheckbox() async throws {
+        let clock = FakeScrollClock()
+        let world = FakeScrollWorld(page: makePage(), clock: clock, pointer: CGPoint(x: 140, y: 200))
+        world.permitted = false
+        let session = ScrollCaptureSession(
+            source: world.source, engine: ScrollStitchEngine(finder: world.page.finder),
+            area: CGRect(x: 100, y: 100, width: 80, height: 200), scale: 2, colorSpace: sRGB, clock: clock,
+            autoScrollEnvironment: world.environment, prefersAutoScroll: true)
+        var stored: [Bool] = []
+        session.onAutoScrollChanged = { stored.append($0) }
+        #expect(session.autoScroll)
+        #expect(!session.isAutoScrollPermitted)
+        #expect(!session.usesAutoScroll)
+        #expect(session.status == .readyManual)
+
+        world.permitted = true
+        session.refreshAutoScrollPermission()
+        #expect(session.isAutoScrollPermitted)
+        #expect(session.status == .readyAuto)
+        #expect(session.status.text == "Click Start, then hold the pointer over the area.")
+
+        session.autoScroll = false
+        #expect(session.status == .readyManual)
+        #expect(stored == [false])
+
+        await session.start()
+        #expect(session.phase == .capturing(.manual))
+        world.showFrame()
+        try await eventually { session.hasFirstFrame }
+        try await clock.run(for: .seconds(1))
+        #expect(world.posted.isEmpty)
+        await session.cancel()
+    }
 }

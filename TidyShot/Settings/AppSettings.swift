@@ -47,6 +47,7 @@ final class AppSettings {
         static let editorLineWidthPoints = "editorLineWidthPoints"
         static let editorBlurRadiusPoints = "editorBlurRadiusPoints"
         static let editorPixelBlockPoints = "editorPixelBlockPoints"
+        static let scrollingAutoScroll = "scrollingAutoScroll"
     }
 
     @ObservationIgnored private let defaults: UserDefaults
@@ -73,6 +74,8 @@ final class AppSettings {
     var editorLineWidthPoints: Double { didSet { defaults.set(editorLineWidthPoints, forKey: Keys.editorLineWidthPoints) } }
     var editorBlurRadiusPoints: Double { didSet { defaults.set(editorBlurRadiusPoints, forKey: Keys.editorBlurRadiusPoints) } }
     var editorPixelBlockPoints: Double { didSet { defaults.set(editorPixelBlockPoints, forKey: Keys.editorPixelBlockPoints) } }
+    /// The scrolling panel's Scroll automatically checkbox. Effective only with the PostEvent grant.
+    var scrollingAutoScroll: Bool { didSet { defaults.set(scrollingAutoScroll, forKey: Keys.scrollingAutoScroll) } }
 
     /// The five editor values as one value. Setting it writes all five keys.
     var editorDefaults: EditorDefaults {
@@ -108,6 +111,7 @@ final class AppSettings {
             Keys.editorLineWidthPoints: Double(EditorDefaults.standard.lineWidthPoints),
             Keys.editorBlurRadiusPoints: Double(EditorDefaults.standard.blurRadiusPoints),
             Keys.editorPixelBlockPoints: Double(EditorDefaults.standard.blockPoints),
+            Keys.scrollingAutoScroll: true,
         ])
         showsCursor = defaults.bool(forKey: Keys.showsCursor)
         copyImageToClipboard = defaults.bool(forKey: Keys.copyImageToClipboard)
@@ -130,6 +134,7 @@ final class AppSettings {
         editorLineWidthPoints = defaults.double(forKey: Keys.editorLineWidthPoints)
         editorBlurRadiusPoints = defaults.double(forKey: Keys.editorBlurRadiusPoints)
         editorPixelBlockPoints = defaults.double(forKey: Keys.editorPixelBlockPoints)
+        scrollingAutoScroll = defaults.bool(forKey: Keys.scrollingAutoScroll)
 
         // Property observers do not run during init, so templates rewritten by
         // `TemplateMigration` are stored here, once.
