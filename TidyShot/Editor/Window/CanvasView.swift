@@ -190,7 +190,12 @@ final class CanvasView: NSView {
 
     private func input(for event: NSEvent) -> ToolInput {
         let flags = event.modifierFlags
-        let input = ToolInput(point: model.transform.imagePoint(convert(event.locationInWindow, from: nil)),
+        var point = model.transform.imagePoint(convert(event.locationInWindow, from: nil))
+        // The dimmed cover hides the rest of the capture, so input stops at the crop's edge.
+        if model.cropDraft == nil, let crop = model.document.crop {
+            point = CGPoint(x: min(max(point.x, crop.minX), crop.maxX), y: min(max(point.y, crop.minY), crop.maxY))
+        }
+        let input = ToolInput(point: point,
                               shift: flags.contains(.shift), option: flags.contains(.option),
                               clickCount: event.clickCount)
         lastInput = input

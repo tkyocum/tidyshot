@@ -446,6 +446,29 @@ struct EditorModelTests {
         // Cropping again starts at the applied crop.
         model.tool = .crop
         #expect(model.cropDraft == crop)
+
+        // Undo and redo while Crop is open move the draft too, so Return cannot re-apply the undone crop.
+        model.undoManager.undo()
+        #expect(model.document.crop == nil)
+        #expect(model.cropDraft == CGRect(x: 0, y: 0, width: 16, height: 16))
+        model.undoManager.redo()
+        #expect(model.cropDraft == crop)
+        model.undoManager.undo()
+        model.applyCrop()
+        #expect(model.document.crop == nil)
+        #expect(model.undoManager.canRedo)
+    }
+
+    @Test func selectAllSkipsAnnotationsOutsideTheCrop() {
+        let model = makeModel()
+        let inside = add(box(x: 2), to: model)
+        _ = add(box(x: 10), to: model)
+        model.tool = .crop
+        model.cropDraft = CGRect(x: 0, y: 0, width: 9, height: 16)
+        model.applyCrop()
+        #expect(model.document.crop == CGRect(x: 0, y: 0, width: 9, height: 16))
+        model.selectAll()
+        #expect(model.selection == inside.id)
     }
 
     @Test func escapeCancelsCropAndAnotherToolApplies() {

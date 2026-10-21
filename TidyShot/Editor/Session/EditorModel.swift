@@ -164,6 +164,8 @@ final class EditorModel: CanvasEditing {
         undoManager.setActionName(actionName)
         coalescingKey = nil
         apply(snapshot)
+        // Undo while cropping: the open draft follows the restored crop, or Return would re-apply the undone one.
+        if cropDraft != nil { cropDraft = snapshot.crop ?? CGRect(origin: .zero, size: imageSize) }
     }
 
     private func apply(_ new: AnnotationDocument) {
@@ -257,10 +259,16 @@ final class EditorModel: CanvasEditing {
     }
 
     /// ⌘A with one selection: the frontmost annotation, drawings before effects as in HitTester.
-    /// Nothing while cropping, which shows no selection.
+    /// Nothing while cropping, which shows no selection. With a crop applied, only annotations that
+    /// reach into the crop count: the rest are hidden.
     func selectAll() {
         guard tool != .crop else { return }
-        selection = (document.drawings.last ?? document.effects.last)?.id
+        let visible: (Annotation) -> Bool = { [document, scale] annotation in
+            guard let crop = document.crop else { return true }
+            let bounds = annotation.effectRect ?? AnnotationGeometry.bounds(of: annotation, scale: scale)
+            return bounds.intersects(crop)
+        }
+        selection = (document.drawings.last(where: visible) ?? document.effects.last(where: visible))?.id
     }
 
     // MARK: Crop

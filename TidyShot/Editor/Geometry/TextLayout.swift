@@ -43,9 +43,10 @@ nonisolated enum TextLayout {
     }
 
     /// The lines of `string`, split at every newline character (LF, CR, CRLF, U+2028, U+2029). An
-    /// empty string, or the end after a trailing newline, is an empty line.
+    /// empty string, or the end after a trailing newline, is an empty line. U+000B (vertical tab) is
+    /// `isNewline` in Swift but TextKit 2 keeps it on its line, so it does not split here.
     static func lines(of string: String) -> [String] {
-        string.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline).map(String.init)
+        string.split(omittingEmptySubsequences: false, whereSeparator: { $0.isNewline && $0 != "\u{0B}" }).map(String.init)
     }
 
     /// One line in `font` and `color`, made on each call and never stored.

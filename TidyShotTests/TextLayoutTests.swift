@@ -38,6 +38,7 @@ struct TextLayoutTests {
         #expect(TextLayout.frame(for: box("")) == CGRect(x: 10, y: 20, width: 2 * padding, height: lineHeight + 2 * padding))
         // Every kind of line break the text view accepts splits a line; nothing wraps.
         #expect(TextLayout.lines(of: "a\r\nb\u{2028}c") == ["a", "b", "c"])
+        #expect(TextLayout.lines(of: "a\u{0B}b").count == 1)
 
         // One baseline per line, a line height apart, round(descent) above the bottom of its line.
         let baselines = TextLayout.baselineOrigins(for: box("Hi\nthere\n"))
