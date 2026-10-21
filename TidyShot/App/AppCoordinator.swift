@@ -177,9 +177,9 @@ final class AppCoordinator {
             switch selection {
             case .area(let rect, let display):
                 let overlays = await selector.overlayWindows()
-                result = await capture(.area(rect: rect, display: display), excludingWindows: overlays)
+                result = await capture(.area(rect: rect, display: display), excludingWindows: overlays, duringSelection: true)
             case .window(let window):
-                result = await capture(.window(window))
+                result = await capture(.window(window), duringSelection: true)
             }
             selector.dismiss()
 
@@ -194,10 +194,14 @@ final class AppCoordinator {
         NSWorkspace.shared.activateFileViewerSelecting([lastCaptureURL])
     }
 
-    /// Runs the engine. On failure posts a notification and returns nil.
-    func capture(_ target: CaptureTarget, excludingWindows: [SCWindow] = []) async -> CaptureResult? {
+    /// Runs the engine. On failure posts a notification and returns nil. `duringSelection` is
+    /// true for the live captures taken while the selection overlay is still up; the pointer is
+    /// then never captured (`CaptureOptions.init(settings:duringSelection:)`).
+    func capture(_ target: CaptureTarget, excludingWindows: [SCWindow] = [],
+                 duringSelection: Bool = false) async -> CaptureResult? {
         do {
-            return try await engine.capture(target, options: CaptureOptions(showsCursor: settings.showsCursor), excludingWindows: excludingWindows)
+            let options = CaptureOptions(settings: settings, duringSelection: duringSelection)
+            return try await engine.capture(target, options: options, excludingWindows: excludingWindows)
         } catch {
             NSLog("Capture failed: \(error.localizedDescription)")
             notifier.notifyError(error.localizedDescription)

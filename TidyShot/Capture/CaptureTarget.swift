@@ -8,8 +8,20 @@ enum CaptureTarget {
     case window(SCWindow)
 }
 
-struct CaptureOptions {
+struct CaptureOptions: Equatable {
     var showsCursor: Bool = false
+    /// Window captures only: keep the window's shadow (spec 2.9). Off is today's output.
+    var windowShadow: Bool = false
+}
+
+extension CaptureOptions {
+    /// The one place the cursor rule lives (spec 2.9, Cursor). A capture taken while the
+    /// selection overlay is up never shows the pointer: it would be TidyShot's own crosshair.
+    /// Any other capture, and a frozen snapshot taken before the overlay appears, follows the
+    /// setting. In an extension so the memberwise `init(showsCursor:windowShadow:)` stays.
+    init(settings: AppSettings, duringSelection: Bool) {
+        self.init(showsCursor: settings.showsCursor && !duringSelection, windowShadow: settings.windowShadow)
+    }
 }
 
 struct CaptureResult {

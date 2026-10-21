@@ -17,32 +17,47 @@ final class CaptureEngine {
 
         let filter: SCContentFilter
         let scale: CGFloat
-        let pointSize: CGSize
+        let pixels: (width: Int, height: Int)
 
         switch target {
         case .display(let display):
             filter = SCContentFilter(display: display, excludingWindows: excludingWindows)
             scale = Self.scale(forDisplayID: display.displayID)
-            pointSize = display.frame.size
+            pixels = Geometry.pixelSize(points: display.frame.size, scale: scale)
         case .area(let rect, let display):
             filter = SCContentFilter(display: display, excludingWindows: excludingWindows)
             scale = Self.scale(forDisplayID: display.displayID)
             config.sourceRect = Geometry.displayLocal(rect, in: display.frame)
-            pointSize = rect.size
+            pixels = Geometry.pixelSize(points: rect.size, scale: scale)
         case .window(let window):
             filter = SCContentFilter(desktopIndependentWindow: window)
-            config.ignoreShadows = true
+            // Off is today's output. On, the shadow lies outside `window.frame`, so the size
+            // comes from the filter (see `windowPixelSize`).
+            config.ignoreShadows = !options.windowShadow
             scale = Self.scale(forDisplayID: Self.displayID(containing: window.frame))
-            pointSize = window.frame.size
+            pixels = Self.windowPixelSize(frame: window.frame, contentRect: filter.contentRect,
+                                          pointPixelScale: CGFloat(filter.pointPixelScale),
+                                          displayScale: scale, includeShadow: options.windowShadow)
         }
-
-        let pixels = Geometry.pixelSize(points: pointSize, scale: scale)
         config.width = pixels.width
         config.height = pixels.height
 
         let output = try await SCScreenshotManager.captureScreenshot(contentFilter: filter, configuration: config)
         guard let image = output.sdrImage else { throw CaptureError.noImage }
         return CaptureResult(image: image, scale: scale, target: target)
+    }
+
+    /// The pixel size of a window capture. Without the shadow: the frame at the display's scale,
+    /// as before. With it: the filter's `contentRect` (points) times `pointPixelScale`, which the
+    /// probe (`probes/window-shadow`) checks includes the shadow. A degenerate filter (empty or smaller than
+    /// the frame, or a zero scale) falls back to the frame, so a capture is never zero-sized.
+    static func windowPixelSize(frame: CGRect, contentRect: CGRect, pointPixelScale: CGFloat,
+                                displayScale: CGFloat, includeShadow: Bool) -> (width: Int, height: Int) {
+        if includeShadow, pointPixelScale > 0,
+           contentRect.width >= frame.width, contentRect.height >= frame.height {
+            return Geometry.pixelSize(points: contentRect.size, scale: pointPixelScale)
+        }
+        return Geometry.pixelSize(points: frame.size, scale: displayScale)
     }
 
     /// Backing scale of a display: from its NSScreen when available, otherwise from the display

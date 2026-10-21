@@ -110,4 +110,14 @@ struct AppSettingsTests {
         #expect(defaults.object(forKey: "scrollingAutoScroll") as? Bool == false)
         #expect(!AppSettings(defaults: defaults).scrollingAutoScroll)
     }
+
+    /// Include window shadow is off by default, which keeps today's output, and persists (spec 2.9).
+    @Test func windowShadowDefaultsOffAndPersists() {
+        let defaults = freshDefaults()
+        let first = AppSettings(defaults: defaults)
+        #expect(!first.windowShadow)
+        first.windowShadow = true
+        #expect(defaults.object(forKey: "windowShadow") as? Bool == true)
+        #expect(AppSettings(defaults: defaults).windowShadow)
+    }
 }

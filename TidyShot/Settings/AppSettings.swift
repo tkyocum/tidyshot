@@ -48,6 +48,7 @@ final class AppSettings {
         static let editorBlurRadiusPoints = "editorBlurRadiusPoints"
         static let editorPixelBlockPoints = "editorPixelBlockPoints"
         static let scrollingAutoScroll = "scrollingAutoScroll"
+        static let windowShadow = "windowShadow"
     }
 
     @ObservationIgnored private let defaults: UserDefaults
@@ -76,6 +77,8 @@ final class AppSettings {
     var editorPixelBlockPoints: Double { didSet { defaults.set(editorPixelBlockPoints, forKey: Keys.editorPixelBlockPoints) } }
     /// The scrolling panel's Scroll automatically checkbox. Effective only with the PostEvent grant.
     var scrollingAutoScroll: Bool { didSet { defaults.set(scrollingAutoScroll, forKey: Keys.scrollingAutoScroll) } }
+    /// The Capture tab's Include window shadow. Off keeps window shots without a shadow.
+    var windowShadow: Bool { didSet { defaults.set(windowShadow, forKey: Keys.windowShadow) } }
 
     /// The five editor values as one value. Setting it writes all five keys.
     var editorDefaults: EditorDefaults {
@@ -112,6 +115,7 @@ final class AppSettings {
             Keys.editorBlurRadiusPoints: Double(EditorDefaults.standard.blurRadiusPoints),
             Keys.editorPixelBlockPoints: Double(EditorDefaults.standard.blockPoints),
             Keys.scrollingAutoScroll: true,
+            Keys.windowShadow: false,
         ])
         showsCursor = defaults.bool(forKey: Keys.showsCursor)
         copyImageToClipboard = defaults.bool(forKey: Keys.copyImageToClipboard)
@@ -135,6 +139,7 @@ final class AppSettings {
         editorBlurRadiusPoints = defaults.double(forKey: Keys.editorBlurRadiusPoints)
         editorPixelBlockPoints = defaults.double(forKey: Keys.editorPixelBlockPoints)
         scrollingAutoScroll = defaults.bool(forKey: Keys.scrollingAutoScroll)
+        windowShadow = defaults.bool(forKey: Keys.windowShadow)
 
         // Property observers do not run during init, so templates rewritten by
         // `TemplateMigration` are stored here, once.
