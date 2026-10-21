@@ -23,8 +23,8 @@ final class SelectionController {
         guard continuation == nil, !NSScreen.screens.isEmpty else { return nil }
         displays = content.displays
         self.mode = mode
-        // Window picking is only offered in window mode; area mode shows just the crosshair.
-        picker = mode == .window ? WindowPicker(content: content) : nil
+        // Window picking is offered in window and scrolling mode; area mode shows just the crosshair.
+        picker = mode == .area ? nil : WindowPicker(content: content)
 
         for screen in NSScreen.screens {
             let window = SelectionWindow(screen: screen)
@@ -37,7 +37,7 @@ final class SelectionController {
             // Capture the hovered window now; a mouseMoved could change it before the Task runs.
             view.onPickWindow = { [weak self] in
                 let picked = self?.hoveredWindow
-                Task { self?.finish(picked.map(Selection.window)) }
+                Task { self?.finishPick(picked) }
             }
             window.contentView = view
             window.makeFirstResponder(view)
@@ -52,7 +52,7 @@ final class SelectionController {
         NSApplication.shared.activate(ignoringOtherApps: true)
         windows.first { $0.frame.contains(NSEvent.mouseLocation) }?.makeKey()
         updateHover(at: NSEvent.mouseLocation)
-        if mode == .area {
+        if mode != .window {
             snapshotTask = Task { await takeSnapshots() }
         }
 
@@ -104,9 +104,9 @@ final class SelectionController {
         hoveredWindow = nil
     }
 
-    /// `globalPoint` is in AppKit global coordinates. No-op outside window mode.
+    /// `globalPoint` is in AppKit global coordinates. No-op in area mode.
     private func updateHover(at globalPoint: CGPoint) {
-        guard mode == .window else { return }
+        guard mode != .area else { return }
         let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
         let cgPoint = Geometry.cgPoint(fromAppKit: globalPoint, primaryHeight: primaryHeight)
         hoveredWindow = picker?.window(at: cgPoint)
@@ -122,9 +122,28 @@ final class SelectionController {
         }
     }
 
+    /// A picked window: itself in window mode; in scrolling mode its frame, as an area of the
+    /// display under its centre. Nil cancels.
+    private func finishPick(_ window: SCWindow?) {
+        guard let window else {
+            finish(nil)
+            return
+        }
+        if mode == .scrolling {
+            finishArea(cgRect: window.frame)
+        } else {
+            finish(.window(window))
+        }
+    }
+
     private func finishArea(_ appKitRect: CGRect) {
         let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
-        let cgRect = Geometry.cgRect(fromAppKit: appKitRect, primaryHeight: primaryHeight)
+        finishArea(cgRect: Geometry.cgRect(fromAppKit: appKitRect, primaryHeight: primaryHeight))
+    }
+
+    /// `cgRect` (CoreGraphics global points) clipped to the display under its centre, or the
+    /// first display. Cancels when nothing of it is on that display.
+    private func finishArea(cgRect: CGRect) {
         let centre = CGPoint(x: cgRect.midX, y: cgRect.midY)
         guard let display = displays.first(where: { $0.frame.contains(centre) }) ?? displays.first else {
             finish(nil)

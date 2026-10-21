@@ -7,6 +7,7 @@ struct ShortcutsSettingsView: View {
             KeyboardShortcuts.Recorder("Capture area:", name: .captureArea)
             KeyboardShortcuts.Recorder("Capture window:", name: .captureWindow)
             KeyboardShortcuts.Recorder("Capture fullscreen:", name: .captureFullscreen)
+            KeyboardShortcuts.Recorder("Capture scrolling:", name: .captureScrolling)
             Text("macOS reserves ⌘⇧3, ⌘⇧4 and ⌘⇧5. To use them here, disable them in System Settings > Keyboard > Keyboard Shortcuts > Screenshots.")
                 .font(.caption)
                 .foregroundStyle(.secondary)

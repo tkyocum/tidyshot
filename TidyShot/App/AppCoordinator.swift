@@ -106,6 +106,11 @@ final class AppCoordinator {
         KeyboardShortcuts.onKeyUp(for: .captureWindow) { [weak self] in
             Task { await self?.captureWindow() }
         }
+        KeyboardShortcuts.onKeyUp(for: .captureScrolling) { [weak self] in
+            Task { await self?.captureScrolling() }
+        }
+        // Escape must never be swallowed outside a scrolling capture; the session enables it.
+        KeyboardShortcuts.disable(.cancelScrollingCapture)
     }
 
     func captureFullscreen() async {
@@ -123,6 +128,30 @@ final class AppCoordinator {
 
     func captureWindow() async {
         await runSelection(mode: .window)
+    }
+
+    /// Capture Scrolling: select an area or a window's frame, then (Task 5) run the scrolling
+    /// session. Until then one frame of the area is captured and saved like an area capture.
+    func captureScrolling() async {
+        await withCaptureLock {
+            guard let content = await loadContent() else { return }
+            guard let selection = await selector.select(mode: .scrolling, content: content) else { return }
+            guard case .area(let rect, let display) = selection else {
+                selector.dismiss()
+                return
+            }
+            guard rect.height >= CGFloat(ScrollCaptureLimits.minimumAreaHeightPoints) else {
+                selector.dismiss()
+                notifier.notifyError("Select an area at least 100 points tall.", title: "Scrolling capture")
+                return
+            }
+            let overlays = await selector.overlayWindows()
+            let result = await capture(.area(rect: rect, display: display), excludingWindows: overlays)
+            selector.dismiss()
+            if let result {
+                await save(result)
+            }
+        }
     }
 
     /// Show the overlay, capture with the overlay excluded, dismiss, then save.
@@ -169,21 +198,12 @@ final class AppCoordinator {
     /// in history, start the thumbnail, show the overlay, and start the upload. A file is always
     /// written before the upload starts; if it cannot be written the image stays on the clipboard,
     /// so a capture is never dropped. When the image goes on the clipboard, `clipboardOwner`
-    /// records it for this capture, so an edit can replace it later.
+    /// records it for this capture, so an edit can replace it later. The PNG, and the TIFF when the
+    /// image goes on the clipboard now, are made in a detached task, so a tall capture does not hold
+    /// up the main actor.
     func save(_ result: CaptureResult) async {
         latestCapture = nil
         let image = result.scaled
-        let png: Data
-        do {
-            png = try ImageEncoder.pngData(from: image.image, scale: image.scale)
-        } catch {
-            NSLog("Encode failed: \(error.localizedDescription)")
-            // Never drop a capture: without PNG data the clipboard still gets the image as TIFF.
-            Pasteboard.copy(image: image.image, scale: image.scale)
-            notifier.notifyError(error.localizedDescription)
-            return
-        }
-
         let action = settings.afterCaptureAction
         // One keychain read per capture; persist passes the result to startUpload.
         let destination = action.uploads ? makeDestination() : nil
@@ -196,8 +216,23 @@ final class AppCoordinator {
         } else {
             copyImageNow = settings.copyImageToClipboard
         }
-        let copiedChangeCount: Int? = copyImageNow
-            ? Pasteboard.copy(image: image.image, pngData: png, scale: image.scale) : nil
+        // A scrolling capture can be 16,384 px tall: encode it, and the clipboard's TIFF, off the
+        // main actor. Every capture takes this path; for a normal one the cost is one hop.
+        let encoded: (png: Data, tiff: Data?)
+        do {
+            encoded = try await Task.detached(priority: .userInitiated) { () throws -> (png: Data, tiff: Data?) in
+                (try ImageEncoder.pngData(from: image.image, scale: image.scale),
+                 copyImageNow ? Pasteboard.tiffData(of: image.image, scale: image.scale) : nil)
+            }.value
+        } catch {
+            NSLog("Encode failed: \(error.localizedDescription)")
+            // Never drop a capture: without PNG data the clipboard still gets the image as TIFF.
+            Pasteboard.copy(image: image.image, scale: image.scale)
+            notifier.notifyError(error.localizedDescription)
+            return
+        }
+        let png = encoded.png
+        let copiedChangeCount: Int? = copyImageNow ? Pasteboard.copy(pngData: png, tiffData: encoded.tiff) : nil
 
         guard let record = await persist(png: png, image: image, action: action, destination: destination,
                                          alreadyOnClipboard: copyImageNow) else { return }
@@ -341,7 +376,11 @@ final class AppCoordinator {
 
     private func showOverlay(for record: CaptureRecord, image: CGImage?, scale: CGFloat) {
         guard settings.showOverlay else { return }
-        let thumbnail = image.map { NSImage(cgImage: $0, size: NSSize(width: CGFloat($0.width) / scale, height: CGFloat($0.height) / scale)) }
+        // The well shows the top of a tall capture, as its thumbnail does. The crop shares the pixels.
+        let shown = image.map { full in
+            full.cropping(to: ThumbnailMaker.cropForThumbnail(CGSize(width: full.width, height: full.height))) ?? full
+        }
+        let thumbnail = shown.map { NSImage(cgImage: $0, size: NSSize(width: CGFloat($0.width) / scale, height: CGFloat($0.height) / scale)) }
         overlay.show(record: record, thumbnail: thumbnail, corner: settings.overlayCorner,
                      autoCloseSeconds: settings.overlayAutoCloseSeconds,
                      actions: QuickAccessController.Actions(

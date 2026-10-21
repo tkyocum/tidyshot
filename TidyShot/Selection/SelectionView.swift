@@ -101,16 +101,17 @@ final class SelectionView: NSView {
             dragRect = nil
             needsDisplay = true
         }
-        if mode == .area, let rect = dragRect, rect.width >= 2, rect.height >= 2 {
+        switch SelectionOutcome.resolve(mode: mode, dragRect: dragRect, hasHighlight: highlightedRect != nil) {
+        case .area(let rect):
             guard let window else {
                 onCancel?()
                 return
             }
             completedRect = rect
             onComplete?(window.convertToScreen(convert(rect, to: nil)))
-        } else if highlightedRect != nil {
+        case .window:
             onPickWindow?()
-        } else {
+        case .cancel:
             onCancel?()
         }
     }
@@ -135,7 +136,7 @@ final class SelectionView: NSView {
             return
         }
 
-        let isDragging = mode == .area && dragStart != nil && dragRect != nil
+        let isDragging = mode != .window && dragStart != nil && dragRect != nil
 
         if isDragging, let rect = dragRect {
             punchHole(rect)
@@ -150,11 +151,11 @@ final class SelectionView: NSView {
             drawSizeLabel(for: highlight)
         }
 
-        if let cursor, !isDragging, mode == .area {
+        if let cursor, !isDragging, mode != .window {
             drawCrosshair(at: cursor)
         }
 
-        if let cursor, mode == .area {
+        if let cursor, mode != .window {
             drawLoupe(at: cursor)
         }
     }
