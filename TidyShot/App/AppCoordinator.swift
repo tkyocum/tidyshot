@@ -14,6 +14,17 @@ final class AppCoordinator {
         let keyTemplate: String
     }
 
+    /// What differs between a capture and the editor's Save Copy on the one save path.
+    private struct PersistOptions {
+        /// The file name in the save folder, without extension, made unique on write. Nil draws it
+        /// from the file name template, `{counter}` included. Upload-only files are `<id>.png`.
+        var baseName: String?
+        /// The image is on the clipboard already, so a failed write need not put it there.
+        var alreadyOnClipboard: Bool
+        /// Plays the shutter when the Play sound setting is on. False for Save Copy.
+        var playsSound: Bool
+    }
+
     static let shared = AppCoordinator()
 
     let engine = CaptureEngine()
@@ -48,6 +59,10 @@ final class AppCoordinator {
     @ObservationIgnored private var deletingIDs: Set<UUID> = []
     /// Set after the first "Upload not configured" notification so later captures stay quiet.
     @ObservationIgnored private var warnedUploadNotConfigured = false
+    /// What TidyShot last put on the clipboard for a capture: set when `save(_:)` copies the
+    /// image, by the editor's Copy, and after an edit replaced the clipboard. An edit of that
+    /// capture replaces the clipboard only while the count still matches.
+    @ObservationIgnored private var clipboardOwner: EditorClipboard.Owner?
 
     private(set) var isCapturing = false
     /// The last capture written to the save folder (upload-only captures do not count).
@@ -149,24 +164,26 @@ final class AppCoordinator {
 
     // MARK: Save and upload
 
-    /// Encode, copy to clipboard (image now, or URL later), write the file (save folder, or the
-    /// container's `pending` folder in upload-only mode), record in history, start the thumbnail,
-    /// show the overlay, and start the upload. A file is always written before the upload starts;
-    /// if it cannot be written the image stays on the clipboard, so a capture is never dropped.
+    /// Encode, copy to clipboard (image now, or URL later), then `persist`: write the file, record
+    /// in history, start the thumbnail, show the overlay, and start the upload. A file is always
+    /// written before the upload starts; if it cannot be written the image stays on the clipboard,
+    /// so a capture is never dropped. When the image goes on the clipboard, `clipboardOwner`
+    /// records it for this capture, so an edit can replace it later.
     func save(_ result: CaptureResult) async {
+        let image = result.scaled
         let png: Data
         do {
-            png = try ImageEncoder.pngData(from: result.image, scale: result.scale)
+            png = try ImageEncoder.pngData(from: image.image, scale: image.scale)
         } catch {
             NSLog("Encode failed: \(error.localizedDescription)")
             // Never drop a capture: without PNG data the clipboard still gets the image as TIFF.
-            Pasteboard.copy(image: result.image, scale: result.scale)
+            Pasteboard.copy(image: image.image, scale: image.scale)
             notifier.notifyError(error.localizedDescription)
             return
         }
 
         let action = settings.afterCaptureAction
-        // One keychain read per capture; the result is passed to startUpload below.
+        // One keychain read per capture; persist passes the result to startUpload.
         let destination = action.uploads ? makeDestination() : nil
         let copyImageNow: Bool
         if destination != nil {
@@ -177,18 +194,35 @@ final class AppCoordinator {
         } else {
             copyImageNow = settings.copyImageToClipboard
         }
-        if copyImageNow {
-            Pasteboard.copy(image: result.image, pngData: png, scale: result.scale)
-        }
+        let copiedChangeCount: Int? = copyImageNow
+            ? Pasteboard.copy(image: image.image, pngData: png, scale: image.scale) : nil
 
+        let options = PersistOptions(baseName: nil, alreadyOnClipboard: copyImageNow, playsSound: true)
+        guard let record = await persist(png: png, image: image, action: action, destination: destination,
+                                         options: options) else { return }
+        if let copiedChangeCount {
+            clipboardOwner = EditorClipboard.Owner(recordID: record.id, changeCount: copiedChangeCount)
+        }
+    }
+
+    /// The one save path, shared by `save(_:)` and the editor's Save Copy. Writes the file (save
+    /// folder, or the container's `pending` folder in upload-only mode), warns once when upload
+    /// is not configured, plays the sound, records the capture, starts the thumbnail, shows the
+    /// overlay, and starts the upload or posts "saved". Returns nil when the file could not be
+    /// written; the writer has then notified and left the image on the clipboard. Any other
+    /// clipboard write is the caller's.
+    private func persist(png: Data, image: ScaledImage, action: AfterCaptureAction, destination: S3Destination?,
+                         options: PersistOptions) async -> CaptureRecord? {
         // The object key is not named here: `startUpload` names it when the upload starts.
         let id = UUID()
         let fileURL: URL
         if action == .uploadOnly {
-            guard let url = writePendingFile(png, id: id, result: result, alreadyOnClipboard: copyImageNow) else { return }
+            guard let url = writePendingFile(png, id: id, image: image,
+                                             alreadyOnClipboard: options.alreadyOnClipboard) else { return nil }
             fileURL = url
         } else {
-            guard let url = await writeFile(png, result: result, alreadyOnClipboard: copyImageNow) else { return }
+            guard let url = await writeFile(png, image: image, baseName: options.baseName,
+                                            alreadyOnClipboard: options.alreadyOnClipboard) else { return nil }
             fileURL = url
             lastCaptureURL = url
         }
@@ -197,7 +231,7 @@ final class AppCoordinator {
                 ? "Set up a destination in Settings > Upload, then retry from Recent Captures. The image is on the clipboard."
                 : "Set up a destination in Settings > Upload. The capture was saved and the image is on the clipboard.")
         }
-        if settings.playSound {
+        if options.playsSound, settings.playSound {
             SoundPlayer.playShutter()
         }
 
@@ -212,11 +246,11 @@ final class AppCoordinator {
         }
         // The source app is no longer recorded (Phase 3.1 removed its token); older records keep theirs.
         let record = CaptureRecord(id: id, fileURL: fileURL, fileIsTemporary: action == .uploadOnly,
-                                   pixelWidth: result.image.width, pixelHeight: result.image.height,
+                                   pixelWidth: image.image.width, pixelHeight: image.image.height,
                                    appName: nil, uploadState: state)
         history.add(record)
-        makeThumbnail(from: result.image, for: id)
-        showOverlay(for: record, image: result.image, scale: result.scale)
+        makeThumbnail(from: image.image, for: id)
+        showOverlay(for: record, image: image.image, scale: image.scale)
 
         if let destination {
             startUpload(recordID: record.id, data: png, destination: destination)
@@ -224,6 +258,7 @@ final class AppCoordinator {
             // Save mode, or upload mode with no destination (as in Phase 2): the file was saved.
             notifier.notifySaved(fileURL: fileURL)
         }
+        return record
     }
 
     /// Posts "Upload not configured" the first time per launch only. With the default
@@ -235,42 +270,51 @@ final class AppCoordinator {
         notifier.notifyError(message, title: "Upload not configured")
     }
 
-    /// Writes the PNG into the save folder, drawing the file name's `{counter}` as Phase 1 did.
-    /// Returns nil after notifying, with the image left on the clipboard, when there is no folder
-    /// or the write fails.
-    private func writeFile(_ png: Data, result: CaptureResult, alreadyOnClipboard: Bool) async -> URL? {
+    /// Writes the PNG into the save folder as `baseName` (`baseName 2`, … when taken), or, when
+    /// `baseName` is nil, under a name from the file name template with `{counter}` drawn as
+    /// Phase 1 did. Returns nil after notifying, with the image left on the clipboard, when there
+    /// is no folder or the write fails.
+    private func writeFile(_ png: Data, image: ScaledImage, baseName: String?, alreadyOnClipboard: Bool) async -> URL? {
         guard let folder = await saveLocation.ensureFolder() else {
-            keepOnClipboard(result, png: png, alreadyOnClipboard: alreadyOnClipboard)
+            keepOnClipboard(image, png: png, alreadyOnClipboard: alreadyOnClipboard)
             notifier.notifyError("No folder was chosen. The image is on the clipboard.", title: "Not saved")
             return nil
         }
         do {
-            let counter = settings.fileNameTemplate.contains("{counter}") ? settings.nextCounter() : 0
-            let baseName = FileNamer(template: settings.fileNameTemplate).name(counter: counter)
-            return try saveLocation.write(png, baseName: baseName, ext: "png", in: folder)
+            let name: String
+            if let baseName {
+                name = baseName
+            } else {
+                let counter = settings.fileNameTemplate.contains("{counter}") ? settings.nextCounter() : 0
+                name = FileNamer(template: settings.fileNameTemplate).name(counter: counter)
+            }
+            return try saveLocation.write(png, baseName: name, ext: "png", in: folder)
         } catch {
             NSLog("Save failed: \(error.localizedDescription)")
-            keepOnClipboard(result, png: png, alreadyOnClipboard: alreadyOnClipboard)
+            keepOnClipboard(image, png: png, alreadyOnClipboard: alreadyOnClipboard)
             notifier.notifyError("\(error.localizedDescription) The image is on the clipboard.", title: "Not saved")
             return nil
         }
     }
 
-    /// Upload-only mode: writes the PNG into the container's `pending` folder, no folder prompt.
-    private func writePendingFile(_ png: Data, id: UUID, result: CaptureResult, alreadyOnClipboard: Bool) -> URL? {
+    /// Upload-only mode: writes the PNG into the container's `pending` folder as `<id>.png`, no
+    /// folder prompt.
+    private func writePendingFile(_ png: Data, id: UUID, image: ScaledImage, alreadyOnClipboard: Bool) -> URL? {
         do {
             return try pendingFiles.write(png, id: id, ext: "png")
         } catch {
             NSLog("Pending write failed: \(error.localizedDescription)")
-            keepOnClipboard(result, png: png, alreadyOnClipboard: alreadyOnClipboard)
+            keepOnClipboard(image, png: png, alreadyOnClipboard: alreadyOnClipboard)
             notifier.notifyError("\(error.localizedDescription) The image is on the clipboard.", title: "Not saved")
             return nil
         }
     }
 
-    private func keepOnClipboard(_ result: CaptureResult, png: Data, alreadyOnClipboard: Bool) {
+    /// A failed write's fallback, so a capture or an edit is never dropped. It sets no
+    /// `clipboardOwner`: no record was made for this image.
+    private func keepOnClipboard(_ image: ScaledImage, png: Data, alreadyOnClipboard: Bool) {
         if !alreadyOnClipboard {
-            Pasteboard.copy(image: result.image, pngData: png, scale: result.scale)
+            Pasteboard.copy(image: image.image, pngData: png, scale: image.scale)
         }
     }
 
@@ -895,26 +939,93 @@ final class AppCoordinator {
         controller.present()
     }
 
-    /// Stubs that only log, so the window, tools and undo can be used before the actions exist:
-    /// Task 12 wires Save Copy and Copy, Task 13 Save, Task 15 Upload. A stub reports failure, so
-    /// nothing is marked saved and the close sheet's Save keeps the window open.
+    /// The editor's actions for `recordID`. Save Copy and Copy go through the coordinator; Save
+    /// and Upload are still stubs that only log (Task 13 wires Save, Task 15 Upload). A stub
+    /// reports failure, so nothing is marked saved and the close sheet's Save keeps the window open.
     private func editorActions(for recordID: UUID) -> EditorActions {
         EditorActions(
             save: { image in
                 NSLog("Editor: Save of \(recordID) (\(image.image.width)x\(image.image.height) @\(image.scale)x) is not wired yet")
                 return false
             },
-            saveCopy: { _ in
-                NSLog("Editor: Save Copy of \(recordID) is not wired yet")
-                return false
+            saveCopy: { [weak self] image in
+                await self?.editorSaveCopy(of: recordID, image: image) ?? false
             },
-            copy: { _ in
-                NSLog("Editor: Copy of \(recordID) is not wired yet")
+            copy: { [weak self] image in
+                await self?.editorCopy(recordID: recordID, image: image)
             },
             upload: { _, asNew in
                 NSLog("Editor: Upload\(asNew ? " as New" : "") of \(recordID) is not wired yet")
                 return false
             })
+    }
+
+    /// Save Copy (⇧⌘S): the edited image becomes a new capture through `persist`, as if just taken
+    /// with the current after-capture action. It gets a file in the save folder named by
+    /// `EditorNaming.copyBaseName(for:)` (or by the template), or a pending file that uploads, plus
+    /// a thumbnail, a Recent Captures row and the overlay. There is no shutter sound. A deleted or
+    /// pruned original does not block it, and the editor stays on the original record. Then the
+    /// clipboard gets the edited image only if it still holds what TidyShot put there for the
+    /// original. Returns false when nothing was written; the edited image is then on the clipboard.
+    private func editorSaveCopy(of recordID: UUID, image: ScaledImage) async -> Bool {
+        let png: Data
+        do {
+            png = try await Task.detached(priority: .userInitiated) {
+                try ImageEncoder.pngData(from: image.image, scale: image.scale)
+            }.value
+        } catch {
+            NSLog("Encode failed: \(error.localizedDescription)")
+            // Never drop an edit: without PNG data the clipboard still gets the image as TIFF.
+            Pasteboard.copy(image: image.image, scale: image.scale)
+            notifier.notifyError("\(error.localizedDescription) The image is on the clipboard.", title: "Not saved")
+            return false
+        }
+        let action = settings.afterCaptureAction
+        let destination = action.uploads ? makeDestination() : nil
+        let options = PersistOptions(baseName: EditorNaming.copyBaseName(for: history.record(id: recordID)),
+                                     alreadyOnClipboard: false, playsSound: false)
+        guard await persist(png: png, image: image, action: action, destination: destination,
+                            options: options) != nil else { return false }
+        await replaceClipboardIfStillOriginal(recordID: recordID, png: png, image: image)
+        return true
+    }
+
+    /// The clipboard rule (spec 2.6), after a Save Copy or (from Task 13) a local edit. Puts the
+    /// edited PNG and TIFF on the clipboard only while it still holds exactly what TidyShot put
+    /// there for `recordID`, and leaves anything copied since alone. The TIFF is made in a detached
+    /// task. Ownership is checked again after that await, right before the write, so a URL that a
+    /// finished upload copied in the meantime is never overwritten. TidyShot then owns the
+    /// clipboard for this record at the new count, so a later edit replaces this one too.
+    private func replaceClipboardIfStillOriginal(recordID: UUID, png: Data, image: ScaledImage) async {
+        guard EditorClipboard.shouldReplace(owner: clipboardOwner, recordID: recordID,
+                                            currentChangeCount: NSPasteboard.general.changeCount) else { return }
+        let tiff = await Task.detached(priority: .userInitiated) {
+            Pasteboard.tiffData(of: image.image, scale: image.scale)
+        }.value
+        guard EditorClipboard.shouldReplace(owner: clipboardOwner, recordID: recordID,
+                                            currentChangeCount: NSPasteboard.general.changeCount) else { return }
+        let changeCount = Pasteboard.copy(pngData: png, tiffData: tiff)
+        clipboardOwner = EditorClipboard.Owner(recordID: recordID, changeCount: changeCount)
+    }
+
+    /// Copy (⌘C, ⇧⌘C): the edited image as PNG and TIFF, both encoded in a detached task and
+    /// written here on the main actor. TidyShot then owns the clipboard for this record, so a later
+    /// Save Copy or Save puts the newer edit there. The window stays open.
+    private func editorCopy(recordID: UUID, image: ScaledImage) async {
+        do {
+            let encoded = try await Task.detached(priority: .userInitiated) { () throws -> (png: Data, tiff: Data?) in
+                (try ImageEncoder.pngData(from: image.image, scale: image.scale),
+                 Pasteboard.tiffData(of: image.image, scale: image.scale))
+            }.value
+            let changeCount = Pasteboard.copy(pngData: encoded.png, tiffData: encoded.tiff)
+            clipboardOwner = EditorClipboard.Owner(recordID: recordID, changeCount: changeCount)
+            if settings.showNotification {
+                let record = history.record(id: recordID)
+                notifier.notify(title: "Image copied", body: record?.uploadedKey ?? record?.fileURL?.lastPathComponent ?? "")
+            }
+        } catch {
+            notifier.notifyError(error.localizedDescription, title: "Could not copy image")
+        }
     }
 
     /// Drops a closed editor. When the last one closes, the renderer frees its caches.
