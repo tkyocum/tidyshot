@@ -138,11 +138,27 @@ final class ScrollCaptureSession {
         status = .ready(autoScroll: prefersAutoScroll && permitted)
     }
 
+    /// A URL command's session (spec 2.9) not started within this cancels itself.
+    static let readyTimeout: Duration = .seconds(60)
+    @ObservationIgnored private var readyTimeoutTask: Task<Void, Never>?
+
     // MARK: Commands
+
+    /// Cancels the session, as Cancel does, when it is still `.ready` after `timeout` on the
+    /// session's clock. Start or the end of the session stops the wait.
+    func cancelIfNotStarted(within timeout: Duration) {
+        readyTimeoutTask?.cancel()
+        readyTimeoutTask = Task { [weak self, clock] in
+            do { try await clock.sleep(for: timeout) } catch { return }
+            guard let self, phase == .ready else { return }
+            await cancel()
+        }
+    }
 
     /// Starts the stream. The first frame is the page as the user arranged it.
     func start() async {
         guard phase == .ready else { return }
+        readyTimeoutTask?.cancel()
         let mode: ScrollMode = usesAutoScroll ? .auto : .manual
         phase = .capturing(mode)
         // Auto mode waits for the pointer over the area.
@@ -326,6 +342,7 @@ final class ScrollCaptureSession {
         driverTask?.cancel()
         endTask?.cancel()
         previewTask?.cancel()
+        readyTimeoutTask?.cancel()
         onEnd?(outcome)
     }
 

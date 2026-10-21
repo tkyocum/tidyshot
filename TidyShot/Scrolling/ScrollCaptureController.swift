@@ -30,8 +30,10 @@ final class ScrollCaptureController {
     /// selection returns it) and returns when the session ends. Nothing is written here: the
     /// caller saves the outcome's image. With `makesPanelKey` false (a URL command's rect) the
     /// panel is only ordered front: TidyShot is not active, and a key panel would take a Return
-    /// typed in the frontmost app as Start, so Start needs a click.
-    func run(rect: CGRect, display: SCDisplay, makesPanelKey: Bool = true) async -> ScrollCaptureOutcome {
+    /// typed in the frontmost app as Start, so Start needs a click. With `readyTimeout` (a URL
+    /// command's rect) a session not started by then cancels itself.
+    func run(rect: CGRect, display: SCDisplay, makesPanelKey: Bool = true,
+             readyTimeout: Duration? = nil) async -> ScrollCaptureOutcome {
         guard session == nil else { return .cancelled }
         appKitArea = Geometry.appKitRect(fromCG: rect, primaryHeight: NSScreen.screens.first?.frame.height ?? 0)
         visibleFrame = (CaptureEngine.screen(forDisplayID: display.displayID) ?? NSScreen.main ?? NSScreen.screens[0])
@@ -74,6 +76,7 @@ final class ScrollCaptureController {
         }
 
         KeyboardShortcuts.enable(.cancelCapture)
+        if let readyTimeout { session.cancelIfNotStarted(within: readyTimeout) }
         return await withCheckedContinuation { continuation = $0 }
     }
 

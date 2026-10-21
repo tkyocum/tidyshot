@@ -34,25 +34,26 @@ final class SelectionController {
     func select(mode: SelectionMode, content: SCShareableContent, freeze: CaptureOptions? = nil) async -> Selection? {
         // All-in-One resolves through `selectAllInOne`.
         guard isIdle, mode != .allInOne, !NSScreen.screens.isEmpty else { return nil }
-        await present(mode: mode, content: content, freeze: freeze, preselect: nil)
+        await present(mode: mode, content: content, freeze: freeze, preselect: nil, armed: true)
         return await withCheckedContinuation { continuation = $0 }
     }
 
     /// All-in-One (spec 2.9): the overlay opens on `preselect` (CoreGraphics global points) when it
     /// is on a display, otherwise as Capture Scrolling's; it stays adjustable until a toolbar
     /// button, Return or a double-click picks the choice. On a choice the overlay stays up until
-    /// `dismiss()`; `freeze` works as in area mode.
+    /// `dismiss()`; `freeze` works as in area mode. With `armed` false (a URL command) the
+    /// preselected rect takes Return and the double-click only after the user touches the overlay.
     func selectAllInOne(content: SCShareableContent, freeze: CaptureOptions? = nil,
-                        preselect: CGRect? = nil) async -> AllInOneChoice? {
+                        preselect: CGRect? = nil, armed: Bool = true) async -> AllInOneChoice? {
         guard isIdle, !NSScreen.screens.isEmpty else { return nil }
-        await present(mode: .allInOne, content: content, freeze: freeze, preselect: preselect)
+        await present(mode: .allInOne, content: content, freeze: freeze, preselect: preselect, armed: armed)
         return await withCheckedContinuation { allInOneContinuation = $0 }
     }
 
     /// Shows one overlay window per screen in `mode`, with the freeze snapshots taken first and
     /// the loupe snapshots started after.
     private func present(mode: SelectionMode, content: SCShareableContent, freeze: CaptureOptions?,
-                         preselect: CGRect?) async {
+                         preselect: CGRect?, armed: Bool) async {
         displays = content.displays
         self.mode = mode
         // Window picking is offered in every mode but area; area mode shows just the crosshair.
@@ -97,7 +98,7 @@ final class SelectionController {
         // activate(ignoringOtherApps:) is marked for future deprecation in the SDK; it compiles without a warning today.
         NSApplication.shared.activate(ignoringOtherApps: true)
         windows.first { $0.frame.contains(NSEvent.mouseLocation) }?.makeKey()
-        if mode == .allInOne, let preselect { placePreselected(preselect) }
+        if mode == .allInOne, let preselect { placePreselected(preselect, armed: armed) }
         updateHover(at: NSEvent.mouseLocation)
         if mode != .window {
             snapshotTask = Task { await takeSnapshots() }
@@ -127,15 +128,18 @@ final class SelectionController {
     }
 
     /// The preselected rect on the screen holding its centre, as that view's adjustable rect.
-    /// Nothing when it is on no screen: the overlay opens with no rect.
-    private func placePreselected(_ cgRect: CGRect) {
+    /// Not `armed` (a URL command), Return and the double-click wait for a press or a toolbar
+    /// control (spec 2.9). Nothing when it is on no screen: the overlay opens with no rect.
+    private func placePreselected(_ cgRect: CGRect, armed: Bool) {
         let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
         let appKitRect = Geometry.appKitRect(fromCG: cgRect, primaryHeight: primaryHeight)
         guard let rect = SelectionAdjust.restored(appKitRect, displayFrames: windows.map(\.frame)),
               let index = windows.firstIndex(where: { $0.frame.contains(CGPoint(x: rect.midX, y: rect.midY)) })
         else { return }
         let frame = windows[index].frame
-        views[index].beginAdjusting(rect.offsetBy(dx: -frame.minX, dy: -frame.minY), fromWindow: false)
+        // A URL command's overlay takes the key from whatever app the user is typing in, so a
+        // Return there must not capture before the user has touched the overlay.
+        views[index].beginAdjusting(rect.offsetBy(dx: -frame.minX, dy: -frame.minY), fromWindow: false, armed: armed)
         windows[index].makeKey()
     }
 

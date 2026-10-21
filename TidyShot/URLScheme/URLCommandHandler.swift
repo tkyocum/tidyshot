@@ -9,7 +9,7 @@ protocol URLCommandTarget: AnyObject {
     func captureWindow(intent: CaptureIntent) async
     func captureFullscreen(intent: CaptureIntent) async
     func capturePreviousArea(intent: CaptureIntent) async
-    func captureAllInOne(intent: CaptureIntent, preselect: ScreenRect?) async
+    func captureAllInOne(intent: CaptureIntent, preselect: ScreenRect?, fromURLCommand: Bool) async
     func captureSelfTimer(intent: CaptureIntent) async
     func captureScrolling(intent: CaptureIntent, preselect: ScreenRect?) async
     func restoreClosedOverlay() async
@@ -143,7 +143,7 @@ final class URLCommandHandler {
         case .captureWindow: await target.captureWindow(intent: intent)
         case .captureFullscreen: await target.captureFullscreen(intent: intent)
         case .capturePreviousArea: await target.capturePreviousArea(intent: intent)
-        case .allInOne: await target.captureAllInOne(intent: intent, preselect: placement)
+        case .allInOne: await target.captureAllInOne(intent: intent, preselect: placement, fromURLCommand: true)
         case .selfTimer: await target.captureSelfTimer(intent: intent)
         case .captureScrolling: await target.captureScrolling(intent: intent, preselect: placement)
         case .restoreRecentlyClosed: await target.restoreClosedOverlay()

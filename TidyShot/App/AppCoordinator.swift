@@ -198,13 +198,17 @@ final class AppCoordinator {
     /// up, with the overlay and the cards excluded, so the pointer is never in them; Fullscreen
     /// dismisses the overlay first and follows Show cursor, as Capture Fullscreen does. Each ends
     /// in `save(_:intent:)`.
-    func captureAllInOne(intent: CaptureIntent = .standard, preselect: ScreenRect? = nil) async {
+    func captureAllInOne(intent: CaptureIntent = .standard, preselect: ScreenRect? = nil,
+                         fromURLCommand: Bool = false) async {
         await withCaptureLock {
             guard let content = await loadContent() else { return }
             // Freeze applies to Capture; the snapshots follow the cursor setting, as in area mode.
             let freeze = settings.freezeScreen ? CaptureOptions(settings: settings, duringSelection: false) : nil
+            // A URL command's start rect (its own or the previous area) opens disarmed: the
+            // overlay takes the key, and a Return typed meanwhile must not capture it for the sender.
             guard let choice = await selector.selectAllInOne(content: content, freeze: freeze,
-                                                             preselect: preselect?.rect ?? settings.lastAreaRect?.cgRect)
+                                                             preselect: preselect?.rect ?? settings.lastAreaRect?.cgRect,
+                                                             armed: !fromURLCommand)
             else { return }
 
             let result: CaptureResult?
@@ -258,7 +262,9 @@ final class AppCoordinator {
                 }
                 // The app is not activated and the panel is not made key: Start and Done are default
                 // actions, so a Return typed in the frontmost app must not start a capture of the
-                // sender's rect. Start needs a click (or the hotkey).
+                // sender's rect. Start needs a click (or the hotkey). Unstarted for
+                // `ScrollCaptureSession.readyTimeout`, the session cancels itself, so a planted one
+                // does not hold the capture lock and the global Escape.
                 // `runScrolling` refuses a rect under 100 pt; its `dismiss()` is a no-op here.
                 await runScrolling(rect: preselect.rect, display: display, intent: intent, preselected: true)
                 return
@@ -275,7 +281,8 @@ final class AppCoordinator {
     /// A scrolling capture of an area chosen in the overlay, which is still up: refuses one under
     /// 100 pt with the Phase 5 message, stores the previous area, dismisses the overlay, runs the
     /// session and saves the stitched image like any capture. A URL command's rect (`preselected`)
-    /// opens the panel without making it key and is stored as the previous area only when the
+    /// opens the panel without making it key, cancels itself when not started within
+    /// `ScrollCaptureSession.readyTimeout`, and is stored as the previous area only when the
     /// stitched image is saved, so a cancelled session leaves Previous Area as it was.
     private func runScrolling(rect: CGRect, display: SCDisplay, intent: CaptureIntent,
                               preselected: Bool = false) async {
@@ -288,7 +295,8 @@ final class AppCoordinator {
             settings.lastAreaRect = StoredRect(rect)
         }
         selector.dismiss()
-        let outcome = await scrollCapture.run(rect: rect, display: display, makesPanelKey: !preselected)
+        let outcome = await scrollCapture.run(rect: rect, display: display, makesPanelKey: !preselected,
+                                              readyTimeout: preselected ? ScrollCaptureSession.readyTimeout : nil)
         if let notice = outcome.failureNotice {
             notifier.notifyError(notice.body, title: notice.title)
         }
@@ -333,9 +341,10 @@ final class AppCoordinator {
                 NSLog("%@", "URL capture-area: display \(area.displayID) is gone")
                 return
             }
-            settings.lastAreaRect = StoredRect(area.rect)
             let cards = await cardWindows()
             guard let result = await capture(.area(rect: area.rect, display: display), excludingWindows: cards) else { return }
+            // Only a rect that was captured becomes the previous area.
+            settings.lastAreaRect = StoredRect(area.rect)
             await save(result, intent: intent)
         }
     }
@@ -1270,8 +1279,9 @@ final class AppCoordinator {
         }
     }
 
-    /// Thumbnails and temporary files of records dropped by retention, and their editors told the
-    /// record is gone (`didPrune` runs after the store dropped them). Files in the save folder are
+    /// Thumbnails and temporary files of records dropped by retention, their pins closed, the
+    /// retained image dropped when it is theirs, and their editors told the record is gone
+    /// (`didPrune` runs after the store dropped them). Files in the save folder are
     /// left alone. (A record whose temporary file is its only copy, or holds an edit its link does
     /// not show yet, is never pruned.)
     private func removeFiles(ofPruned records: [CaptureRecord]) {
@@ -1283,6 +1293,8 @@ final class AppCoordinator {
             if record.fileIsTemporary, let fileURL = record.fileURL {
                 removePendingFile(at: fileURL, context: "after pruning")
             }
+            forgetLatestCapture(record.id)
+            pins.close(recordID: record.id)
             pushEditorState(for: record.id)
         }
     }

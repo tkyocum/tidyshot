@@ -48,6 +48,11 @@ final class SelectionView: NSView {
     private(set) var adjustRect: CGRect?
     /// True while `adjustRect` came from a window click: the Window button is enabled.
     private(set) var adjustRectIsWindow = false
+    /// Return, keypad Enter and a double-click capture only while this is true. A URL command's
+    /// rect (spec 2.9) opens disarmed, so a key typed in another app as the overlay appears, or
+    /// the second click of a double-click elsewhere, does not capture the sender's rect; a press
+    /// in the view or a toolbar size, lock or action arms it. Arrows and Escape work disarmed.
+    private(set) var keyCaptureArmed = true
     /// The toolbar's lock, from `settings.allInOneAspectLock` when the overlay opens.
     var isAspectLocked = false
     /// Width over height kept while locked. Set when the lock goes on and when a new rect is set while locked.
@@ -188,7 +193,7 @@ final class SelectionView: NSView {
             case .cancel?:
                 onCancel?()
             case .capture?:
-                fireAllInOne(.capture)
+                if keyCaptureArmed { fireAllInOne(.capture) } else { super.keyDown(with: event) }
             case .nudge(let arrow)?:
                 if let adjustRect {
                     self.adjustRect = SelectionAdjust.nudged(adjustRect, key: arrow,
@@ -401,8 +406,10 @@ final class SelectionView: NSView {
 
 extension SelectionView {
     /// A new rect (view coordinates, on this display): handles and toolbar appear. While locked,
-    /// its ratio becomes the one kept.
-    func beginAdjusting(_ rect: CGRect, fromWindow: Bool) {
+    /// its ratio becomes the one kept. `armed` false (a URL command's rect) leaves Return, Enter
+    /// and a double-click unable to capture until the user touches the overlay.
+    func beginAdjusting(_ rect: CGRect, fromWindow: Bool, armed: Bool = true) {
+        keyCaptureArmed = armed
         adjustRect = rect
         adjustRectIsWindow = fromWindow
         lockedRatio = isAspectLocked && rect.height > 0 ? rect.width / rect.height : nil
@@ -421,6 +428,9 @@ extension SelectionView {
     }
 
     fileprivate func allInOneMouseDown(_ event: NSEvent) {
+        // The press arms Return and the double-click; this press itself counts only if armed before.
+        let wasArmed = keyCaptureArmed
+        keyCaptureArmed = true
         let point = convert(event.locationInWindow, from: nil)
         dragRect = nil
         guard let adjustRect,
@@ -429,7 +439,7 @@ extension SelectionView {
             return
         }
         if handle == .inside {
-            if event.clickCount == 2 {
+            if event.clickCount == 2, wasArmed {
                 fireAllInOne(.capture)
                 return
             }
@@ -509,11 +519,13 @@ extension SelectionView {
         let toolbar = AllInOneToolbar(timerSeconds: timerSeconds)
         toolbar.onAction = { [weak self] action in
             guard let self else { return }
+            keyCaptureArmed = true
             window?.makeFirstResponder(self)
             if action == .cancel { onCancel?() } else { fireAllInOne(action) }
         }
         toolbar.onSize = { [weak self] width, height in
             guard let self, let adjustRect else { return }
+            keyCaptureArmed = true
             self.adjustRect = SelectionAdjust.sized(adjustRect, width: width.map { CGFloat($0) },
                                                     height: height.map { CGFloat($0) },
                                                     lockedRatio: lockedRatio, bounds: bounds)
@@ -522,6 +534,7 @@ extension SelectionView {
         }
         toolbar.onToggleLock = { [weak self] in
             guard let self else { return }
+            keyCaptureArmed = true
             isAspectLocked.toggle()
             lockedRatio = isAspectLocked ? adjustRect.flatMap { $0.height > 0 ? $0.width / $0.height : nil } : nil
             onAspectLockChanged?(isAspectLocked)

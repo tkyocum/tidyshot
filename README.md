@@ -181,9 +181,9 @@ The names follow CleanShot X's, so a CleanShot macro works after changing `clean
 | `capture-window` | Click a window | `action` |
 | `capture-fullscreen` | Capture the display under the pointer | `action` |
 | `capture-previous-area` | Capture your last area again | `action` |
-| `all-in-one` | All-in-One; a rectangle is preselected | `action`, `x`, `y`, `width`, `height`, `display` |
+| `all-in-one` | All-in-One; a rectangle is preselected (or the previous area), and Return or a double-click captures it only after you click in the overlay or use its toolbar | `action`, `x`, `y`, `width`, `height`, `display` |
 | `self-timer` | Select, then count down | `action` |
-| `capture-scrolling` (or `scrolling-capture`) | Scrolling capture; a rectangle skips the selection, and the capture waits until you click Start (Return in the frontmost app does not start it) | `action`, `x`, `y`, `width`, `height`, `display` |
+| `capture-scrolling` (or `scrolling-capture`) | Scrolling capture; a rectangle skips the selection, and the capture waits until you click Start (Return in the frontmost app does not start it); unstarted for a minute, it cancels itself | `action`, `x`, `y`, `width`, `height`, `display` |
 | `restore-recently-closed` | Restore Closed Overlay | none |
 
 `action` is `upload` (upload only when that is your after-capture setting, otherwise save, upload

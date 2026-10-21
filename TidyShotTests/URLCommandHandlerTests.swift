@@ -11,7 +11,8 @@ final class URLTargetRecorder: URLCommandTarget {
         case window(CaptureIntent)
         case fullscreen(CaptureIntent)
         case previousArea(CaptureIntent)
-        case allInOne(CaptureIntent, ScreenRect?)
+        /// The handler always passes `fromURLCommand: true`, which the default lets the expectations check.
+        case allInOne(CaptureIntent, ScreenRect?, fromURLCommand: Bool = true)
         case selfTimer(CaptureIntent)
         case scrolling(CaptureIntent, ScreenRect?)
         case restore
@@ -25,7 +26,9 @@ final class URLTargetRecorder: URLCommandTarget {
     func captureWindow(intent: CaptureIntent) async { calls.append(.window(intent)) }
     func captureFullscreen(intent: CaptureIntent) async { calls.append(.fullscreen(intent)) }
     func capturePreviousArea(intent: CaptureIntent) async { calls.append(.previousArea(intent)) }
-    func captureAllInOne(intent: CaptureIntent, preselect: ScreenRect?) async { calls.append(.allInOne(intent, preselect)) }
+    func captureAllInOne(intent: CaptureIntent, preselect: ScreenRect?, fromURLCommand: Bool) async {
+        calls.append(.allInOne(intent, preselect, fromURLCommand: fromURLCommand))
+    }
     func captureSelfTimer(intent: CaptureIntent) async { calls.append(.selfTimer(intent)) }
     func captureScrolling(intent: CaptureIntent, preselect: ScreenRect?) async { calls.append(.scrolling(intent, preselect)) }
     func restoreClosedOverlay() async { calls.append(.restore) }
