@@ -24,7 +24,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
     var optionsPopover: NSPopover?
     /// One document action at a time; another one beeps until it finishes.
     private var isPerformingAction = false
-    /// What the editor may do now. Empty until the coordinator's first push, which showEditor
+    /// What the editor may do now. Empty until the coordinator's first push, which presentEditor
     /// sends before the window shows.
     private(set) var available: Set<EditorAction> = []
 

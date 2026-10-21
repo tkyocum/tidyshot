@@ -4,6 +4,8 @@ import SwiftUI
 struct RecentCaptureActions {
     /// Clicking the row: the URL, or the file when the capture was never uploaded.
     var copyLinkOrFile: (UUID) -> Void
+    /// Opens the annotation editor (`AppCoordinator.openEditor(recordID:)`), once menu tracking has ended.
+    var annotate: (UUID) -> Void
     var copyLink: (UUID) -> Void
     var copyImage: (UUID) -> Void
     /// The overlay's delete: one confirmation, then storage, file, thumbnail and record.
@@ -16,8 +18,8 @@ final class RecentCaptureRowState {
     var isHighlighted = false
 }
 
-/// One row of the Recent Captures submenu: thumbnail, name, relative time, and Copy URL, Copy
-/// Image and Delete buttons. Every string and flag is worked out before the row is built, and the
+/// One row of the Recent Captures submenu: thumbnail, name, relative time, and Annotate, Copy URL,
+/// Copy Image and Delete buttons. Every string and flag is worked out before the row is built, and the
 /// thumbnail loads in `.task`, so `body` does no work.
 struct RecentCaptureRow: View {
     static let size = CGSize(width: 360, height: 52)
@@ -33,6 +35,8 @@ struct RecentCaptureRow: View {
     let detail: String
     let canCopyLink: Bool
     let canCopyImage: Bool
+    /// From `RecentCaptureFormatting.canAnnotate`; false when `EditorInput.source` is `.unavailable`.
+    let canAnnotate: Bool
     let state: RecentCaptureRowState
     let provider: ThumbnailProvider
     let actions: RecentCaptureActions
@@ -59,6 +63,7 @@ struct RecentCaptureRow: View {
             .buttonStyle(.plain)
             .accessibilityLabel("\(name), \(detail)")
             .accessibilityHint(canCopyLink ? "Copies the link" : "Copies the file")
+            iconButton("pencil.tip.crop.circle", label: "Annotate", enabled: canAnnotate) { actions.annotate(record.id) }
             iconButton("link", label: "Copy URL", enabled: canCopyLink) { actions.copyLink(record.id) }
             iconButton("photo.on.rectangle", label: "Copy Image", enabled: canCopyImage) { actions.copyImage(record.id) }
             iconButton("trash", label: "Delete…", enabled: true) { actions.delete(record.id) }

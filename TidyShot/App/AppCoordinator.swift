@@ -59,6 +59,13 @@ final class AppCoordinator {
     @ObservationIgnored private var deletingIDs: Set<UUID> = []
     /// Set after the first "Upload not configured" notification so later captures stay quiet.
     @ObservationIgnored private var warnedUploadNotConfigured = false
+    /// The capture just taken and its pixels, kept while its overlay shows, so Annotate opens the
+    /// editor at once: also while the upload runs, and after an upload-only capture's pending file
+    /// is gone. The overlay's NSImage wraps the same CGImage, so this costs no memory. Cleared when
+    /// the overlay closes, by the next capture and by `removeRecord`.
+    @ObservationIgnored private var latestCapture: (id: UUID, image: ScaledImage)?
+    /// Records whose editor image is loading, so a second Annotate does not open a second editor.
+    @ObservationIgnored private var openingEditorIDs: Set<UUID> = []
     /// Set when the first same-key replace of this launch posts `EditorUploadPlan.cacheNote`.
     @ObservationIgnored private var postedCacheNote = false
     /// What TidyShot last put on the clipboard for a capture: set when `save(_:)` copies the
@@ -74,6 +81,8 @@ final class AppCoordinator {
 
     var permissionGranted: Bool { ScreenCapturePermission.isGranted }
     var isUploading: Bool { !uploadingIDs.isEmpty }
+    /// The record whose image is retained, for the Annotate flag on Recent Captures rows.
+    var retainedCaptureID: UUID? { latestCapture?.id }
 
     init() {
         let url = (try? HistoryStore.defaultFileURL())
@@ -82,6 +91,7 @@ final class AppCoordinator {
         thumbnails = ThumbnailStore(nextTo: url)
         pendingFiles = PendingFileStore(nextTo: url)
         history.didPrune = { [weak self] records in self?.removeFiles(ofPruned: records) }
+        overlay.onDidClose = { [weak self] id in self?.forgetLatestCapture(id) }
     }
 
     func start() {
@@ -172,6 +182,7 @@ final class AppCoordinator {
     /// so a capture is never dropped. When the image goes on the clipboard, `clipboardOwner`
     /// records it for this capture, so an edit can replace it later.
     func save(_ result: CaptureResult) async {
+        latestCapture = nil
         let image = result.scaled
         let png: Data
         do {
@@ -356,7 +367,10 @@ final class AppCoordinator {
                         copy: { [weak self] id in self?.copyLinkOrFile(recordID: id) },
                         retry: { [weak self] id in self?.retryUpload(recordID: id) },
                         reveal: { [weak self] id in self?.reveal(recordID: id) },
-                        delete: { [weak self] id in Task { await self?.deleteCapture(recordID: id) } }))
+                        delete: { [weak self] id in Task { await self?.deleteCapture(recordID: id) } },
+                        annotate: { [weak self] id in self?.openEditorAfterMenuTracking(recordID: id) }))
+        // After `show`: its `close()` of the previous panel has already reported that capture.
+        latestCapture = image.map { (id: record.id, image: ScaledImage(image: $0, scale: scale)) }
     }
 
     /// The configured destination, or nil when the Upload tab is incomplete, no credentials are
@@ -558,7 +572,7 @@ final class AppCoordinator {
     /// save folder is resolved here, on the main actor, and the file is read in a detached task,
     /// as `ThumbnailProvider` does: a temporary file in `pending` directly, a saved one through
     /// the folder's security scope.
-    private func imageData(of record: CaptureRecord) async throws -> Data {
+    private func imageData(of record: CaptureRecord, downloadTitle: String = "Copying image…") async throws -> Data {
         if let fileURL = record.fileURL {
             let temporary = record.fileIsTemporary
             let folder = temporary ? nil : saveLocation.currentURL
@@ -573,19 +587,19 @@ final class AppCoordinator {
             // has lost its `pending` file and gained the key that the snapshot above lacks.
             let current = history.record(id: record.id) ?? record
             guard current.uploadedKey != nil, current.objectLocation != nil else { throw CopyImageError.unreadableFile }
-            return try await downloadImage(of: current)
+            return try await downloadImage(of: current, title: downloadTitle)
         }
-        return try await downloadImage(of: record)
+        return try await downloadImage(of: record, title: downloadTitle)
     }
 
     /// The uploaded object's bytes, from where the record says it went, signed with the
     /// credentials stored now.
-    private func downloadImage(of record: CaptureRecord) async throws -> Data {
+    private func downloadImage(of record: CaptureRecord, title: String) async throws -> Data {
         guard let key = record.uploadedKey else { throw CopyImageError.nothingToCopy }
         guard let location = record.objectLocation else { throw CopyImageError.unknownLocation }
         guard let credentials = loadCredentials() else { throw UploadError.notConfigured }
         if settings.showNotification {
-            notifier.notify(title: "Copying image…", body: "Downloading \(key)")
+            notifier.notify(title: title, body: "Downloading \(key)")
         }
         return try await S3Destination(config: location.config, credentials: credentials).download(key: key)
     }
@@ -743,6 +757,7 @@ final class AppCoordinator {
         thumbnails.remove(fileName: defaultName)
         history.remove(id: id)
         thumbnailProvider.forget(id)
+        forgetLatestCapture(id)
         overlay.close(recordID: id)
         pushEditorState(for: id)
     }
@@ -955,52 +970,85 @@ final class AppCoordinator {
         editors.values.contains { $0.model.hasUnsavedChanges }
     }
 
-    /// Opens the annotation editor for `recordID`, or brings its open editor forward. The PNG is
-    /// read as Copy Image reads it (`imageData(of:)`: the local file, else the uploaded object),
-    /// and decoded in a detached task, which also recovers the capture's scale from its DPI.
-    /// Task 16 adds the in-memory image of the capture just taken (`EditorInput`).
+    /// Opens the annotation editor for a capture, or brings its open editor forward. The capture
+    /// just taken opens at once from the image kept in memory. Any other capture is read from its
+    /// file or downloaded through `imageData(of:)`, and the PNG is decoded in a detached task, which
+    /// also recovers its scale. Callers run this once menu tracking has ended.
     func openEditor(recordID: UUID) {
         if let open = editors[recordID] {
             open.present()
             return
         }
-        guard let record = history.record(id: recordID) else { return }
-        Task {
-            do {
-                let png = try await imageData(of: record)
-                let decoded = await Task.detached(priority: .userInitiated) { ImageEncoder.decode(png) }.value
-                guard let decoded else { throw CopyImageError.notAnImage }
-                showEditor(recordID: recordID, image: ScaledImage(image: decoded.image, scale: decoded.scale))
-            } catch {
-                notifier.notifyError(error.localizedDescription, title: "Could not open the capture")
+        guard !openingEditorIDs.contains(recordID), let record = history.record(id: recordID) else { return }
+        switch EditorInput.source(for: record, retainedID: latestCapture?.id, saveFolder: saveLocation.currentURL) {
+        case .retained:
+            guard let retained = latestCapture else { return }
+            presentEditor(record: record, image: retained.image)
+        case .pendingFile, .saveFolderFile, .download:
+            openingEditorIDs.insert(recordID)
+            Task { [weak self] in
+                await self?.loadAndPresentEditor(for: record)
             }
+        case .unavailable(let reason):
+            notifier.notifyError(reason, title: "Could not open the capture")
         }
     }
 
-    /// Builds the model and the window and shows them. Re-checked after the load's awaits: an
-    /// editor opened meanwhile is brought forward instead, and a record deleted meanwhile opens
-    /// nothing.
-    private func showEditor(recordID: UUID, image: ScaledImage) {
-        if let open = editors[recordID] {
-            open.present()
+    /// Reads or downloads the PNG, decodes it off the main actor, then opens the editor, unless
+    /// the record was deleted or an editor for it opened during the load.
+    private func loadAndPresentEditor(for record: CaptureRecord) async {
+        defer { openingEditorIDs.remove(record.id) }
+        let image: ScaledImage
+        do {
+            let png = try await imageData(of: record, downloadTitle: "Opening the capture…")
+            let decoded = await Task.detached(priority: .userInitiated) { () -> ScaledImage? in
+                ImageEncoder.decode(png).map { ScaledImage(image: $0.image, scale: $0.scale) }
+            }.value
+            guard let decoded else { throw CopyImageError.notAnImage }
+            image = decoded
+        } catch {
+            notifier.notifyError(error.localizedDescription, title: "Could not open the capture")
             return
         }
-        guard let record = history.record(id: recordID) else { return }
+        guard editors[record.id] == nil, let current = history.record(id: record.id) else { return }
+        presentEditor(record: current, image: image)
+    }
+
+    /// Drops the retained image if it is `id`'s.
+    private func forgetLatestCapture(_ id: UUID) {
+        if latestCapture?.id == id {
+            latestCapture = nil
+        }
+    }
+
+    /// The overlay's Annotate: runs `openEditor` when the run loop is back in its default mode,
+    /// after any menu tracking, as `RecentCapturesMenu.afterMenusClose` does for rows.
+    private func openEditorAfterMenuTracking(recordID: UUID) {
+        RunLoop.main.perform(inModes: [.default]) {
+            MainActor.assumeIsolated { self.openEditor(recordID: recordID) }
+        }
+    }
+
+    /// Builds the model and the window and shows them. `openEditor` and `loadAndPresentEditor`
+    /// have checked that no editor is open for the record and that it still exists.
+    private func presentEditor(record: CaptureRecord, image: ScaledImage) {
         // A save-folder file names the window and gives it a proxy icon; a pending file in the
         // container is not shown.
         let fileURL = record.fileIsTemporary ? nil : record.fileURL
         let title = fileURL?.lastPathComponent
             ?? "Capture \(record.timestamp.formatted(date: .omitted, time: .shortened))"
-        let model = EditorModel(recordID: recordID, image: image, renderer: RedactionRenderer.shared, defaults: settings.editorDefaults)
-        let controller = EditorWindowController(model: model, actions: editorActions(for: recordID), title: title,
+        let model = EditorModel(recordID: record.id, image: image, renderer: RedactionRenderer.shared, defaults: settings.editorDefaults)
+        let controller = EditorWindowController(model: model, actions: editorActions(for: record.id), title: title,
                                                 representedURL: fileURL,
                                                 cascadeFrom: NSApp.orderedWindows.first { $0 is EditorWindow })
         controller.onClose = { [weak self] closed in self?.editorDidClose(closed) }
-        editors[recordID] = controller
-        pushEditorState(for: recordID)
+        editors[record.id] = controller
+        pushEditorState(for: record.id)
         observeSaveFolderForEditors()
         Task { await RedactionRenderer.shared.warmUp(with: image.image) }
         controller.present()
+        // The editor is now the capture's surface; the record stays in Recent Captures.
+        overlay.close(recordID: record.id)
     }
 
     /// The editor's actions for `recordID`. Save, Save Copy, Copy, Upload and Upload as New all go

@@ -2,8 +2,8 @@ import AppKit
 
 /// The Recent Captures submenu: the newest captures, up to 15, as custom rows, and the full-size
 /// preview beside the submenu while a thumbnail is hovered. A row's buttons close the whole menu
-/// and act once menu tracking has ended, so the delete alert never runs inside the menu's
-/// tracking loop.
+/// and act once menu tracking has ended, so neither the delete alert nor the editor window opens
+/// inside the menu's tracking loop.
 final class RecentCapturesMenu: NSObject, NSMenuDelegate {
     static let limit = 15
 
@@ -49,9 +49,12 @@ final class RecentCapturesMenu: NSObject, NSMenuDelegate {
         }
         let now = Date()
         let actions = makeActions()
+        let saveFolder = coordinator.saveLocation.currentURL
+        let retainedID = coordinator.retainedCaptureID
         for record in records {
             let row = NSMenuItem()
-            row.view = RecentCaptureMenuItemView(record: record, now: now, provider: coordinator.thumbnailProvider,
+            row.view = RecentCaptureMenuItemView(record: record, now: now, saveFolder: saveFolder, retainedID: retainedID,
+                                                 provider: coordinator.thumbnailProvider,
                                                  actions: actions, onThumbnailHover: { [weak self] view, inside in
                                                      self?.thumbnailHover(view, inside: inside)
                                                  })
@@ -104,6 +107,7 @@ final class RecentCapturesMenu: NSObject, NSMenuDelegate {
     private func makeActions() -> RecentCaptureActions {
         RecentCaptureActions(
             copyLinkOrFile: { [weak self] id in self?.afterMenusClose { $0.copyLinkOrFile(recordID: id) } },
+            annotate: { [weak self] id in self?.afterMenusClose { $0.openEditor(recordID: id) } },
             copyLink: { [weak self] id in self?.afterMenusClose { $0.copyLink(recordID: id) } },
             copyImage: { [weak self] id in self?.afterMenusClose { coordinator in Task { await coordinator.copyImage(recordID: id) } } },
             delete: { [weak self] id in self?.afterMenusClose { coordinator in Task { await coordinator.deleteCapture(recordID: id) } } })

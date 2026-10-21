@@ -14,8 +14,9 @@ final class RecentCaptureMenuItemView: NSView {
     private var rowArea: NSTrackingArea?
     private var thumbnailArea: NSTrackingArea?
 
-    init(record: CaptureRecord, now: Date, provider: ThumbnailProvider, actions: RecentCaptureActions,
-         onThumbnailHover: @escaping (RecentCaptureMenuItemView, Bool) -> Void) {
+    /// `saveFolder` and `retainedID` say what Annotate can load from; the menu reads them once per rebuild.
+    init(record: CaptureRecord, now: Date, saveFolder: URL?, retainedID: UUID?, provider: ThumbnailProvider,
+         actions: RecentCaptureActions, onThumbnailHover: @escaping (RecentCaptureMenuItemView, Bool) -> Void) {
         recordID = record.id
         self.onThumbnailHover = onThumbnailHover
         super.init(frame: CGRect(origin: .zero, size: RecentCaptureRow.size))
@@ -24,6 +25,8 @@ final class RecentCaptureMenuItemView: NSView {
         let row = RecentCaptureRow(record: record, name: name, detail: detail,
                                    canCopyLink: RecentCaptureFormatting.canCopyLink(record),
                                    canCopyImage: RecentCaptureFormatting.canCopyImage(record),
+                                   canAnnotate: RecentCaptureFormatting.canAnnotate(record, retainedID: retainedID,
+                                                                                    saveFolder: saveFolder),
                                    state: state, provider: provider, actions: actions)
         let host = NSHostingView(rootView: row)
         host.frame = bounds

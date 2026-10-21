@@ -70,4 +70,27 @@ struct RecentCaptureFormattingTests {
         replacing.priorUpload = nil
         #expect(!RecentCaptureFormatting.canCopyLink(replacing))
     }
+
+    @Test func annotateIsEnabledWhenTheEditorCanLoadTheImage() {
+        let desktop = URL(fileURLWithPath: "/Users/tim/Desktop", isDirectory: true)
+        let url = URL(string: "https://snap.tky.io/aB3dE9.png")!
+        #expect(RecentCaptureFormatting.canAnnotate(record(.none), retainedID: nil, saveFolder: desktop))
+        #expect(RecentCaptureFormatting.canAnnotate(record(.uploading(fraction: 0.5)), retainedID: nil, saveFolder: desktop))
+        // Upload-only and uploaded: downloaded with a signed GET.
+        let uploadOnly = record(.uploaded(url: url, key: "aB3dE9.png"), file: nil, location: location)
+        #expect(RecentCaptureFormatting.canAnnotate(uploadOnly, retainedID: nil, saveFolder: nil))
+    }
+
+    @Test func annotateIsDisabledWhenThereIsNothingToLoad() {
+        let url = URL(string: "https://snap.tky.io/aB3dE9.png")!
+        // Uploaded before Phase 3, with no file and no location.
+        let legacy = record(.uploaded(url: url, key: "aB3dE9.png"), file: nil)
+        #expect(!RecentCaptureFormatting.canAnnotate(legacy, retainedID: nil, saveFolder: nil))
+        // Saved to a folder that is no longer the save folder, never uploaded...
+        let pictures = URL(fileURLWithPath: "/Users/tim/Pictures", isDirectory: true)
+        let moved = record(.none)
+        #expect(!RecentCaptureFormatting.canAnnotate(moved, retainedID: nil, saveFolder: pictures))
+        // ...unless it is the capture just taken, whose image is still in memory.
+        #expect(RecentCaptureFormatting.canAnnotate(moved, retainedID: moved.id, saveFolder: pictures))
+    }
 }
