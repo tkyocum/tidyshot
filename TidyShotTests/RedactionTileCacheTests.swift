@@ -252,4 +252,38 @@ struct RedactionTileCacheTests {
         #expect(renderer.calls.count == 3)
         #expect(changes == 5)
     }
+
+    /// A redact whose render fails must never let a later blur or pixelate render over the raw
+    /// pixels it should cover, in the preview or in the export.
+    @Test func failedBeneathTileLeavesLaterPending() async throws {
+        let secret = redact(10, 10, 20, 20)
+        let blurred = blur(25, 10, 20, 20, radius: 2)   // samples the redact's pixels
+        let far = redact(70, 70, 10, 10)
+        let renderer = FakeTileRenderer(failing: [secret.id])
+        let cache = makeCache(renderer)
+        let start = document(secret, blurred)
+        cache.reconcile(document: start, transient: nil)
+        await cache.renderTask?.value
+
+        // The pass ended at the failed redact: nothing was rendered over it, nothing is shown.
+        #expect(cache.tiles[secret.id] == nil)
+        #expect(cache.tiles[blurred.id] == nil)
+        #expect(cache.currentTile(for: blurred, in: start, transient: nil) == nil)
+        #expect(renderer.calls.map(\.effect) == [secret])
+
+        // The export leaves the blur out too, and never renders it without the redact beneath.
+        let exported = await cache.allTiles(for: start)
+        #expect(exported.isEmpty)
+        #expect(renderer.calls.allSatisfy { $0.effect.id == secret.id })
+
+        // A later reconcile that changes the keys renders the redact again, then the blur over it.
+        renderer.recover(secret.id)
+        let later = start.appending(far)
+        cache.reconcile(document: later, transient: nil)
+        await cache.renderTask?.value
+        #expect(renderer.calls.contains(TileKey(effect: blurred, beneath: [secret])))
+        #expect(cache.tiles[blurred.id]?.key == TileKey(effect: blurred, beneath: [secret]))
+        #expect(cache.currentTile(for: blurred, in: later, transient: nil) != nil)
+        #expect(await cache.allTiles(for: later).map(\.effect) == [secret, blurred, far])
+    }
 }

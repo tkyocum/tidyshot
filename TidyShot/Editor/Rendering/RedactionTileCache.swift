@@ -119,12 +119,16 @@ final class RedactionTileCache {
         var result: [EffectTile] = []
         for effect in effects {
             guard let key = keys[effect.id] else { continue }
+            // Fail closed: an effect whose direct beneath is missing a tile is left out, never
+            // rendered over the raw pixels (a redact under it that failed to render).
+            guard let beneath = directlyBeneath(key, tile: { done[$0] }) else { continue }
             let image: CGImage?
             if let entry = tiles[effect.id], entry.key == key {
                 image = entry.image
             } else {
-                image = await renderer.tile(for: effect, over: base, beneath: directlyBeneath(key) { done[$0] })
+                image = await renderer.tile(for: effect, over: base, beneath: beneath)
             }
+            // nil is a failure when the effect has pixels in the image: leave it out.
             guard let image else { continue }
             let tile = EffectTile(effect: effect, image: image)
             done[effect.id] = tile
@@ -143,23 +147,45 @@ final class RedactionTileCache {
                 guard let entry = self.tiles[id], entry.key == keys[id] else { return nil }
                 return EffectTile(effect: entry.key.effect, image: entry.image)
             }
+            // A tile under this effect is missing (its render failed): rendering now would
+            // composite over the raw pixels it should cover, so end the pass.
+            guard let beneath else { return fail(effect) }
             let image = await renderer.tile(for: effect, over: base, beneath: beneath)
             // A newer reconcile started while this tile rendered: drop it, that pass owns the cache.
             guard generation == self.generation else { return }
-            // nil (an effect wholly outside the image) also clears a stale entry.
-            tiles[effect.id] = image.map { (key, $0) }
+            guard let image else {
+                // nil for an effect with pixels in the image is a failed render, not a missing
+                // tile: later effects may sample this one, so end the pass and leave them pending.
+                // Only an effect wholly outside the image has nothing to show, and may go on.
+                if EffectTile.rect(for: effect, imageSize: imageSize) != nil { return fail(effect) }
+                tiles[effect.id] = nil
+                onChange()
+                continue
+            }
+            tiles[effect.id] = (key, image)
             onChange()
         }
     }
 
+    /// Ends a pass at `effect`: it has no tile, and the effects after it stay pending until a
+    /// later `reconcile` with changed keys renders them.
+    private func fail(_ effect: Annotation) {
+        tiles[effect.id] = nil
+        onChange()
+    }
+
     /// The tiles the renderer composites under `key.effect`: those of the earlier effects whose
     /// rects meet its sample rect, in creation order. `tile` returns a tile only when it matches
-    /// the current key of that effect.
-    private func directlyBeneath(_ key: TileKey, tile: (UUID) -> EffectTile?) -> [EffectTile] {
+    /// the current key of that effect. Nil when one of those effects has no tile: the effect must
+    /// not be rendered over the pixels that tile should have covered.
+    private func directlyBeneath(_ key: TileKey, tile: (UUID) -> EffectTile?) -> [EffectTile]? {
         let sample = Self.sampleArea(of: key.effect, imageSize: imageSize)
-        return key.beneath.compactMap { earlier in
-            Self.meets(earlier, sample, imageSize: imageSize) ? tile(earlier.id) : nil
+        var result: [EffectTile] = []
+        for earlier in key.beneath where Self.meets(earlier, sample, imageSize: imageSize) {
+            guard let found = tile(earlier.id) else { return nil }
+            result.append(found)
         }
+        return result
     }
 
     /// The pixels an effect reads, rounded out to whole pixels and clipped to the image.

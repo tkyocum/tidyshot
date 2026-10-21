@@ -1,4 +1,5 @@
 import CoreGraphics
+import Foundation
 import Synchronization
 @testable import TidyShot
 
@@ -7,13 +8,22 @@ import Synchronization
 /// 1x1 image, so `===` tells a reused tile from a re-rendered one.
 ///
 /// `tile` is `@concurrent`, so it runs off the main actor like the real actor does. With a
-/// `gate`, the first call waits until the gate opens; later calls return at once.
+/// `gate`, the first call waits until the gate opens; later calls return at once. A call for an
+/// effect whose id is in `failing` is recorded and returns nil, like a failed `createCGImage`,
+/// until `recover(_:)` removes the id.
 nonisolated final class FakeTileRenderer: TileRendering {
     let gate: TileGate?
     private let recorded = Mutex<[TileKey]>([])
+    private let failing: Mutex<Set<UUID>>
 
-    init(gate: TileGate? = nil) {
+    init(gate: TileGate? = nil, failing: Set<UUID> = []) {
         self.gate = gate
+        self.failing = Mutex(failing)
+    }
+
+    /// Stops failing renders of the effect with `id`.
+    func recover(_ id: UUID) {
+        failing.withLock { _ = $0.remove(id) }
     }
 
     /// Every call so far, in the order they started.
@@ -29,6 +39,7 @@ nonisolated final class FakeTileRenderer: TileRendering {
         if isFirst, let gate {
             await gate.wait()
         }
+        if failing.withLock({ $0.contains(effect.id) }) { return nil }
         return Self.pixel()
     }
 
