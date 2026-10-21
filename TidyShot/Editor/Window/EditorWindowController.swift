@@ -181,8 +181,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
         }
     }
 
-    /// ⌘U: uploads the edit at once. Once it is saved locally and uploading, the window closes;
-    /// the link reaches the clipboard when the upload finishes.
+    /// ⌘U: uploads the edit at once. Once the upload is enqueued the window closes; the link
+    /// reaches the clipboard when the upload finishes.
     @objc func uploadDocument(_ sender: Any?) {
         guard permits(#selector(uploadDocument(_:))) else { return }
         runDocumentTask { await self.performUpload(asNew: false) }

@@ -1037,7 +1037,9 @@ final class AppCoordinator {
     private func editorActions(for recordID: UUID) -> EditorActions {
         EditorActions(
             save: { [weak self] image in await self?.editorSave(recordID: recordID, image: image) ?? false },
-            saveAs: { [weak self] image, url in await self?.editorSaveAs(image: image, to: url) ?? false },
+            saveAs: { [weak self] image, url in
+                await self?.editorSaveAs(recordID: recordID, image: image, to: url) ?? false
+            },
             saveAsSuggestion: { [weak self] in
                 self?.editorSaveAsSuggestion(recordID: recordID)
                     ?? EditorNaming.SaveAsSuggestion(fileName: "Screenshot.png", directory: nil)
@@ -1194,19 +1196,24 @@ final class AppCoordinator {
 
     /// Save As… (⇧⌘S, and ⌘S with no file to write over): writes the flattened PNG to the URL the
     /// save panel returned, atomically. The panel's URL is user-selected, so the sandbox grants
-    /// access, and no bookmark is kept. No record is made, nothing uploads, the record, its
-    /// thumbnail and the clipboard are left alone. Never refused, like Copy.
-    private func editorSaveAs(image: ScaledImage, to url: URL) async -> Bool {
+    /// access, and no bookmark is kept. No record is made, nothing uploads, and the record and its
+    /// thumbnail are left alone. Then the clipboard rule applies, as after Save: a clipboard that
+    /// still holds what TidyShot put there for `recordID` gets the edited image. Never refused,
+    /// like Copy.
+    private func editorSaveAs(recordID: UUID, image: ScaledImage, to url: URL) async -> Bool {
+        let png: Data
         do {
-            try await Task.detached(priority: .userInitiated) {
+            png = try await Task.detached(priority: .userInitiated) {
                 let png = try ImageEncoder.pngData(from: image.image, scale: image.scale)
                 try png.write(to: url, options: .atomic)
+                return png
             }.value
         } catch {
             NSLog("Save As failed: \(error.localizedDescription)")
             notifier.notifyError(error.localizedDescription, title: "Not saved")
             return false
         }
+        await replaceClipboardIfStillOriginal(recordID: recordID, png: png, image: image)
         if settings.showNotification {
             notifier.notifySaved(fileURL: url, title: "Saved")
         }
@@ -1224,9 +1231,9 @@ final class AppCoordinator {
     /// Upload (⌘U) and Upload as New (⌥⌘U). The edit is written locally first, so the file equals
     /// the object; then it goes through the live lane like any upload, over the link's own key for
     /// a replace or under a new template key. The outcome says whether the edit was written
-    /// locally (the editor marks itself saved) and whether the job was enqueued (with both, the
-    /// editor closes; the link reaches the clipboard through `.uploaded`). An upload with no local
-    /// write leaves the document unsaved and the window open.
+    /// locally (the editor marks itself saved) and whether the job was enqueued (the editor then
+    /// closes, with or without a local write; the link reaches the clipboard through `.uploaded`).
+    /// A refused upload leaves the window open.
     private func editorUpload(recordID: UUID, image: ScaledImage, asNew: Bool) async -> EditorUploadOutcome {
         let action: EditorAction = asNew ? .uploadAsNew : .upload
         // 1. The editor's available set can lag behind the record.
@@ -1275,7 +1282,8 @@ final class AppCoordinator {
         case .noLocalWrite:
             // A save-folder file outside the current folder, or no folder: the file is not
             // rewritten and the subtitle says so. The clipboard still must not keep the original.
-            // The document stays unsaved, so a failed upload cannot lose the edit on close.
+            // The document is not marked saved; the editor still closes once the job is enqueued
+            // (feedback round 1), so a failed upload of this edit leaves no local copy of it.
             await replaceClipboardIfStillOriginal(recordID: recordID, png: png, image: image)
         }
         // 4. Plan on the live record, against where the lane writes (as in startUpload).
@@ -1356,7 +1364,8 @@ final class AppCoordinator {
         }
     }
 
-    /// The clipboard rule (spec 2.6), after a local edit (Save, or the write before Upload). Puts the
+    /// The clipboard rule (spec 2.6), after a local edit (Save, or the write before Upload) or a
+    /// Save As…. Puts the
     /// edited PNG and TIFF on the clipboard only while it still holds exactly what TidyShot put
     /// there for `recordID`, and leaves anything copied since alone. The TIFF is made in a detached
     /// task. Ownership is checked again after that await, right before the write, so a URL that a
@@ -1376,7 +1385,7 @@ final class AppCoordinator {
 
     /// Copy (⌘C, ⇧⌘C): the edited image as PNG and TIFF, both encoded in a detached task and
     /// written here on the main actor. TidyShot then owns the clipboard for this record, so a later
-    /// Save puts the newer edit there. The window stays open.
+    /// Save or Save As… puts the newer edit there. The window stays open.
     private func editorCopy(recordID: UUID, image: ScaledImage) async {
         do {
             let encoded = try await Task.detached(priority: .userInitiated) { () throws -> (png: Data, tiff: Data?) in

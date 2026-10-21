@@ -107,7 +107,8 @@ resolution without HiDPI); skip the 1x run if neither is available and say so.
 
 ## Clipboard
 - [ ] "Save and copy image" with "Copy image to clipboard" on: capture a made-up secret, Annotate, Redact, ⌘S. Preview, File > New from Clipboard: the redacted image.
-- [ ] The same with ⇧⌘S in place of ⌘S, saving to the Desktop: the clipboard is left alone and still holds the unredacted original (Save As… does not replace the capture's file). Copy (⌘C) puts the redacted image there.
+- [ ] The same with ⇧⌘S in place of ⌘S, saving to the Desktop: the clipboard holds the redacted image.
+- [ ] Capture, copy some text in TextEdit, then Annotate, Redact, ⇧⌘S: the clipboard still holds the text.
 - [ ] Capture, copy some text in TextEdit, then Annotate, Redact, ⌘S: the clipboard still holds the text.
 - [ ] "Upload and copy URL" with no destination (Forget Credentials in Settings > Upload): capture (the image goes to the clipboard), Annotate, Redact, ⌘S: the clipboard holds the redacted image. ⌘U posts `Upload not configured`, changes nothing, and the editor stays open. Enter the credentials again.
 - [ ] "Upload and copy URL" with "Also copy image" on: capture, Annotate, Redact, ⌘U. The editor closes at once; when the upload finishes the clipboard holds the URL.
@@ -137,7 +138,7 @@ resolution without HiDPI); skip the 1x run if neither is available and say so.
 - [ ] Slow profile, "Upload and copy URL": capture something large and press Annotate on the overlay while it uploads. The subtitle reads `Uploading…`, ⌘S, ⌘U and ⌥⌘U beep and do nothing, and Save and Upload are greyed in the toolbar; ⌘C and ⇧⌘C work and ⇧⌘S opens the save panel. When the upload finishes they turn on again.
 - [ ] With an editor open, press Delete on its row and leave the alert open: the editor's Save and Upload grey out at once, the subtitle reads `Deleting…`, and ⌘S beeps. Cancel: they turn on again and the subtitle returns to what it was.
 - [ ] Delete again and confirm: the subtitle reads `This capture was deleted. Copy and Save As still work.`, Save and Upload stay greyed, ⌘C copies, and ⇧⌘S opens the save panel and writes the PNG.
-- [ ] Editor open on a capture in the save folder: Settings > General, Choose… another folder. The subtitle gives the reason at once, and ⌘S now opens the save panel instead of writing over the file (Cancel it). ⌘U still uploads the edit and the file in the old folder is not rewritten; the edited dot stays after ⌘U, the editor stays open, and ⌘W's Save opens the save panel. Choose the original folder again: ⌘S writes over the file without a panel.
+- [ ] Editor open on a capture in the save folder: Settings > General, Choose… another folder. The subtitle gives the reason at once, and ⌘S now opens the save panel instead of writing over the file (Cancel it). ⌘W's Save opens the save panel (Cancel it). ⌘U uploads the edit and closes the editor, and the file in the old folder is not rewritten. Choose the original folder again; on another capture there, ⌘S writes over the file without a panel.
 
 ## Closing and quitting
 - [ ] ⌘W on an editor with no changes closes it at once.

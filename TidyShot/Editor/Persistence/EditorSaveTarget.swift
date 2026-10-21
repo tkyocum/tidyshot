@@ -33,7 +33,8 @@ nonisolated enum EditorSaveTarget {
         /// An uploaded upload-only capture with no file: the edit gets `pending/<id>.png` first.
         case newPendingFile
         /// A save-folder file outside the current folder, or no folder: nothing is written locally.
-        /// The edit then lives only in the upload, which can fail, so the editor stays unsaved.
+        /// The edit then lives only in the upload, which can fail, so the editor is not marked
+        /// saved (it still closes once the upload is enqueued).
         case noLocalWrite
     }
 

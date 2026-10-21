@@ -135,7 +135,8 @@ Upload sends the edit at once and closes the editor; the link is on the clipboar
 upload finishes. If the upload cannot start (no destination set up, or the capture is busy), the
 editor stays open and a notification says why. If it fails later, the capture keeps the edited
 file, and Annotate on its Recent Captures row opens it again. A capture whose file is outside the
-current save folder still uploads but keeps its editor open with the edit unsaved.
+current save folder uploads and closes too, but its file is not rewritten, so if that upload fails
+the edit is gone; use Save As… first to keep a copy.
 
 Upload also saves the edit over the local file first, as Save would, so the file and the uploaded
 object match; a file outside the current save folder is left as it was. On a capture that is
@@ -154,8 +155,8 @@ object is deleted, but a CDN can still serve its copy until it expires, so also 
 in the CDN, and delete the old version in a versioned bucket. The first replace after each launch
 posts a reminder.
 
-When the clipboard still holds the image TidyShot put there for a capture, Save and Upload
-replace it with the edited image; Upload then puts the link there as usual. Anything you
+When the clipboard still holds the image TidyShot put there for a capture, Save, Save As… and
+Upload replace it with the edited image; Upload then puts the link there as usual. Anything you
 copied since is left alone. A clipboard manager may still keep the original in its history; clear
 it there.
 

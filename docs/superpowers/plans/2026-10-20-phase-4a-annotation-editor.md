@@ -32,9 +32,9 @@ Each task gives the exact Swift interfaces it produces, complete Swift Testing t
 - Concurrency: any `nonisolated async` function that must run off the main actor is marked `@concurrent`. `RedactionRenderer` is an actor and owns the only `CIContext`; CIFilters are built inside each call. No GPU or Core Image work runs inside `draw(_:)`. Tests never block the main actor with a semaphore; fakes wait on an async gate.
 - Exact user-visible strings (from spec 2.6), used verbatim:
   - Notification titles: `Not saved`, `Not uploaded`, `Could not open the capture`, `Image copied`; bodies `Upload failed. The link still shows the earlier image.`, `Replaced. Copies opened before now may stay cached for a while.` (posted once per app session, on the first successful same-key replace).
-  - Window subtitles: `Uploading…`, `Deleting…`, `The uploaded copy still shows the original. Upload to replace it.`, `This capture was deleted. Copy and Save Copy still work.`
+  - Window subtitles: `Uploading…`, `Deleting…`, `The uploaded copy still shows the original. Upload to replace it.`, `This capture was deleted. Copy and Save As still work.` (was `… Copy and Save Copy still work.` until feedback round 1)
   - Upload notices: `The destination changed, so this uploads as a new link.`, `Another capture shares this link, so this uploads as a new link.`, `The earlier upload stays in the bucket.`
-  - Close sheet: message `Do you want to save the changes made to “<title>”?`, informative text `Your changes will be lost if you don’t save them.`, buttons Save (or Save Copy… when Save is unavailable), Cancel, Don’t Save.
+  - Close sheet: message `Do you want to save the changes made to “<title>”?`, informative text `Your changes will be lost if you don’t save them.`, buttons Save (or `Save As…` when Save is unavailable), Cancel, Don’t Save. Feedback round 1 replaced Save Copy with Save As… (⇧⌘S, `saveDocumentAs:`), and the toolbar tool tips are `Copy the image (⌘C)`, `Save (⌘S)` and `Upload and copy the link (⌘U)`; notification title `Saved` for Save As….
 - Shortcuts: the 4a `EditorShortcut` table in spec 2.6 (⌘S, ⇧⌘S, ⌘C, ⇧⌘C, ⌘U, ⌥⌘U, ⌘Z, ⇧⌘Z, ⌘W, ⌘0, ⌘1, ⌘=, ⌘-, ⌘A); tool letters V, D, X, B, R, A; digits 1 to 6 for line widths 2, 3, 4, 6, 8, 12 pt. ⌘X has no row.
 - The editor activates the app (`activate(ignoringOtherApps:)`, then `makeKeyAndOrderFront`, then `orderFrontRegardless` if still inactive). Menu and overlay actions that open it run after menu tracking ends (`afterMenusClose`).
 - Tests use Swift Testing, run with:
@@ -74,6 +74,8 @@ Task 17 correction: the review fix 60d63ea (tile cache fails closed) added one t
 Whole-branch review fix: `uploadWritesLocallyWhenASaveTargetExists` and `uploadWritesNothingLocallyOutsideTheSaveFolder` in `EditorSaveTargetTests` bring the real run to 402 tests in 51 suites.
 
 Review follow-ups: `supersededCleanupNeverDeletesALink` in `EditorUploadPlanTests` and the new `CanvasFitTests` suite (2 tests) bring the real run to 405 tests in 52 suites.
+
+Feedback round 1 (2026-10-20, Save As…, plain toolbar buttons, Upload closes the editor): 8 new tests net (Save As suggestion, save command, close-sheet button, upload outcome, toolbar width) bring the real run to 413 tests in 52 suites.
 
 ---
 

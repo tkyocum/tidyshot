@@ -219,9 +219,11 @@ nonisolated struct EditorUploadOutcome: Equatable, Sendable {
     /// A local write is what makes the document saved; an upload alone can still fail.
     var marksSaved: Bool { wroteLocally }
 
-    /// The window closes once the edit is saved locally and uploading, unless it was edited
-    /// meanwhile. A refused upload leaves it open with its notification.
+    /// The window closes once the upload is enqueued, with or without a local write: the edit is
+    /// on its way to the bucket and its link reaches the clipboard. It stays open when the upload
+    /// was refused (its notification says why), or when the document was edited meanwhile, so the
+    /// newer edit is not lost.
     func closesWindow(documentUnchanged: Bool) -> Bool {
-        wroteLocally && enqueued && documentUnchanged
+        enqueued && documentUnchanged
     }
 }

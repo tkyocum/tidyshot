@@ -298,9 +298,9 @@ struct EditorUploadPlanTests {
         #expect(!EditorUploadPlan.shouldPostCacheNote(prior: replace, uploadedKey: "Qx12Zz.png", at: elsewhere, alreadyPosted: false))
     }
 
-    /// The editor closes after Upload only when the edit was written locally and the job was
-    /// enqueued, and nothing was edited while it ran. A local write alone marks it saved.
-    @Test func uploadOutcomeClosesOnlyWhenWrittenAndEnqueued() {
+    /// The editor closes after Upload whenever the job was enqueued and nothing was edited while
+    /// the call ran. A local write is what marks it saved.
+    @Test func uploadOutcomeClosesWhenEnqueued() {
         let uploading = EditorUploadOutcome(wroteLocally: true, enqueued: true)
         #expect(uploading.marksSaved)
         #expect(uploading.closesWindow(documentUnchanged: true))
@@ -312,11 +312,12 @@ struct EditorUploadPlanTests {
         #expect(savedOnly.marksSaved)
         #expect(!savedOnly.closesWindow(documentUnchanged: true))
 
-        // Enqueued with no local write (file outside the save folder): the edit lives only in the
-        // upload, which can fail, so the editor stays unsaved and open.
+        // Enqueued with no local write (file outside the save folder): the edit is in the upload,
+        // so the window still closes; it is not marked saved, and a newer edit keeps it open.
         let uploadOnly = EditorUploadOutcome(wroteLocally: false, enqueued: true)
         #expect(!uploadOnly.marksSaved)
-        #expect(!uploadOnly.closesWindow(documentUnchanged: true))
+        #expect(uploadOnly.closesWindow(documentUnchanged: true))
+        #expect(!uploadOnly.closesWindow(documentUnchanged: false))
 
         #expect(EditorUploadOutcome.refused == EditorUploadOutcome(wroteLocally: false, enqueued: false))
         #expect(!EditorUploadOutcome.refused.marksSaved)
