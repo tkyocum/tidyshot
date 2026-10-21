@@ -28,7 +28,7 @@ nonisolated struct WallpaperSource: Sendable {
         return await withTaskGroup(of: (CGDirectDisplayID, CGImage?).self) { group in
             for (match, size) in zip(matches, sizes) {
                 let displayID = match.displayID
-                // SCWindow is not Sendable, but it is an immutable snapshot that each task only reads.
+                // SCWindow is not Sendable; it is only read, inside this one capture call.
                 nonisolated(unsafe) let window = match.window
                 group.addTask {
                     (displayID, try? await Self.capture(window, width: size.width, height: size.height))

@@ -30,17 +30,19 @@ final class DesktopCoverController {
     /// Whether `Hide Desktop Icons` is on until turned off.
     var isPersistent: Bool { reasons.active.contains(.persistent) }
 
-    /// Adds `reason`. When the covers were not already up, captures the wallpapers, orders the
-    /// panels front and returns once a capture would see them.
+    /// Adds `reason`. When the covers were not already up, or a screen has none, captures the
+    /// wallpapers, orders the panels front and returns once a capture would see them.
     func show(for reason: DesktopCoverReasons.Reason) async {
         reasons.insert(reason)
         while true {
-            // A hide and a show while it ran can leave the covers down, hence the loop.
             if let bringingUp {
                 await bringingUp.value
+                // A hide and a show while it ran can leave the covers down; then go again.
+                if isShowing || !reasons.showsCovers { return }
                 continue
             }
-            guard reasons.showsCovers, !isShowing else { return }
+            guard reasons.showsCovers else { return }
+            if isShowing, DesktopCoverPlan.needingCapture(screens: screenIDs, covered: Set(panels.keys)).isEmpty { return }
             bringingUp = Task {
                 await bringUp()
                 bringingUp = nil
@@ -60,10 +62,12 @@ final class DesktopCoverController {
     }
 
     private func bringUp() async {
+        // While the covers are up, only screens without one are new; the others are left as is.
+        let keepsExisting = isShowing
         let wallpapers = await captureWallpapers()
         // Hidden again while capturing.
         guard reasons.showsCovers else { return }
-        update(with: wallpapers)
+        update(with: wallpapers, keepsExisting: keepsExisting && isShowing)
         isShowing = true
         startRefreshing()
         CATransaction.flush()
@@ -75,7 +79,7 @@ final class DesktopCoverController {
         Task {
             let wallpapers = await captureWallpapers()
             guard isShowing else { return }
-            update(with: wallpapers)
+            update(with: wallpapers, keepsExisting: false)
         }
     }
 
@@ -91,31 +95,32 @@ final class DesktopCoverController {
         return await task.value
     }
 
-    /// Builds or updates one panel per screen that has a wallpaper, orders them front, and drops
-    /// the panels of screens that are gone or have none.
-    private func update(with wallpapers: [CGDirectDisplayID: CGImage]) {
-        var updated: [CGDirectDisplayID: DesktopCoverPanel] = [:]
-        var missing = false
-        for screen in NSScreen.screens {
-            guard let displayID = screen.displayID else { continue }
-            guard let wallpaper = wallpapers[displayID] else {
-                missing = true
-                continue
-            }
+    /// Builds or updates one panel per screen with a new wallpaper and orders them front. A panel
+    /// whose capture failed keeps its last wallpaper; one whose screen is gone is dropped.
+    private func update(with wallpapers: [CGDirectDisplayID: CGImage], keepsExisting: Bool) {
+        let screens = NSScreen.screens.compactMap { screen in screen.displayID.map { ($0, screen) } }
+        let plan = DesktopCoverPlan.make(screens: screens.map(\.0), covered: Set(panels.keys),
+                                         captured: Set(wallpapers.keys), keepsExisting: keepsExisting)
+        for displayID in plan.removed {
+            panels.removeValue(forKey: displayID)?.orderOut(nil)
+        }
+        for (displayID, screen) in screens where panels[displayID] != nil || plan.wallpapered.contains(displayID) {
             let panel = panels[displayID] ?? DesktopCoverPanel(frame: screen.frame)
             panel.setFrame(screen.frame, display: false)
-            panel.setWallpaper(wallpaper)
+            if plan.wallpapered.contains(displayID), let wallpaper = wallpapers[displayID] {
+                panel.setWallpaper(wallpaper)
+            }
             panel.orderFrontRegardless()
-            updated[displayID] = panel
+            panels[displayID] = panel
         }
-        for (displayID, panel) in panels where updated[displayID] == nil {
-            panel.orderOut(nil)
-        }
-        panels = updated
-        if missing, !hasReportedFailure {
+        if !plan.uncovered.isEmpty, !hasReportedFailure {
             hasReportedFailure = true
             reportFailure()
         }
+    }
+
+    private var screenIDs: [CGDirectDisplayID] {
+        NSScreen.screens.compactMap(\.displayID)
     }
 
     private func startRefreshing() {
