@@ -105,7 +105,9 @@ nonisolated struct OverlapFinder: Sendable {
         // A leading or trailing run of equal rows longer than any header or footer can be means part
         // of the band stayed put: when no shift explains the rows between, they changed in place
         // (Terminal output, a new chat message), nothing scrolled, and the pair is still, not lost.
-        let unplaced: OverlapMatch = lead > cap || trail > cap ? .still : .lost
+        // The rows that changed must also be no more than a header or footer can be: a jump past the
+        // band under a tall static pane changes everything below it, and that stays lost.
+        let unplaced: OverlapMatch = (lead > cap || trail > cap) && h - lead - trail <= cap ? .still : .lost
         var top = 0
         while top < cap && whole[top] == wholeB[top] { top += 1 }
         var bottom = 0

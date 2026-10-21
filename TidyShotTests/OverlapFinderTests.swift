@@ -109,6 +109,13 @@ struct OverlapFinderTests {
         #expect(page.finder.find(previous: before, current: middle, predicted: nil) == .lost)
     }
 
+    /// A jump past the band under a static pane taller than a header can be changes everything below
+    /// it, so it is lost, not a change in place.
+    @Test func aJumpPastTheBandUnderATallStaticPaneIsLost() {
+        var page = SyntheticPage(header: 420)
+        #expect(match(&page, from: 400, to: 3000) == .lost)
+    }
+
     @Test func scrollingBackUpGivesANegativeShift() {
         var page = SyntheticPage()
         #expect(dy(of: match(&page, from: 700, to: 550)) == -150)

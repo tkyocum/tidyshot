@@ -67,7 +67,9 @@ final class AutoScrollDriver {
             session.showAutoStatus(.autoScrolling)
             if let back = pendingBack {
                 pendingBack = nil
-                guard await scroll(by: back, in: session) != nil else { return }
+                guard let moved = await scroll(by: back, in: session) else { return }
+                // A scroll-back cut short (the pointer left, or the grant went) owes the rest.
+                if abs(moved.posted) < abs(back) { pendingBack = back - moved.posted }
                 continue
             }
             // A burst cut short (the pointer left, or the grant went) still integrates: the
