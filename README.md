@@ -86,7 +86,7 @@ kept once, at the top or bottom, and a fixed sidebar is ignored. A floating elem
 (a chat button, a spinner) is stitched in each time it appears. A capture ends at 65,536 pixels
 tall (32,768 points on a Retina display); at that point the panel says so and the capture finishes.
 An endless feed therefore runs to that limit. At that height and about 3,000 pixels wide the image
-takes about 800 MB of memory while it is saved or annotated. Content with no distinctive rows (a long run of
+takes about 800 MB of memory, and about 1.7 GB while an annotated copy is saved. Content with no distinctive rows (a long run of
 identical lines or a blank stretch taller than the area) cannot be placed, so the "Too fast" line
 shows until you scroll back. A window pick captures the window's frame from the display, so a window
 that overlaps it is in the picture. The macOS screen-recording indicator shows while a session runs.

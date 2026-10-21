@@ -44,14 +44,14 @@ enum Pasteboard {
         return write([item])
     }
 
-    /// Puts the image on the general pasteboard as TIFF only, for when PNG encoding failed. It is
-    /// the only copy of the image there, so it is made at any size. The rep's size is set in
-    /// points, as above.
+    /// Puts TIFF data on the general pasteboard alone, for when PNG encoding failed. It is the
+    /// only copy of the image there, so callers make it at any size, off the main actor
+    /// (`tiffData(of:scale:)`). Nil data leaves an empty pasteboard item out.
     @discardableResult
-    static func copy(image: CGImage, scale: CGFloat) -> Int {
+    static func copy(tiffData: Data?) -> Int {
         let item = NSPasteboardItem()
-        if let tiff = tiffData(of: image, scale: scale) {
-            item.setData(tiff, forType: .tiff)
+        if let tiffData {
+            item.setData(tiffData, forType: .tiff)
         }
         return write([item])
     }

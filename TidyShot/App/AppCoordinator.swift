@@ -241,7 +241,10 @@ final class AppCoordinator {
         } catch {
             NSLog("Encode failed: \(error.localizedDescription)")
             // Never drop a capture: without PNG data the clipboard still gets the image as TIFF.
-            Pasteboard.copy(image: image.image, scale: image.scale)
+            let tiff = await Task.detached(priority: .userInitiated) {
+                Pasteboard.tiffData(of: image.image, scale: image.scale)
+            }.value
+            Pasteboard.copy(tiffData: tiff)
             notifier.notifyError(error.localizedDescription)
             return
         }
@@ -1157,7 +1160,7 @@ final class AppCoordinator {
                 try ImageEncoder.pngData(from: image.image, scale: image.scale)
             }.value
         } catch {
-            keepFailedEditOnClipboard(image, png: nil, recordID: recordID, error: error)
+            await keepFailedEditOnClipboard(image, png: nil, recordID: recordID, error: error)
             return false
         }
         return await applyLocalEdit(recordID: recordID, png: png, image: image)
@@ -1192,7 +1195,7 @@ final class AppCoordinator {
                 return false
             }
         } catch {
-            keepFailedEditOnClipboard(image, png: png, recordID: recordID, error: error)
+            await keepFailedEditOnClipboard(image, png: png, recordID: recordID, error: error)
             return false
         }
         let editedAt = Date()
@@ -1208,12 +1211,17 @@ final class AppCoordinator {
     /// A save that failed: the edit goes on the clipboard, so it is never lost, and `Not saved`
     /// says why. TidyShot put it there for this record, so the record owns the clipboard and a
     /// later successful save may replace it (the clipboard rule).
-    private func keepFailedEditOnClipboard(_ image: ScaledImage, png: Data?, recordID: UUID, error: any Error) {
+    private func keepFailedEditOnClipboard(_ image: ScaledImage, png: Data?, recordID: UUID, error: any Error) async {
         NSLog("Save over failed: \(error.localizedDescription)")
-        let changeCount = if let png {
-            Pasteboard.copy(image: image.image, pngData: png, scale: image.scale)
+        let changeCount: Int
+        if let png {
+            changeCount = Pasteboard.copy(image: image.image, pngData: png, scale: image.scale)
         } else {
-            Pasteboard.copy(image: image.image, scale: image.scale)
+            // No PNG: the TIFF is the only copy, at any size, made off the main actor.
+            let tiff = await Task.detached(priority: .userInitiated) {
+                Pasteboard.tiffData(of: image.image, scale: image.scale)
+            }.value
+            changeCount = Pasteboard.copy(tiffData: tiff)
         }
         clipboardOwner = EditorClipboard.Owner(recordID: recordID, changeCount: changeCount)
         notifier.notifyError("\(error.localizedDescription) The edited image is on the clipboard.", title: "Not saved")

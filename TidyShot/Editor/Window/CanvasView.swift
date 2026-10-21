@@ -807,25 +807,13 @@ final class CanvasView: NSView {
             context.replacePathWithStrokedPath()
             context.clip()
             context.interpolationQuality = quality
-            let clip = context.boundingBoxOfClipPath
-            for base in baseView.baseTiles where base.rect.intersects(clip) {
-                drawFlipped(base.image, in: base.rect, context: context)
-            }
+            var layers = baseView.baseTiles
             for effect in displayedEffects {
-                if let tile = shownTile(for: effect) { drawFlipped(tile.image, in: tile.rect, context: context) }
+                if let tile = shownTile(for: effect) { layers.append((rect: tile.rect, image: tile.image)) }
             }
+            HighlighterBackdrop.draw(layers, in: context)
             context.restoreGState()
         }
-    }
-
-    /// `CGContext.draw` assumes a y-up space and the CTM here is y-down, so the image is drawn
-    /// through a local flip about `rect`; without it the copy would be upside down.
-    private func drawFlipped(_ image: CGImage, in rect: CGRect, context: CGContext) {
-        context.saveGState()
-        context.translateBy(x: rect.minX, y: rect.maxY)
-        context.scaleBy(x: 1, y: -1)
-        context.draw(image, in: CGRect(x: 0, y: 0, width: rect.width, height: rect.height))
-        context.restoreGState()
     }
 
     /// Spec 2.6 Rendering: (1) image-pixel CTM; (2) placeholders for effects with no tile yet;
