@@ -526,7 +526,7 @@ The Clop app itself is GPLv3. TidyShot only talks to it over the port and never 
   - `nonisolated struct ClopOptimiser: Sendable`, initialised with `workDirectory: URL` (the container's `tmp/Clop`) and `transport: @Sendable (URL) throws -> ClopResponse`.
   - `func optimisedPNG(_ data: Data) async -> ClopOutcome`. It:
     1. writes `<workDirectory>/<UUID>.png`;
-    2. runs the transport in `Task.detached`;
+    2. runs the transport on one private serial `DispatchQueue` (`io.tky.tidyshot.clop`, bridged with `withCheckedContinuation`), so requests reach Clop one at a time and never block a cooperative-pool thread;
     3. validates the result;
     4. reads it back;
     5. deletes the file in a `defer`.

@@ -43,14 +43,21 @@ nonisolated struct ClopOptimiser: Sendable {
         self.transport = transport
     }
 
-    /// The write, the blocking request, the checks and the read-back all run in a detached task,
+    /// One private serial queue for every request, so Clop sees one at a time and a blocked
+    /// `CFMessagePortSendRequest` (up to the 32 s send and receive timeouts) never occupies a
+    /// cooperative-pool thread.
+    private static let queue = DispatchQueue(label: "io.tky.tidyshot.clop", qos: .utility)
+
+    /// The write, the blocking request, the checks and the read-back all run on the serial queue,
     /// so a main-actor caller is never blocked by file I/O or Clop's reply.
     func optimisedPNG(_ data: Data) async -> ClopOutcome {
         let workDirectory = workDirectory
         let transport = transport
-        return await Task.detached {
-            Self.optimise(data, workDirectory: workDirectory, transport: transport)
-        }.value
+        return await withCheckedContinuation { continuation in
+            Self.queue.async {
+                continuation.resume(returning: Self.optimise(data, workDirectory: workDirectory, transport: transport))
+            }
+        }
     }
 
     private static func optimise(_ data: Data, workDirectory: URL,

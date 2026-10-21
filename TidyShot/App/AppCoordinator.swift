@@ -129,6 +129,8 @@ final class AppCoordinator {
     func start() {
         // Drag copies from the last run, also after a crash.
         dragFiles.sweep()
+        // A quit or crash mid-request leaves a full-size capture in tmp/Clop.
+        try? FileManager.default.removeItem(at: ClopApp.workDirectory)
         notifier.setUp()
         history.load()
         registerShortcuts()

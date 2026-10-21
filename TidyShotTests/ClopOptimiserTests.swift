@@ -88,6 +88,28 @@ struct ClopOptimiserTests {
 
     // MARK: Fallbacks
 
+    @Test func concurrentRequestsNeverRunTheirTransportsAtTheSameTime() async throws {
+        let input = try Self.png(width: 64, height: 64, noisy: false)
+        let active = Mutex(0)
+        let overlapped = Mutex(false)
+        let calls = Mutex(0)
+        let directory = makeDirectory()
+        let optimiser = ClopOptimiser(workDirectory: directory) { url in
+            let wasActive = active.withLock { value -> Int in value += 1; return value }
+            if wasActive > 1 { overlapped.withLock { $0 = true } }
+            calls.withLock { $0 += 1 }
+            Thread.sleep(forTimeInterval: 0.15)
+            active.withLock { $0 -= 1 }
+            return Self.response(for: url, old: 10, new: 10)
+        }
+        async let first = optimiser.optimisedPNG(input)
+        async let second = optimiser.optimisedPNG(input)
+        _ = await (first, second)
+        #expect(calls.withLock { $0 } == 2)
+        #expect(!overlapped.withLock { $0 })
+        #expect(leftovers(in: directory).isEmpty)
+    }
+
     @Test func throwingTransportReturnsFailed() async throws {
         let input = try Self.png(width: 16, height: 16, noisy: true)
         let (outcome, directory) = await run(input) { _ in throw ClopClientError.sendFailed(-2) }
