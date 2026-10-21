@@ -40,6 +40,9 @@ final class AppSettings {
         static let showOverlay = "showOverlay"
         static let overlayCorner = "overlayCorner"
         static let overlayAutoCloseSeconds = "overlayAutoCloseSeconds"
+        static let overlayDisplay = "overlayDisplay"
+        static let overlayMaxCards = "overlayMaxCards"
+        static let overlayCloseAfterDrag = "overlayCloseAfterDrag"
         static let historyRetentionDays = "historyRetentionDays"
         static let s3Config = "s3DestinationConfig"
         static let editorStrokeColor = "editorStrokeColor"
@@ -48,6 +51,9 @@ final class AppSettings {
         static let editorBlurRadiusPoints = "editorBlurRadiusPoints"
         static let editorPixelBlockPoints = "editorPixelBlockPoints"
         static let scrollingAutoScroll = "scrollingAutoScroll"
+        static let lastAreaRect = "lastAreaRect"
+        static let windowShadow = "windowShadow"
+        static let freezeScreen = "freezeScreen"
     }
 
     @ObservationIgnored private let defaults: UserDefaults
@@ -62,6 +68,13 @@ final class AppSettings {
     var showOverlay: Bool { didSet { defaults.set(showOverlay, forKey: Keys.showOverlay) } }
     var overlayCorner: OverlayCorner { didSet { defaults.set(overlayCorner.rawValue, forKey: Keys.overlayCorner) } }
     var overlayAutoCloseSeconds: Double { didSet { defaults.set(overlayAutoCloseSeconds, forKey: Keys.overlayAutoCloseSeconds) } }
+    /// Which screen the card stack uses (Overlay tab, `Show on`).
+    var overlayDisplay: OverlayDisplayChoice { didSet { defaults.set(overlayDisplay.rawValue, forKey: Keys.overlayDisplay) } }
+    /// How many cards the stack shows at most (Overlay tab, `Show up to N overlays`).
+    var overlayMaxCards: Int { didSet { defaults.set(overlayMaxCards, forKey: Keys.overlayMaxCards) } }
+    static let overlayMaxCardsRange: ClosedRange<Int> = 1...8
+    /// Close a Quick Access card once it was dragged out and dropped (Overlay tab).
+    var overlayCloseAfterDrag: Bool { didSet { defaults.set(overlayCloseAfterDrag, forKey: Keys.overlayCloseAfterDrag) } }
     var historyRetentionDays: Int { didSet { defaults.set(historyRetentionDays, forKey: Keys.historyRetentionDays) } }
     /// Nil until the Upload tab has been saved once. Stored as JSON.
     var s3Config: S3DestinationConfig? {
@@ -76,6 +89,13 @@ final class AppSettings {
     var editorPixelBlockPoints: Double { didSet { defaults.set(editorPixelBlockPoints, forKey: Keys.editorPixelBlockPoints) } }
     /// The scrolling panel's Scroll automatically checkbox. Effective only with the PostEvent grant.
     var scrollingAutoScroll: Bool { didSet { defaults.set(scrollingAutoScroll, forKey: Keys.scrollingAutoScroll) } }
+    /// The rect of the last area capture (Capture Area, Capture Scrolling, and the later area
+    /// kinds), for Capture Previous Area. Stored as JSON; nil until an area has been captured.
+    var lastAreaRect: StoredRect? { didSet { storeLastAreaRect() } }
+    /// The Capture tab's Include window shadow. Off keeps window shots without a shadow.
+    var windowShadow: Bool { didSet { defaults.set(windowShadow, forKey: Keys.windowShadow) } }
+    /// The Capture tab's Freeze screen while selecting (spec 2.9). Area selections then show a still image.
+    var freezeScreen: Bool { didSet { defaults.set(freezeScreen, forKey: Keys.freezeScreen) } }
 
     /// The five editor values as one value. Setting it writes all five keys.
     var editorDefaults: EditorDefaults {
@@ -107,11 +127,16 @@ final class AppSettings {
             Keys.showOverlay: true,
             Keys.overlayCorner: OverlayCorner.bottomRight.rawValue,
             Keys.overlayAutoCloseSeconds: 5.0,
+            Keys.overlayDisplay: OverlayDisplayChoice.capture.rawValue,
+            Keys.overlayMaxCards: 5,
+            Keys.overlayCloseAfterDrag: true,
             Keys.historyRetentionDays: 30,
             Keys.editorLineWidthPoints: Double(EditorDefaults.standard.lineWidthPoints),
             Keys.editorBlurRadiusPoints: Double(EditorDefaults.standard.blurRadiusPoints),
             Keys.editorPixelBlockPoints: Double(EditorDefaults.standard.blockPoints),
             Keys.scrollingAutoScroll: true,
+            Keys.windowShadow: false,
+            Keys.freezeScreen: false,
         ])
         showsCursor = defaults.bool(forKey: Keys.showsCursor)
         copyImageToClipboard = defaults.bool(forKey: Keys.copyImageToClipboard)
@@ -124,6 +149,10 @@ final class AppSettings {
         showOverlay = defaults.bool(forKey: Keys.showOverlay)
         overlayCorner = OverlayCorner(rawValue: defaults.string(forKey: Keys.overlayCorner) ?? "") ?? .bottomRight
         overlayAutoCloseSeconds = defaults.double(forKey: Keys.overlayAutoCloseSeconds)
+        overlayDisplay = OverlayDisplayChoice(rawValue: defaults.string(forKey: Keys.overlayDisplay) ?? "") ?? .capture
+        overlayMaxCards = min(max(defaults.integer(forKey: Keys.overlayMaxCards), Self.overlayMaxCardsRange.lowerBound),
+                              Self.overlayMaxCardsRange.upperBound)
+        overlayCloseAfterDrag = defaults.bool(forKey: Keys.overlayCloseAfterDrag)
         historyRetentionDays = defaults.integer(forKey: Keys.historyRetentionDays)
         // Decoding drops `{app}` from the key template (see `S3DestinationConfig.init(from:)`).
         let storedConfig = defaults.data(forKey: Keys.s3Config)
@@ -135,6 +164,10 @@ final class AppSettings {
         editorBlurRadiusPoints = defaults.double(forKey: Keys.editorBlurRadiusPoints)
         editorPixelBlockPoints = defaults.double(forKey: Keys.editorPixelBlockPoints)
         scrollingAutoScroll = defaults.bool(forKey: Keys.scrollingAutoScroll)
+        // Not registered: a missing or unreadable value means no previous area.
+        lastAreaRect = defaults.data(forKey: Keys.lastAreaRect).flatMap { try? JSONDecoder().decode(StoredRect.self, from: $0) }
+        windowShadow = defaults.bool(forKey: Keys.windowShadow)
+        freezeScreen = defaults.bool(forKey: Keys.freezeScreen)
 
         // Property observers do not run during init, so templates rewritten by
         // `TemplateMigration` are stored here, once.
@@ -159,6 +192,20 @@ final class AppSettings {
             defaults.set(try JSONEncoder().encode(s3Config), forKey: Keys.s3Config)
         } catch {
             NSLog("Upload settings could not be encoded, so the stored ones are kept: \(error.localizedDescription)")
+        }
+    }
+
+    /// Writes `lastAreaRect` as JSON, or removes it when nil. An encoding failure is logged and
+    /// leaves the stored value as it was.
+    private func storeLastAreaRect() {
+        guard let lastAreaRect else {
+            defaults.removeObject(forKey: Keys.lastAreaRect)
+            return
+        }
+        do {
+            defaults.set(try JSONEncoder().encode(lastAreaRect), forKey: Keys.lastAreaRect)
+        } catch {
+            NSLog("The last area could not be encoded, so the stored one is kept: \(error.localizedDescription)")
         }
     }
 

@@ -17,32 +17,62 @@ final class CaptureEngine {
 
         let filter: SCContentFilter
         let scale: CGFloat
-        let pointSize: CGSize
+        let pixels: (width: Int, height: Int)
 
         switch target {
         case .display(let display):
             filter = SCContentFilter(display: display, excludingWindows: excludingWindows)
             scale = Self.scale(forDisplayID: display.displayID)
-            pointSize = display.frame.size
+            pixels = Geometry.pixelSize(points: display.frame.size, scale: scale)
         case .area(let rect, let display):
             filter = SCContentFilter(display: display, excludingWindows: excludingWindows)
             scale = Self.scale(forDisplayID: display.displayID)
             config.sourceRect = Geometry.displayLocal(rect, in: display.frame)
-            pointSize = rect.size
+            pixels = Geometry.pixelSize(points: rect.size, scale: scale)
         case .window(let window):
             filter = SCContentFilter(desktopIndependentWindow: window)
-            config.ignoreShadows = true
-            scale = Self.scale(forDisplayID: Self.displayID(containing: window.frame))
-            pointSize = window.frame.size
+            // Off is today's output. On, the shadow lies outside `window.frame`, so the size
+            // comes from the filter (see `windowPixelSize`).
+            config.ignoreShadows = !options.windowShadow
+            let displayScale = Self.scale(forDisplayID: Self.displayID(containing: window.frame))
+            let geometry = Self.windowGeometry(frame: window.frame, contentRect: filter.contentRect,
+                                               pointPixelScale: CGFloat(filter.pointPixelScale),
+                                               displayScale: displayScale, includeShadow: options.windowShadow)
+            scale = geometry.scale
+            pixels = (geometry.width, geometry.height)
         }
-
-        let pixels = Geometry.pixelSize(points: pointSize, scale: scale)
         config.width = pixels.width
         config.height = pixels.height
 
         let output = try await SCScreenshotManager.captureScreenshot(contentFilter: filter, configuration: config)
         guard let image = output.sdrImage else { throw CaptureError.noImage }
         return CaptureResult(image: image, scale: scale, target: target)
+    }
+
+    /// The pixel size of a window capture. Without the shadow: the frame at the display's scale,
+    /// as before. With it: the filter's `contentRect` (points) times `pointPixelScale`, which the
+    /// probe (`probes/window-shadow`) checks includes the shadow. A degenerate filter (empty or smaller than
+    /// the frame, or a zero scale) falls back to the frame, so a capture is never zero-sized.
+    static func windowPixelSize(frame: CGRect, contentRect: CGRect, pointPixelScale: CGFloat,
+                                displayScale: CGFloat, includeShadow: Bool) -> (width: Int, height: Int) {
+        let geometry = windowGeometry(frame: frame, contentRect: contentRect, pointPixelScale: pointPixelScale,
+                                      displayScale: displayScale, includeShadow: includeShadow)
+        return (geometry.width, geometry.height)
+    }
+
+    /// The pixel size and the pixels-per-point of a window capture. When the size comes from the
+    /// filter (the branch described at `windowPixelSize`), the scale is the filter's
+    /// `pointPixelScale` too, so the result's points match its pixels; otherwise it is the
+    /// display's.
+    static func windowGeometry(frame: CGRect, contentRect: CGRect, pointPixelScale: CGFloat,
+                               displayScale: CGFloat, includeShadow: Bool) -> (width: Int, height: Int, scale: CGFloat) {
+        if includeShadow, pointPixelScale > 0,
+           contentRect.width >= frame.width, contentRect.height >= frame.height {
+            let size = Geometry.pixelSize(points: contentRect.size, scale: pointPixelScale)
+            return (size.width, size.height, pointPixelScale)
+        }
+        let size = Geometry.pixelSize(points: frame.size, scale: displayScale)
+        return (size.width, size.height, displayScale)
     }
 
     /// Backing scale of a display: from its NSScreen when available, otherwise from the display
@@ -57,10 +87,7 @@ final class CaptureEngine {
     }
 
     static func screen(forDisplayID id: CGDirectDisplayID) -> NSScreen? {
-        NSScreen.screens.first { screen in
-            let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
-            return number?.uint32Value == id
-        }
+        NSScreen.screens.first { $0.displayID == id }
     }
 
     /// The display containing the centre of `cgRect` (CG global coordinates), or the main display.
@@ -69,5 +96,12 @@ final class CaptureEngine {
         var count: UInt32 = 0
         CGGetDisplaysWithPoint(CGPoint(x: cgRect.midX, y: cgRect.midY), 1, &id, &count)
         return count > 0 ? id : CGMainDisplayID()
+    }
+}
+
+extension NSScreen {
+    /// The CoreGraphics display id of this screen.
+    var displayID: CGDirectDisplayID? {
+        (deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value
     }
 }

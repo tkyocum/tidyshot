@@ -23,11 +23,13 @@ final class AppCoordinator {
     /// `thumbnails` and `pending` folders next to `history.json`.
     let thumbnails: ThumbnailStore
     let pendingFiles: PendingFileStore
+    /// Drag-out copies, `<container tmp>/Drag/<id>/` (spec 2.9).
+    let dragFiles: DragFileStore
     let credentialStore: any CredentialStore = KeychainCredentialStore()
     private let notifier = Notifier()
     private let permissionWindow = PermissionWindowController()
-    private let overlay = QuickAccessController()
-    @ObservationIgnored private lazy var selector = SelectionController(engine: engine)
+    private let overlay = QuickAccessController(settings: AppSettings.shared)
+    @ObservationIgnored private lazy var selector = SelectionController(engine: engine, cardWindowNumbers: { [weak self] in self?.overlay.windowNumbers ?? [] })
     @ObservationIgnored private lazy var scrollCapture = ScrollCaptureController(engine: engine, settings: settings)
     /// Thumbnails and previews for Recent Captures.
     @ObservationIgnored private(set) lazy var thumbnailProvider = ThumbnailProvider(
@@ -49,11 +51,17 @@ final class AppCoordinator {
     @ObservationIgnored private var deletingIDs: Set<UUID> = []
     /// Set after the first "Upload not configured" notification so later captures stay quiet.
     @ObservationIgnored private var warnedUploadNotConfigured = false
-    /// The capture just taken and its pixels, kept while its overlay shows, so Annotate opens the
+    /// The capture just taken and its pixels, kept while its card shows, so Annotate opens the
     /// editor at once: also while the upload runs, and after an upload-only capture's pending file
-    /// is gone. The overlay's NSImage wraps the same CGImage, so this costs no memory. Cleared when
-    /// the overlay closes, by the next capture and by `removeRecord`.
+    /// is gone. The card's NSImage wraps the same CGImage, so this costs no memory. Cleared when
+    /// its card closes, by the next capture and by `removeRecord`. Older cards in the stack load
+    /// from the file or the bucket.
     @ObservationIgnored private var latestCapture: (id: UUID, image: ScaledImage)?
+    /// Recently closed cards for Restore Closed Overlay. In memory only.
+    @ObservationIgnored private var closedOverlays = ClosedOverlays()
+    /// True while `restoreClosedOverlay` shows its card, so the card that push-out closes goes to
+    /// the back of the restore list.
+    @ObservationIgnored private var isRestoring = false
     /// Records whose editor image is loading, so a second Annotate does not open a second editor.
     @ObservationIgnored private var openingEditorIDs: Set<UUID> = []
     /// Set when the first same-key replace of this launch posts `EditorUploadPlan.cacheNote`.
@@ -62,6 +70,16 @@ final class AppCoordinator {
     /// image, by the editor's Copy, and after an edit replaced the clipboard. An edit of that
     /// capture replaces the clipboard only while the count still matches.
     @ObservationIgnored private var clipboardOwner: EditorClipboard.Owner?
+    /// Bumped when a record's drag folder is removed or its pending file adopted. A stage or
+    /// download that started before compares it at its end and drops what it made.
+    @ObservationIgnored private var dragGenerations: [UUID: Int] = [:]
+    /// Bumped by every `prepareDragFile` for a record. A stage hands its file to the card only
+    /// while it is still the newest, so an older stage never sets a file a newer one replaced.
+    @ObservationIgnored private var dragStageSeqs: [UUID: Int] = [:]
+    /// Drag folders waiting `dragCleanupDelay` after their card closed.
+    @ObservationIgnored private var dragCleanups: [UUID: Task<Void, Never>] = [:]
+    /// Restored cards whose drag file is downloading, so a press does not start a second GET.
+    @ObservationIgnored private var prefetchingDragIDs: Set<UUID> = []
 
     private(set) var isCapturing = false
     /// The last capture written to the save folder (upload-only captures do not count).
@@ -80,11 +98,14 @@ final class AppCoordinator {
         history = HistoryStore(fileURL: url, retentionDays: { AppSettings.shared.historyRetentionDays })
         thumbnails = ThumbnailStore(nextTo: url)
         pendingFiles = PendingFileStore(nextTo: url)
+        dragFiles = DragFileStore(temporaryDirectory: FileManager.default.temporaryDirectory)
         history.didPrune = { [weak self] records in self?.removeFiles(ofPruned: records) }
-        overlay.onDidClose = { [weak self] id in self?.forgetLatestCapture(id) }
+        overlay.onDidClose = { [weak self] id, reason in self?.overlayDidClose(id, reason: reason) }
     }
 
     func start() {
+        // Drag copies from the last run, also after a crash.
+        dragFiles.sweep()
         notifier.setUp()
         history.load()
         registerShortcuts()
@@ -110,6 +131,12 @@ final class AppCoordinator {
         KeyboardShortcuts.onKeyUp(for: .captureScrolling) { [weak self] in
             Task { await self?.captureScrolling() }
         }
+        KeyboardShortcuts.onKeyUp(for: .capturePreviousArea) { [weak self] in
+            Task { await self?.capturePreviousArea() }
+        }
+        KeyboardShortcuts.onKeyUp(for: .restoreOverlay) { [weak self] in
+            Task { await self?.restoreClosedOverlay() }
+        }
         // Escape must never be swallowed outside a scrolling capture; the session enables it.
         KeyboardShortcuts.disable(.cancelScrollingCapture)
         // Live only while a scrolling session runs: the controller enables and disables it.
@@ -122,7 +149,7 @@ final class AppCoordinator {
         await withCaptureLock {
             guard let content = await loadContent() else { return }
             guard let display = Self.display(under: NSEvent.mouseLocation, in: content.displays) else { return }
-            guard let result = await capture(.display(display)) else { return }
+            guard let result = await capture(.display(display), excludingWindows: await cardWindows()) else { return }
             await save(result)
         }
     }
@@ -155,6 +182,7 @@ final class AppCoordinator {
                 notifier.notifyError("Select an area at least 100 points tall.", title: "Scrolling capture")
                 return
             }
+            settings.lastAreaRect = StoredRect(rect)
             selector.dismiss()
             let outcome = await scrollCapture.run(rect: rect, display: display)
             if let notice = outcome.failureNotice {
@@ -167,19 +195,50 @@ final class AppCoordinator {
         }
     }
 
-    /// Show the overlay, capture with the overlay excluded, dismiss, then save.
+    /// Capture Previous Area: the last area capture's rect again, live, with no selection overlay.
+    /// `PreviousArea.resolve` clips the stored rect to the display under its centre. The cards are
+    /// excluded and the pointer follows Show cursor, as for a fullscreen capture. It does not
+    /// write `lastAreaRect`: a clipped rect would shrink the memory.
+    func capturePreviousArea() async {
+        await withCaptureLock {
+            guard let content = await loadContent() else { return }
+            let displays = content.displays.map { PreviousArea.Display(id: $0.displayID, frame: $0.frame) }
+            switch PreviousArea.resolve(rect: settings.lastAreaRect?.cgRect, displays: displays) {
+            case .none:
+                notifier.notifyError("Capture an area first.", title: "No previous area")
+            case .offScreen:
+                notifier.notifyError("The previous area is not on a connected display.", title: "No previous area")
+            case .area(let rect, let displayID):
+                guard let display = content.displays.first(where: { $0.displayID == displayID }) else { return }
+                let cards = await cardWindows()
+                guard let result = await capture(.area(rect: rect, display: display), excludingWindows: cards) else { return }
+                await save(result)
+            }
+        }
+    }
+
+    /// Show the overlay, capture with the overlay excluded (or cut the frozen snapshot), dismiss, then save.
     private func runSelection(mode: SelectionMode) async {
         await withCaptureLock {
             guard let content = await loadContent() else { return }
-            guard let selection = await selector.select(mode: mode, content: content) else { return }
+            // Freeze applies to area mode only. The snapshots follow the cursor setting: they are
+            // taken before the overlay, so the pointer in them is the real one.
+            let freeze = mode == .area && settings.freezeScreen
+                ? CaptureOptions(settings: settings, duringSelection: false) : nil
+            guard let selection = await selector.select(mode: mode, content: content, freeze: freeze) else { return }
 
             let result: CaptureResult?
             switch selection {
             case .area(let rect, let display):
-                let overlays = await selector.overlayWindows()
-                result = await capture(.area(rect: rect, display: display), excludingWindows: overlays)
+                settings.lastAreaRect = StoredRect(rect)
+                if let frozen = frozenResult(for: rect, display: display) {
+                    result = frozen
+                } else {
+                    let overlays = await selector.overlayWindows()
+                    result = await capture(.area(rect: rect, display: display), excludingWindows: overlays, duringSelection: true)
+                }
             case .window(let window):
-                result = await capture(.window(window))
+                result = await capture(.window(window), duringSelection: true)
             }
             selector.dismiss()
 
@@ -189,15 +248,31 @@ final class AppCoordinator {
         }
     }
 
+    /// The selection cut from the display's frozen snapshot, or nil when there is none (freeze off,
+    /// or that display's snapshot failed) or the crop failed; the caller then captures live.
+    private func frozenResult(for rect: CGRect, display: SCDisplay) -> CaptureResult? {
+        guard let frozen = selector.frozenCapture(for: display.displayID) else { return nil }
+        guard let image = FreezeCrop.cropped(frozen.image, selection: rect, displayFrame: display.frame,
+                                             scale: frozen.scale) else {
+            NSLog("Freeze crop failed for \(rect) on display \(display.displayID); capturing live")
+            return nil
+        }
+        return CaptureResult(image: image, scale: frozen.scale, target: .area(rect: rect, display: display))
+    }
+
     func revealLastCapture() {
         guard let lastCaptureURL else { return }
         NSWorkspace.shared.activateFileViewerSelecting([lastCaptureURL])
     }
 
-    /// Runs the engine. On failure posts a notification and returns nil.
-    func capture(_ target: CaptureTarget, excludingWindows: [SCWindow] = []) async -> CaptureResult? {
+    /// Runs the engine. On failure posts a notification and returns nil. `duringSelection` is
+    /// true for the live captures taken while the selection overlay is still up; the pointer is
+    /// then never captured (`CaptureOptions.init(settings:duringSelection:)`).
+    func capture(_ target: CaptureTarget, excludingWindows: [SCWindow] = [],
+                 duringSelection: Bool = false) async -> CaptureResult? {
         do {
-            return try await engine.capture(target, options: CaptureOptions(showsCursor: settings.showsCursor), excludingWindows: excludingWindows)
+            let options = CaptureOptions(settings: settings, duringSelection: duringSelection)
+            return try await engine.capture(target, options: options, excludingWindows: excludingWindows)
         } catch {
             NSLog("Capture failed: \(error.localizedDescription)")
             notifier.notifyError(error.localizedDescription)
@@ -252,7 +327,8 @@ final class AppCoordinator {
         let copiedChangeCount: Int? = copyImageNow ? Pasteboard.copy(pngData: png, tiffData: encoded.tiff) : nil
 
         guard let record = await persist(png: png, image: image, action: action, destination: destination,
-                                         alreadyOnClipboard: copyImageNow) else { return }
+                                         alreadyOnClipboard: copyImageNow,
+                                         captureDisplayID: result.target.displayID) else { return }
         if let copiedChangeCount {
             clipboardOwner = EditorClipboard.Owner(recordID: record.id, changeCount: copiedChangeCount)
         }
@@ -265,7 +341,7 @@ final class AppCoordinator {
     /// notified and left the image on the clipboard (`alreadyOnClipboard` says it is there
     /// already). Any other clipboard write is the caller's.
     private func persist(png: Data, image: ScaledImage, action: AfterCaptureAction, destination: S3Destination?,
-                         alreadyOnClipboard: Bool) async -> CaptureRecord? {
+                         alreadyOnClipboard: Bool, captureDisplayID: CGDirectDisplayID) async -> CaptureRecord? {
         // The object key is not named here: `startUpload` names it when the upload starts.
         let id = UUID()
         let fileURL: URL
@@ -302,7 +378,7 @@ final class AppCoordinator {
                                    appName: nil, uploadState: state)
         history.add(record)
         makeThumbnail(from: image.image, for: id)
-        showOverlay(for: record, image: image.image, scale: image.scale)
+        showOverlay(for: record, image: image.image, scale: image.scale, captureDisplayID: captureDisplayID)
 
         if let destination {
             startUpload(recordID: record.id, data: png, destination: destination)
@@ -391,23 +467,78 @@ final class AppCoordinator {
         }
     }
 
-    private func showOverlay(for record: CaptureRecord, image: CGImage?, scale: CGFloat) {
-        guard settings.showOverlay else { return }
+    private func showOverlay(for record: CaptureRecord, image: CGImage?, scale: CGFloat, captureDisplayID: CGDirectDisplayID) {
+        guard settings.showOverlay, let screen = overlayScreen(captureDisplayID: captureDisplayID) else { return }
         // The well shows the top of a tall capture, as its thumbnail does. The crop shares the pixels.
         let shown = image.map { full in
             full.cropping(to: ThumbnailMaker.cropForThumbnail(CGSize(width: full.width, height: full.height))) ?? full
         }
         let thumbnail = shown.map { NSImage(cgImage: $0, size: NSSize(width: CGFloat($0.width) / scale, height: CGFloat($0.height) / scale)) }
-        overlay.show(record: record, thumbnail: thumbnail, corner: settings.overlayCorner,
-                     autoCloseSeconds: settings.overlayAutoCloseSeconds,
-                     actions: QuickAccessController.Actions(
-                        copy: { [weak self] id in self?.copyLinkOrFile(recordID: id) },
-                        retry: { [weak self] id in self?.retryUpload(recordID: id) },
-                        reveal: { [weak self] id in self?.reveal(recordID: id) },
-                        delete: { [weak self] id in Task { await self?.deleteCapture(recordID: id) } },
-                        annotate: { [weak self] id in self?.openEditorAfterMenuTracking(recordID: id) }))
-        // After `show`: its `close()` of the previous panel has already reported that capture.
+        overlay.show(record: record, thumbnail: thumbnail, screen: screen,
+                     autoCloseSeconds: settings.overlayAutoCloseSeconds, actions: overlayActions())
+        // After `show`: a card it pushed out of the stack has already reported its capture.
         latestCapture = image.map { (id: record.id, image: ScaledImage(image: $0, scale: scale)) }
+    }
+
+    /// Every card's buttons. Shared by new captures' cards and restored ones (Task 4).
+    private func overlayActions() -> QuickAccessController.Actions {
+        QuickAccessController.Actions(
+            copy: { [weak self] id in self?.copyLinkOrFile(recordID: id) },
+            retry: { [weak self] id in self?.retryUpload(recordID: id) },
+            reveal: { [weak self] id in self?.reveal(recordID: id) },
+            delete: { [weak self] id in self?.afterMenuTracking { Task { await self?.deleteCapture(recordID: id) } } },
+            annotate: { [weak self] id in self?.openEditorAfterMenuTracking(recordID: id) },
+            saveAs: { [weak self] id in self?.saveAs(recordID: id) },
+            copyImage: { [weak self] id in self?.afterMenuTracking { Task { await self?.copyImage(recordID: id) } } },
+            prepareDrag: { [weak self] id in self?.prepareDragFile(recordID: id) },
+            dragEnded: { [weak self] id, accepted in self?.dragDidEnd(recordID: id, accepted: accepted) })
+    }
+
+    /// The screen for the card stack under `settings.overlayDisplay`; nil without screens.
+    private func overlayScreen(captureDisplayID: CGDirectDisplayID?) -> NSScreen? {
+        let screens = NSScreen.screens
+        guard !screens.isEmpty else { return nil }
+        let pointer = screens.firstIndex { $0.frame.contains(NSEvent.mouseLocation) }
+        let index = OverlayScreenChoice.index(choice: settings.overlayDisplay, captureDisplayID: captureDisplayID,
+                                              pointerIndex: pointer, screenDisplayIDs: screens.map { $0.displayID ?? 0 })
+        return screens[index]
+    }
+
+    /// Every card close: the retained image goes with the newest card, a restorable close is
+    /// remembered, and the card's drag folder is scheduled for removal.
+    private func overlayDidClose(_ id: UUID, reason: QuickAccessCloseReason) {
+        forgetLatestCapture(id)
+        if isRestoring, reason == .pushedOut {
+            closedOverlays.didCloseBehind(id)
+        } else {
+            closedOverlays.didClose(id, reason: reason)
+        }
+        scheduleDragCleanup(id)
+    }
+
+    /// Whether Restore Closed Overlay has a card to bring back (the menu item's state).
+    var canRestoreClosedOverlay: Bool {
+        closedOverlays.hasRestorable(exists: { history.record(id: $0) != nil }, shown: Set(overlay.shownIDs).union(deletingIDs))
+    }
+
+    /// Restore Closed Overlay: the newest closed card whose capture still exists and is not
+    /// showing, again at the corner of the stack's screen, with the record as it is now and its
+    /// stored thumbnail. Annotate on it loads from the file or the bucket. It does not check
+    /// `settings.showOverlay`: it is an explicit request.
+    func restoreClosedOverlay() async {
+        guard let id = closedOverlays.popRestorable(exists: { history.record(id: $0) != nil },
+                                                    shown: Set(overlay.shownIDs).union(deletingIDs)),
+              let record = history.record(id: id) else { return }
+        let thumbnail = await thumbnailProvider.thumbnail(for: record)
+        // Deleted (or being deleted) during the read, or shown by a second restore meanwhile.
+        guard let current = history.record(id: id), !deletingIDs.contains(id), !overlay.isShowing(recordID: id),
+              let screen = overlay.screen ?? overlayScreen(captureDisplayID: nil) else { return }
+        isRestoring = true
+        defer { isRestoring = false }
+        overlay.show(record: current, thumbnail: thumbnail, screen: screen,
+                     autoCloseSeconds: settings.overlayAutoCloseSeconds, actions: overlayActions())
+        // A record without a local file starts its quiet download now.
+        prepareDragFile(recordID: id)
     }
 
     /// The configured destination, or nil when the Upload tab is incomplete, no credentials are
@@ -605,37 +736,82 @@ final class AppCoordinator {
         }
     }
 
-    /// The capture's PNG: the local file when it can be read, otherwise the uploaded object. The
-    /// save folder is resolved here, on the main actor, and the file is read in a detached task,
-    /// as `ThumbnailProvider` does: a temporary file in `pending` directly, a saved one through
-    /// the folder's security scope.
-    private func imageData(of record: CaptureRecord, downloadTitle: String = "Copying image…") async throws -> Data {
-        if let fileURL = record.fileURL {
-            let temporary = record.fileIsTemporary
-            let folder = temporary ? nil : saveLocation.currentURL
-            let local = await Task.detached(priority: .userInitiated) { () -> Data? in
-                if temporary { return try? Data(contentsOf: fileURL) }
-                guard let folder else { return nil }
-                return try? SaveLocation.readScoped(fileURL, folder: folder)
-            }.value
-            if let local { return local }
-            // The file is recorded but cannot be read; the uploaded object is the other copy. The
-            // record is read again: an upload-only capture whose upload finished during the read
-            // has lost its `pending` file and gained the key that the snapshot above lacks.
-            let current = history.record(id: record.id) ?? record
-            guard current.uploadedKey != nil, current.objectLocation != nil else { throw CopyImageError.unreadableFile }
-            return try await downloadImage(of: current, title: downloadTitle)
+    /// Save As… from a Quick Access card (and from a pin's menu, 6b): runs `saveCopy` after any
+    /// menu tracking (`afterMenuTracking`).
+    func saveAs(recordID: UUID) {
+        afterMenuTracking { [weak self] in
+            Task { await self?.saveCopy(recordID: recordID) }
         }
-        return try await downloadImage(of: record, title: downloadTitle)
+    }
+
+    /// Activates the app, asks for a place with the editor's suggestion, then writes the capture's
+    /// PNG there unchanged (`imageData(of:)`: the local file, or a signed GET). A copy only: the
+    /// record, its link, `lastCaptureURL` and the clipboard stay as they are.
+    private func saveCopy(recordID: UUID) async {
+        guard history.record(id: recordID) != nil else { return }
+        let panel = EditorNaming.savePanel(for: saveAsSuggestion(recordID: recordID))
+        // Reached from a non-activating card while another app is active; a plain activate() can
+        // be refused and the panel would open behind that app (as in SaveLocation.chooseFolder).
+        NSApplication.shared.activate(ignoringOtherApps: true)
+        guard await panel.begin() == .OK, let url = panel.url else { return }
+        // Read again: the upload may have finished, or the capture been deleted, while the panel was open.
+        guard let record = history.record(id: recordID) else {
+            NSLog("Save As: \(recordID) was deleted while the panel was open")
+            return
+        }
+        let png: Data
+        do {
+            png = try await imageData(of: record, downloadTitle: "Saving a copy…")
+        } catch {
+            notifier.notifyError(error.localizedDescription, title: "Not saved")
+            return
+        }
+        await writeSaveAsCopy(png, to: url)
+    }
+
+    /// The capture's PNG: the local file when it can be read, otherwise the uploaded object. Copy
+    /// Image, Annotate and the card's Save As… use it. Between the two, the record's drag copy
+    /// (`DragFileStore`), which an upload-only capture keeps while its card shows; an edit removes
+    /// it (`applyLocalEdit`). The save folder is resolved here, on the main actor, and the file is
+    /// read in a detached task, as `ThumbnailProvider` does: a temporary file in `pending`
+    /// directly, a saved one through the folder's security scope.
+    private func imageData(of record: CaptureRecord, downloadTitle: String = "Copying image…") async throws -> Data {
+        let fileURL = record.fileURL
+        let temporary = record.fileIsTemporary
+        let folder = temporary ? nil : saveLocation.currentURL
+        let drag = dragFiles
+        let id = record.id
+        let local = await Task.detached(priority: .userInitiated) { () -> Data? in
+            if let fileURL {
+                let data: Data?
+                if temporary {
+                    data = try? Data(contentsOf: fileURL)
+                } else {
+                    data = folder.flatMap { try? SaveLocation.readScoped(fileURL, folder: $0) }
+                }
+                if let data { return data }
+            }
+            // The drag copy: an upload-only capture's file kept while its card shows, or a download.
+            return drag.stagedFile(id: id).flatMap { try? Data(contentsOf: $0) }
+        }.value
+        if let local { return local }
+        // The record is read again: an upload-only capture whose upload finished during the read
+        // has lost its `pending` file and gained the key that the snapshot above lacks.
+        let current = history.record(id: record.id) ?? record
+        if record.fileURL != nil, current.uploadedKey == nil || current.objectLocation == nil {
+            // The file is recorded but cannot be read, and there is no upload to fall back on.
+            throw CopyImageError.unreadableFile
+        }
+        return try await downloadImage(of: current, title: downloadTitle)
     }
 
     /// The uploaded object's bytes, from where the record says it went, signed with the
-    /// credentials stored now.
-    private func downloadImage(of record: CaptureRecord, title: String) async throws -> Data {
+    /// credentials stored now. A nil title downloads quietly (a restored card's drag file).
+    private func downloadImage(of record: CaptureRecord, title: String?) async throws -> Data {
         guard let key = record.uploadedKey else { throw CopyImageError.nothingToCopy }
         guard let location = record.objectLocation else { throw CopyImageError.unknownLocation }
         guard let credentials = loadCredentials() else { throw UploadError.notConfigured }
-        if settings.showNotification {
+        if let title, settings.showNotification {
             notifier.notify(title: title, body: "Downloading \(key)")
         }
         return try await S3Destination(config: location.config, credentials: credentials).download(key: key)
@@ -795,7 +971,8 @@ final class AppCoordinator {
         history.remove(id: id)
         thumbnailProvider.forget(id)
         forgetLatestCapture(id)
-        overlay.close(recordID: id)
+        overlay.close(recordID: id, reason: .deleted)
+        removeDragFolder(id)
         pushEditorState(for: id)
     }
 
@@ -912,11 +1089,15 @@ final class AppCoordinator {
                 deleteOrphanedObject(key: key, at: location)
                 return
             }
-            // Upload-only mode: the temporary file has done its job. If it cannot be removed the
-            // record keeps pointing at it, so Delete can still remove it later.
+            // Upload-only mode: the temporary file has done its job. While a card shows the
+            // capture it moves into the drag folder under the key's name, so the card can still be
+            // dragged out (spec 2.9); otherwise it is removed. Either way the record drops it
+            // below. If it can be neither moved nor removed the record keeps pointing at it, so
+            // Delete can still remove it later.
             var removedTemporaryFile = false
             if before.fileIsTemporary, let fileURL = before.fileURL {
-                removedTemporaryFile = removePendingFile(at: fileURL, context: "after upload")
+                removedTemporaryFile = keepForDragOut(fileURL, record: before, url: url, key: key)
+                    || removePendingFile(at: fileURL, context: "after upload")
             }
             history.update(id: id) { record in
                 record.uploadState = .uploaded(url: url, key: key)
@@ -995,6 +1176,140 @@ final class AppCoordinator {
         }
     }
 
+    // MARK: Drag-out
+
+    /// How long a closed card's drag folder stays, for a receiver still reading the dropped file.
+    static let dragCleanupDelay: Duration = .seconds(60)
+
+    /// Stages the record's drag file for its card: at a press on the card, and when a restored
+    /// card appears. The name and the source are worked out here; the copy runs detached. The
+    /// card's `dragFileURL` is nil until it is done. A record with no readable file uses its kept
+    /// copy, or, uploaded, a quiet download (`prefetchDragFile`).
+    func prepareDragFile(recordID: UUID) {
+        guard let record = history.record(id: recordID), overlay.isShowing(recordID: recordID) else { return }
+        dragCleanups.removeValue(forKey: recordID)?.cancel()
+        let name = DragFileName.name(for: record, suggestion: saveAsSuggestion(recordID: recordID))
+        let generation = dragGenerations[recordID, default: 0]
+        dragStageSeqs[recordID, default: 0] += 1
+        let seq = dragStageSeqs[recordID, default: 0]
+        overlay.setDragFile(nil, for: recordID)
+        let store = dragFiles
+        let source = record.fileURL
+        let scope = record.fileIsTemporary ? nil : saveLocation.currentURL
+        Task { [weak self] in
+            let staged = await Task.detached(priority: .userInitiated) { () -> URL? in
+                if let source, let url = try? store.stage(id: recordID, name: name, from: source, scope: scope) {
+                    return url
+                }
+                // An adopted or downloaded copy, or the last copy of a file that has gone since,
+                // under the name worked out above.
+                return store.restage(id: recordID, name: name)
+            }.value
+            guard let self else { return }
+            guard self.dragGenerations[recordID, default: 0] == generation else {
+                // The folder was replaced while this stage ran (an upload's adopt), so `staged`
+                // may be a file the adopt's place() deleted. A card still showing gets whatever
+                // the folder holds now; otherwise the folder this stage recreated goes.
+                if self.overlay.isShowing(recordID: recordID) {
+                    let current = await Task.detached(priority: .userInitiated) {
+                        store.restage(id: recordID, name: name)
+                    }.value
+                    if self.dragStageSeqs[recordID, default: 0] == seq, self.overlay.isShowing(recordID: recordID) {
+                        self.overlay.setDragFile(current, for: recordID)
+                    }
+                } else {
+                    self.dropStaleDragFolder(recordID)
+                }
+                return
+            }
+            // A later press staged again; its file is the card's.
+            guard self.dragStageSeqs[recordID, default: 0] == seq else { return }
+            if let staged {
+                self.overlay.setDragFile(staged, for: recordID)
+            } else {
+                await self.prefetchDragFile(recordID: recordID, name: name)
+            }
+        }
+    }
+
+    /// A quiet signed GET (no notification) of an uploaded capture that has no local file, into
+    /// its drag folder. A failure is only logged; the card then cannot be dragged.
+    private func prefetchDragFile(recordID: UUID, name: String) async {
+        guard !prefetchingDragIDs.contains(recordID), let record = history.record(id: recordID),
+              record.uploadedKey != nil, record.objectLocation != nil else { return }
+        prefetchingDragIDs.insert(recordID)
+        defer { prefetchingDragIDs.remove(recordID) }
+        let generation = dragGenerations[recordID, default: 0]
+        let store = dragFiles
+        do {
+            let data = try await downloadImage(of: record, title: nil)
+            let url = try await Task.detached(priority: .utility) {
+                try store.write(data, id: recordID, name: name)
+            }.value
+            guard dragGenerations[recordID, default: 0] == generation else {
+                dropStaleDragFolder(recordID)
+                return
+            }
+            overlay.setDragFile(url, for: recordID)
+        } catch {
+            NSLog("Drag-out download for \(recordID) failed: \(error.localizedDescription)")
+        }
+    }
+
+    /// `.uploaded` for an upload-only capture: when a card shows it, moves the pending file to
+    /// `Drag/<id>/<key name>` and hands it to the card. False when no card shows the record or the
+    /// move failed (logged); the caller then removes the pending file as before.
+    private func keepForDragOut(_ fileURL: URL, record: CaptureRecord, url: URL, key: String) -> Bool {
+        guard overlay.isShowing(recordID: record.id) else { return false }
+        var uploaded = record
+        uploaded.uploadState = .uploaded(url: url, key: key)
+        let name = DragFileName.name(for: uploaded, suggestion: saveAsSuggestion(recordID: record.id))
+        do {
+            let kept = try dragFiles.adopt(id: record.id, name: name, moving: fileURL)
+            dragGenerations[record.id, default: 0] += 1
+            overlay.setDragFile(kept, for: record.id)
+            return true
+        } catch {
+            NSLog("Could not keep \(fileURL.lastPathComponent) for drag-out: \(error.localizedDescription)")
+            return false
+        }
+    }
+
+    /// A drag-out ended. With `Close after dragging out` on, a drop that a receiver took closes the
+    /// card as `.draggedOut` (restorable).
+    private func dragDidEnd(recordID: UUID, accepted: Bool) {
+        guard accepted, settings.overlayCloseAfterDrag else { return }
+        overlay.close(recordID: recordID, reason: .draggedOut)
+    }
+
+    /// A card closed, for any reason: its drag folder goes after `dragCleanupDelay`, unless the
+    /// card shows again first (`prepareDragFile` cancels this).
+    private func scheduleDragCleanup(_ id: UUID) {
+        dragCleanups[id]?.cancel()
+        dragCleanups[id] = Task { [weak self] in
+            try? await Task.sleep(for: Self.dragCleanupDelay)
+            guard !Task.isCancelled, let self else { return }
+            self.dragCleanups[id] = nil
+            guard !self.overlay.isShowing(recordID: id) else { return }
+            self.removeDragFolder(id)
+        }
+    }
+
+    /// Removes the record's drag folder now (Delete, or the delayed clean-up), and makes any stage
+    /// or download still running for it drop what it makes.
+    private func removeDragFolder(_ id: UUID) {
+        dragCleanups.removeValue(forKey: id)?.cancel()
+        dragGenerations[id, default: 0] += 1
+        dragFiles.remove(id: id)
+    }
+
+    /// A stage or download finished after its folder was removed or replaced: unless a card shows
+    /// the record, the folder it recreated goes again.
+    private func dropStaleDragFolder(_ id: UUID) {
+        guard !overlay.isShowing(recordID: id) else { return }
+        dragFiles.remove(id: id)
+    }
+
     // MARK: Editor
 
     /// Open annotation editors, one per record.
@@ -1058,12 +1373,17 @@ final class AppCoordinator {
         }
     }
 
-    /// The overlay's Annotate: runs `openEditor` when the run loop is back in its default mode,
-    /// after any menu tracking, as `RecentCapturesMenu.afterMenusClose` does for rows.
-    private func openEditorAfterMenuTracking(recordID: UUID) {
+    /// Runs `work` when the run loop is back in its default mode, after any menu tracking (the
+    /// card's context menu, the status menu), as `RecentCapturesMenu.afterMenusClose` does for rows.
+    private func afterMenuTracking(_ work: @escaping @MainActor () -> Void) {
         RunLoop.main.perform(inModes: [.default]) {
-            MainActor.assumeIsolated { self.openEditor(recordID: recordID) }
+            MainActor.assumeIsolated { work() }
         }
+    }
+
+    /// The card's Annotate.
+    private func openEditorAfterMenuTracking(recordID: UUID) {
+        afterMenuTracking { [weak self] in self?.openEditor(recordID: recordID) }
     }
 
     /// Builds the model and the window and shows them. `openEditor` and `loadAndPresentEditor`
@@ -1085,7 +1405,9 @@ final class AppCoordinator {
         Task { await RedactionRenderer.shared.warmUp(with: image.image) }
         controller.present()
         // The editor is now the capture's surface; the record stays in Recent Captures.
-        overlay.close(recordID: record.id)
+        overlay.close(recordID: record.id, reason: .editorOpened)
+        // The card may already be closed (editor opened from Recent Captures): not restorable.
+        closedOverlays.didClose(record.id, reason: .editorOpened)
     }
 
     /// The editor's actions for `recordID`. Save, Save As…, Copy, Upload and Upload as New all go
@@ -1097,7 +1419,7 @@ final class AppCoordinator {
                 await self?.editorSaveAs(recordID: recordID, image: image, to: url) ?? false
             },
             saveAsSuggestion: { [weak self] in
-                self?.editorSaveAsSuggestion(recordID: recordID)
+                self?.saveAsSuggestion(recordID: recordID)
                     ?? EditorNaming.SaveAsSuggestion(fileName: "Screenshot.png", directory: nil)
             },
             copy: { [weak self] image in
@@ -1198,6 +1520,10 @@ final class AppCoordinator {
             await keepFailedEditOnClipboard(image, png: png, recordID: recordID, error: error)
             return false
         }
+        // The drag copy holds the pixels from before the edit: `imageData(of:)` would read it
+        // before the bucket once the file is gone. A press on a showing card stages the edit.
+        removeDragFolder(recordID)
+        overlay.setDragFile(nil, for: recordID)
         let editedAt = Date()
         history.update(id: recordID) {
             $0.recordLocalEdit(pixelWidth: image.image.width, pixelHeight: image.image.height, at: editedAt)
@@ -1278,25 +1604,42 @@ final class AppCoordinator {
         let png: Data
         do {
             png = try await Task.detached(priority: .userInitiated) {
-                let png = try ImageEncoder.pngData(from: image.image, scale: image.scale)
-                try png.write(to: url, options: .atomic)
-                return png
+                try ImageEncoder.pngData(from: image.image, scale: image.scale)
             }.value
         } catch {
             NSLog("Save As failed: \(error.localizedDescription)")
             notifier.notifyError(error.localizedDescription, title: "Not saved")
             return false
         }
+        guard await writeSaveAsCopy(png, to: url) else { return false }
         await replaceClipboardIfStillOriginal(recordID: recordID, png: png, image: image)
+        return true
+    }
+
+    /// The one Save As… write, for the editor and for a card: `png` as it is, atomically, to a
+    /// URL a save panel returned. The panel's URL is user-selected, so the sandbox grants the
+    /// write, and no bookmark is kept. Posts `Saved` with the file name when notifications are on,
+    /// or the error as `Not saved`. Touches no record.
+    @discardableResult
+    private func writeSaveAsCopy(_ png: Data, to url: URL) async -> Bool {
+        do {
+            try await Task.detached(priority: .userInitiated) {
+                try png.write(to: url, options: .atomic)
+            }.value
+        } catch {
+            NSLog("Save As failed: \(error.localizedDescription)")
+            notifier.notifyError(error.localizedDescription, title: "Not saved")
+            return false
+        }
         if settings.showNotification {
             notifier.notifySaved(fileURL: url, title: "Saved")
         }
         return true
     }
 
-    /// The save panel's suggestion for `recordID`: its file name in the save folder, or the file
-    /// name template's name with the current `{counter}` (none is drawn).
-    private func editorSaveAsSuggestion(recordID: UUID) -> EditorNaming.SaveAsSuggestion {
+    /// The Save As… suggestion for `recordID`, the editor's and the card's: its file name in the
+    /// save folder, or the file name template's name with the current `{counter}` (none is drawn).
+    private func saveAsSuggestion(recordID: UUID) -> EditorNaming.SaveAsSuggestion {
         EditorNaming.saveAsSuggestion(for: history.record(id: recordID), saveFolder: saveLocation.currentURL,
                                       namer: FileNamer(template: settings.fileNameTemplate),
                                       currentCounter: settings.currentCounter)
@@ -1509,6 +1852,14 @@ final class AppCoordinator {
             }
             return nil
         }
+    }
+
+    /// The Quick Access cards as ScreenCaptureKit sees them, for a capture taken without the
+    /// selection overlay; no lookup when no card shows.
+    private func cardWindows() async -> [SCWindow] {
+        let numbers = overlay.windowNumbers
+        guard !numbers.isEmpty else { return [] }
+        return await OverlayWindowLookup.windows(numbers: numbers, engine: engine)
     }
 
     private func withCaptureLock(_ body: () async -> Void) async {

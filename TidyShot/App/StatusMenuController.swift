@@ -73,9 +73,14 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         menu.addItem(captureItem("Capture Window", .captureWindow, #selector(captureWindow)))
         menu.addItem(captureItem("Capture Fullscreen", .captureFullscreen, #selector(captureFullscreen)))
         menu.addItem(captureItem("Capture Scrolling", .captureScrolling, #selector(captureScrolling)))
+        menu.addItem(captureItem("Capture Previous Area", .capturePreviousArea, #selector(capturePreviousArea)))
         menu.addItem(.separator())
         recentCaptures.rebuild()
         menu.addItem(recentCaptures.item)
+        // Not disabled while a capture runs: restoring captures nothing.
+        let restore = item(title("Restore Closed Overlay", shortcut: .restoreOverlay), #selector(restoreClosedOverlay))
+        restore.isEnabled = coordinator.canRestoreClosedOverlay
+        menu.addItem(restore)
         if !coordinator.history.failedRecords.isEmpty {
             menu.addItem(item("Retry Failed Uploads", #selector(retryFailedUploads)))
         }
@@ -97,10 +102,14 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     /// is not a key equivalent, which would fire the capture a second time through the global
     /// hotkey that the menu buffers while it is open.
     private func captureItem(_ title: String, _ name: KeyboardShortcuts.Name, _ action: Selector) -> NSMenuItem {
-        let shortcut = KeyboardShortcuts.getShortcut(for: name)
-        let menuItem = item(shortcut.map { "\(title)  \($0)" } ?? title, action)
+        let menuItem = item(self.title(title, shortcut: name), action)
         menuItem.isEnabled = !coordinator.isCapturing
         return menuItem
+    }
+
+    /// "Title  ⌃⇧4" when `name` has a shortcut, otherwise the title alone.
+    private func title(_ title: String, shortcut name: KeyboardShortcuts.Name) -> String {
+        KeyboardShortcuts.getShortcut(for: name).map { "\(title)  \($0)" } ?? title
     }
 
     // MARK: Actions (AppKit calls these after the menu has closed)
@@ -110,7 +119,9 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     @objc private func captureWindow() { Task { await coordinator.captureWindow() } }
     @objc private func captureFullscreen() { Task { await coordinator.captureFullscreen() } }
     @objc private func captureScrolling() { Task { await coordinator.captureScrolling() } }
+    @objc private func capturePreviousArea() { Task { await coordinator.capturePreviousArea() } }
     @objc private func retryFailedUploads() { coordinator.retryFailedUploads() }
+    @objc private func restoreClosedOverlay() { Task { await coordinator.restoreClosedOverlay() } }
     @objc private func revealLastCapture() { coordinator.revealLastCapture() }
     @objc private func openSettings() { settingsOpener.open() }
     @objc private func quit() { NSApplication.shared.terminate(nil) }

@@ -47,4 +47,40 @@ struct EditorNamingTests {
     @Test func noFolderLeavesTheDirectoryToThePanel() {
         #expect(EditorNaming.saveAsSuggestion(for: nil, saveFolder: nil, namer: namer(), currentCounter: 0).directory == nil)
     }
+
+    /// The card's Save As… (spec 2.9) uses this suggestion. An upload-only capture before its
+    /// upload finished (its pending `<id>.png`, uploading or failed) has no key: the template's
+    /// name, in the save folder when one is set, else where the panel last was.
+    @Test func uploadOnlyCaptureWithoutAKeySuggestsTheTemplateName() {
+        let pending = URL(fileURLWithPath: "/tmp/pending/\(UUID().uuidString).png")
+        let uploading = CaptureRecord(fileURL: pending, fileIsTemporary: true, pixelWidth: 64, pixelHeight: 48,
+                                      appName: nil, uploadState: .uploading(fraction: 0.4))
+        let failed = CaptureRecord(fileURL: pending, fileIsTemporary: true, pixelWidth: 64, pixelHeight: 48,
+                                   appName: nil, uploadState: .failed(message: "Upload not configured."))
+        for record in [uploading, failed] {
+            #expect(EditorNaming.saveAsSuggestion(for: record, saveFolder: folder, namer: namer(), currentCounter: 7)
+                    == EditorNaming.SaveAsSuggestion(fileName: "Screenshot 2026-10-20 at 09.15.02.png", directory: folder))
+            #expect(EditorNaming.saveAsSuggestion(for: record, saveFolder: nil, namer: namer(), currentCounter: 7)
+                    == EditorNaming.SaveAsSuggestion(fileName: "Screenshot 2026-10-20 at 09.15.02.png", directory: nil))
+        }
+    }
+
+    /// With a key: an uploaded upload-only capture (no file) still gets the template's name, not the
+    /// key (the key names the drag file, Task 6); `{counter}` is the current one. A save-folder file
+    /// that was also uploaded keeps its own name.
+    @Test func uploadedCaptureWithAKeySuggestsTheTemplateOrItsOwnName() {
+        let link = URL(string: "https://snap.example.com/shots/aSIS7.png")!
+        let uploadedOnly = CaptureRecord(fileURL: nil, pixelWidth: 64, pixelHeight: 48, appName: nil,
+                                         uploadState: .uploaded(url: link, key: "shots/aSIS7.png"))
+        #expect(EditorNaming.saveAsSuggestion(for: uploadedOnly, saveFolder: nil, namer: namer(), currentCounter: 7)
+                == EditorNaming.SaveAsSuggestion(fileName: "Screenshot 2026-10-20 at 09.15.02.png", directory: nil))
+        #expect(EditorNaming.saveAsSuggestion(for: uploadedOnly, saveFolder: folder, namer: namer("shot-{counter}"),
+                                              currentCounter: 12).fileName == "shot-12.png")
+
+        let file = folder.appending(path: "Bug 12.png")
+        let savedAndUploaded = CaptureRecord(fileURL: file, pixelWidth: 64, pixelHeight: 48, appName: nil,
+                                             uploadState: .uploaded(url: link, key: "shots/aSIS7.png"))
+        #expect(EditorNaming.saveAsSuggestion(for: savedAndUploaded, saveFolder: folder, namer: namer(), currentCounter: 7)
+                == EditorNaming.SaveAsSuggestion(fileName: "Bug 12.png", directory: folder))
+    }
 }

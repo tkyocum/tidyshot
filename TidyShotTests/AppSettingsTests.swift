@@ -47,6 +47,29 @@ struct AppSettingsTests {
         #expect(AppSettings(defaults: defaults).s3Config == nil)
     }
 
+    @Test func lastAreaRectIsNilUntilAnAreaIsCaptured() {
+        #expect(AppSettings(defaults: freshDefaults()).lastAreaRect == nil)
+    }
+
+    @Test func lastAreaRectRoundTripsThroughASecondInstanceAndClears() {
+        let defaults = freshDefaults()
+        let rect = StoredRect(CGRect(x: -300, y: 120.5, width: 640, height: 480))
+        let first = AppSettings(defaults: defaults)
+        first.lastAreaRect = rect
+        #expect(AppSettings(defaults: defaults).lastAreaRect == rect)
+        #expect(defaults.data(forKey: "lastAreaRect") != nil)
+
+        first.lastAreaRect = nil
+        #expect(AppSettings(defaults: defaults).lastAreaRect == nil)
+        #expect(defaults.object(forKey: "lastAreaRect") == nil)
+    }
+
+    @Test func anUnreadableLastAreaRectReadsAsNil() {
+        let defaults = freshDefaults()
+        defaults.set(Data("not json".utf8), forKey: "lastAreaRect")
+        #expect(AppSettings(defaults: defaults).lastAreaRect == nil)
+    }
+
     /// `{app}` was removed in Phase 3.1. Templates saved before that lose it on load, and the
     /// rewritten values are stored, so the next launch reads them as they are.
     @Test func storedTemplatesLoseTheRemovedAppToken() throws {
@@ -109,5 +132,63 @@ struct AppSettingsTests {
         first.scrollingAutoScroll = false
         #expect(defaults.object(forKey: "scrollingAutoScroll") as? Bool == false)
         #expect(!AppSettings(defaults: defaults).scrollingAutoScroll)
+    }
+
+    /// Include window shadow is off by default, which keeps today's output, and persists (spec 2.9).
+    @Test func windowShadowDefaultsOffAndPersists() {
+        let defaults = freshDefaults()
+        let first = AppSettings(defaults: defaults)
+        #expect(!first.windowShadow)
+        first.windowShadow = true
+        #expect(defaults.object(forKey: "windowShadow") as? Bool == true)
+        #expect(AppSettings(defaults: defaults).windowShadow)
+    }
+
+    /// Freeze screen while selecting is off by default and persists (spec 2.9).
+    @Test func freezeScreenDefaultsOffAndPersists() {
+        let defaults = freshDefaults()
+        let first = AppSettings(defaults: defaults)
+        #expect(!first.freezeScreen)
+        first.freezeScreen = true
+        #expect(defaults.object(forKey: "freezeScreen") as? Bool == true)
+        #expect(AppSettings(defaults: defaults).freezeScreen)
+    }
+
+    /// Phase 6a: the stack shows up to five cards on the display of the capture (spec 2.9).
+    @Test func overlayStackSettingsDefaultAndPersist() {
+        let defaults = freshDefaults()
+        let first = AppSettings(defaults: defaults)
+        #expect(first.overlayDisplay == .capture)
+        #expect(first.overlayMaxCards == 5)
+        first.overlayDisplay = .main
+        first.overlayMaxCards = 3
+        #expect(defaults.string(forKey: "overlayDisplay") == "main")
+        #expect(defaults.integer(forKey: "overlayMaxCards") == 3)
+        let second = AppSettings(defaults: defaults)
+        #expect(second.overlayDisplay == .main)
+        #expect(second.overlayMaxCards == 3)
+    }
+
+    /// A stored value outside the Stepper's 1 to 8, or an unknown display choice, reads as the
+    /// nearest valid one.
+    @Test func overlayStackSettingsOutOfRangeReadAsValid() {
+        let defaults = freshDefaults()
+        defaults.set("elsewhere", forKey: "overlayDisplay")
+        defaults.set(0, forKey: "overlayMaxCards")
+        let low = AppSettings(defaults: defaults)
+        #expect(low.overlayDisplay == .capture)
+        #expect(low.overlayMaxCards == 1)
+        defaults.set(20, forKey: "overlayMaxCards")
+        #expect(AppSettings(defaults: defaults).overlayMaxCards == 8)
+    }
+
+    /// Close after dragging out is on by default and persists (spec 2.9).
+    @Test func overlayCloseAfterDragDefaultsOnAndPersists() {
+        let defaults = freshDefaults()
+        let first = AppSettings(defaults: defaults)
+        #expect(first.overlayCloseAfterDrag)
+        first.overlayCloseAfterDrag = false
+        #expect(defaults.object(forKey: "overlayCloseAfterDrag") as? Bool == false)
+        #expect(!AppSettings(defaults: defaults).overlayCloseAfterDrag)
     }
 }

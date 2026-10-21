@@ -29,7 +29,10 @@ nonisolated enum EditorInput {
     ///    shows the original.
     /// 3. A file in `saveFolder`. A file outside it, or with no folder, cannot be read under the
     ///    sandbox, so it falls through.
-    /// 4. The uploaded object, when its location is known.
+    /// 4. The uploaded object, when its location is known. `imageData(of:)`, which loads steps 2 to
+    ///    4, reads the record's drag copy (`DragFileStore`) first when no local file can be read, so
+    ///    a `.download` opens from that copy while it exists (an upload-only capture whose card
+    ///    still shows, or a restored card's download).
     /// 5. Otherwise `.unavailable`, with the reason.
     static func source(for record: CaptureRecord, retainedID: UUID?, saveFolder: URL?) -> Source {
         if record.id == retainedID { return .retained }

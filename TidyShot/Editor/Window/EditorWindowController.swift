@@ -238,13 +238,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
     /// False for Cancel or a failed write; the editor then stays as it was.
     private func performSaveAs() async -> Bool {
         guard let window else { return false }
-        let suggestion = actions.saveAsSuggestion()
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [.png]
-        panel.nameFieldStringValue = suggestion.fileName
-        if let directory = suggestion.directory {
-            panel.directoryURL = directory
-        }
+        let panel = EditorNaming.savePanel(for: actions.saveAsSuggestion())
         guard await panel.beginSheetModal(for: window) == .OK, let url = panel.url else { return false }
         return await exportAndDeliver(marksSaved: true) { await self.actions.saveAs($0, url) }
     }
