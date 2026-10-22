@@ -55,20 +55,41 @@ nonisolated struct S3Destination: Destination {
 
     func upload(_ data: Data, key: String, contentType: String, cacheControl: String?,
                 progress: @escaping @Sendable (Double) -> Void) async throws {
+        let headers = putHeaders(contentType: contentType, cacheControl: cacheControl)
+        let request = try signedRequest(method: "PUT", key: key, body: data, extraHeaders: headers)
+        let delegate = UploadProgressDelegate(onProgress: progress)
+        let (body, response) = try await session.upload(for: request, from: data, delegate: delegate)
+        try Self.checkPut(body, response)
+    }
+
+    /// Hashes the file off the actor, signs with that hash, and streams the file as the body.
+    /// URLSession sets `Content-Length` itself for a file body, so it is neither set nor signed.
+    func upload(fileAt url: URL, key: String, contentType: String, cacheControl: String?,
+                progress: @escaping @Sendable (Double) -> Void) async throws {
+        let payloadHash = try await S3Signer.sha256Hex(fileAt: url)
+        let headers = putHeaders(contentType: contentType, cacheControl: cacheControl)
+        let request = try signedRequest(method: "PUT", key: key, payloadHash: payloadHash, extraHeaders: headers)
+        let delegate = UploadProgressDelegate(onProgress: progress)
+        let (body, response) = try await session.upload(for: request, fromFile: url, delegate: delegate)
+        try Self.checkPut(body, response)
+    }
+
+    /// The PUT's extra headers, all signed, so a change in transit fails the signature.
+    private func putHeaders(contentType: String, cacheControl: String?) -> [(name: String, value: String)] {
         var headers = [(name: "content-type", value: contentType)]
         if let cacheControl {
-            // Signed like every extra header, so a change in transit fails the signature.
             headers.append((name: "cache-control", value: cacheControl))
         }
         if config.sendPublicReadACL {
             headers.append((name: "x-amz-acl", value: "public-read"))
         }
-        let request = try signedRequest(method: "PUT", key: key, body: data, extraHeaders: headers)
-        let delegate = UploadProgressDelegate(onProgress: progress)
-        let (body, response) = try await session.upload(for: request, from: data, delegate: delegate)
-        let http = try Self.httpResponse(response)
+        return headers
+    }
+
+    private static func checkPut(_ body: Data, _ response: URLResponse) throws {
+        let http = try httpResponse(response)
         guard (200..<300).contains(http.statusCode) else {
-            throw Self.failure(http, bodyText: Self.excerpt(body))
+            throw failure(http, bodyText: excerpt(body))
         }
     }
 
@@ -94,16 +115,61 @@ nonisolated struct S3Destination: Destination {
         return body
     }
 
+    /// GET Object streamed to a temporary file, for a recording, which is never loaded into
+    /// memory. On 2xx the file moves to `destination`, replacing any file there (the save panel
+    /// already asked). Otherwise the error body, which is small, is read from the temporary file
+    /// for the usual error, and the temporary file is removed. Redirects are refused. The file
+    /// work runs where the caller runs, so callers on the main actor call it from a detached task.
+    func download(key: String, to destination: URL) async throws {
+        let request = try signedRequest(method: "GET", key: key, payloadHash: S3Signer.emptyPayloadHash, extraHeaders: [])
+        let (temporary, response) = try await session.download(for: request, delegate: UploadProgressDelegate())
+        // The async download leaves its file for the caller; nothing else removes it.
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let http = try Self.httpResponse(response)
+        guard (200..<300).contains(http.statusCode) else {
+            throw Self.failure(http, bodyText: Self.excerpt(Self.errorBody(at: temporary)))
+        }
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: destination.path(percentEncoded: false)) else {
+            try fileManager.moveItem(at: temporary, to: destination)
+            return
+        }
+        // `replaceItemAt` fails across volumes (EXDEV), and a Save As… target can be on any
+        // volume, so the download first moves next to it, into the replacement folder for it.
+        let staging = try fileManager.url(for: .itemReplacementDirectory, in: .userDomainMask,
+                                          appropriateFor: destination, create: true)
+        defer { try? fileManager.removeItem(at: staging) }
+        let staged = staging.appending(path: destination.lastPathComponent)
+        try fileManager.moveItem(at: temporary, to: staged)
+        _ = try fileManager.replaceItemAt(destination, withItemAt: staged)
+    }
+
+    /// The first 64 KiB of an error response saved to a file. An S3 error body is far smaller, and
+    /// `excerpt` keeps only 200 characters, so a large body from elsewhere is never read whole.
+    private static func errorBody(at url: URL) -> Data {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return Data() }
+        defer { try? handle.close() }
+        return (try? handle.read(upToCount: 64 * 1024)) ?? Data()
+    }
+
     func publicURL(for key: String) throws -> URL {
         try config.publicURL(for: key)
     }
 
-    /// Builds the request for `key` and signs it. `host` and `x-amz-content-sha256` are always
-    /// signed; `extraHeaders` are signed too. Visible for tests.
+    /// Builds the request for `key` and signs it with the hash of `body` (none for HEAD, GET and
+    /// DELETE). Visible for tests.
     func signedRequest(method: String, key: String, body: Data?,
                        extraHeaders: [(name: String, value: String)]) throws -> URLRequest {
+        try signedRequest(method: method, key: key, payloadHash: body.map(S3Signer.sha256Hex) ?? S3Signer.emptyPayloadHash,
+                          extraHeaders: extraHeaders)
+    }
+
+    /// Builds the request for `key` and signs it with a payload hash worked out already (a file's,
+    /// from `S3Signer.sha256Hex(fileAt:)`). `host` and `x-amz-content-sha256` are always signed;
+    /// `extraHeaders` are signed too. Visible for tests.
+    func signedRequest(method: String, key: String, payloadHash: String,
+                       extraHeaders: [(name: String, value: String)]) throws -> URLRequest {
         let url = try config.objectURL(for: key)
-        let payloadHash = body.map(S3Signer.sha256Hex) ?? S3Signer.emptyPayloadHash
         var headers = extraHeaders
         headers.append((name: "host", value: config.hostHeader(for: url)))
         headers.append((name: "x-amz-content-sha256", value: payloadHash))

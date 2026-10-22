@@ -181,6 +181,33 @@ nonisolated enum S3Signer {
         SHA256.hash(data: data).map { byteHex($0) }.joined()
     }
 
+    /// The size of each read when hashing a file: 4 MiB.
+    static let fileHashChunkSize = 4 * 1024 * 1024
+
+    /// SHA-256 of a file's contents, read in `fileHashChunkSize` pieces into one reusable buffer and
+    /// fed to an incremental hash, so a recording is never in memory whole. `@concurrent`, so it
+    /// never runs on the upload queue's actor. It checks for cancellation before every read, so a
+    /// Delete during the hash stops it there.
+    @concurrent
+    static func sha256Hex(fileAt url: URL) async throws -> String {
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        var hasher = SHA256()
+        let buffer = UnsafeMutableRawBufferPointer.allocate(byteCount: fileHashChunkSize, alignment: 1)
+        defer { buffer.deallocate() }
+        while true {
+            try Task.checkCancellation()
+            let count = Darwin.read(handle.fileDescriptor, buffer.baseAddress, buffer.count)
+            if count < 0 {
+                if errno == EINTR { continue }
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
+            if count == 0 { break }
+            hasher.update(bufferPointer: UnsafeRawBufferPointer(rebasing: buffer[..<count]))
+        }
+        return hasher.finalize().map { byteHex($0) }.joined()
+    }
+
     static func signingKey(secret: String, dateStamp: String, region: String, service: String) -> SymmetricKey {
         var key = SymmetricKey(data: Data("AWS4\(secret)".utf8))
         for component in [dateStamp, region, service, "aws4_request"] {

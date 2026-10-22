@@ -67,7 +67,7 @@ nonisolated enum ThumbnailMaker {
 
     /// Decodes PNG bytes into a thumbnail through ImageIO. Used for records from before
     /// thumbnails existed and for the larger hover preview; the bytes come from
-    /// `AppCoordinator.readLocalFile(of:)`, which holds the save folder's security scope, so there
+    /// `SaveLocation.readScoped(_:folder:)`, which holds the save folder's security scope, so there
     /// is no variant that opens a URL itself.
     static func thumbnail(fromPNGData data: Data, maxSide: Int = maxSide) -> CGImage? {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }

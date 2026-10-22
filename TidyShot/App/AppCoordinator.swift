@@ -784,7 +784,7 @@ final class AppCoordinator {
         showOverlay(for: record, image: image.image, scale: image.scale, captureDisplayID: captureDisplayID)
 
         if let destination {
-            startUpload(recordID: record.id, data: png, destination: destination)
+            startUpload(recordID: record.id, payload: .data(png), destination: destination)
         } else if action != .uploadOnly, settings.showNotification {
             // Save mode, or upload mode with no destination (as in Phase 2): the file was saved.
             notifier.notifySaved(fileURL: fileURL)
@@ -1008,11 +1008,12 @@ final class AppCoordinator {
         return UploadLane(queue: queue, location: location, keyTemplate: keyTemplate)
     }
 
-    /// Enqueues `data` for `recordID`. `destination` is only used when the queue has to be
-    /// created (first upload, or after the Upload tab was saved); callers read it once. With
-    /// `fixedKey` the job PUTs that exact key with `Cache-Control: no-cache` and draws no counter
-    /// (an editor replace, or a retry of one); otherwise the key is named from the template.
-    private func startUpload(recordID: UUID, data: Data, destination: S3Destination, fixedKey: String? = nil) {
+    /// Enqueues `payload` for `recordID`, with the content type and extension of the record's
+    /// media kind. `destination` is only used when the queue has to be created (first upload, or
+    /// after the Upload tab was saved); callers read it once. With `fixedKey` the job PUTs that
+    /// exact key with `Cache-Control: no-cache` and draws no counter (an editor replace, or a retry
+    /// of one); otherwise the key is named from the template. Clop optimises `.data` only.
+    private func startUpload(recordID: UUID, payload: UploadPayload, destination: S3Destination, fixedKey: String? = nil) {
         // Look the record up before marking it uploading, so a missing record never leaves an
         // id in `uploadingIDs` (and the menu bar icon spinning) with no job to clear it.
         guard let record = history.record(id: recordID) else { return }
@@ -1029,18 +1030,19 @@ final class AppCoordinator {
         // set up, and every retry, get a counter drawn when their upload starts. The date stays
         // the capture's own, so a retried upload lands in the capture's date folder. Drawn before
         // Clop runs, so counters follow the order uploads start.
-        let makeJob: (Data) -> UploadJob
+        let kind = record.mediaKind
+        let makeJob: (UploadPayload) -> UploadJob
         if let fixedKey {
-            makeJob = { UploadJob(id: recordID, data: $0, contentType: "image/png", fileExtension: "png",
+            makeJob = { UploadJob(id: recordID, payload: $0, contentType: kind.contentType, fileExtension: kind.fileExtension,
                                   fixedKey: fixedKey, cacheControl: "no-cache") }
         } else {
             let counter = lane.keyTemplate.contains("{counter}") ? settings.nextCounter() : 0
             let naming = TemplateContext(date: record.timestamp, counter: counter)
-            makeJob = { UploadJob(id: recordID, data: $0, contentType: "image/png", fileExtension: "png",
+            makeJob = { UploadJob(id: recordID, payload: $0, contentType: kind.contentType, fileExtension: kind.fileExtension,
                                   naming: naming) }
         }
-        guard settings.optimiseWithClop, clopIsRunning() else {
-            Task { await lane.queue.enqueue(makeJob(data)) }
+        guard case .data(let data) = payload, settings.optimiseWithClop, clopIsRunning() else {
+            Task { await lane.queue.enqueue(makeJob(payload)) }
             return
         }
         // Clop rewrites a throwaway copy: the save-folder file, the pending file and the editor's
@@ -1064,7 +1066,7 @@ final class AppCoordinator {
                 uploadingIDs.remove(recordID)
                 return
             }
-            await lane.queue.enqueue(makeJob(bytes))
+            await lane.queue.enqueue(makeJob(.data(bytes)))
         }
     }
 
@@ -1114,14 +1116,14 @@ final class AppCoordinator {
         }
     }
 
-    /// Reads the record's file and starts its upload with `destination`. A record whose delete
+    /// Starts the record's upload again from its file with `destination`. A record whose delete
     /// is in progress is never re-enqueued, so a retry cannot re-upload what Delete is removing.
     /// An interrupted or failed replace re-PUTs its own key, so its URL stays.
     private func retry(recordID: UUID, destination: S3Destination) {
         guard !deletingIDs.contains(recordID), let record = history.record(id: recordID) else { return }
-        let data: Data
+        let payload: UploadPayload
         do {
-            data = try readLocalFile(of: record)
+            payload = try uploadPayload(for: record)
         } catch {
             markFailed(recordID, message: UploadError.fileUnreadable(record.fileURL?.lastPathComponent ?? "no local file").localizedDescription)
             return
@@ -1135,17 +1137,29 @@ final class AppCoordinator {
             history.update(id: recordID) { $0 = started }
         }
         if case .fixed(let key) = policy {
-            startUpload(recordID: recordID, data: data, destination: destination, fixedKey: key)
+            startUpload(recordID: recordID, payload: payload, destination: destination, fixedKey: key)
         } else {
-            startUpload(recordID: recordID, data: data, destination: destination)
+            startUpload(recordID: recordID, payload: payload, destination: destination)
         }
     }
 
-    /// The record's PNG: straight from the container for a temporary file, through the save
-    /// folder's security scope otherwise. Throws when the record has no file any more.
-    func readLocalFile(of record: CaptureRecord) throws -> Data {
-        guard let fileURL = record.fileURL else { throw UploadError.fileUnreadable("no local file") }
-        return record.fileIsTemporary ? try Data(contentsOf: fileURL) : try saveLocation.read(contentsOf: fileURL)
+    /// What an upload of the record sends. An image's PNG is read into memory: straight from the
+    /// container for a temporary file, through the save folder's security scope otherwise. A video
+    /// is never read here: it streams from its file, once the file is found (holding the folder's
+    /// scope to look) and a save-folder file is inside the current folder. Throws when the record
+    /// has no file it can reach.
+    func uploadPayload(for record: CaptureRecord) throws -> UploadPayload {
+        switch record.mediaKind {
+        case .image:
+            guard let fileURL = record.fileURL else { throw UploadError.fileUnreadable("no local file") }
+            return .data(record.fileIsTemporary ? try Data(contentsOf: fileURL) : try saveLocation.read(contentsOf: fileURL))
+        case .video:
+            return try UploadPayload.video(for: record, saveFolder: saveLocation.currentURL) { url, folder in
+                let accessing = folder?.startAccessingSecurityScopedResource() ?? false
+                defer { if accessing { folder?.stopAccessingSecurityScopedResource() } }
+                return FileManager.default.fileExists(atPath: url.path(percentEncoded: false))
+            }
+        }
     }
 
     /// Copies the link (`linkURL`, which also covers an editor upload that is running or was
@@ -2265,9 +2279,9 @@ final class AppCoordinator {
         refreshOverlay(for: recordID)
         // 7. Through the live lane: uploadingIDs, progress, cancel, Delete and the menu bar icon.
         if case .replace(let key) = plan {
-            startUpload(recordID: recordID, data: png, destination: destination, fixedKey: key)
+            startUpload(recordID: recordID, payload: .data(png), destination: destination, fixedKey: key)
         } else {
-            startUpload(recordID: recordID, data: png, destination: destination)
+            startUpload(recordID: recordID, payload: .data(png), destination: destination)
         }
         return EditorUploadOutcome(wroteLocally: true, enqueued: true)
     }

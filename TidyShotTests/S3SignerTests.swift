@@ -114,4 +114,79 @@ struct S3SignerTests {
         #expect(result.canonical == "host:h\nmy-header1:value2,value1\nx:\"a b c\"\n")
         #expect(result.signed == "host;my-header1;x")
     }
+
+    // MARK: File hash
+
+    /// Writes `data` to a file in a fresh folder of its own; the caller removes the folder.
+    func makeFile(_ data: Data) throws -> URL {
+        let folder = FileManager.default.temporaryDirectory.appending(path: "S3SignerTests-\(UUID().uuidString)",
+                                                                      directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let url = folder.appending(path: "file.mp4")
+        try data.write(to: url)
+        return url
+    }
+
+    /// Bytes that differ along the file, so a chunk read twice, skipped or padded changes the hash.
+    func patterned(_ count: Int) -> Data {
+        var bytes = [UInt8](repeating: 0, count: count)
+        for index in bytes.indices {
+            bytes[index] = UInt8(truncatingIfNeeded: index &* 31 &+ index >> 12)
+        }
+        return Data(bytes)
+    }
+
+    /// Empty, one byte, exactly one 4 MiB read, and one byte into the second read.
+    @Test(arguments: [0, 1, S3Signer.fileHashChunkSize, S3Signer.fileHashChunkSize + 1])
+    func fileHashEqualsTheOneShotHash(byteCount: Int) async throws {
+        let data = patterned(byteCount)
+        let url = try makeFile(data)
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+
+        #expect(try await S3Signer.sha256Hex(fileAt: url) == S3Signer.sha256Hex(data))
+    }
+
+    @Test func fileHashChunkIsFourMebibytes() {
+        #expect(S3Signer.fileHashChunkSize == 4_194_304)
+    }
+
+    /// The hash checks for cancellation before every read, so a Delete during the hash stops it
+    /// instead of reading the rest of the file.
+    @Test func cancelledFileHashStopsBeforeReading() async throws {
+        let url = try makeFile(patterned(S3Signer.fileHashChunkSize * 2 + 1))
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+
+        let task = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await S3Signer.sha256Hex(fileAt: url)
+        }
+        await #expect(throws: CancellationError.self) { try await task.value }
+    }
+
+    @Test func missingFileHashThrows() async {
+        let missing = FileManager.default.temporaryDirectory.appending(path: "S3SignerTests-\(UUID().uuidString).mp4")
+        await #expect(throws: (any Error).self) { try await S3Signer.sha256Hex(fileAt: missing) }
+    }
+
+    /// A file's PUT is signed with the file's hash, just as the same bytes in memory are, and
+    /// `Content-Length` is neither set nor signed: URLSession sets it for a file body.
+    @Test func fileRequestCarriesTheFileHash() async throws {
+        let data = Data("hello".utf8)
+        let url = try makeFile(data)
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let config = S3DestinationConfig(endpoint: "https://s3.us-east-1.amazonaws.com", region: "us-east-1",
+                                         bucket: "snap", publicURLTemplate: "https://snap.tky.io/{key}")
+        let destination = S3Destination(config: config, credentials: credentials, now: { date })
+        let headers = [(name: "content-type", value: "video/mp4")]
+
+        let hash = try await S3Signer.sha256Hex(fileAt: url)
+        let fromFile = try destination.signedRequest(method: "PUT", key: "a.mp4", payloadHash: hash, extraHeaders: headers)
+        let fromData = try destination.signedRequest(method: "PUT", key: "a.mp4", body: data, extraHeaders: headers)
+
+        #expect(fromFile.value(forHTTPHeaderField: "x-amz-content-sha256") == hash)
+        #expect(hash == "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824")
+        #expect(fromFile.value(forHTTPHeaderField: "authorization") == fromData.value(forHTTPHeaderField: "authorization"))
+        #expect(fromFile.value(forHTTPHeaderField: "content-length") == nil)
+        #expect(fromFile.value(forHTTPHeaderField: "authorization")?.contains("content-length") == false)
+    }
 }
