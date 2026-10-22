@@ -63,6 +63,19 @@ struct VideoValidationTests {
         #expect(!facts.meetsMinimum)
     }
 
+    /// Clop rewrites its work file in place, and the second inspect uses the same URL.
+    @Test func aRewrittenFileReadsItsNewSize() async throws {
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appending(path: "rewritten.mp4")
+        try VideoFixtures.makeGarbage(at: url)
+        let first = await VideoValidation.inspect(url)
+
+        try Data("short".utf8).write(to: url)
+        let second = await VideoValidation.inspect(url)
+        #expect(first.byteCount > 5)
+        #expect(second.byteCount == 5)
+    }
+
     @Test func shortMovieIsPlayableButTooShort() async throws {
         defer { try? FileManager.default.removeItem(at: dir) }
         let url = dir.appending(path: "short.mp4")

@@ -17,7 +17,6 @@ nonisolated enum VideoFixtures {
     private static let sampleRate = 44_100
 
     /// Writes an `.mp4` of `seconds` at `width` × `height` to `url`, replacing any file there.
-    /// Frames and audio go in time order, so the writer's interleaving never stalls an input.
     @concurrent
     static func makeMP4(at url: URL, width: Int, height: Int, seconds: Double, audio: Bool) async throws {
         try? FileManager.default.removeItem(at: url)
@@ -59,23 +58,38 @@ nonisolated enum VideoFixtures {
         // The small margin keeps 0.3 s at three frames despite 0.3 × 10 not being exact.
         let frameCount = max(1, Int((seconds * Double(framesPerSecond) - 1e-9).rounded(.up)))
         let format = sound == nil ? nil : try silentFormat()
-        for frame in 0..<frameCount {
-            let time = CMTime(value: CMTimeValue(frame), timescale: CMTimeScale(framesPerSecond))
-            try await waitUntilReady(video)
-            let buffer = try pixelBuffer(from: adaptor, shade: frame)
-            guard adaptor.append(buffer, withPresentationTime: time) else {
-                throw FixtureError.appendFailed(writer.error?.localizedDescription ?? "video frame \(frame)")
-            }
-            if let sound, let format {
-                // The audio that covers this frame, cut off at `seconds`.
-                let start = frame * sampleRate / framesPerSecond
-                let end = min((frame + 1) * sampleRate / framesPerSecond, Int((seconds * Double(sampleRate)).rounded()))
-                guard end > start else { continue }
-                try await waitUntilReady(sound)
-                let samples = try silence(format: format, start: start, count: end - start)
-                guard sound.append(samples) else {
-                    throw FixtureError.appendFailed(writer.error?.localizedDescription ?? "audio at \(start)")
+        let sampleCount = sound == nil ? 0 : Int((seconds * Double(sampleRate)).rounded())
+        var frame = 0
+        var sample = 0
+        // Each input is fed whenever it is ready, a frame's worth of audio at a time. The writer
+        // holds the input that is ahead until the other catches up, so waiting on one input
+        // alone can wait forever. A writer that stops taking both throws instead of hanging.
+        let deadline = ContinuousClock.now + .seconds(30)
+        while frame < frameCount || sample < sampleCount {
+            var appended = false
+            if frame < frameCount, video.isReadyForMoreMediaData {
+                let time = CMTime(value: CMTimeValue(frame), timescale: CMTimeScale(framesPerSecond))
+                let buffer = try pixelBuffer(from: adaptor, shade: frame)
+                guard adaptor.append(buffer, withPresentationTime: time) else {
+                    throw FixtureError.appendFailed(writer.error?.localizedDescription ?? "video frame \(frame)")
                 }
+                frame += 1
+                appended = true
+            }
+            if let sound, let format, sample < sampleCount, sound.isReadyForMoreMediaData {
+                let count = min(sampleRate / framesPerSecond, sampleCount - sample)
+                let samples = try silence(format: format, start: sample, count: count)
+                guard sound.append(samples) else {
+                    throw FixtureError.appendFailed(writer.error?.localizedDescription ?? "audio at \(sample)")
+                }
+                sample += count
+                appended = true
+            }
+            if !appended {
+                guard ContinuousClock.now < deadline else {
+                    throw FixtureError.writeFailed("the writer stopped taking media at frame \(frame), sample \(sample)")
+                }
+                try await Task.sleep(for: .milliseconds(2))
             }
         }
         video.markAsFinished()
@@ -90,12 +104,6 @@ nonisolated enum VideoFixtures {
     /// Bytes that are not a movie, under an `.mp4` name.
     static func makeGarbage(at url: URL) throws {
         try Data(String(repeating: "not a movie ", count: 4_096).utf8).write(to: url)
-    }
-
-    private static func waitUntilReady(_ input: AVAssetWriterInput) async throws {
-        while !input.isReadyForMoreMediaData {
-            try await Task.sleep(for: .milliseconds(2))
-        }
     }
 
     /// A frame of one grey that changes with `shade`, so the encoder has something to encode.

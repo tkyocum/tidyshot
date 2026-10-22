@@ -22,6 +22,10 @@ nonisolated struct VideoFacts: Equatable, Sendable {
 nonisolated enum VideoValidation {
     @concurrent
     static func inspect(_ url: URL) async -> VideoFacts {
+        // A URL keeps the resource values it read, shared by its copies, so a file rewritten since
+        // (Clop rewrites its work file in place) would report its old size.
+        var url = url
+        url.removeAllCachedResourceValues()
         let byteCount = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
         let unplayable = VideoFacts(isPlayable: false, duration: 0, naturalSize: nil, videoTracks: 0, audioTracks: 0,
                                     byteCount: byteCount, meetsMinimum: false)

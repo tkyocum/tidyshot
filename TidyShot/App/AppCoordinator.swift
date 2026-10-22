@@ -65,7 +65,8 @@ final class AppCoordinator {
     /// finish against the destination they started with (their records store that location),
     /// and Delete can still cancel them.
     @ObservationIgnored private var drainingQueues: [UploadLane] = []
-    /// Optimize images with Clop (spec 2.7): one optimiser, sending to whichever Clop build runs.
+    /// Optimize images and videos with Clop (spec 2.7): one optimiser, sending to whichever Clop
+    /// build runs.
     private let clopOptimiser = ClopApp.makeOptimiser()
     /// Records whose upload waits for Clop, each with the token of the attempt that waits. Delete's
     /// cancel takes the record out, and the upload is then never enqueued; a retry started after
@@ -74,6 +75,18 @@ final class AppCoordinator {
     /// Per lane (by queue identity), the uploads still waiting for Clop or being enqueued, so a lane
     /// the Upload tab replaced is not dropped from `drainingQueues` before their jobs reach it.
     @ObservationIgnored private var clopWaitsPerLane: [ObjectIdentifier: Int] = [:]
+    /// Recordings whose upload waits for Clop, for the card's and the row's `Optimizing…`. Left
+    /// when Clop answers, and at once on Delete, removal from history and pruning.
+    private(set) var optimizingVideoIDs: Set<UUID> = []
+    /// Clop's accepted movie per record, in `tmp/Clop`. The coordinator owns it: the job uploads it
+    /// (the queue's own retries re-send it), and it is removed when the upload ends.
+    @ObservationIgnored private var clopResults: [UUID: URL] = [:]
+    /// Records with a `.file` upload waiting for Clop, queued or in flight. The `Uploading a
+    /// recording` activity is held while there is one, so idle sleep and App Nap do not stop it.
+    @ObservationIgnored private var fileUploadIDs: Set<UUID> = [] {
+        didSet { updateUploadActivity() }
+    }
+    @ObservationIgnored private var uploadActivity: (any NSObjectProtocol)?
     /// Records whose delete is in progress (alert showing or requests running): a second click
     /// shows no second alert, and a retry does not re-enqueue them.
     @ObservationIgnored private var deletingIDs: Set<UUID> = []
@@ -1012,7 +1025,8 @@ final class AppCoordinator {
     /// media kind. `destination` is only used when the queue has to be created (first upload, or
     /// after the Upload tab was saved); callers read it once. With `fixedKey` the job PUTs that
     /// exact key with `Cache-Control: no-cache` and draws no counter (an editor replace, or a retry
-    /// of one); otherwise the key is named from the template. Clop optimises `.data` only.
+    /// of one); otherwise the key is named from the template. With Clop on and running, Clop
+    /// optimises a copy first: a PNG on its image queue, a recording on its video queue.
     private func startUpload(recordID: UUID, payload: UploadPayload, destination: S3Destination, fixedKey: String? = nil) {
         // Look the record up before marking it uploading, so a missing record never leaves an
         // id in `uploadingIDs` (and the menu bar icon spinning) with no job to clear it.
@@ -1041,7 +1055,12 @@ final class AppCoordinator {
             makeJob = { UploadJob(id: recordID, payload: $0, contentType: kind.contentType, fileExtension: kind.fileExtension,
                                   naming: naming) }
         }
-        guard case .data(let data) = payload, settings.optimiseWithClop, clopIsRunning() else {
+        let isFile = if case .file = payload { true } else { false }
+        if isFile {
+            // The activity starts here, at the Clop request or at the enqueue when Clop is off.
+            fileUploadIDs.insert(recordID)
+        }
+        guard settings.optimiseWithClop, clopIsRunning() else {
             Task { await lane.queue.enqueue(makeJob(payload)) }
             return
         }
@@ -1052,21 +1071,51 @@ final class AppCoordinator {
         optimisingIDs[recordID] = token
         let laneID = ObjectIdentifier(lane.queue)
         clopWaitsPerLane[laneID, default: 0] += 1
+        if isFile {
+            optimizingVideoIDs.insert(recordID)
+        }
+        let duration = record.durationSeconds ?? 0
         Task {
             defer {
                 clopWaitsPerLane[laneID, default: 1] -= 1
                 if clopWaitsPerLane[laneID] == 0 { clopWaitsPerLane[laneID] = nil }
             }
-            let bytes = await optimisedForUpload(data)
-            // Delete cancelled the upload while Clop ran (`cancelUpload` did the bookkeeping).
-            guard optimisingIDs[recordID] == token else { return }
+            let (sent, clopResult) = await optimisedForUpload(payload, duration: duration)
+            // Delete cancelled the upload while Clop ran (`cancelUpload` did the bookkeeping), or a
+            // newer retry is waiting for Clop now. Nothing will upload this attempt's movie.
+            guard optimisingIDs[recordID] == token else {
+                if let clopResult { removeClopFile(clopResult) }
+                return
+            }
             optimisingIDs[recordID] = nil
+            optimizingVideoIDs.remove(recordID)
             guard history.record(id: recordID) != nil else {
                 // Removed from history meanwhile: nothing would point at the object.
                 uploadingIDs.remove(recordID)
+                fileUploadIDs.remove(recordID)
+                if let clopResult { removeClopFile(clopResult) }
                 return
             }
-            await lane.queue.enqueue(makeJob(.data(bytes)))
+            // Owned until the upload ends (the top of `handle(_:at:)`).
+            if let clopResult { clopResults[recordID] = clopResult }
+            await lane.queue.enqueue(makeJob(sent))
+        }
+    }
+
+    /// The upload's activity, held while `fileUploadIDs` is not empty.
+    private func updateUploadActivity() {
+        if fileUploadIDs.isEmpty, let activity = uploadActivity {
+            ProcessInfo.processInfo.endActivity(activity)
+            uploadActivity = nil
+        } else if !fileUploadIDs.isEmpty, uploadActivity == nil {
+            uploadActivity = ProcessInfo.processInfo.beginActivity(options: .userInitiated, reason: "Uploading a recording")
+        }
+    }
+
+    /// Removes a movie Clop made, detached. The launch sweep of `tmp/Clop` is the backstop.
+    private func removeClopFile(_ url: URL) {
+        Task.detached(priority: .utility) {
+            try? FileManager.default.removeItem(at: url)
         }
     }
 
@@ -1079,16 +1128,31 @@ final class AppCoordinator {
         return true
     }
 
-    /// Clop's smaller PNG, or `data` itself with one `Clop: ` log line saying why. Never fails and
-    /// never posts an error: a capture is never lost to Clop (spec 2.7).
-    private func optimisedForUpload(_ data: Data) async -> Data {
-        switch await clopOptimiser.optimisedPNG(data) {
-        case .optimised(let bytes, _, _):
-            return bytes
-        case .original(let reason):
-            NSLog("%@", "Clop: \(reason.summary), uploading the original")
-            return data
+    /// What the upload sends: Clop's smaller PNG or movie, or `payload` itself with one `Clop: ` log
+    /// line saying why. A movie Clop made is also returned as `clopResult`, for the caller to own.
+    /// Never fails and never posts an error: a capture is never lost to Clop (spec 2.7).
+    private func optimisedForUpload(_ payload: UploadPayload, duration: TimeInterval)
+        async -> (payload: UploadPayload, clopResult: URL?) {
+        let reason: ClopSkipReason
+        switch payload {
+        case .data(let data):
+            switch await clopOptimiser.optimisedPNG(data) {
+            case .optimised(let bytes, _, _):
+                return (.data(bytes), nil)
+            case .original(let skipped):
+                reason = skipped
+            }
+        case .file(let url, let scope):
+            switch await clopOptimiser.optimisedVideo(at: url, duration: duration, scope: scope) {
+            case .optimised(let result, _, _):
+                // In the container, so it needs no scope.
+                return (.file(result, scope: nil), result)
+            case .original(let skipped):
+                reason = skipped
+            }
         }
+        NSLog("%@", "Clop: \(reason.summary), uploading the original")
+        return (payload, nil)
     }
 
     /// Re-reads the file and uploads it again.
@@ -1421,9 +1485,13 @@ final class AppCoordinator {
     /// queue's `.cancelled` event has been handled, so the record holds the reserved key.
     private func cancelUpload(of recordID: UUID) async {
         guard uploadingIDs.contains(recordID) else { return }
+        // The queue's `.cancelled` event also takes it out; this covers the Clop wait.
+        defer { fileUploadIDs.remove(recordID) }
         // Still waiting for Clop: nothing is enqueued and no key is reserved, so this is the
-        // whole cancel, as the queue's `.cancelled` event would do it.
+        // whole cancel, as the queue's `.cancelled` event would do it. Clop's movie, when it comes,
+        // is removed by the waiting task, whose token no longer matches.
         if optimisingIDs.removeValue(forKey: recordID) != nil {
+            optimizingVideoIDs.remove(recordID)
             uploadingIDs.remove(recordID)
             history.update(id: recordID) { $0.uploadState = .failed(message: "Upload cancelled.") }
             refreshOverlay(for: recordID)
@@ -1447,6 +1515,8 @@ final class AppCoordinator {
         }
         thumbnails.remove(fileName: defaultName)
         history.remove(id: id)
+        optimizingVideoIDs.remove(id)
+        fileUploadIDs.remove(id)
         thumbnailProvider.forget(id)
         forgetLatestCapture(id)
         overlay.close(recordID: id, reason: .deleted)
@@ -1517,6 +1587,8 @@ final class AppCoordinator {
     /// not show yet, is never pruned.)
     private func removeFiles(ofPruned records: [CaptureRecord]) {
         for record in records {
+            optimizingVideoIDs.remove(record.id)
+            fileUploadIDs.remove(record.id)
             thumbnailProvider.forget(record.id)
             if let name = record.thumbnailFileName {
                 thumbnails.remove(fileName: name)
@@ -1550,6 +1622,18 @@ final class AppCoordinator {
 
     /// `location` is where the queue that sent `event` uploads to.
     private func handle(_ event: UploadEvent, at location: ObjectLocation) {
+        switch event {
+        case .uploaded(let id, _, _), .failed(let id, _), .cancelled(let id, _):
+            // The upload has ended, before any early return below: Clop's movie has done its
+            // job, and the activity ends with the last recording's upload.
+            if let clopResult = clopResults.removeValue(forKey: id) {
+                removeClopFile(clopResult)
+            }
+            optimizingVideoIDs.remove(id)
+            fileUploadIDs.remove(id)
+        case .started, .progress:
+            break
+        }
         switch event {
         case .started(let id, let attempt):
             if attempt > 1 {

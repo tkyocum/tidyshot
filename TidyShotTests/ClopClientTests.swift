@@ -39,6 +39,34 @@ struct ClopClientTests {
                                      "aggressiveOptimisation", "source"])
     }
 
+    static func encoded(_ request: ClopRequest) throws -> [String: Any] {
+        try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(request)) as? [String: Any])
+    }
+
+    @Test func aVideoRequestEncodesRemoveAudioFalse() throws {
+        let url = URL(fileURLWithPath: "/tmp/Clop/a.mp4")
+        let request = ClopClient.request(for: url, id: "REQ-3")
+        let object = try Self.encoded(request)
+
+        #expect(request.removeAudio == false)
+        #expect(object["removeAudio"] as? Bool == false)
+        #expect(object["id"] as? String == "REQ-3")
+        #expect(object["urls"] as? [String] == ["file:///tmp/Clop/a.mp4"])
+        #expect(object["hideFloatingResult"] as? Bool == true)
+        #expect(object["copyToClipboard"] as? Bool == false)
+        #expect(object["aggressiveOptimisation"] as? Bool == false)
+    }
+
+    @Test func anImageRequestStillOmitsRemoveAudio() throws {
+        let request = ClopClient.request(for: URL(fileURLWithPath: "/tmp/Clop/a.png"), id: "REQ-4")
+        let object = try Self.encoded(request)
+
+        #expect(request.removeAudio == nil)
+        #expect(Set(object.keys) == ["id", "urls", "originalUrls", "hideFloatingResult", "copyToClipboard",
+                                     "aggressiveOptimisation", "source"])
+        #expect(object["hideFloatingResult"] as? Bool == true)
+    }
+
     // MARK: Response (recorded from Clop 3.6.2)
 
     @Test func responseDecodesTheRecordedReply() throws {
@@ -65,6 +93,22 @@ struct ClopClientTests {
         #expect(response.convertedFrom == nil)
     }
 
+    @Test func theReplyDecoderReturnsTheFirstEntry() throws {
+        let response = try ClopClient.response(from: Self.fixture("reply-optimised.json"))
+        #expect(response.newBytes == 15_664)
+    }
+
+    /// Clop answers `[]` for a file it skips, as it did for a 5120×2880 H.264 recording.
+    @Test func anEmptyReplyThrowsBadReply() {
+        #expect(throws: ClopClientError.badReply) { try ClopClient.response(from: Data("[]".utf8)) }
+    }
+
+    @Test func aMissingOrUndecodableReplyThrowsBadReply() {
+        #expect(throws: ClopClientError.badReply) { try ClopClient.response(from: nil) }
+        #expect(throws: ClopClientError.badReply) { try ClopClient.response(from: Data()) }
+        #expect(throws: ClopClientError.badReply) { try ClopClient.response(from: Data("{\"path\":1}".utf8)) }
+    }
+
     // MARK: Port names
 
     @Test func portNameAppendsTheServiceSuffix() {
@@ -76,6 +120,12 @@ struct ClopClientTests {
         let client = ClopClient(bundleID: "com.lowtechguys.Clop")
         #expect(client.sendTimeout == 2)
         #expect(client.receiveTimeout == 30)
+    }
+
+    @Test func clientTakesAVideoReceiveTimeout() {
+        let client = ClopClient(bundleID: "com.lowtechguys.Clop", receiveTimeout: ClopOptimiser.videoTimeout(duration: 10))
+        #expect(client.sendTimeout == 2)
+        #expect(client.receiveTimeout == 90)
     }
 
     /// A port nobody listens on is reported, not hung on. This does not touch the real Clop.

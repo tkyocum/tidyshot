@@ -64,10 +64,27 @@ nonisolated struct ClopClient: Sendable {
         self.receiveTimeout = receiveTimeout
     }
 
-    func optimise(_ url: URL) throws -> ClopResponse {
-        let request = ClopRequest(id: UUID().uuidString, urls: [url], hideFloatingResult: true,
+    /// The request for one file. A video (`.mp4`) asks Clop to keep its audio, whatever Clop's own
+    /// remove-audio preference says; an image leaves `removeAudio` out.
+    static func request(for url: URL, id: String) -> ClopRequest {
+        var request = ClopRequest(id: id, urls: [url], hideFloatingResult: true,
                                   copyToClipboard: false, aggressiveOptimisation: false)
-        let body = try JSONEncoder().encode(request)
+        if url.pathExtension.lowercased() == "mp4" {
+            request.removeAudio = false
+        }
+        return request
+    }
+
+    /// The first entry of Clop's reply. No reply, an undecodable one, or an empty list (`[]`,
+    /// which Clop sends for a file it skips) throws `badReply`.
+    static func response(from reply: Data?) throws -> ClopResponse {
+        guard let reply, let responses = try? JSONDecoder().decode([ClopResponse].self, from: reply),
+              let first = responses.first else { throw ClopClientError.badReply }
+        return first
+    }
+
+    func optimise(_ url: URL) throws -> ClopResponse {
+        let body = try JSONEncoder().encode(Self.request(for: url, id: UUID().uuidString))
         guard let port = CFMessagePortCreateRemote(nil, Self.portName(bundleID: bundleID) as CFString) else {
             throw ClopClientError.portUnavailable
         }
@@ -77,9 +94,6 @@ nonisolated struct ClopClient: Sendable {
         let status = CFMessagePortSendRequest(port, Int32.random(in: 1...100_000), body as CFData,
                                               sendTimeout, receiveTimeout, CFRunLoopMode.defaultMode.rawValue, &reply)
         guard status == kCFMessagePortSuccess else { throw ClopClientError.sendFailed(status) }
-        guard let data = reply?.takeRetainedValue() as Data?,
-              let responses = try? JSONDecoder().decode([ClopResponse].self, from: data),
-              let first = responses.first else { throw ClopClientError.badReply }
-        return first
+        return try Self.response(from: reply?.takeRetainedValue() as Data?)
     }
 }
