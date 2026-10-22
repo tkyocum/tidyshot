@@ -44,10 +44,16 @@ The map of every place the app assumes an image is in `docs/superpowers/research
 - Clop's own "Remove audio on optimised videos" preference is not set in Tim's defaults, so this does not show whether `removeAudio: false` overrides it. Video requests send it anyway, and the audio-track check stays (see Clop).
 - The 79% figure above is for a silent file.
 
-**Still to probe.** These run as the first build step or as hand checks. The rules below hold whatever they show.
-- **Window changes.** Give `record-window.swift` a delegate that prints every callback and `recordedDuration`. Resize, move, minimise, hide (⌘H), change Space and close the window. Also record whether a window recording with `capturesAudio` carries other apps' sound.
-- **Sleep and lock.** Run an area recording through each of: ⌃⌘Q, a hot-corner display sleep, a system sleep, a lid close and a fast user switch. Record what `didStopWithError`, `didFailWithError` and the frame status report, and whether the file plays.
-- **Sandbox.** Every probe so far ran unsandboxed. The first build step is a spike in the sandboxed app: record 3 s of an area, with audio, to `tmp/Recording`, then record the natural size and the track types.
+**Sandbox.** Every probe above ran unsandboxed. A spike in the sandboxed Debug app (`RecordingSpike`, launched with `-RecordingSpike YES`) recorded 3 s of an 800×500 pt area centred on the 2x main display, with system audio, through `SCRecordingOutput` to the container's `tmp/Recording`. It matched the unsandboxed probes, with no new entitlement.
+- Two runs gave 3.20 s and 3.11 s files, 0.70 MB and 1.81 MB. Each had a 1600×1000 H.264 (`avc1`) `vide` track at about 29 fps and an AAC `soun` track, and played.
+- Both `soun` tracks carry sound, not silence (peaks of 4,322 and 11,734 of 32,767), so system audio reaches the file under the sandbox.
+- The output started 26 ms after `startCapture`. The finish callback arrived 14 ms after the stop was requested.
+- `NSLog`'s text shows only as `<private>` in `log show`, so the spike logs through `Logger` with public text. The app's `Recording:` lines need the same, or `log show | grep "Recording:"` finds nothing.
+- With only a recording output on the stream, ScreenCaptureKit logs `stream output NOT found. Dropping frame` at error level for every sample (246 lines in 3 s). The file is unaffected.
+
+**Still to probe.** These are hand checks in the R1 checklist, with `record-window.swift` and `record-stop-order.swift watch` (see the probes README). The rules below hold whatever they show.
+- **Window changes.** `record-window.swift` prints every callback and `recordedDuration`, and once a second whether the window is listed and on screen. Resize, move, minimise, hide (⌘H), change Space and close the window. Also record whether a window recording with `capturesAudio` carries other apps' sound.
+- **Sleep and lock.** Run `record-stop-order.swift watch` through each of: ⌃⌘Q, a hot-corner display sleep, a system sleep, a lid close and a fast user switch. Record what `didStopWithError`, `didFailWithError` and the frame status report, and whether the file plays.
 
 ## R1 behaviour
 
