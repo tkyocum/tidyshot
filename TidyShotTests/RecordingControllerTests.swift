@@ -448,8 +448,8 @@ struct RecordingControllerTests {
         world.center.post(name: NSWorkspace.sessionDidResignActiveNotification, object: nil)
         controller.cancel()
         await world.clock.advance(by: .seconds(6))
-        // A later error ends the wait but not the recording.
-        driver.send(.streamStopped("The stream stopped."))
+        // A later finish ends the wait but not the recording.
+        driver.send(.recordingFinished)
 
         let outcome = await run.value
         #expect(driver.stopCount == 1)
@@ -502,6 +502,31 @@ struct RecordingControllerTests {
         let outcome = await run.value
         #expect(outcome.kept != nil)
         #expect(outcome.notice == RecordingNotice(title: "Recording stopped", body: "The display was disconnected."))
+        controller.close()
+    }
+
+    @Test func aStreamStopAfterAnotherEndStillWaitsForTheOutputToFinish() async throws {
+        world.listedWindows = [windowID]
+        let driver = FakeRecordingDriver(log: world.log)
+        driver.finishTiming = .never
+        let chrome = FakeRecordingChrome(log: world.log)
+        let (controller, run) = await begin(windowRequest, driver: driver, chrome: chrome)
+        driver.send(.recordingStarted)
+        await world.clock.advance(by: .seconds(2))
+        world.listedWindows = []
+        await world.clock.advance(by: .seconds(1))
+        #expect(driver.stopCount == 1)
+        // The stream reports the lost window while the output is still finishing the file.
+        driver.send(.streamStopped("The window is no longer available."))
+        await world.clock.advance(by: .seconds(1))
+        #expect(world.log.fileAccesses.isEmpty)
+        #expect(controller.isRunning)
+
+        driver.send(.recordingFinished)
+        let outcome = await run.value
+        #expect(outcome.kept != nil)
+        #expect(outcome.notice == RecordingNotice(title: "Recording stopped", body: "The recorded window closed."))
+        #expect(entriesAfterFirstFrame().suffix(3) == ["recordingFinished", "inspect", "poster"])
         controller.close()
     }
 

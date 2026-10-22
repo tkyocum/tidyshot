@@ -103,8 +103,8 @@ final class RecordingController {
     private var startedAt: Date?
     /// The output finished or failed: it writes nothing more.
     private var outputEnded = false
-    /// The stop wait's one-shot waiter, armed at the end, has fired: a finish, a fail or a stream
-    /// stop since then, or an output that had already ended.
+    /// The stop wait's one-shot waiter, armed at the end, has fired: a finish or a fail since
+    /// then, or an output that had already ended.
     private var waitIsOver = false
     /// The driver's stop has returned or thrown.
     private var stopReturned = false
@@ -228,13 +228,10 @@ final class RecordingController {
             stopWaitEnded()
             end(.end(.failed(description)))
         case .streamStopped(let description):
-            // An end the stream itself caused waits for the output, which may still be
-            // finishing the file; a stop after another end is the wait's end.
-            if cause == nil {
-                end(.end(.failed(description)))
-            } else {
-                stopWaitEnded()
-            }
+            // It never ends the stop wait: the output may still be finishing the file, which
+            // cannot be opened until the finish (290 ms after the stop, in the 5K probe). The
+            // wait takes the output's finish or fail, or the timeout.
+            end(.end(.failed(description)))
         case .streamInactive, .streamActive:
             // The driver's log lines are their only trace: window loss is polled.
             break
@@ -296,7 +293,7 @@ final class RecordingController {
         endWaiter = nil
     }
 
-    /// A finish, a fail or a stream stop. Once the end has armed the waiter, it fires it.
+    /// The output's finish or fail. Once the end has armed the waiter, it fires it.
     private func stopWaitEnded() {
         guard cause != nil else { return }
         waitIsOver = true
@@ -345,9 +342,10 @@ final class RecordingController {
         }
     }
 
-    /// Calls the driver's stop, then waits until it has returned and a finish, fail or stream
-    /// stop has come since the end (the finish can come first), or until `stopTimeout` after the
-    /// stop call, so a stop that never returns cannot hold the recording. True when it timed out.
+    /// Calls the driver's stop, then waits until it has returned and the output's finish or fail
+    /// has come since the end (the finish can come first), or until `stopTimeout` after the stop
+    /// call, so a stop that never returns cannot hold the recording. A stream stop does not end
+    /// the wait. True when it timed out.
     private func stopAndWait(_ driver: any RecordingStreamDriver) async -> Bool {
         stopReturned = false
         let clock = environment.clock
