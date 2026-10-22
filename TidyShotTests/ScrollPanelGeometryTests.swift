@@ -82,6 +82,18 @@ struct ScrollPanelGeometryTests {
         #expect(ScrollPanelGeometry.height(wanted: 400, areaHeight: 150) == 220)
     }
 
+    /// A fullscreen recording's panel (design, Control panel; plan Gap 8).
+    @Test func bottomCentreSitsTwelvePointsAboveTheBottomOfTheVisibleFrame() {
+        let bar = CGSize(width: 172, height: 44)
+        // 960 - 86 across; 70 + 12 up, above the Dock.
+        #expect(ScrollPanelGeometry.bottomCentre(panelSize: bar, visibleFrame: screen)
+                == CGRect(x: 874, y: 82, width: 172, height: 44))
+        // A screen away from the origin, with an odd width: the x is rounded (2640.5 - 86).
+        let right = CGRect(x: 1920, y: 0, width: 1441, height: 875)
+        #expect(ScrollPanelGeometry.bottomCentre(panelSize: bar, visibleFrame: right)
+                == CGRect(x: 2555, y: 12, width: 172, height: 44))
+    }
+
     @Test func thePanelIs240PointsWide() {
         #expect(ScrollPanelGeometry.panelWidth == 240)
         #expect(ScrollPanelGeometry.gap == 12)

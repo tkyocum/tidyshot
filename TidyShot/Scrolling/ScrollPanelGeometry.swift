@@ -32,4 +32,11 @@ nonisolated enum ScrollPanelGeometry {
         origin.y = max(visibleFrame.minY, min(origin.y, visibleFrame.maxY - panelSize.height))
         return CGRect(origin: origin, size: panelSize)
     }
+
+    /// Centred across `visibleFrame` on a whole point, `gap` above its bottom: a fullscreen
+    /// recording's panel, which has no area to sit beside.
+    static func bottomCentre(panelSize: CGSize, visibleFrame: CGRect) -> CGRect {
+        CGRect(x: (visibleFrame.midX - panelSize.width / 2).rounded(), y: visibleFrame.minY + gap,
+               width: panelSize.width, height: panelSize.height)
+    }
 }

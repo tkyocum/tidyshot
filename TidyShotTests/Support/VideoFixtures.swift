@@ -75,6 +75,9 @@ nonisolated enum VideoFixtures {
                 }
                 frame += 1
                 appended = true
+                // Finished as soon as it is complete, so the writer stops holding the other input
+                // back to interleave with it.
+                if frame == frameCount { video.markAsFinished() }
             }
             if let sound, let format, sample < sampleCount, sound.isReadyForMoreMediaData {
                 let count = min(sampleRate / framesPerSecond, sampleCount - sample)
@@ -84,6 +87,7 @@ nonisolated enum VideoFixtures {
                 }
                 sample += count
                 appended = true
+                if sample == sampleCount { sound.markAsFinished() }
             }
             if !appended {
                 guard ContinuousClock.now < deadline else {
@@ -92,8 +96,7 @@ nonisolated enum VideoFixtures {
                 try await Task.sleep(for: .milliseconds(2))
             }
         }
-        video.markAsFinished()
-        sound?.markAsFinished()
+        if sampleCount == 0 { sound?.markAsFinished() }
         writer.endSession(atSourceTime: CMTime(seconds: seconds, preferredTimescale: 600))
         await writer.finishWriting()
         guard writer.status == .completed else {

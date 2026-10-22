@@ -1,0 +1,646 @@
+import AppKit
+import CoreGraphics
+import CoreMedia
+import Foundation
+import ScreenCaptureKit
+import Testing
+@testable import TidyShot
+
+/// One recording from the start to the outcome, on a fake driver and chrome and a clock the test
+/// moves (design, While recording, Stopping and End rule). Nothing here needs Screen Recording.
+@Suite(.timeLimit(.minutes(1)))
+struct RecordingControllerTests {
+    let world = RecordingTestWorld()
+    let display = RecordingDisplay(id: 1, frame: CGRect(x: 0, y: 0, width: 1728, height: 1117), scale: 2)
+    let options = RecordingOptions(framesPerSecond: 30, retina: true, systemAudio: false, showsCursor: true)
+    /// The recorded window's id.
+    let windowID: CGWindowID = 77
+
+    var areaRequest: RecordingRequest {
+        request(.area(CGRect(x: 100, y: 100, width: 800, height: 500), on: display))
+    }
+
+    var windowRequest: RecordingRequest {
+        request(.window(id: windowID, frame: CGRect(x: 200, y: 150, width: 1000, height: 700), scale: 2))
+    }
+
+    func request(_ source: RecordingSource) -> RecordingRequest {
+        let id = UUID()
+        return RecordingRequest(id: id, configuration: .make(source, options: options), displayID: display.id,
+                                outputURL: URL(filePath: "/private/tmp/RecordingControllerTests/Recording/\(id.uuidString).mp4"))
+    }
+
+    /// Runs `request` on a new controller with `driver` and `chrome`, and lets the start run.
+    func begin(_ request: RecordingRequest, driver: FakeRecordingDriver, chrome: FakeRecordingChrome,
+               onStarted: @escaping () -> Void = {}) async -> (RecordingController, Task<RecordingOutcome, Never>) {
+        let controller = RecordingController(environment: world.environment, makeDriver: { driver })
+        let run = Task { await controller.run(request, chrome: chrome, onStarted: onStarted) }
+        await world.clock.advance(by: .zero)
+        return (controller, run)
+    }
+
+    /// The log after the first frame.
+    func entriesAfterFirstFrame() -> [String] {
+        Array(world.log.entries.drop { $0 != "recordingStarted" }.dropFirst())
+    }
+
+    // MARK: The stop wait
+
+    @Test func aFinishBeforeStopReturnsEndsTheWait() async throws {
+        let driver = FakeRecordingDriver(log: world.log)
+        let chrome = FakeRecordingChrome(log: world.log)
+        let request = areaRequest
+        let (controller, run) = await begin(request, driver: driver, chrome: chrome)
+        driver.send(.recordingStarted)
+        await world.clock.advance(by: .seconds(3))
+        chrome.pressStop()
+
+        let outcome = await run.value
+        let recording = try #require(outcome.kept)
+        #expect(outcome.notice == nil)
+        #expect(world.log.entries == ["show", "start", "recordingStarted", "activity begun", "stop", "recordingFinished",
+                                      "stop returned", "inspect", "poster"])
+        #expect(recording.id == request.id)
+        #expect(recording.fileURL == request.outputURL)
+        #expect(recording.startedAt == world.date)
+        #expect(recording.pixelWidth == 1600)
+        #expect(recording.pixelHeight == 1000)
+        #expect(recording.duration == 10)
+        #expect(recording.poster === world.poster)
+        #expect(recording.displayID == display.id)
+        controller.close()
+    }
+
+    @Test func aFinishAfterStopReturnsEndsTheWait() async throws {
+        let driver = FakeRecordingDriver(log: world.log)
+        driver.finishTiming = .afterReturning
+        let chrome = FakeRecordingChrome(log: world.log)
+        let (controller, run) = await begin(areaRequest, driver: driver, chrome: chrome)
+        driver.send(.recordingStarted)
+        await world.clock.advance(by: .seconds(3))
+        chrome.pressStop()
+
+        let outcome = await run.value
+        #expect(outcome.kept != nil)
+        #expect(entriesAfterFirstFrame() == ["activity begun", "stop", "stop returned", "recordingFinished", "inspect", "poster"])
+        controller.close()
+    }
+
+    @Test func withNoFinishTheWaitEndsAfterFifteenSeconds() async throws {
+        let driver = FakeRecordingDriver(log: world.log)
+        driver.finishTiming = .never
+        let chrome = FakeRecordingChrome(log: world.log)
+        let (controller, run) = await begin(areaRequest, driver: driver, chrome: chrome)
+        driver.send(.recordingStarted)
+        await world.clock.advance(by: .seconds(3))
+        chrome.pressStop()
+
+        await world.clock.advance(by: .milliseconds(14_900))
+        #expect(world.log.fileAccesses.isEmpty)
+        #expect(controller.isRunning)
+        await world.clock.advance(by: .milliseconds(100))
+        let outcome = await run.value
+        // The timeout never deletes a playable file, and a Stop saves it silently.
+        #expect(outcome.kept != nil)
+        #expect(outcome.notice == nil)
+        #expect(world.log.fileAccesses == ["inspect", "poster"])
+        #expect(!controller.isRunning)
+        controller.close()
+    }
+
+    @Test func nothingTouchesTheFileBeforeTheWaitEnds() async throws {
+        let driver = FakeRecordingDriver(log: world.log)
+        driver.finishTiming = .never
+        let chrome = FakeRecordingChrome(log: world.log)
+        let (controller, run) = await begin(areaRequest, driver: driver, chrome: chrome)
+        driver.send(.recordingStarted)
+        await world.clock.advance(by: .seconds(2))
+        chrome.pressStop()
+        await world.clock.advance(by: .seconds(5))
+        #expect(driver.stopCount == 1)
+        #expect(world.log.fileAccesses.isEmpty)
+
+        driver.send(.recordingFinished)
+        let outcome = await run.value
+        #expect(outcome.kept != nil)
+        #expect(entriesAfterFirstFrame() == ["activity begun", "stop", "stop returned", "recordingFinished", "inspect", "poster"])
+        controller.close()
+    }
+
+    // MARK: The start
+
+    @Test func aStopDuringTheStartStopsTheNewStreamAndRemovesTheFile() async throws {
+        let driver = FakeRecordingDriver(log: world.log)
+        driver.holdsStart = true
+        let chrome = FakeRecordingChrome(log: world.log)
+        let (controller, run) = await begin(areaRequest, driver: driver, chrome: chrome)
+        #expect(driver.isHoldingStart)
+        chrome.pressStop()
+        #expect(driver.stopCount == 0)
+
+        driver.releaseStart()
+        let outcome = await run.value
+        #expect(driver.stopCount == 1)
+        #expect(outcome.kept == nil)
+        #expect(outcome.notice == nil)
+        // The file goes only after the wait.
+        #expect(world.log.entries == ["show", "start", "stop", "recordingFinished", "stop returned", "remove"])
+        #expect(world.activitiesBegun == 0)
+        controller.close()
+    }
+
+    @Test func aCancelDuringTheStartStopsTheNewStreamWithoutAsking() async throws {
+        let driver = FakeRecordingDriver(log: world.log)
+        driver.holdsStart = true
+        let chrome = FakeRecordingChrome(log: world.log)
+        let (controller, run) = await begin(areaRequest, driver: driver, chrome: chrome)
+        chrome.pressCancel()
+        driver.releaseStart()
+
+        let outcome = await run.value
+        #expect(driver.stopCount == 1)
+        #expect(outcome.kept == nil)
+        #expect(outcome.notice == nil)
+        #expect(world.log.fileAccesses == ["remove"])
+        #expect(!chrome.calls.contains { $0.hasPrefix("ask") })
+        controller.close()
+    }
+
+    @Test func aStartThatThrowsFailsWithItsDescriptionAndNoFile() async throws {
+        let driver = FakeRecordingDriver(log: world.log)
+        driver.startError = RecordingStartError.windowGone
+        let chrome = FakeRecordingChrome(log: world.log)
+        var startedCalls = 0
+        let (controller, run) = await begin(windowRequest, driver: driver, chrome: chrome) { startedCalls += 1 }
+
+        let outcome = await run.value
+        #expect(outcome.kept == nil)
+        #expect(outcome.notice == RecordingNotice(title: "Recording failed", body: "The window is no longer on screen."))
+        #expect(driver.stopCount == 0)
+        #expect(startedCalls == 0)
+        #expect(world.log.fileAccesses == ["remove"])
+        controller.close()
+        #expect(world.activitiesBegun == 0)
+        #expect(world.activitiesEnded == 0)
+    }
+
+    @Test func startErrorsSayWhatWentWrong() {
+        #expect(RecordingStartError.cannotHideOwnWindows.localizedDescription == "TidyShot could not hide its own windows.")
+        #expect(RecordingStartError.windowGone.localizedDescription == "The window is no longer on screen.")
+        #expect(RecordingStartError.displayGone.localizedDescription == "The display is no longer connected.")
+    }
+
+    @Test func anOutputFailureBeforeTheFirstFrameFailsWithNoFile() async throws {
+        let driver = FakeRecordingDriver(log: world.log)
+        driver.finishTiming = .never
+        let chrome = FakeRecordingChrome(log: world.log)
+        let (controller, run) = await begin(areaRequest, driver: driver, chrome: chrome)
+        driver.send(.outputFailed("The file could not be written."))
+
+        // The output is done, so the stop needs no wait; the file is removed whatever it holds.
+        let outcome = await run.value
+        #expect(outcome.kept == nil)
+        #expect(outcome.notice == RecordingNotice(title: "Recording failed", body: "The file could not be written."))
+        #expect(driver.stopCount == 1)
+        #expect(world.log.fileAccesses == ["remove"])
+        #expect(world.activitiesBegun == 0)
+        controller.close()
+    }
+
+    @Test func theDriverGetsTheChromeTheCardsAndTheDisplaysCovers() async throws {
+        world.coverWindows = [1: [90], 2: [91]]
+        let driver = FakeRecordingDriver(log: world.log)
+        let chrome = FakeRecordingChrome(log: world.log)
+        let request = areaRequest
+        let (controller, run) = await begin(request, driver: driver, chrome: chrome)
+
+        // The chrome is on screen before the driver reads the shareable content.
+        #expect(world.log.entries == ["show", "start"])
+        #expect(driver.exclusions == RecordingExclusions(chromeWindows: [41, 42], cardWindows: [7], coverWindows: [90]))
+        #expect(driver.configuration == request.configuration)
+        #expect(driver.outputURL == request.outputURL)
+        chrome.pressStop()
+        _ = await run.value
+        controller.close()
+    }
+
+    @Test func oneRunAtATime() async throws {
+        let driver = FakeRecordingDriver(log: world.log)
+        let chrome = FakeRecordingChrome(log: world.log)
+        let (controller, run) = await begin(areaRequest, driver: driver, chrome: chrome)
+        #expect(controller.isRunning)
+
+        let second = await controller.run(areaRequest, chrome: FakeRecordingChrome(log: world.log), onStarted: {})
+        #expect(second.kept == nil)
+        #expect(second.notice == nil)
+        #expect(driver.startCount == 1)
+        chrome.pressStop()
+        _ = await run.value
+        #expect(!controller.isRunning)
+        controller.close()
+    }
+
+    // MARK: While recording
+
+    @Test func elapsedStartsAtTheFirstFrameAndStartedAtIsThatMoment() async throws {
+        let driver = FakeRecordingDriver(log: world.log)
+        let chrome = FakeRecordingChrome(log: world.log)
+        var startedCalls = 0
+        let (controller, run) = await begin(areaRequest, driver: driver, chrome: chrome) { startedCalls += 1 }
+        await world.clock.advance(by: .seconds(2))
+        #expect(chrome.elapsedShown.isEmpty)
+        #expect(startedCalls == 0)
+        #expect(world.activitiesBegun == 0)
+
+        let firstFrame = Date(timeIntervalSinceReferenceDate: 800_000_042)
+        world.date = firstFrame
+        driver.send(.recordingStarted)
+        #expect(startedCalls == 1)
+        #expect(world.activitiesBegun == 1)
+        world.date = firstFrame.addingTimeInterval(60)
+        await world.clock.advance(by: .milliseconds(3_500))
+        #expect(chrome.elapsedShown == [1, 2, 3])
+        // A second start callback changes nothing.
+        driver.send(.recordingStarted)
+        #expect(startedCalls == 1)
+
+        chrome.pressStop()
+        let outcome = await run.value
+        #expect(outcome.kept?.startedAt == firstFrame)
+        controller.close()
+    }
+
+    @Test func inactiveAndActiveStreamsEndNothing() async throws {
+        let driver = FakeRecordingDriver(log: world.log)
+        let chrome = FakeRecordingChrome(log: world.log)
+        let (controller, run) = await begin(areaRequest, driver: driver, chrome: chrome)
+        driver.send(.recordingStarted)
+        driver.send(.streamInactive)
+        await world.clock.advance(by: .seconds(2))
+        driver.send(.streamActive)
+        await world.clock.advance(by: .seconds(2))
+        #expect(driver.stopCount == 0)
+
+        chrome.pressStop()
+        let outcome = await run.value
+        #expect(outcome.kept != nil)
+        #expect(outcome.notice == nil)
+        controller.close()
+    }
+
+    @Test func sleepEndsTheRecording() async throws {
+        let driver = FakeRecordingDriver(log: world.log)
+        let chrome = FakeRecordingChrome(log: world.log)
+        let (controller, run) = await begin(areaRequest, driver: driver, chrome: chrome)
+        driver.send(.recordingStarted)
+        await world.clock.advance(by: .seconds(2))
+        world.center.post(name: NSWorkspace.willSleepNotification, object: nil)
+
+        let outcome = await run.value
+        #expect(outcome.kept != nil)
+        #expect(outcome.notice == RecordingNotice(title: "Recording stopped", body: "Your Mac went to sleep."))
+        controller.close()
+    }
+
+    @Test func aUserSwitchEndsTheRecording() async throws {
+        let driver = FakeRecordingDriver(log: world.log)
+        let chrome = FakeRecordingChrome(log: world.log)
+        let (controller, run) = await begin(areaRequest, driver: driver, chrome: chrome)
+        driver.send(.recordingStarted)
+        await world.clock.advance(by: .seconds(2))
+        world.center.post(name: NSWorkspace.sessionDidResignActiveNotification, object: nil)
+
+        let outcome = await run.value
+        #expect(outcome.kept != nil)
+        #expect(outcome.notice == RecordingNotice(title: "Recording stopped", body: "Another user took over the screen."))
+        controller.close()
+    }
+
+    @Test func aWindowNoLongerListedEndsTheRecordingAtTheNextTick() async throws {
+        world.listedWindows = [windowID]
+        let driver = FakeRecordingDriver(log: world.log)
+        let chrome = FakeRecordingChrome(log: world.log)
+        let (controller, run) = await begin(windowRequest, driver: driver, chrome: chrome)
+        driver.send(.recordingStarted)
+        await world.clock.advance(by: .seconds(2))
+        world.listedWindows = []
+        await world.clock.advance(by: .milliseconds(900))
+        #expect(driver.stopCount == 0)
+        await world.clock.advance(by: .milliseconds(100))
+        #expect(driver.stopCount == 1)
+
+        let outcome = await run.value
+        #expect(outcome.kept != nil)
+        #expect(outcome.notice == RecordingNotice(title: "Recording stopped", body: "The recorded window closed."))
+        controller.close()
+    }
+
+    @Test func anAreaRecordingLooksUpNoWindow() async throws {
+        world.listedWindows = []
+        let driver = FakeRecordingDriver(log: world.log)
+        let chrome = FakeRecordingChrome(log: world.log)
+        let (controller, run) = await begin(areaRequest, driver: driver, chrome: chrome)
+        driver.send(.recordingStarted)
+        await world.clock.advance(by: .seconds(3))
+        #expect(driver.stopCount == 0)
+        chrome.pressStop()
+        _ = await run.value
+        controller.close()
+    }
+
+    @Test func underOneGigabyteAtAFiveSecondTickEndsTheRecording() async throws {
+        world.freeBytes = RecordingLimits.runningFreeBytes - 1
+        let driver = FakeRecordingDriver(log: world.log)
+        let chrome = FakeRecordingChrome(log: world.log)
+        let request = areaRequest
+        let (controller, run) = await begin(request, driver: driver, chrome: chrome)
+        driver.send(.recordingStarted)
+        await world.clock.advance(by: .seconds(4))
+        #expect(driver.stopCount == 0)
+        #expect(world.freeSpaceURLs.isEmpty)
+        await world.clock.advance(by: .seconds(1))
+        #expect(driver.stopCount == 1)
+        // The free space of tmp/Recording.
+        #expect(world.freeSpaceURLs == [request.outputURL.deletingLastPathComponent()])
+
+        let outcome = await run.value
+        #expect(outcome.kept != nil)
+        #expect(outcome.notice == RecordingNotice(title: "Recording stopped", body: "Your disk is almost full."))
+        controller.close()
+    }
+
+    @Test func enoughOrUnreadableFreeSpaceKeepsRecording() async throws {
+        world.freeBytes = RecordingLimits.runningFreeBytes
+        let driver = FakeRecordingDriver(log: world.log)
+        let chrome = FakeRecordingChrome(log: world.log)
+        let (controller, run) = await begin(areaRequest, driver: driver, chrome: chrome)
+        driver.send(.recordingStarted)
+        await world.clock.advance(by: .seconds(5))
+        world.freeBytes = nil
+        await world.clock.advance(by: .seconds(5))
+        #expect(world.freeSpaceURLs.count == 2)
+        #expect(driver.stopCount == 0)
+        chrome.pressStop()
+        _ = await run.value
+        controller.close()
+    }
+
+    // MARK: Ending
+
+    @Test func cancelUnderFiveSecondsRemovesTheFileWithoutAsking() async throws {
+        let driver = FakeRecordingDriver(log: world.log)
+        let chrome = FakeRecordingChrome(log: world.log)
+        let (controller, run) = await begin(areaRequest, driver: driver, chrome: chrome)
+        driver.send(.recordingStarted)
+        await world.clock.advance(by: .milliseconds(4_900))
+        chrome.pressCancel()
+
+        let outcome = await run.value
+        #expect(outcome.kept == nil)
+        #expect(outcome.notice == nil)
+        #expect(!chrome.calls.contains { $0.hasPrefix("ask") })
+        #expect(entriesAfterFirstFrame() == ["activity begun", "stop", "recordingFinished", "stop returned", "inspect", "remove"])
+        controller.close()
+    }
+
+    @Test func cancelFromFiveSecondsAsksAfterTheWaitAndSaveKeepsTheFileAsStopDoes() async throws {
+        let driver = FakeRecordingDriver(log: world.log)
+        let chrome = FakeRecordingChrome(log: world.log)
+        chrome.discards = false
+        let (controller, run) = await begin(areaRequest, driver: driver, chrome: chrome)
+        driver.send(.recordingStarted)
+        await world.clock.advance(by: .seconds(5))
+        chrome.pressCancel()
+
+        let outcome = await run.value
+        #expect(outcome.kept != nil)
+        #expect(outcome.notice == nil)
+        #expect(chrome.calls.contains("ask 0:05"))
+        #expect(entriesAfterFirstFrame() == ["activity begun", "stop", "recordingFinished", "stop returned", "ask", "inspect", "poster"])
+        controller.close()
+    }
+
+    @Test func cancelFromFiveSecondsWithDiscardRemovesTheFileAndPostsNothing() async throws {
+        let driver = FakeRecordingDriver(log: world.log)
+        let chrome = FakeRecordingChrome(log: world.log)
+        chrome.discards = true
+        let (controller, run) = await begin(areaRequest, driver: driver, chrome: chrome)
+        driver.send(.recordingStarted)
+        await world.clock.advance(by: .seconds(5))
+        chrome.pressCancel()
+
+        let outcome = await run.value
+        #expect(outcome.kept == nil)
+        #expect(outcome.notice == nil)
+        #expect(entriesAfterFirstFrame() == ["activity begun", "stop", "recordingFinished", "stop returned", "ask", "inspect", "remove"])
+        controller.close()
+    }
+
+    @Test func theFirstEndWins() async throws {
+        let driver = FakeRecordingDriver(log: world.log)
+        driver.finishTiming = .never
+        let chrome = FakeRecordingChrome(log: world.log)
+        let (controller, run) = await begin(areaRequest, driver: driver, chrome: chrome)
+        driver.send(.recordingStarted)
+        await world.clock.advance(by: .seconds(2))
+        chrome.pressStop()
+        world.center.post(name: NSWorkspace.willSleepNotification, object: nil)
+        world.center.post(name: NSWorkspace.sessionDidResignActiveNotification, object: nil)
+        controller.cancel()
+        await world.clock.advance(by: .seconds(6))
+        // A later error ends the wait but not the recording.
+        driver.send(.streamStopped("The stream stopped."))
+
+        let outcome = await run.value
+        #expect(driver.stopCount == 1)
+        #expect(outcome.kept != nil)
+        #expect(outcome.notice == nil)
+        #expect(!chrome.calls.contains { $0.hasPrefix("ask") })
+        controller.close()
+    }
+
+    @Test func stopIsDisabledOnceAnEndArrivesAndASecondStopDoesNothing() async throws {
+        let driver = FakeRecordingDriver(log: world.log)
+        driver.finishTiming = .never
+        let chrome = FakeRecordingChrome(log: world.log)
+        let (controller, run) = await begin(areaRequest, driver: driver, chrome: chrome)
+        driver.send(.recordingStarted)
+        await world.clock.advance(by: .seconds(2))
+        #expect(!chrome.calls.contains("stop disabled"))
+
+        world.center.post(name: NSWorkspace.willSleepNotification, object: nil)
+        await world.clock.advance(by: .zero)
+        #expect(chrome.calls.filter { $0 == "stop disabled" }.count == 1)
+        chrome.pressStop()
+        controller.stop()
+        await world.clock.advance(by: .zero)
+        #expect(driver.stopCount == 1)
+
+        driver.send(.recordingFinished)
+        let outcome = await run.value
+        #expect(outcome.notice == RecordingNotice(title: "Recording stopped", body: "Your Mac went to sleep."))
+        #expect(chrome.calls.filter { $0 == "stop disabled" }.count == 1)
+        // After the run, Stop does nothing at all.
+        controller.stop()
+        #expect(driver.stopCount == 1)
+        controller.close()
+    }
+
+    @Test func aStreamErrorWaitsForTheOutputToFinish() async throws {
+        let driver = FakeRecordingDriver(log: world.log)
+        driver.finishTiming = .never
+        let chrome = FakeRecordingChrome(log: world.log)
+        let (controller, run) = await begin(areaRequest, driver: driver, chrome: chrome)
+        driver.send(.recordingStarted)
+        await world.clock.advance(by: .seconds(2))
+        driver.send(.streamStopped("The display was disconnected."))
+        await world.clock.advance(by: .seconds(1))
+        #expect(driver.stopCount == 1)
+        #expect(world.log.fileAccesses.isEmpty)
+
+        driver.send(.recordingFinished)
+        let outcome = await run.value
+        #expect(outcome.kept != nil)
+        #expect(outcome.notice == RecordingNotice(title: "Recording stopped", body: "The display was disconnected."))
+        controller.close()
+    }
+
+    @Test func aFinishNobodyAskedForKeepsTheFileAsStopped() async throws {
+        let driver = FakeRecordingDriver(log: world.log)
+        let chrome = FakeRecordingChrome(log: world.log)
+        let (controller, run) = await begin(areaRequest, driver: driver, chrome: chrome)
+        driver.send(.recordingStarted)
+        await world.clock.advance(by: .seconds(2))
+        driver.send(.recordingFinished)
+
+        let outcome = await run.value
+        #expect(outcome.kept != nil)
+        #expect(outcome.notice == RecordingNotice(title: "Recording stopped", body: "The screen recording stream stopped."))
+        // The stream is stopped all the same.
+        #expect(driver.stopCount == 1)
+        controller.close()
+    }
+
+    @Test func anUnplayableFileAfterAStopIsRemovedAsTooShort() async throws {
+        world.facts = .unplayable
+        let driver = FakeRecordingDriver(log: world.log)
+        let chrome = FakeRecordingChrome(log: world.log)
+        let (controller, run) = await begin(areaRequest, driver: driver, chrome: chrome)
+        driver.send(.recordingStarted)
+        await world.clock.advance(by: .seconds(2))
+        chrome.pressStop()
+
+        let outcome = await run.value
+        #expect(outcome.kept == nil)
+        #expect(outcome.notice == RecordingNotice(title: "Recording failed", body: "The recording is too short."))
+        #expect(world.log.fileAccesses == ["inspect", "remove"])
+        controller.close()
+    }
+
+    // MARK: The activity and close
+
+    @Test func theActivityBeginsAtTheFirstFrameAndEndsAtClose() async throws {
+        let driver = FakeRecordingDriver(log: world.log)
+        let chrome = FakeRecordingChrome(log: world.log)
+        let (controller, run) = await begin(areaRequest, driver: driver, chrome: chrome)
+        await world.clock.advance(by: .seconds(1))
+        #expect(world.activitiesBegun == 0)
+        driver.send(.recordingStarted)
+        #expect(world.activitiesBegun == 1)
+        chrome.pressStop()
+        _ = await run.value
+        // Held until the lock is released, after the hand-off.
+        #expect(world.activitiesEnded == 0)
+        #expect(!chrome.calls.contains("close"))
+
+        controller.close()
+        #expect(world.activitiesEnded == 1)
+        #expect(chrome.calls.last == "close")
+        #expect(world.log.entries.suffix(2) == ["close", "activity ended"])
+        // Closing again changes nothing.
+        controller.close()
+        #expect(world.activitiesEnded == 1)
+    }
+
+    nonisolated enum Exit: CaseIterable, Sendable {
+        case stop, cancelUnderFiveSeconds, cancelWithSave, cancelWithDiscard, sleep, userSwitch, diskFull,
+             windowClosed, outputError, streamError, stopTimeout
+    }
+
+    @Test(arguments: Exit.allCases)
+    func theActivityStartsAndEndsOnEveryExit(_ exit: Exit) async throws {
+        world.listedWindows = [windowID]
+        let driver = FakeRecordingDriver(log: world.log)
+        let chrome = FakeRecordingChrome(log: world.log)
+        let (controller, run) = await begin(windowRequest, driver: driver, chrome: chrome)
+        driver.send(.recordingStarted)
+        await world.clock.advance(by: .seconds(exit == .cancelUnderFiveSeconds ? 2 : 6))
+        switch exit {
+        case .stop: chrome.pressStop()
+        case .cancelUnderFiveSeconds: chrome.pressCancel()
+        case .cancelWithSave:
+            chrome.discards = false
+            chrome.pressCancel()
+        case .cancelWithDiscard: chrome.pressCancel()
+        case .sleep: world.center.post(name: NSWorkspace.willSleepNotification, object: nil)
+        case .userSwitch: world.center.post(name: NSWorkspace.sessionDidResignActiveNotification, object: nil)
+        case .diskFull:
+            world.freeBytes = 0
+            await world.clock.advance(by: .seconds(5))
+        case .windowClosed:
+            world.listedWindows = []
+            await world.clock.advance(by: .seconds(1))
+        case .outputError: driver.send(.outputFailed("The file could not be written."))
+        case .streamError: driver.send(.streamStopped("The stream stopped."))
+        case .stopTimeout:
+            driver.finishTiming = .never
+            chrome.pressStop()
+            await world.clock.advance(by: RecordingLimits.stopTimeout)
+        }
+        _ = await run.value
+        #expect(world.activitiesBegun == 1)
+        controller.close()
+        #expect(world.activitiesEnded == 1)
+    }
+
+    @Test func thePanelIsA172By44Bar() {
+        #expect(RecordingPanelView.size == CGSize(width: 172, height: 44))
+    }
+
+    // MARK: The real driver's configuration
+
+    @Test func anAreaStreamTakesItsSizeSourceRectFrameRateCursorAndAudioFromTheConfiguration() {
+        let configuration = RecordingConfiguration.make(
+            .area(CGRect(x: 100, y: 100, width: 800, height: 500), on: display),
+            options: RecordingOptions(framesPerSecond: 60, retina: true, systemAudio: true, showsCursor: false))
+        let stream = ScreenRecordingDriver.streamConfiguration(configuration)
+        #expect(stream.width == 1600)
+        #expect(stream.height == 1000)
+        #expect(stream.sourceRect == CGRect(x: 100, y: 100, width: 800, height: 500))
+        #expect(stream.minimumFrameInterval == CMTime(value: 1, timescale: 60))
+        #expect(!stream.showsCursor)
+        #expect(stream.capturesAudio)
+        #expect(stream.excludesCurrentProcessAudio)
+        #expect(!stream.scalesToFit)
+        #expect(stream.preservesAspectRatio)
+    }
+
+    @Test func aWindowStreamIgnoresTheShadowAndScalesToFit() {
+        let stream = ScreenRecordingDriver.streamConfiguration(windowRequest.configuration)
+        #expect(stream.width == 2000)
+        #expect(stream.height == 1400)
+        #expect(stream.ignoreShadowsSingleWindow)
+        #expect(stream.scalesToFit)
+        #expect(stream.preservesAspectRatio)
+        #expect(stream.minimumFrameInterval == CMTime(value: 1, timescale: 30))
+        #expect(!stream.capturesAudio)
+    }
+
+    @Test func theOutputIsAnH264MP4AtTheRequestedURL() {
+        let url = areaRequest.outputURL
+        let output = ScreenRecordingDriver.outputConfiguration(url)
+        #expect(output.outputURL == url)
+        #expect(output.outputFileType == .mp4)
+        #expect(output.videoCodecType == .h264)
+    }
+}

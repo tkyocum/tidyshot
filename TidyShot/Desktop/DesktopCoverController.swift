@@ -32,6 +32,12 @@ final class DesktopCoverController {
     /// Whether `Hide Desktop Icons` is on until turned off.
     var isPersistent: Bool { reasons.active.contains(.persistent) }
 
+    /// The covers on screen by display, for a recording's filter: they are TidyShot windows the
+    /// recording keeps in the picture.
+    var windowNumbers: [CGDirectDisplayID: CGWindowID] {
+        panels.compactMapValues { $0.isVisible && $0.windowNumber > 0 ? CGWindowID($0.windowNumber) : nil }
+    }
+
     /// Adds `reason`. When the covers were not already up, or a screen has none, captures the
     /// wallpapers, orders the panels front and returns once a capture would see them.
     func show(for reason: DesktopCoverReasons.Reason) async {
