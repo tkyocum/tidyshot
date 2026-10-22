@@ -31,6 +31,8 @@ extension EditorWindowController: NSToolbarDelegate, NSToolbarItemValidation {
         .tools, .space, .color, .toolOptions, .background, .flexibleSpace, .zoom, .copyImage, .save, .upload,
     ]
     private static let zoomPopUpWidth: CGFloat = 84
+    /// Each tool segment's width before the toolbar's padding; the toolbar draws them 35 pt apart.
+    private static let toolSegmentWidth: CGFloat = 28
 
     /// The narrowest content width that shows every item of `itemIdentifiers`: the window buttons
     /// and the title measured from the window, the zoom pop-up at its fixed width, the tools'
@@ -248,15 +250,17 @@ extension EditorWindowController: NSToolbarDelegate, NSToolbarItemValidation {
     }
 
     /// One segment per tool in `EditorTool.toolbarOrder`, each with its symbol, accessibility
-    /// title and tool tip ("Redact (D)").
-    static func makeToolsControl(selected: EditorTool) -> NSSegmentedControl {
+    /// title and tool tip ("Redact (D)"), all `toolSegmentWidth` wide so the tips line up.
+    static func makeToolsControl(selected: EditorTool) -> ToolSegmentedControl {
         let tools = EditorTool.toolbarOrder
-        let control = NSSegmentedControl(
-            images: tools.map { NSImage(systemSymbolName: $0.symbolName, accessibilityDescription: $0.title) ?? NSImage() },
-            trackingMode: .selectOne, target: nil, action: nil)
+        let control = ToolSegmentedControl()
+        control.trackingMode = .selectOne
+        control.segmentCount = tools.count
         for (index, tool) in tools.enumerated() {
-            control.setToolTip(tool.tooltip, forSegment: index)
+            control.setImage(NSImage(systemSymbolName: tool.symbolName, accessibilityDescription: tool.title), forSegment: index)
+            control.setWidth(Self.toolSegmentWidth, forSegment: index)
         }
+        control.segmentToolTips = tools.map(\.tooltip)
         control.selectedSegment = tools.firstIndex(of: selected) ?? 0
         control.sizeToFit()
         return control
