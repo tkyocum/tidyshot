@@ -33,8 +33,8 @@ extension EditorWindowController: NSToolbarDelegate, NSToolbarItemValidation {
     private static let zoomPopUpWidth: CGFloat = 84
 
     /// The narrowest content width that shows every item of `itemIdentifiers`: the window buttons
-    /// and the title measured from the window, the zoom pop-up at its fixed width, and the items
-    /// AppKit draws itself (one segment per tool in `EditorTool.toolbarOrder`; Colour, Options,
+    /// and the title measured from the window, the zoom pop-up at its fixed width, the tools'
+    /// segmented control at its fitting width, and the items AppKit draws itself (Colour, Options,
     /// Background, Copy and Save; the prominent Upload; the fixed space) from
     /// `EditorWindowGeometry.ToolbarMetrics`.
     func minimumToolbarContentWidth() -> CGFloat {
@@ -43,11 +43,13 @@ extension EditorWindowController: NSToolbarDelegate, NSToolbarItemValidation {
             .compactMap { window.standardWindowButton($0)?.frame.maxX }.max() ?? 0
         let windowButtonsMaxX = measured > 0 ? measured : EditorWindowGeometry.ToolbarMetrics.windowButtons
         let titleWidth = (window.title as NSString).size(withAttributes: [.font: NSFont.titleBarFont(ofSize: 0)]).width
+        // The tools are a segmented control of our own, so their width is measured, not estimated.
+        let toolsWidth = (toolbarItem(.tools)?.view ?? Self.makeToolsControl(selected: model.tool)).fittingSize.width
         let width = EditorWindowGeometry.toolbarWidth(
-            windowButtonsMaxX: windowButtonsMaxX, titleWidth: titleWidth, toolSegments: EditorTool.toolbarOrder.count,
+            windowButtonsMaxX: windowButtonsMaxX, titleWidth: titleWidth, toolSegments: 0,
             buttons: [NSToolbarItem.Identifier.color, .toolOptions, .background, .copyImage, .save].count,
             prominentButtons: 1,
-            viewWidths: [Self.zoomPopUpWidth],
+            viewWidths: [Self.zoomPopUpWidth, toolsWidth],
             fixedSpaces: Self.itemIdentifiers.filter { $0 == .space }.count)
         return EditorWindowGeometry.minimumContentWidth(toolbarWidth: width)
     }
@@ -137,12 +139,12 @@ extension EditorWindowController: NSToolbarDelegate, NSToolbarItemValidation {
         reflectZoom(percent: state.percent)
     }
 
-    /// Keeps the group's selection in step when a letter key changed the tool. Setting
-    /// `selectedIndex` does not send the action, so there is no loop.
+    /// Keeps the segments in step when a letter key changed the tool. Setting `selectedSegment`
+    /// does not send the action, so there is no loop.
     func reflectTool(_ tool: EditorTool) {
-        guard let group = toolbarItem(.tools) as? NSToolbarItemGroup,
-              let index = EditorTool.toolbarOrder.firstIndex(of: tool), group.selectedIndex != index else { return }
-        group.selectedIndex = index
+        guard let control = toolbarItem(.tools)?.view as? NSSegmentedControl,
+              let index = EditorTool.toolbarOrder.firstIndex(of: tool), control.selectedSegment != index else { return }
+        control.selectedSegment = index
     }
 
     private func reflectColor(_ color: RGBA) {
@@ -165,11 +167,17 @@ extension EditorWindowController: NSToolbarDelegate, NSToolbarItemValidation {
 
     // MARK: Actions
 
-    /// The group sends this from its segments and from its collapsed menu alike.
+    /// The segments send this.
     @objc func selectToolFromToolbar(_ sender: Any?) {
-        guard let group = toolbarItem(.tools) as? NSToolbarItemGroup,
-              EditorTool.toolbarOrder.indices.contains(group.selectedIndex) else { return }
-        model.tool = EditorTool.toolbarOrder[group.selectedIndex]
+        guard let control = sender as? NSSegmentedControl,
+              EditorTool.toolbarOrder.indices.contains(control.selectedSegment) else { return }
+        model.tool = EditorTool.toolbarOrder[control.selectedSegment]
+    }
+
+    /// The menu form's items send this, with the tool's index as the tag.
+    @objc func selectToolFromMenu(_ sender: NSMenuItem) {
+        guard EditorTool.toolbarOrder.indices.contains(sender.tag) else { return }
+        model.tool = EditorTool.toolbarOrder[sender.tag]
     }
 
     @objc func showColorPalette(_ sender: Any?) {
@@ -215,18 +223,43 @@ extension EditorWindowController: NSToolbarDelegate, NSToolbarItemValidation {
 
     // MARK: Items
 
+    /// A segmented control of our own rather than an `NSToolbarItemGroup`: the group draws its
+    /// segments in a private picker view and shows no sub-item tool tips, so hovering a tool told
+    /// the user nothing. The window is never narrower than the toolbar, so the item never collapses
+    /// into its menu form.
     private func makeToolsItem() -> NSToolbarItem {
+        let control = Self.makeToolsControl(selected: model.tool)
+        control.target = self
+        control.action = #selector(selectToolFromToolbar(_:))
+        let item = NSToolbarItem(itemIdentifier: .tools)
+        item.label = "Tools"
+        item.view = control
+        let form = NSMenuItem(title: "Tools", action: nil, keyEquivalent: "")
+        let menu = NSMenu(title: "Tools")
+        for (index, tool) in EditorTool.toolbarOrder.enumerated() {
+            let entry = NSMenuItem(title: tool.title, action: #selector(selectToolFromMenu(_:)), keyEquivalent: "")
+            entry.target = self
+            entry.tag = index
+            menu.addItem(entry)
+        }
+        form.submenu = menu
+        item.menuFormRepresentation = form
+        return item
+    }
+
+    /// One segment per tool in `EditorTool.toolbarOrder`, each with its symbol, accessibility
+    /// title and tool tip ("Redact (D)").
+    static func makeToolsControl(selected: EditorTool) -> NSSegmentedControl {
         let tools = EditorTool.toolbarOrder
-        let group = NSToolbarItemGroup(
-            itemIdentifier: .tools,
+        let control = NSSegmentedControl(
             images: tools.map { NSImage(systemSymbolName: $0.symbolName, accessibilityDescription: $0.title) ?? NSImage() },
-            selectionMode: .selectOne, labels: tools.map(\.title),
-            target: self, action: #selector(selectToolFromToolbar(_:)))
-        group.label = "Tools"
-        group.controlRepresentation = .automatic  // segments, or a menu when the window is narrow
-        for (item, tool) in zip(group.subitems, tools) { item.toolTip = tool.tooltip }
-        group.selectedIndex = tools.firstIndex(of: model.tool) ?? 0
-        return group
+            trackingMode: .selectOne, target: nil, action: nil)
+        for (index, tool) in tools.enumerated() {
+            control.setToolTip(tool.tooltip, forSegment: index)
+        }
+        control.selectedSegment = tools.firstIndex(of: selected) ?? 0
+        control.sizeToFit()
+        return control
     }
 
     private func makeButtonItem(_ identifier: NSToolbarItem.Identifier, label: String, toolTip: String,
