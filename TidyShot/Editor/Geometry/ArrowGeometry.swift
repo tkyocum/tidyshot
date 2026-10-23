@@ -72,8 +72,41 @@ nonisolated enum AnnotationGeometry {
             painted = TextLayout.frame(for: box)
         case .redact(let region, _), .blur(let region, _), .pixelate(let region, _):
             painted = region.rect.standardized
+        case .spotlight(let shape):
+            // The overlay changes only inside the hole.
+            painted = shape.rect.standardized
+        case .counter(let mark):
+            // The ring sits inside the circle.
+            painted = circleBox(of: mark)
         }
         return painted.insetBy(dx: -antialiasMargin, dy: -antialiasMargin)
+    }
+
+    /// The rect the selection outline dashes around, in image pixels: an effect's or a spotlight's
+    /// rect, a stroke's outline, a text's frame, or a counter's bounding square; nil for a
+    /// rectangle, ellipse, arrow or line, whose handles show where it is. Exhaustive, so a new kind
+    /// decides here.
+    static func selectionOutline(of annotation: Annotation) -> CGRect? {
+        switch annotation {
+        case .rectangle, .ellipse, .arrow, .line:
+            nil
+        case .pencil(let stroke), .highlighter(let stroke):
+            strokeBounds(of: stroke)
+        case .text(let box):
+            TextLayout.frame(for: box)
+        case .redact(let region, _), .blur(let region, _), .pixelate(let region, _):
+            region.rect
+        case .spotlight(let shape):
+            shape.rect
+        case .counter(let mark):
+            circleBox(of: mark)
+        }
+    }
+
+    /// The square around a counter's circle.
+    private static func circleBox(of mark: CounterMark) -> CGRect {
+        let radius = mark.diameter / 2
+        return CGRect(x: mark.center.x - radius, y: mark.center.y - radius, width: mark.diameter, height: mark.diameter)
     }
 
     /// A stroke's smoothed path grown by half its width. The path is built here and dropped.

@@ -50,6 +50,8 @@ final class AppSettings {
         static let editorLineWidthPoints = "editorLineWidthPoints"
         static let editorBlurRadiusPoints = "editorBlurRadiusPoints"
         static let editorPixelBlockPoints = "editorPixelBlockPoints"
+        static let editorSpotlightEllipse = "editorSpotlightEllipse"
+        static let editorCounterDiameterPoints = "editorCounterDiameterPoints"
         static let scrollingAutoScroll = "scrollingAutoScroll"
         static let lastAreaRect = "lastAreaRect"
         static let windowShadow = "windowShadow"
@@ -95,13 +97,19 @@ final class AppSettings {
     var s3Config: S3DestinationConfig? {
         didSet { storeS3Config() }
     }
-    /// The annotation editor's last colours (sRGB, stored as JSON) and sizes in points. An editor
-    /// reads them once, as `editorDefaults`, when it opens. There is no Settings tab for them.
+    /// The annotation editor's last colours (sRGB, stored as JSON), sizes in points and spotlight
+    /// shape. An editor reads them once, as `editorDefaults`, when it opens. There is no Settings
+    /// tab for them.
     var editorStrokeColor: RGBA { didSet { storeColor(editorStrokeColor, forKey: Keys.editorStrokeColor) } }
     var editorRedactColor: RGBA { didSet { storeColor(editorRedactColor, forKey: Keys.editorRedactColor) } }
     var editorLineWidthPoints: Double { didSet { defaults.set(editorLineWidthPoints, forKey: Keys.editorLineWidthPoints) } }
     var editorBlurRadiusPoints: Double { didSet { defaults.set(editorBlurRadiusPoints, forKey: Keys.editorBlurRadiusPoints) } }
     var editorPixelBlockPoints: Double { didSet { defaults.set(editorPixelBlockPoints, forKey: Keys.editorPixelBlockPoints) } }
+    var editorSpotlightEllipse: Bool { didSet { defaults.set(editorSpotlightEllipse, forKey: Keys.editorSpotlightEllipse) } }
+    /// One of `EditorPalette.counterDiametersPoints`.
+    var editorCounterDiameterPoints: Double {
+        didSet { defaults.set(editorCounterDiameterPoints, forKey: Keys.editorCounterDiameterPoints) }
+    }
     /// The scrolling panel's Scroll automatically checkbox. Effective only with the PostEvent grant.
     var scrollingAutoScroll: Bool { didSet { defaults.set(scrollingAutoScroll, forKey: Keys.scrollingAutoScroll) } }
     /// The rect of the last area capture (Capture Area, Capture Scrolling, and the later area
@@ -160,13 +168,15 @@ final class AppSettings {
                          systemAudio: recordingSystemAudio, showsCursor: recordingShowsCursor)
     }
 
-    /// The five editor values as one value. Setting it writes all five keys.
+    /// The seven editor values as one value. Setting it writes all seven keys.
     var editorDefaults: EditorDefaults {
         get {
             EditorDefaults(strokeColor: editorStrokeColor, redactColor: editorRedactColor,
                            lineWidthPoints: CGFloat(editorLineWidthPoints),
                            blurRadiusPoints: CGFloat(editorBlurRadiusPoints),
-                           blockPoints: CGFloat(editorPixelBlockPoints))
+                           blockPoints: CGFloat(editorPixelBlockPoints),
+                           spotlightEllipse: editorSpotlightEllipse,
+                           counterDiameterPoints: CGFloat(editorCounterDiameterPoints))
         }
         set {
             editorStrokeColor = newValue.strokeColor
@@ -174,6 +184,8 @@ final class AppSettings {
             editorLineWidthPoints = Double(newValue.lineWidthPoints)
             editorBlurRadiusPoints = Double(newValue.blurRadiusPoints)
             editorPixelBlockPoints = Double(newValue.blockPoints)
+            editorSpotlightEllipse = newValue.spotlightEllipse
+            editorCounterDiameterPoints = Double(newValue.counterDiameterPoints)
         }
     }
 
@@ -197,6 +209,8 @@ final class AppSettings {
             Keys.editorLineWidthPoints: Double(EditorDefaults.standard.lineWidthPoints),
             Keys.editorBlurRadiusPoints: Double(EditorDefaults.standard.blurRadiusPoints),
             Keys.editorPixelBlockPoints: Double(EditorDefaults.standard.blockPoints),
+            Keys.editorSpotlightEllipse: EditorDefaults.standard.spotlightEllipse,
+            Keys.editorCounterDiameterPoints: Double(EditorDefaults.standard.counterDiameterPoints),
             Keys.scrollingAutoScroll: true,
             Keys.windowShadow: false,
             Keys.freezeScreen: false,
@@ -240,6 +254,10 @@ final class AppSettings {
         editorLineWidthPoints = defaults.double(forKey: Keys.editorLineWidthPoints)
         editorBlurRadiusPoints = defaults.double(forKey: Keys.editorBlurRadiusPoints)
         editorPixelBlockPoints = defaults.double(forKey: Keys.editorPixelBlockPoints)
+        editorSpotlightEllipse = defaults.bool(forKey: Keys.editorSpotlightEllipse)
+        let storedCounterDiameter = defaults.double(forKey: Keys.editorCounterDiameterPoints)
+        editorCounterDiameterPoints = EditorPalette.counterDiametersPoints.contains(CGFloat(storedCounterDiameter))
+            ? storedCounterDiameter : Double(EditorPalette.defaultCounterDiameterPoints)
         scrollingAutoScroll = defaults.bool(forKey: Keys.scrollingAutoScroll)
         // Not registered: a missing or unreadable value means no previous area.
         lastAreaRect = defaults.data(forKey: Keys.lastAreaRect).flatMap { try? JSONDecoder().decode(StoredRect.self, from: $0) }

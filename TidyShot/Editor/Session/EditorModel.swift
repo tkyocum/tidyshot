@@ -143,6 +143,10 @@ final class EditorModel: CanvasEditing {
     var highlightWidthPoints = EditorPalette.highlighterWidthPoints
     var blurRadiusPoints: CGFloat
     var blockPoints: CGFloat
+    /// The Shape option: new spotlights are ellipses when true.
+    var spotlightEllipse: Bool
+    /// The Size option: a new counter's diameter in points.
+    var counterDiameterPoints: CGFloat
     /// The size for new text, in points; keys 1 to 6 with the Text tool change it.
     var textSizePoints: CGFloat = EditorPalette.defaultTextSizePoints
     /// The text being typed, or nil. While it is set, CanvasView shows an NSTextView over it.
@@ -173,6 +177,8 @@ final class EditorModel: CanvasEditing {
         lineWidthPoints = defaults.lineWidthPoints
         blurRadiusPoints = defaults.blurRadiusPoints
         blockPoints = defaults.blockPoints
+        spotlightEllipse = defaults.spotlightEllipse
+        counterDiameterPoints = defaults.counterDiameterPoints
         // Natural size until the window controller fits the image to its view.
         transform = CanvasTransform(zoom: 1 / image.scale, offset: .zero)
         let undoManager = UndoManager()
@@ -264,6 +270,8 @@ final class EditorModel: CanvasEditing {
             return nil  // Strokes come from `makeStroke`.
         case .text:
             return nil  // Text is placed by `beginTextEditing`, not by a drag.
+        case .spotlight, .counter:
+            return nil  // Tasks 2 and 3 build them.
         }
     }
 

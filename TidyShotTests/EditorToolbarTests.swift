@@ -34,6 +34,39 @@ struct EditorToolbarTests {
         #expect(control.fittingSize.width > CGFloat(EditorTool.toolbarOrder.count) * 20)
     }
 
+    /// The window's real minimum uses the control's measured width, not 36 pt a segment. Measured
+    /// as `minimumToolbarContentWidth()` measures it, with a long title, the fourteen tools still
+    /// fit the 90 % of a 1280 pt display an editor may open at (spec 2.12, Shared).
+    @Test func measuredToolbarFitsASmallDisplay() {
+        let toolsWidth = EditorWindowController.makeToolsControl(selected: .select).fittingSize.width
+        let width = EditorWindowGeometry.toolbarWidth(
+            windowButtonsMaxX: EditorWindowGeometry.ToolbarMetrics.windowButtons, titleWidth: 230, toolSegments: 0,
+            buttons: 5, prominentButtons: 1, viewWidths: [84, toolsWidth], fixedSpaces: 1)
+        let ninetyPercent = (1280 * EditorWindowGeometry.screenFraction).rounded(.down)
+        #expect(ninetyPercent == 1152)
+        #expect(EditorWindowGeometry.minimumContentWidth(toolbarWidth: width) <= ninetyPercent)
+    }
+
+    /// What the editor opened with is what it stores back, the 4c defaults included.
+    @Test func currentDefaultsCarryEveryEditorDefault() {
+        let opened = EditorDefaults(strokeColor: RGBA(red: 0, green: 0.5, blue: 1, alpha: 1),
+                                    redactColor: RGBA(red: 1, green: 1, blue: 1, alpha: 1),
+                                    lineWidthPoints: 12, blurRadiusPoints: 20, blockPoints: 6,
+                                    spotlightEllipse: true, counterDiameterPoints: 44)
+        let context = CGContext(data: nil, width: 8, height: 8, bitsPerComponent: 8, bytesPerRow: 0,
+                                space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        let model = EditorModel(recordID: UUID(), image: ScaledImage(image: context.makeImage()!, scale: 2),
+                                renderer: FakeTileRenderer(), defaults: opened)
+        #expect(model.spotlightEllipse)
+        #expect(model.counterDiameterPoints == 44)
+        #expect(model.currentDefaults == opened)
+        model.spotlightEllipse = false
+        model.counterDiameterPoints = 24
+        #expect(model.currentDefaults.spotlightEllipse == false)
+        #expect(model.currentDefaults.counterDiameterPoints == 24)
+    }
+
     @Test func segmentRectsSplitTheBoundsEvenly() {
         let rects = ToolSegmentedControl.segmentRects(in: CGRect(x: 0, y: 0, width: 420, height: 36), count: 12)
         #expect(rects.count == 12)

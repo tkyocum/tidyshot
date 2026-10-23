@@ -33,6 +33,14 @@ struct HitTesterTests {
         .blur(Region(id: id, rect: rect), radius: 16)
     }
 
+    func spotlight(_ rect: CGRect, isEllipse: Bool = false, id: UUID = UUID()) -> Annotation {
+        .spotlight(SpotlightShape(id: id, rect: rect, isEllipse: isEllipse))
+    }
+
+    func counter(at center: CGPoint, diameter: CGFloat = 40, id: UUID = UUID()) -> Annotation {
+        .counter(CounterMark(id: id, center: center, number: 1, diameter: diameter, color: red))
+    }
+
     @Test func handlesBeforeBody() throws {
         let shape = rectangle(box)
         #expect(HitTester.handles(for: shape) == [
@@ -249,5 +257,59 @@ struct HitTesterTests {
         // Moving shifts both ends.
         #expect(original.moved(by: CGVector(dx: 5, dy: -3))
                 == line(CGPoint(x: 15, y: 7), CGPoint(x: 105, y: 7), lineWidth: 6, id: id))
+    }
+
+    /// A spotlight shows nothing inside its hole, so its body is filled, as an effect's is: its
+    /// shape grown by the tolerance, with no band. `box` is 200 by 100 about (200, 100).
+    @Test func spotlightBodyIsFilled() {
+        let tolerance: CGFloat = 2
+        let rect = spotlight(box)
+        #expect(HitTester.hit(rect, at: CGPoint(x: 200, y: 100), tolerance: tolerance) == .body)
+        #expect(HitTester.hit(rect, at: CGPoint(x: 150, y: 48.5), tolerance: tolerance) == .body)
+        #expect(HitTester.hit(rect, at: CGPoint(x: 301.5, y: 120), tolerance: tolerance) == .body)
+        #expect(HitTester.hit(rect, at: CGPoint(x: 150, y: 47), tolerance: tolerance) == nil)
+        #expect(HitTester.hit(rect, at: CGPoint(x: 296, y: 146), tolerance: tolerance) == .body)
+
+        // The ellipse's radii are 100 and 50; at x 230 its edge is at y 52.3.
+        let oval = spotlight(box, isEllipse: true)
+        #expect(HitTester.hit(oval, at: CGPoint(x: 200, y: 100), tolerance: tolerance) == .body)
+        #expect(HitTester.hit(oval, at: CGPoint(x: 230, y: 53), tolerance: tolerance) == .body)
+        #expect(HitTester.hit(oval, at: CGPoint(x: 230, y: 51), tolerance: tolerance) == .body)
+        #expect(HitTester.hit(oval, at: CGPoint(x: 230, y: 49), tolerance: tolerance) == nil)
+        // The bounding box's corner is outside the ellipse, and far enough from its handle.
+        #expect(HitTester.hit(oval, at: CGPoint(x: 296, y: 146), tolerance: tolerance) == nil)
+    }
+
+    /// A spotlight has the eight box handles of either shape and resizes like a rectangle,
+    /// keeping its id and shape.
+    @Test func spotlightHandlesResizeItsRect() {
+        for isEllipse in [false, true] {
+            let shape = spotlight(box, isEllipse: isEllipse, id: id)
+            #expect(HitTester.handles(for: shape) == HitTester.boxHandles(box))
+            #expect(HitTester.hit(shape, at: CGPoint(x: 101, y: 51), tolerance: 8) == .handle(0))
+            #expect(HitTester.hit(shape, at: CGPoint(x: 299, y: 101), tolerance: 8) == .handle(3))
+            #expect(HitTester.resized(shape, handle: 4, to: CGPoint(x: 320, y: 170), square: false)
+                    == spotlight(CGRect(x: 100, y: 50, width: 220, height: 120), isEllipse: isEllipse, id: id))
+            #expect(HitTester.resized(shape, handle: 4, to: CGPoint(x: 400, y: 100), square: true)
+                    == spotlight(CGRect(x: 100, y: 50, width: 300, height: 300), isEllipse: isEllipse, id: id))
+            #expect(HitTester.resized(shape, handle: 7, to: CGPoint(x: 60, y: 0), square: false)
+                    == spotlight(CGRect(x: 60, y: 50, width: 240, height: 100), isEllipse: isEllipse, id: id))
+        }
+    }
+
+    /// A counter's body is its circle grown by the tolerance. It has no handles: its size comes
+    /// from the Size option, so a handle drag changes nothing.
+    @Test func counterBodyIsItsCircle() {
+        let mark = counter(at: CGPoint(x: 100, y: 100), diameter: 40, id: id)
+        let tolerance: CGFloat = 2
+        #expect(HitTester.hit(mark, at: CGPoint(x: 100, y: 100), tolerance: tolerance) == .body)
+        #expect(HitTester.hit(mark, at: CGPoint(x: 121.5, y: 100), tolerance: tolerance) == .body)
+        #expect(HitTester.hit(mark, at: CGPoint(x: 100, y: 78.5), tolerance: tolerance) == .body)
+        #expect(HitTester.hit(mark, at: CGPoint(x: 123, y: 100), tolerance: tolerance) == nil)
+        // The bounding square's corner is 26.9 px from the centre, outside the circle.
+        #expect(HitTester.hit(mark, at: CGPoint(x: 119, y: 119), tolerance: tolerance) == nil)
+        #expect(HitTester.handles(for: mark).isEmpty)
+        #expect(HitTester.resized(mark, handle: 0, to: CGPoint(x: 0, y: 0), square: false) == mark)
+        #expect(HitTester.resized(mark, handle: 4, to: CGPoint(x: 300, y: 300), square: true) == mark)
     }
 }

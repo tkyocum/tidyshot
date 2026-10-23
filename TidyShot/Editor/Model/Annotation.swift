@@ -12,6 +12,23 @@ nonisolated struct ShapeBox: Codable, Equatable, Sendable {
     var lineWidth: CGFloat
 }
 
+/// A hole in the spotlight overlay: the rect, or the ellipse inscribed in it when `isEllipse`. It
+/// has no colour and no line width; the document's `spotlightDim` sets how dark the rest gets.
+nonisolated struct SpotlightShape: Codable, Equatable, Sendable {
+    let id: UUID
+    var rect: CGRect
+    var isEllipse: Bool
+}
+
+/// A numbered circle (4c). `center` and `diameter` are image pixels; `number` is the step it shows.
+nonisolated struct CounterMark: Codable, Equatable, Sendable {
+    let id: UUID
+    var center: CGPoint
+    var number: Int
+    var diameter: CGFloat
+    var color: RGBA
+}
+
 /// A two-point shape: an arrow in 4a, a line in 4b. The tail is `from`, the head `to`.
 nonisolated struct Segment: Codable, Equatable, Sendable {
     let id: UUID
@@ -49,8 +66,9 @@ nonisolated struct TextBox: Codable, Equatable, Sendable {
 }
 
 /// One edit on a capture. Effects (redact, blur, pixelate) belong to the base layer and render
-/// beneath every drawing; drawings (rectangle, ellipse, arrow, line, pencil, highlighter, text)
-/// render above them.
+/// beneath every drawing; drawings (rectangle, ellipse, arrow, line, pencil, highlighter, text,
+/// counter) render above them. Spotlights are neither: they cut holes in one overlay painted
+/// between the two.
 nonisolated enum Annotation: Identifiable, Codable, Equatable, Sendable {
     case rectangle(ShapeBox)
     case arrow(Segment)
@@ -65,6 +83,8 @@ nonisolated enum Annotation: Identifiable, Codable, Equatable, Sendable {
     /// `radius` is the Gaussian sigma.
     case blur(Region, radius: CGFloat)
     case pixelate(Region, block: CGFloat)
+    case spotlight(SpotlightShape)
+    case counter(CounterMark)
 
     var id: UUID {
         switch self {
@@ -73,23 +93,37 @@ nonisolated enum Annotation: Identifiable, Codable, Equatable, Sendable {
         case .pencil(let stroke), .highlighter(let stroke): stroke.id
         case .text(let box): box.id
         case .redact(let region, _), .blur(let region, _), .pixelate(let region, _): region.id
+        case .spotlight(let shape): shape.id
+        case .counter(let mark): mark.id
         }
     }
 
     var isEffect: Bool {
         switch self {
-        case .rectangle, .ellipse, .arrow, .line, .pencil, .highlighter, .text: false
+        case .rectangle, .ellipse, .arrow, .line, .pencil, .highlighter, .text, .spotlight, .counter: false
         case .redact, .blur, .pixelate: true
         }
     }
 
-    /// The region an effect covers; nil for a drawing.
+    /// The region an effect covers; nil for a drawing and a spotlight.
     var effectRect: CGRect? {
         switch self {
-        case .rectangle, .ellipse, .arrow, .line, .pencil, .highlighter, .text: nil
+        case .rectangle, .ellipse, .arrow, .line, .pencil, .highlighter, .text, .spotlight, .counter: nil
         case .redact(let region, _), .blur(let region, _), .pixelate(let region, _): region.rect
         }
     }
+
+    var spotlightShape: SpotlightShape? {
+        if case .spotlight(let shape) = self { return shape }
+        return nil
+    }
+
+    var counterMark: CounterMark? {
+        if case .counter(let mark) = self { return mark }
+        return nil
+    }
+
+    var isSpotlight: Bool { spotlightShape != nil }
 
     /// The name of the tool that makes this kind, for undo action names.
     var title: String {
@@ -104,10 +138,13 @@ nonisolated enum Annotation: Identifiable, Codable, Equatable, Sendable {
         case .redact: "Redact"
         case .blur: "Blur"
         case .pixelate: "Pixelate"
+        case .spotlight: "Spotlight"
+        case .counter: "Counter"
         }
     }
 
-    /// The same annotation shifted by `delta`: a rect's origin, or both ends of a segment.
+    /// The same annotation shifted by `delta`: a rect's origin, both ends of a segment, or a
+    /// counter's centre.
     func moved(by delta: CGVector) -> Annotation {
         switch self {
         case .rectangle(var box):
@@ -142,10 +179,17 @@ nonisolated enum Annotation: Identifiable, Codable, Equatable, Sendable {
         case .pixelate(var region, let block):
             region.rect = region.rect.offsetBy(dx: delta.dx, dy: delta.dy)
             return .pixelate(region, block: block)
+        case .spotlight(var shape):
+            shape.rect = shape.rect.offsetBy(dx: delta.dx, dy: delta.dy)
+            return .spotlight(shape)
+        case .counter(var mark):
+            mark.center = CGPoint(x: mark.center.x + delta.dx, y: mark.center.y + delta.dy)
+            return .counter(mark)
         }
     }
 
-    /// The same annotation under another id, for duplicate and paste. Every other field is kept.
+    /// The same annotation under another id, for duplicate and paste. Every other field is kept,
+    /// a counter's number included.
     func withID(_ id: UUID) -> Annotation {
         switch self {
         case .rectangle(let box):
@@ -168,12 +212,17 @@ nonisolated enum Annotation: Identifiable, Codable, Equatable, Sendable {
             .blur(Region(id: id, rect: region.rect), radius: radius)
         case .pixelate(let region, let block):
             .pixelate(Region(id: id, rect: region.rect), block: block)
+        case .spotlight(let shape):
+            .spotlight(SpotlightShape(id: id, rect: shape.rect, isEllipse: shape.isEllipse))
+        case .counter(let mark):
+            .counter(CounterMark(id: id, center: mark.center, number: mark.number, diameter: mark.diameter, color: mark.color))
         }
     }
 
     /// Every position and size times `factor`, around image pixel (0, 0): a paste from a capture
     /// at another scale keeps the annotation's size in points. A pixel block stays a whole pixel
-    /// count of at least 1. Unchanged for a factor of 1 or a factor that is not a positive number.
+    /// count of at least 1, and a counter keeps its number. Unchanged for a factor of 1 or a factor
+    /// that is not a positive number.
     func scaled(by factor: CGFloat) -> Annotation {
         guard factor != 1, factor > 0, factor.isFinite else { return self }
         func point(_ p: CGPoint) -> CGPoint { CGPoint(x: p.x * factor, y: p.y * factor) }
@@ -220,11 +269,19 @@ nonisolated enum Annotation: Identifiable, Codable, Equatable, Sendable {
         case .pixelate(var region, let block):
             region.rect = rect(region.rect)
             return .pixelate(region, block: max(1, (block * factor).rounded()))
+        case .spotlight(var shape):
+            shape.rect = rect(shape.rect)
+            return .spotlight(shape)
+        case .counter(var mark):
+            mark.center = point(mark.center)
+            mark.diameter *= factor
+            return .counter(mark)
         }
     }
 
-    /// The stroke colour of a shape or the fill of a redaction. A highlighter keeps its alpha of
-    /// 0.45 whatever the colour's own. Blur and pixelate have no colour and come back unchanged.
+    /// The stroke colour of a shape, the fill of a redaction or a counter. A highlighter keeps its
+    /// alpha of 0.45 whatever the colour's own. Blur, pixelate and a spotlight have no colour and
+    /// come back unchanged.
     func withColor(_ color: RGBA) -> Annotation {
         switch self {
         case .rectangle(var box):
@@ -250,13 +307,16 @@ nonisolated enum Annotation: Identifiable, Codable, Equatable, Sendable {
             return .text(box)
         case .redact(let region, _):
             return .redact(region, fill: color)
-        case .blur, .pixelate:
+        case .counter(var mark):
+            mark.color = color
+            return .counter(mark)
+        case .blur, .pixelate, .spotlight:
             return self
         }
     }
 
-    /// The line width of a shape, in image pixels. Effects and text come back unchanged: text has a
-    /// size, not a line width.
+    /// The line width of a shape, in image pixels. Effects, text, spotlights and counters come back
+    /// unchanged: text and a counter have a size, not a line width, and a spotlight has no line.
     func withLineWidth(_ width: CGFloat) -> Annotation {
         switch self {
         case .rectangle(var box):
@@ -277,7 +337,7 @@ nonisolated enum Annotation: Identifiable, Codable, Equatable, Sendable {
         case .highlighter(var stroke):
             stroke.lineWidth = width
             return .highlighter(stroke)
-        case .text, .redact, .blur, .pixelate:
+        case .text, .redact, .blur, .pixelate, .spotlight, .counter:
             return self
         }
     }
@@ -290,7 +350,7 @@ nonisolated enum Annotation: Identifiable, Codable, Equatable, Sendable {
             return .blur(region, radius: value)
         case .pixelate(let region, _):
             return .pixelate(region, block: value)
-        case .rectangle, .ellipse, .arrow, .line, .pencil, .highlighter, .text, .redact:
+        case .rectangle, .ellipse, .arrow, .line, .pencil, .highlighter, .text, .redact, .spotlight, .counter:
             return self
         }
     }

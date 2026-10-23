@@ -13,8 +13,9 @@ nonisolated enum AnnotationDrawing {
     static let outlineDash: [CGFloat] = [4, 4]
 
     /// Draws a drawing in image pixels. Effects draw nothing here, because they are tiles on the
-    /// base layer. `scale` is the capture scale, which sizes the arrow head only; the other
-    /// drawings are sized by their stored line widths.
+    /// base layer, and neither does a spotlight, which the overlay draws. `scale` is the capture
+    /// scale, which sizes the arrow head only; the other drawings are sized by their stored line
+    /// widths.
     static func draw(_ annotation: Annotation, in context: CGContext, scale: CGFloat) {
         switch annotation {
         case .rectangle(let box):
@@ -31,8 +32,10 @@ nonisolated enum AnnotationDrawing {
             drawStroke(stroke, blend: .multiply, in: context)
         case .text(let box):
             drawText(box, in: context)
-        case .redact, .blur, .pixelate:
+        case .redact, .blur, .pixelate, .spotlight:
             break
+        case .counter:
+            break  // Task 3 draws the numbered circle.
         }
     }
 
@@ -54,20 +57,21 @@ nonisolated enum AnnotationDrawing {
         context.fill(rect)
     }
 
-    /// Selection chrome in view space, so it keeps its size at every zoom. A selected effect gets
-    /// a dashed outline of its rect, white under black so it shows on any background, because a
-    /// blur has no edge of its own. A selected stroke gets the same dashed outline around its
-    /// bounds (it has no handles), and a selected text the same around its frame (text has no
-    /// handles either). Every selection then gets an 8 pt white square with a dark
-    /// border at each point of `HitTester.handles(for:)`. `scale` is the view's backing scale
-    /// factor: edges snap to device pixels so the 1 pt lines stay sharp.
+    /// Selection chrome in view space, so it keeps its size at every zoom. The dashed outline,
+    /// white under black so it shows on any background, goes around
+    /// `AnnotationGeometry.selectionOutline(of:)`: a selected effect's rect, because a blur has no
+    /// edge of its own; a stroke's bounds and a text's frame, which have no handles; a spotlight's
+    /// rect, since its outline is never drawn into the image; and a counter's bounding square, as it
+    /// has no handles either. Every selection then gets an 8 pt white square with a dark border at
+    /// each point of `HitTester.handles(for:)`. `scale` is the view's backing scale factor: edges
+    /// snap to device pixels so the 1 pt lines stay sharp.
     static func drawSelection(for annotation: Annotation, transform: CanvasTransform, scale: CGFloat, in context: CGContext) {
         let device = max(scale, 1)
         func snap(_ value: CGFloat) -> CGFloat { (value * device).rounded() / device }
         context.saveGState()
         defer { context.restoreGState() }
         context.setLineWidth(1)
-        if let rect = annotation.effectRect ?? AnnotationGeometry.strokeOutline(of: annotation) ?? textFrame(of: annotation) {
+        if let rect = AnnotationGeometry.selectionOutline(of: annotation) {
             let view = transform.viewRect(rect)
             let outline = CGRect(x: snap(view.minX), y: snap(view.minY),
                                  width: snap(view.maxX) - snap(view.minX),
@@ -141,12 +145,6 @@ nonisolated enum AnnotationDrawing {
         func snap(_ value: CGFloat) -> CGFloat { (value * device).rounded() / device }
         return CGRect(x: snap(rect.minX), y: snap(rect.minY),
                       width: snap(rect.maxX) - snap(rect.minX), height: snap(rect.maxY) - snap(rect.minY))
-    }
-
-    /// A text annotation's frame, outlined when it is selected because text has no handles.
-    private static func textFrame(of annotation: Annotation) -> CGRect? {
-        guard case .text(let box) = annotation else { return nil }
-        return TextLayout.frame(for: box)
     }
 
     /// Stroked inset by half the line width, so the stroke sits inside the rect. A box no wider

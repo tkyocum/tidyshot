@@ -25,7 +25,8 @@ struct EditorPaletteTests {
         let standard = EditorDefaults.standard
         #expect(standard == EditorDefaults(strokeColor: EditorPalette.defaultStroke,
                                            redactColor: EditorPalette.defaultRedact,
-                                           lineWidthPoints: 4, blurRadiusPoints: 8, blockPoints: 10))
+                                           lineWidthPoints: 4, blurRadiusPoints: 8, blockPoints: 10,
+                                           spotlightEllipse: false, counterDiameterPoints: 32))
         #expect(EditorPalette.defaultRedact == RGBA(red: 0, green: 0, blue: 0))
         let red = EditorPalette.defaultStroke
         #expect(red.red == 1 && red.green < 0.3 && red.blue < 0.3)
@@ -35,6 +36,12 @@ struct EditorPaletteTests {
         #expect(RedactionDefaults.blurRangePoints.contains(standard.blurRadiusPoints))
         #expect(RedactionDefaults.blockRangePoints == 6...32)
         #expect(RedactionDefaults.blockRangePoints.contains(standard.blockPoints))
+        // 4c: a rectangle spotlight and a Medium counter.
+        #expect(EditorPalette.spotlightDims == [0.3, 0.5, 0.7])
+        #expect(EditorPalette.spotlightDims.contains(AnnotationDocument.defaultSpotlightDim))
+        #expect(EditorPalette.counterDiametersPoints == [24, 32, 44])
+        #expect(EditorPalette.defaultCounterDiameterPoints == 32)
+        #expect(standard.counterDiameterPoints == EditorPalette.defaultCounterDiameterPoints)
     }
 
     @Test func blurDefaultDoublesAtRetina() {

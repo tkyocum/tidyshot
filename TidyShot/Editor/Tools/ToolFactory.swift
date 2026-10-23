@@ -6,10 +6,12 @@ import Foundation
 func makeTool(for tool: EditorTool) -> any CanvasTool {
     switch tool {
     case .select: return SelectTool()
-    case .redact, .pixelate, .blur, .rectangle, .ellipse: return RectDragTool(tool: tool)
+    case .redact, .pixelate, .blur, .spotlight, .rectangle, .ellipse: return RectDragTool(tool: tool)
     case .arrow, .line: return TwoPointTool(tool: tool)
     case .pencil, .highlighter: return PencilTool(tool: tool)
     case .text: return TextTool()
+    // Places nothing until Task 3's CounterTool: `makeAnnotation` returns nil for it.
+    case .counter: return RectDragTool(tool: tool)
     case .crop: return CropTool()
     }
 }

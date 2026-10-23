@@ -48,9 +48,10 @@ struct CropGeometryTests {
         #expect(press(CGPoint(x: 35, y: 20), tool: .select, selected: box) == .deselect)
         #expect(press(CGPoint(x: 40, y: 20), tool: .select, selected: box) == .asPressed)
         #expect(press(CGPoint(x: 40, y: 20), tool: .select) == .deselect)
-        // Text ignores it; the drawing tools begin at the edge.
+        // Text and Counter ignore it; the drawing tools and Spotlight begin at the edge.
         #expect(press(outside, tool: .text) == .ignore)
-        for tool in [EditorTool.redact, .pixelate, .blur, .rectangle, .arrow, .ellipse, .line, .pencil, .highlighter] {
+        #expect(press(outside, tool: .counter) == .ignore)
+        for tool in [EditorTool.redact, .pixelate, .blur, .spotlight, .rectangle, .arrow, .ellipse, .line, .pencil, .highlighter] {
             #expect(press(outside, tool: tool) == .clampedToEdge)
         }
         #expect(CropGeometry.clamped(outside, to: crop) == CGPoint(x: 30, y: 30))

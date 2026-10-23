@@ -17,7 +17,8 @@ extension EditorModel {
     /// This editor's colours and sizes, in the shape AppSettings stores.
     var currentDefaults: EditorDefaults {
         EditorDefaults(strokeColor: strokeColor, redactColor: redactColor, lineWidthPoints: lineWidthPoints,
-                       blurRadiusPoints: blurRadiusPoints, blockPoints: blockPoints)
+                       blurRadiusPoints: blurRadiusPoints, blockPoints: blockPoints,
+                       spotlightEllipse: spotlightEllipse, counterDiameterPoints: counterDiameterPoints)
     }
 }
 
@@ -165,6 +166,10 @@ extension EditorWindowController: NSToolbarDelegate, NSToolbarItemValidation {
         if new.lineWidthPoints != old.lineWidthPoints { settings.editorLineWidthPoints = Double(new.lineWidthPoints) }
         if new.blurRadiusPoints != old.blurRadiusPoints { settings.editorBlurRadiusPoints = Double(new.blurRadiusPoints) }
         if new.blockPoints != old.blockPoints { settings.editorPixelBlockPoints = Double(new.blockPoints) }
+        if new.spotlightEllipse != old.spotlightEllipse { settings.editorSpotlightEllipse = new.spotlightEllipse }
+        if new.counterDiameterPoints != old.counterDiameterPoints {
+            settings.editorCounterDiameterPoints = Double(new.counterDiameterPoints)
+        }
     }
 
     // MARK: Actions

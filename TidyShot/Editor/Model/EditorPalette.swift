@@ -23,7 +23,7 @@ nonisolated enum EditorPalette {
     static let lineWidthsPoints: [CGFloat] = [2, 3, 4, 6, 8, 12]
     /// Text sizes in points, on keys 1 to 6 while the Text tool is active.
     static let textSizesPoints: [CGFloat] = [12, 16, 20, 28, 40, 56]
-    /// New text starts at this size. It is not persisted: AppSettings keeps its five editor keys.
+    /// New text starts at this size. It is not persisted: AppSettings keeps its seven editor keys.
     static let defaultTextSizePoints: CGFloat = 20
     /// A highlighter stroke's alpha. Any colour picked for the highlighter keeps it, so text stays
     /// readable under the multiply.
@@ -32,6 +32,11 @@ nonisolated enum EditorPalette {
     static let defaultHighlight = yellow.withAlpha(highlighterAlpha)
     /// The highlighter's width in points; also the last stop of `lineWidthsPoints`.
     static let highlighterWidthPoints: CGFloat = 12
+    /// The Dim row's stops: the spotlight overlay's black alpha.
+    static let spotlightDims: [Double] = [0.3, 0.5, 0.7]
+    /// The Size row's counter diameters in points: Small, Medium and Large.
+    static let counterDiametersPoints: [CGFloat] = [24, 32, 44]
+    static let defaultCounterDiameterPoints: CGFloat = 32
 
     /// `color` at the highlighter's alpha.
     static func highlighterColor(from color: RGBA) -> RGBA {
@@ -74,8 +79,13 @@ nonisolated struct EditorDefaults: Equatable, Sendable {
     var lineWidthPoints: CGFloat
     var blurRadiusPoints: CGFloat
     var blockPoints: CGFloat
+    /// Spotlight's Shape: an ellipse when true, else a rectangle.
+    var spotlightEllipse: Bool
+    var counterDiameterPoints: CGFloat
 
     static let standard = EditorDefaults(strokeColor: EditorPalette.defaultStroke,
                                          redactColor: EditorPalette.defaultRedact,
-                                         lineWidthPoints: 4, blurRadiusPoints: 8, blockPoints: 10)
+                                         lineWidthPoints: 4, blurRadiusPoints: 8, blockPoints: 10,
+                                         spotlightEllipse: false,
+                                         counterDiameterPoints: EditorPalette.defaultCounterDiameterPoints)
 }

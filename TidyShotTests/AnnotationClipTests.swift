@@ -54,4 +54,28 @@ struct AnnotationClipTests {
                 == .rectangle(ShapeBox(id: id, rect: CGRect(x: 30, y: 40, width: 40, height: 20),
                                        color: red, lineWidth: 8)))
     }
+
+    /// 4c's kinds travel on the pasteboard like the others.
+    @Test func spotlightAndCounterRoundTrip() throws {
+        let kinds: [Annotation] = [
+            .spotlight(SpotlightShape(id: UUID(), rect: CGRect(x: 10, y: 20, width: 30, height: 40), isEllipse: true)),
+            .counter(CounterMark(id: UUID(), center: CGPoint(x: 50, y: 60), number: 12, diameter: 64, color: red)),
+        ]
+        for annotation in kinds {
+            let clip = AnnotationClip(annotation: annotation, scale: 2)
+            #expect(AnnotationClip.decoded(from: try #require(clip.encoded())) == clip)
+        }
+    }
+
+    /// A counter from a 2x capture pasted into a 1x editor keeps its size in points: its centre
+    /// and diameter halve, and it keeps its number (the model renumbers it when it commits).
+    @Test func counterFromATwoXClipKeepsItsPointSize() throws {
+        let id = UUID()
+        let copied = Annotation.counter(CounterMark(id: UUID(), center: CGPoint(x: 100, y: 80), number: 3, diameter: 64,
+                                                    color: red))
+        let clip = AnnotationClip(annotation: copied, scale: 2)
+        let placed = clip.placed(in: AnnotationDocument(annotations: []), imageSize: CGSize(width: 400, height: 300),
+                                 scale: 1, step: CGVector(dx: 10, dy: 10), id: id)
+        #expect(placed == .counter(CounterMark(id: id, center: CGPoint(x: 50, y: 40), number: 3, diameter: 32, color: red)))
+    }
 }
