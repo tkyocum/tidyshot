@@ -193,6 +193,25 @@ struct RecentCaptureFormattingTests {
         #expect(detail.unicodeScalars.filter { $0 == "\u{00B7}" }.count == 2)
     }
 
+    /// What the row falls back to when the whole detail would not fit: the time and the state, in
+    /// that order, with the size left out. Nil when there is no size to leave out.
+    @Test func detailWithoutSizeKeepsTheTimeAndTheState() {
+        #expect(RecentCaptureFormatting.detailWithoutSize(for: record(.uploading(fraction: 0.5), byteCount: 120_000),
+                                                          now: now, locale: english) == "2 minutes ago · Uploading")
+        #expect(RecentCaptureFormatting.detailWithoutSize(for: record(.failed(message: "offline"), byteCount: 120_000),
+                                                          now: now, locale: english) == "2 minutes ago · Upload failed")
+        var recording = video(.uploading(fraction: 0))
+        recording.byteCount = 1_200_000
+        #expect(RecentCaptureFormatting.detailWithoutSize(for: recording, now: now, locale: english, isOptimizing: true)
+                == "2 minutes ago · Optimizing…")
+        #expect(RecentCaptureFormatting.detailWithoutSize(for: record(.none, byteCount: 5_000), now: now, locale: english)
+                == "2 minutes ago")
+        for byteCount in [nil, 0] as [Int?] {
+            #expect(RecentCaptureFormatting.detailWithoutSize(for: record(.failed(message: "offline"), byteCount: byteCount),
+                                                              now: now, locale: english) == nil)
+        }
+    }
+
     /// `ByteCountFormatter`'s `.file` style: decimal units, as Finder shows them.
     @Test(.enabled(if: currentIsUSEnglish, "ByteCountFormatter writes in the current locale"))
     func sizeTextInUSEnglish() {

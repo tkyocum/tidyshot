@@ -16,20 +16,32 @@ nonisolated enum RecentCaptureFormatting {
     /// dot with a space either side, and an unknown or zero size leaves its part out.
     static func detail(for record: CaptureRecord, now: Date, locale: Locale = .current,
                        isOptimizing: Bool = false) -> String {
+        let parts = detailParts(for: record, now: now, locale: locale, isOptimizing: isOptimizing)
+        return [parts.time, parts.size, parts.state].compactMap { $0 }.joined(separator: " · ")
+    }
+
+    /// The detail with the size left out: "2 minutes ago · Upload failed". The row shows it when the
+    /// whole detail would not fit, so the size gives way before the upload state is cut off. Nil
+    /// when there is no size to leave out.
+    static func detailWithoutSize(for record: CaptureRecord, now: Date, locale: Locale = .current,
+                                  isOptimizing: Bool = false) -> String? {
+        let parts = detailParts(for: record, now: now, locale: locale, isOptimizing: isOptimizing)
+        guard parts.size != nil else { return nil }
+        return [parts.time, parts.state].compactMap { $0 }.joined(separator: " · ")
+    }
+
+    private static func detailParts(for record: CaptureRecord, now: Date, locale: Locale,
+                                    isOptimizing: Bool) -> (time: String, size: String?, state: String?) {
         let formatter = RelativeDateTimeFormatter()
         formatter.locale = locale
         formatter.unitsStyle = .full
         formatter.dateTimeStyle = .named
-        var parts = [formatter.localizedString(for: record.timestamp, relativeTo: now)]
-        if let size = sizeText(record.byteCount) {
-            parts.append(size)
+        let state: String? = switch record.uploadState {
+        case .uploading: isOptimizing ? "Optimizing…" : "Uploading"
+        case .failed: "Upload failed"
+        case .none, .uploaded: nil
         }
-        switch record.uploadState {
-        case .uploading: parts.append(isOptimizing ? "Optimizing…" : "Uploading")
-        case .failed: parts.append("Upload failed")
-        case .none, .uploaded: break
-        }
-        return parts.joined(separator: " · ")
+        return (formatter.localizedString(for: record.timestamp, relativeTo: now), sizeText(record.byteCount), state)
     }
 
     /// "999 bytes", "5 KB", "1.2 MB": `ByteCountFormatter`'s `.file` style, the decimal units Finder
