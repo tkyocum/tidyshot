@@ -22,9 +22,8 @@ struct CaptureSettingsView: View {
         RecordingSettingsLayout(format: settings.recordingFormat)
     }
 
-    private var microphones: any MicrophoneDevices {
-        AppCoordinator.shared.microphones
-    }
+    /// The same `AVCaptureDevice` reads the recorder's `microphones` makes; it holds no state.
+    private let microphones: any MicrophoneDevices = LiveMicrophoneDevices()
 
     private var storedMicrophone: MicrophoneChoice.Stored {
         MicrophoneChoice.Stored(value: settings.recordingMicrophone, name: settings.recordingMicrophoneName)

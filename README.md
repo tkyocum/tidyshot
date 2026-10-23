@@ -49,6 +49,11 @@ event" privilege that lets TidyShot send scroll-wheel events), under the same Pr
 pane. Without it you scroll yourself and everything else works. See Scrolling capture below; ad-hoc
 rebuilds lose this grant like they lose Screen Recording.
 
+Recording the microphone (Screen recording below) needs a third, optional permission: Microphone, under
+the same pane. macOS asks the first time you choose an input in Settings > Capture > Recording >
+Microphone; ad-hoc rebuilds lose this grant too. The app's sandbox gains one entitlement for it,
+`com.apple.security.device.audio-input`, and its Info.plist a usage string.
+
 ## Default shortcuts
 
 | Action | Shortcut |
@@ -205,16 +210,18 @@ icons still showing* is posted, once per launch.
 
 ## Screen recording
 
-Record Screen (⌃⇧8, or the menu bar item) records an area or a window to an H.264 `.mp4`. Select as
+Record Screen (⌃⇧8, or the menu bar item) records an area or a window to an H.264 `.mp4`, or to a
+GIF when Settings > Capture > Recording > *Format* is GIF. Select as
 for Self-Timer: drag an area at least 32 by 32 points, or click a window. Record Fullscreen (the menu
 bar item; no default shortcut, set one in Settings > Shortcuts) records the display under the
 pointer. With *Count down before recording* on, which it is by default, a 3, 2, 1 badge counts first;
 Escape, or either record shortcut, cancels the countdown. Recording needs the same Screen Recording
-permission as screenshots and nothing else.
+permission as screenshots, and Microphone access only when you choose an input (see Permissions).
 
-A small panel shows the elapsed time (orange from 5:00, with no limit), Stop and Cancel. It never
-takes focus, you can drag it, and it is not in the video. An area recording also has the dashed frame
-of a scrolling capture. Stop with the panel, with ⌃⇧8 or the fullscreen shortcut, or with *Stop
+A small panel shows the elapsed time (orange from 5:00, or from 0:30 for a GIF, with no limit), a mute
+button when the recording has sound, Stop and Cancel. A GIF's panel has a `GIF` tag where the mute
+button would be. It never takes focus, you can drag it, and it is not in the video. An area recording
+also has the dashed frame of a scrolling capture. Stop with the panel, with ⌃⇧8 or the fullscreen shortcut, or with *Stop
 Recording* at the top of the menu; the menu bar icon is a `record.circle` meanwhile. Escape is left
 to your own apps while recording. Cancel discards the recording: at once under 5 seconds, and from 5
 seconds after asking *Discard this recording?*, where Save keeps it as Stop would.
@@ -227,12 +234,53 @@ recording started; a window resized later is scaled to fit and never stretched. 
 it, or moving it to another Space, keeps the recording going; closing it ends the recording and keeps
 what was recorded.
 
-**Settings.** Settings > Capture > Recording has *Frame rate* (30 or 60 fps), *Resolution* (Retina, the
-display's own pixels, or Standard, one pixel to the point; Retina stops at 4,096 pixels on the longer
-side, so a 5K display records at 4096 by 2304), *Record system audio* (off; other apps' sound, never
-TidyShot's own), *Show cursor in recordings* (on) and *Count down before recording* (on). Settings >
-General > *Recording file name* is `Recording {date} at {time}` with the screenshot tokens; the file
-and the object get `.mp4`.
+**Settings.** Settings > Capture > Recording has *Format* (MP4, or GIF; MP4), for GIF only *GIF frame
+rate* (10, 15 or 20 fps; 15) and *GIF size* (800 px, 1280 px or Full size; 1280 px, which is the long
+side), *Frame rate* (30 or 60 fps; hidden for GIF), *Resolution* (Retina, the display's own pixels, or
+Standard, one pixel to the point; Retina stops at 4,096 pixels on the longer side, so a 5K display
+records at 4096 by 2304), *Record system audio* (off; other apps' sound, never TidyShot's own),
+*Microphone* (Off), *Show cursor in recordings* (on) and *Count down before recording* (on). With GIF
+chosen the two sound rows are greyed out, because a GIF has no sound. Settings > General > *Recording
+file name* is `Recording {date} at {time}` with the screenshot tokens; the file and the object get
+`.mp4`, or `.gif`.
+
+**Format and GIF.** A GIF recording is made as an MP4 at 30 fps with no sound, and TidyShot converts
+it after you stop, with its own GIF encoder (no library, no ImageIO, no Clop). One palette of up to 255
+colours is built from 32 frames spread across the recording, there is no dithering, so text and flat
+colours stay sharp, and each frame stores only the rectangle that changed, so a mostly static recording
+is small (a 3-second area came out smaller than its MP4) and scrolling text is not (a 10-second
+recording at 1280 px came out near 15 MB). *Full size* keeps the recording's pixels up to 4,096 px on
+the long side and can make very large files. Memory stays flat with the length, tens of megabytes at
+1280 px. While it converts, the menu shows a disabled *Making GIF… 42 %* with *Stop Making GIF* under
+it (*Making 2 GIFs…* and *Stop Making GIFs* for more), and no card or row exists until the GIF is saved.
+When it fails, is stopped, or the disk has under 1 GB free, the recording is saved as an MP4 and *GIF not
+made* says why; quitting during a conversion saves the MP4 and does not wait. After a crash the next
+launch keeps the MP4. A saved GIF is a recording like the others (the same save folder, naming, After
+capture rules, Save As… and upload, with the extension and content type from its kind), with a *GIF*
+badge, and with no Annotate, Pin, Copy Image or Trim.
+
+**Microphone and mute.** *Microphone* lists *Off*, *System Default* and each input by name; the list
+follows inputs as they are plugged in, an input that is gone stays chosen and reads *(not connected)*,
+and *Privacy Settings…* appears when macOS access is off. The microphone mixes with system audio in the
+recording's one audio track. **Held in this build:** recording from the microphone. Choosing an input
+stores the choice and asks macOS for access, but a recording does not capture the microphone yet (the
+start path waits for a sandboxed probe; see the R2 design's built notes).
+
+The mute button is shown when a recording has sound (system audio now). Muted stretches are silent in
+the saved and uploaded file: after you stop, TidyShot rewrites the audio, silencing each stretch from 0.1
+s before the press to 0.3 s after the unmute (more for a Bluetooth input), and re-encodes the audio once;
+the video is untouched. If the rewrite fails, the file is saved without sound (*Sound removed*); if that
+fails too, it is kept inside TidyShot, marked *Sound not muted*, never uploaded, copied, saved to the
+folder or dragged, and offers Open and Delete. A crash leaves a small log in `tmp/Mute` and the next
+launch applies it before recovering the file. Two limits are accepted: sound from an input whose
+real latency exceeds its lag can leak in its last moments before Unmute, and a kill in the milliseconds
+between a press and its log write recovers that press's sound.
+
+**Trim.** *Trim…* in a recording's card menu and Recent Captures row is designed (R2 design, Trim) and
+**held in this build**: its pure rules, the in-progress marker and Delete's refusal are built and
+tested, but the export, the Trim window and the menu wiring wait for a design amendment, because the
+system's re-encode preset passes H.264 at or under 3840 by 2160 through and scales larger recordings
+down. Nothing in the app shows *Trim…* yet.
 
 **After you stop.** The recording follows Settings > General > After capture, as a screenshot does:
 - *Save and copy image* moves the file into the save folder and, with *Copy image to clipboard* on,
@@ -251,11 +299,11 @@ says so; the card reads *Kept in TidyShot*, and Save As… copies it where you w
 destination set up, *Upload and copy URL* saves the recording and puts the file on the clipboard, and
 *Upload only* keeps it inside TidyShot for a Retry once a destination exists.
 
-**Cards and Recent Captures.** A recording's card and row show its first frame with a play badge and
-the length. A click opens the file in your default player (or the link, when only the upload is
-left). There is no Annotate, Pin or Copy Image for a video. *Copy File* puts the file on the
+**Cards and Recent Captures.** A recording's card and row show its first frame with a play badge (a
+GIF: *GIF*) and the length. A click opens the file in your default player (or the link, when only the
+upload is left). There is no Annotate, Pin or Copy Image for a video or a GIF. *Copy File* puts the file on the
 clipboard (for a file that is still waiting to upload, a copy that stays valid after the upload
-removes the original). Save As… copies the file, or downloads the uploaded object when no copy is
+removes the original). Save As… copies the file (a GIF offers `.gif`), or downloads the uploaded object when no copy is
 left. Drag a card to drop the file into Finder, Slack or Mail. A recording that was uploaded and has
 no local file cannot be dragged. Delete removes the file and the uploaded object, as for a
 screenshot.
@@ -271,9 +319,11 @@ macOS to finish writing the file.
 
 TidyShot logs one `Recording:` line for each stream and output callback, with the time recorded so
 far: `/usr/bin/log show --last 10m --style compact --predicate 'process == "TidyShot"' | grep "Recording:"`
-(the full path, because zsh has a `log` builtin). The microphone, GIF export, trimming, Pause,
-uploads over 5 GiB, a separate upload lane for videos, dragging an uploaded video that has no local
-copy, and URL commands for recording are planned for a later release (R2 in the recording design).
+(the full path, because zsh has a `log` builtin). Recording from the microphone and Trim are built in
+parts and held (R2 built notes in the R2 design). Pause, uploads over 5 GiB, a separate upload lane for
+videos, dragging an uploaded video that has no local copy, and URL commands for recording are planned
+for a later release (the recording designs' lists). The conversion, the mute ladder and recovery log
+`Recording:` lines too, among them `Recording: mute lag <s> s (<input>)` at each start.
 
 ## URL scheme
 
@@ -384,6 +434,11 @@ recording's. Clop gets 60 seconds plus 3 for each second recorded to answer. It 
 for a 5120 by 2880 recording and left it as it was, which is why Retina stops at 4,096 pixels, and
 TidyShot skips Clop when the disk has less than the file's size plus 1 GB free. The copy is removed
 when the upload ends.
+
+**GIFs.** A GIF never goes to Clop, with Clop on or off: it uploads as made, from its file, with no
+*Optimizing…*. TidyShot's encoder already crops each frame to what changed and spends no colours on
+codec noise, and Clop took 9 % off an ImageIO GIF and made a static one larger. With the Clop setting
+on, `Clop: GIFs are not sent to Clop` is logged once per launch, at the first GIF upload.
 
 ## Recent Captures
 
@@ -574,6 +629,7 @@ afterwards, so opening it again in the editor starts from the composed picture.
 
 - Design: `docs/superpowers/specs/2026-10-19-tidyshot-screenshot-design.md`
 - Screen recording design: `docs/superpowers/specs/2026-10-21-tidyshot-screen-recording-design.md`
+- Screen recording R2 design (GIF, microphone, mute, Trim): `docs/superpowers/specs/2026-10-23-tidyshot-screen-recording-r2-design.md`
 - Coordinator split design: `docs/superpowers/specs/2026-10-23-coordinator-split-design.md`
 - Plans: `docs/superpowers/plans/`
 - Phase 1 manual test checklist: `docs/testing/phase-1-manual-checklist.md`
@@ -590,4 +646,5 @@ afterwards, so opening it again in the editor starts from the composed picture.
 - Phase 7b (Capture Text, Hide desktop icons) manual test checklist: `docs/testing/phase-7b-manual-checklist.md`
 - Phase 7c (Backgrounds) manual test checklist: `docs/testing/phase-7c-manual-checklist.md`
 - Recording R1 (screen recording) manual test checklist: `docs/testing/recording-r1-manual-checklist.md`
+- Recording R2 (GIF, microphone, mute, Trim) manual test checklist: `docs/testing/recording-r2-manual-checklist.md`
 - Coordinator split manual test checklist: `docs/testing/coordinator-split-manual-checklist.md`
