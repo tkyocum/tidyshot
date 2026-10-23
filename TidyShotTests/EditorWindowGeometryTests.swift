@@ -93,14 +93,15 @@ struct EditorWindowGeometryTests {
     @Test func toolbarWithEveryToolFitsASmallDisplay() {
         func width(segments: Int) -> CGFloat {
             EditorWindowGeometry.toolbarWidth(windowButtonsMaxX: EditorWindowGeometry.ToolbarMetrics.windowButtons,
-                                              titleWidth: 230, toolSegments: segments, buttons: 4,
+                                              titleWidth: 230, toolSegments: segments, buttons: 5,
                                               prominentButtons: 1, viewWidths: [84], fixedSpaces: 1)
         }
         #expect(width(segments: 8) - width(segments: 6) == 2 * EditorWindowGeometry.ToolbarMetrics.segment)
         // The 4a toolbar is 800 pt wide. Each 4b task that adds a tool updates these two lines:
         // 8 tools and 872 pt (Task 1), 10 and 944 (Task 2), 11 and 980 (Task 3), 12 and 1016 (Task 4).
+        // 7c's Background button (Colour, Options, Background, Copy and Save) makes it 1062.
         #expect(EditorTool.toolbarOrder.count == 12)
-        #expect(width(segments: EditorTool.toolbarOrder.count) == 1016)
+        #expect(width(segments: EditorTool.toolbarOrder.count) == 1062)
         let widest = EditorWindowGeometry.minimumContentWidth(toolbarWidth: width(segments: EditorTool.toolbarOrder.count))
         let ninetyPercent = (1280 * EditorWindowGeometry.screenFraction).rounded(.down)
         #expect(widest <= ninetyPercent)

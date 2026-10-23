@@ -108,14 +108,15 @@ Horizontal scrolling is not supported.
 
 ## Capture options
 
-Settings > Capture has five options. *Freeze screen while selecting* shows a still picture of the
+Settings > Capture has six options. *Freeze screen while selecting* shows a still picture of the
 screen while you drag an area and cuts the capture from it, so menus, tooltips and video stay as
 they were when you pressed the shortcut; window mode and scrolling capture are live. *Show cursor in
 screenshots* puts the pointer into fullscreen, previous-area, self-timer and URL captures (not `capture-text` with a rect), and into
 area captures only with freeze on; TidyShot never captures its own crosshair. *Include window
 shadow* keeps the system shadow around a window capture; the corners are transparent either way.
-*Hide desktop icons while capturing* is described under Hide desktop icons below. *Self-timer* sets
-the countdown to 3, 5 or 10 seconds.
+*Hide desktop icons while capturing* is described under Hide desktop icons below. *Add background to
+window captures* is described under Backgrounds below. *Self-timer* sets the countdown to 3, 5 or 10
+seconds.
 
 Capture Previous Area (⌃⇧6) captures the rectangle of your last area capture (or scrolling capture)
 again, with no selection. It says so when there is no previous area or its display is gone.
@@ -325,7 +326,8 @@ Keys `1` to `6` set the line width to 2, 3, 4, 6, 8 or 12 points, or, with Text,
 12, 16, 20, 28, 40 or 56 points. With Select, the arrow keys move the selection by one pixel (ten
 with Shift), Delete removes it and Escape deselects. The colour and options buttons in the toolbar
 set the colour, line width, blur radius and pixel size for the tool and the selection, and the
-editor remembers them. At the right of the toolbar are Copy, Save (the downward arrow) and Upload
+editor remembers them. The Background button opens the Backgrounds popover (see Backgrounds below).
+At the right of the toolbar are Copy, Save (the downward arrow) and Upload
 (the cloud). The window is never narrower than its toolbar, so every button stays in view.
 
 Pencil draws a smoothed freehand line. Highlighter draws a wide yellow stroke at 45% opacity that
@@ -411,6 +413,47 @@ Closing an editor with unsaved changes, or quitting TidyShot, asks whether to sa
 there does what ⌘S does; while the capture uploads or is being deleted it reads Save As….
 Cancelling the save panel keeps the editor open.
 
+## Backgrounds
+
+A capture can sit on a background: a fill with padding round the capture, rounded corners and a
+soft shadow, as in a screenshot for a blog or a slide. There are two ways in, and both use one
+style.
+
+**The editor's Background tool.** The Background button in the editor's toolbar (after Options)
+opens a popover. Its switch puts the capture on the background or takes it off; the style editor
+below it sets:
+- the fill: one of twelve gradients (drawn from the top-left corner to the bottom-right one), the
+  Desktop Picture of the display the editor window is on, a Solid Colour, or a Custom Image;
+- Padding, 0 to 160 pt (48 by default), and Corner Radius, 0 to 40 pt (12);
+- Shadow, on by default;
+- Aspect Ratio: Auto, 1:1, 4:3, 3:2, 16:10 or 16:9. The canvas grows along one axis until it has the
+  ratio, and the capture stays centred; a portrait capture gets the inverted ratio.
+
+The editor shows the background live, and Zoom to fit covers the whole canvas. Annotations stay on
+the capture and are clipped to its rounded corners; the padding is never drawn on. The Crop tool
+shows the whole capture while it is open, and the background frames the applied crop. Each swatch,
+slider drag, Shadow toggle and ratio is one undo step, and so is a run of Solid Colour changes.
+Save, Save As…, Copy and Upload all produce the composed image. The popover starts from the style
+in Settings > Capture, but changing it in the editor does not change the setting. Backgrounds work on
+images up to 16,384 px on the long side (a longer scrolling capture cannot have one); the switch is
+dimmed with a caption when the image is too long.
+
+**Custom Image.** *Choose Image…* takes any image the Mac can read. TidyShot keeps one copy, scaled
+down to at most 6,000 px, in its container, and replaces it when you choose another; the file you
+picked is not touched. A file that cannot be read posts *Not a usable image* and changes nothing.
+If the stored copy goes missing, the first gradient is drawn instead. The image is drawn to fill the
+canvas and centred, so part of it is cut off unless the shapes match.
+
+**Window captures.** Settings > Capture > *Add background to window captures* puts every window
+capture on the style under *Edit Background…* before it is saved, copied or uploaded: Capture
+Window, All-in-One's Window, a Self-Timer window and `capture-window`, including `action=copy`. The
+Desktop Picture is that of the display the window is on. Area, fullscreen, previous-area and scrolling captures
+get none; open them in the editor and use the Background tool. If a background cannot be drawn, the
+plain window capture is kept and a line in the log says why.
+
+The saved file is the capture with the background already in it; there is no layer to take off
+afterwards, so opening it again in the editor starts from the composed picture.
+
 ## Documents
 
 - Design: `docs/superpowers/specs/2026-10-19-tidyshot-screenshot-design.md`
@@ -426,3 +469,4 @@ Cancelling the save panel keeps the editor open.
 - Phase 6b manual test checklist: `docs/testing/phase-6b-manual-checklist.md`
 - Phase 7 (Clop) manual test checklist: `docs/testing/phase-7-clop-manual-checklist.md`
 - Phase 7b (Capture Text, Hide desktop icons) manual test checklist: `docs/testing/phase-7b-manual-checklist.md`
+- Phase 7c (Backgrounds) manual test checklist: `docs/testing/phase-7c-manual-checklist.md`

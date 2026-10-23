@@ -397,20 +397,20 @@ struct EditorModelTests {
     @Test func renderExportReturnsCaptureScale() async throws {
         let model = makeModel()
         add(box(), to: model)
-        let export = try #require(await model.renderExport())
+        let export = try await model.renderExport()
         #expect(export.scale == 2)
         #expect(export.image.width == 16)
         #expect(export.image.height == 16)
     }
 
-    @Test func renderExportFailsWhenAnEffectTileIsMissing() async {
+    @Test func renderExportFailsWhenAnEffectTileIsMissing() async throws {
         let model = makeModel(renderer: NoTileRenderer())
         // An effect wholly outside the image covers nothing, so the export goes ahead.
         add(.blur(Region(id: UUID(), rect: CGRect(x: 40, y: 40, width: 8, height: 8)), radius: 16), to: model)
-        #expect(await model.renderExport() != nil)
+        _ = try await model.renderExport()
         // A redaction over the image without its tile would export the secret: no export.
         add(redaction(), to: model)
-        #expect(await model.renderExport() == nil)
+        await #expect(throws: EditorExportFailure.missingTile) { try await model.renderExport() }
     }
 
     @Test func undoRestoresUncropped() async throws {
@@ -432,7 +432,7 @@ struct EditorModelTests {
         #expect(model.cropDraft == nil)
         #expect(model.tool == .redact)
         #expect(model.undoManager.undoActionName == EditorModel.ActionName.crop)
-        let cropped = try #require(await model.renderExport())
+        let cropped = try await model.renderExport()
         #expect(cropped.image.width == 10)
         #expect(cropped.image.height == 8)
         #expect(cropped.scale == 2)
@@ -440,7 +440,7 @@ struct EditorModelTests {
         model.undoManager.undo()
         #expect(model.document.crop == nil)
         #expect(model.document.annotations == [shape])
-        let uncropped = try #require(await model.renderExport())
+        let uncropped = try await model.renderExport()
         #expect(uncropped.image.width == 16)
         model.undoManager.redo()
         #expect(model.document.crop == crop)

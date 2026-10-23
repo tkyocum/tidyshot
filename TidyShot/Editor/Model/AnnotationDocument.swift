@@ -10,6 +10,9 @@ nonisolated struct AnnotationDocument: Codable, Equatable, Sendable {
     /// Nil keeps the whole capture. `EditorFlattener` applies it last. Optional, so the synthesized
     /// decoder reads it with `decodeIfPresent` and a document without the key has no crop.
     var crop: CGRect? = nil
+    /// What export puts the capture (or its crop) on (spec 2.11); nil for none. Optional, so a
+    /// document without the key, written before 7c, decodes with no background.
+    var background: BackgroundStyle? = nil
 
     /// Redact, blur and pixelate, in creation order. They render first, on the base layer.
     var effects: [Annotation] { annotations.filter(\.isEffect) }
@@ -51,6 +54,12 @@ nonisolated struct AnnotationDocument: Codable, Equatable, Sendable {
     func withCrop(_ crop: CGRect?) -> AnnotationDocument {
         var copy = self
         copy.crop = crop
+        return copy
+    }
+
+    func withBackground(_ background: BackgroundStyle?) -> AnnotationDocument {
+        var copy = self
+        copy.background = background
         return copy
     }
 }

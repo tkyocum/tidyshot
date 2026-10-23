@@ -7,6 +7,10 @@ import QuartzCore
 /// creation order. Zoom and pan only move layer frames, and the view is viewport-sized, so there
 /// is no document-sized backing store and no `_NSTiledLayer`. Clicks pass through to the canvas
 /// above.
+///
+/// With a background (spec 2.11, Editor), three more layers are placed by the transform: the fill
+/// behind everything, reaching past the content by the padding; a shadow under the rounded
+/// content rect; and a rounded mask over the container that holds the image and effect layers.
 final class BaseImageView: NSView {
     var image: CGImage? {
         didSet {
@@ -32,10 +36,46 @@ final class BaseImageView: NSView {
     private var tileRects: [UUID: CGRect] = [:]
     private var tileOrder: [UUID] = []
 
+    /// The background shown behind the capture, nil for none, and the capture's scale, which
+    /// sizes the shadow.
+    private var background: ShownBackground?
+    private var captureScale: CGFloat = 1
+    /// The fill, rendered off the main actor at most 2,048 px on its long side and stretched over
+    /// the background's rect. Nil until the first render arrives.
+    var backgroundFill: CGImage? {
+        didSet {
+            guard backgroundFill !== oldValue else { return }
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            backgroundLayer.contents = backgroundFill
+            CATransaction.commit()
+        }
+    }
+    let backgroundLayer = CALayer()
+    /// No contents: only its shadow shows, cast by `shadowPath`.
+    let shadowLayer = CALayer()
+    /// Holds the image and effect layers, so one mask rounds them all.
+    private let contentLayer = CALayer()
+    /// The content container's mask while a background is shown.
+    let roundedMask = CALayer()
+
+    /// The image layers, then the effect-tile layers, in creation order.
+    var contentLayers: [CALayer] { contentLayer.sublayers ?? [] }
+    var isContentMasked: Bool { contentLayer.mask != nil }
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
         layerContentsRedrawPolicy = .never
+        backgroundLayer.contentsGravity = .resize
+        backgroundLayer.isHidden = true
+        shadowLayer.shadowColor = CGColor(gray: 0, alpha: 1)
+        shadowLayer.shadowOpacity = Float(BackgroundCompositor.shadowAlpha)
+        shadowLayer.shadowOffset = .zero
+        shadowLayer.isHidden = true
+        roundedMask.backgroundColor = CGColor(gray: 0, alpha: 1)
+        roundedMask.cornerCurve = .circular  // as CGPath(roundedRect:) draws in the export
+        installLayers()
     }
 
     @available(*, unavailable)
@@ -51,6 +91,27 @@ final class BaseImageView: NSView {
 
     override func viewDidChangeBackingProperties() {
         super.viewDidChangeBackingProperties()
+        layoutLayers()
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        layoutLayers()
+    }
+
+    /// The fill, the shadow and the content container, in that order, under the view's layer.
+    /// The layer may not exist yet when the view is made, so every change calls this.
+    private func installLayers() {
+        guard let layer, contentLayer.superlayer !== layer else { return }
+        layer.sublayers = [backgroundLayer, shadowLayer, contentLayer]
+    }
+
+    /// Shows `background` behind the capture, or hides it for nil. The fill arrives separately, as
+    /// `backgroundFill`.
+    func setBackground(_ background: ShownBackground?, captureScale: CGFloat) {
+        guard background != self.background || captureScale != self.captureScale else { return }
+        self.background = background
+        self.captureScale = captureScale
         layoutLayers()
     }
 
@@ -76,7 +137,8 @@ final class BaseImageView: NSView {
         tileImages = images
         tileRects = rects
         tileOrder = tiles.map(\.id)
-        layer?.sublayers = imageLayers + tileOrder.compactMap { layers[$0] }
+        installLayers()
+        contentLayer.sublayers = imageLayers + tileOrder.compactMap { layers[$0] }
         CATransaction.commit()
         layoutLayers()
     }
@@ -91,7 +153,8 @@ final class BaseImageView: NSView {
             imageLayer.contents = tile.image
             return imageLayer
         }
-        layer?.sublayers = imageLayers + tileOrder.compactMap { tileLayers[$0] }
+        installLayers()
+        contentLayer.sublayers = imageLayers + tileOrder.compactMap { tileLayers[$0] }
         CATransaction.commit()
         layoutLayers()
     }
@@ -105,10 +168,13 @@ final class BaseImageView: NSView {
     /// Frames every layer at `transform.viewRect` of its image-pixel rect, so the image's layers
     /// meet edge to edge at any zoom and pan. Nearest-neighbour magnification from 2 device pixels
     /// per image pixel up, so redacted pixels read exactly when zoomed in; linear below; trilinear
-    /// minification.
+    /// minification. The background's layers follow the same transform.
     private func layoutLayers() {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
+        installLayers()
+        contentLayer.frame = bounds
+        layoutBackground()
         let filter: CALayerContentsFilter = transform.zoom * (window?.backingScaleFactor ?? 2) >= 2 ? .nearest : .linear
         for (imageLayer, tile) in zip(imageLayers, baseTiles) {
             imageLayer.frame = transform.viewRect(tile.rect)
@@ -122,5 +188,37 @@ final class BaseImageView: NSView {
             tileLayer.minificationFilter = .trilinear
         }
         CATransaction.commit()
+    }
+
+    /// The fill at the background's rect; the shadow and the mask at the rounded content rect,
+    /// with the export's shadow (offset, blur, black at 35 %) in view points. A layer's shadow
+    /// radius is half a CoreGraphics shadow blur. The shadow is moved down by its offset rather
+    /// than given a `shadowOffset`, whose direction a flipped layer tree would turn around.
+    private func layoutBackground() {
+        guard let background else {
+            backgroundLayer.isHidden = true
+            shadowLayer.isHidden = true
+            contentLayer.mask = nil
+            return
+        }
+        let zoom = transform.zoom
+        let content = transform.viewRect(background.contentRect)
+        // At most half the shorter side, which CGPath requires; zooming must not round past it.
+        let radius = min(background.radius * zoom, content.width / 2, content.height / 2)
+        backgroundLayer.isHidden = false
+        backgroundLayer.frame = transform.viewRect(background.canvasRect)
+        backgroundLayer.magnificationFilter = .linear
+        backgroundLayer.minificationFilter = .trilinear
+
+        shadowLayer.isHidden = !background.style.shadow
+        let points = captureScale * zoom  // view points per point of the style
+        shadowLayer.frame = content.offsetBy(dx: 0, dy: BackgroundCompositor.shadowOffset * points)
+        shadowLayer.shadowPath = CGPath(roundedRect: shadowLayer.bounds, cornerWidth: radius, cornerHeight: radius,
+                                        transform: nil)
+        shadowLayer.shadowRadius = BackgroundCompositor.shadowBlur * points / 2
+
+        roundedMask.frame = content
+        roundedMask.cornerRadius = radius
+        contentLayer.mask = roundedMask
     }
 }

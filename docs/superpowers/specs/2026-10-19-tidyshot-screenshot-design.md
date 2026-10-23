@@ -30,14 +30,14 @@ Tiers: **P0** is the MVP, **P1** follows once the upload loop is solid, **P2** i
 | Quick Access Overlay | Thumbnail in a screen corner after capture with copy, save, annotate, share, drag-out, auto-close, restore closed overlay, multi-display | P0 (minimal), P1 (full) | MVP shows upload status plus copy/save/drag; Phase 6a (2.9) built the stack of cards, close and restore, the choice of display, Save As…, Copy Image and drag-out of a file; Phase 6b added Pin; swipe gestures and hide-temporarily are deferred |
 | After-capture action | Preference: show overlay, save, copy, open editor, or upload automatically | P0 | Upload-and-copy-URL is the default this app exists for. Phase 3 adds "Upload only" (no local file kept), see 2.4. "Open editor" is deferred to Phase 4c; Phase 4 opens the editor from the overlay and Recent Captures, see 2.6 |
 | Upload and copy link | One click, link copied | P0 | Replaced by S3 destination |
-| Window with background | Padding plus wallpaper, custom image, or solid colour behind a window shot | P2 | Pure image compositing |
+| Window with background | Padding plus wallpaper, custom image, or solid colour behind a window shot | P2 | Built in Phase 7c (2.11): a Capture setting puts each window capture on the style chosen under Edit Background…, composed in `AppCoordinator.save` |
 | Transparent window / shadow toggle | Keep or drop the window shadow | P1 | Built in Phase 6a (2.9): `ignoreShadows` follows `Include window shadow`; the system shadow, sized from the filter's contentRect and pointPixelScale |
 | Freeze screen | Snapshot the display before selecting, so moving content is capturable | P1 | Built in Phase 6a (2.9): every display is captured before the overlay appears and the capture is cut from that picture |
 | Self-timer | Delay before capture | P1 | Built in Phase 6b (2.9): select an area or a window, then a 3, 5 or 10 second countdown; Escape cancels |
 | Hide desktop icons | Clean desktop during capture | P2 | Built in Phase 7b (2.10): one panel per display shows the captured wallpaper window just above the icons and widgets, during most captures (a Capture setting) or until turned off (a menu item and three URL commands); not a Finder `defaults` write |
 | Scrolling capture | Captures content taller than the screen, any app | P1 (own phase) | Hardest screenshot feature; gets Phase 5, designed in 2.8. Manual mode first (the user scrolls, TidyShot captures and stitches; Screen Recording only), then opt-in auto-scroll that posts scroll-wheel events behind the PostEvent permission (listed as Accessibility in System Settings). Vertical only; horizontal is deferred |
 | Annotate | Arrow, rect, ellipse, line, pencil, highlighter, text, counter, blur, pixelate, redact, spotlight, crop; editable project file | P1 (basic set plus blur, pixelate, redact), P2 (spotlight/counter) | Biggest UI surface in the app. Blur, pixelate and a solid redact rectangle ship in the first editor release because screenshots of dashboards and terminals carry secrets |
-| Background tool | 20 backgrounds, padding, presets, auto balance | P2 | Compositing step shared with "window with background" |
+| Background tool | 20 backgrounds, padding, presets, auto balance | P2 | Built in Phase 7c (2.11): twelve gradients, the desktop picture, a solid colour or one custom image, with padding, corner radius, shadow and an aspect ratio; auto balance and named presets are deferred |
 | Pin (floating screenshot) | Always-on-top window, opacity, nudge with arrows, lock mode | P1 | Built in Phase 6b (2.9): a non-activating panel per pin with move, resize, zoom, opacity, arrows, lock (click-through) and a context menu; pins live until quit |
 | Text recognition (OCR) | Select area, copy text, QR codes | P2 | Built in Phase 7b (2.10): Capture Text (⌃⇧7) puts the text of a selection, or its two-dimensional codes' payloads, on the clipboard, with Vision on-device |
 | Capture history | Recent captures with filter, restore, delete, one month retention | P1 | Also the retry queue for failed uploads. Phase 2 shipped a text menu; Phase 3 turns it into a gallery, see 2.4 |
@@ -291,11 +291,11 @@ Selection, zoom, pan, tool and colour choice never enter the undo stack. `hasUns
   - normal level, managed collection behaviour plus `.fullScreenPrimary`, and `tabbingMode = .disallowed`;
   - `representedURL` set to the file when one exists, and `title` set to the file name or `Capture <time>`;
   - `subtitle` showing the status line from `EditorAvailability.status`, for example `Uploading…`, `Deleting…`, `The uploaded copy still shows the original. Upload to replace it.` or `This capture was deleted. Copy and Save As still work.`
-- **Size and placement.** There is no frame autosave. `EditorWindowGeometry.initialContentSize(imagePixels:scale:chrome:visibleFrame:)` sizes the window to the image's natural point size plus chrome and a 24 pt inset. The size is at least 640x420, at least the toolbar's width, and at most 90% of the visible frame of the screen under the mouse. The toolbar's width comes from `EditorWindowGeometry.toolbarWidth(windowButtonsMaxX:titleWidth:toolSegments:buttons:prominentButtons:viewWidths:fixedSpaces:)`: the window buttons and the title (counted up to 96 pt, since a unified toolbar truncates its title first) are measured, the zoom pop-up has a fixed width, and the items AppKit draws itself use `EditorWindowGeometry.ToolbarMetrics`. `toolSegments` is `EditorTool.toolbarOrder.count`, one 36 pt segment per tool, so the 4b toolbar with twelve tools and the widest title is 1016 pt (the 4a toolbar was 800), within 90% of a 1280 pt display; `toolbarWithEveryToolFitsASmallDisplay` pins both numbers. `minimumContentWidth(toolbarWidth:)` (at least 640) becomes `contentMinSize.width` and the initial size's minimum, so the window never gets narrow enough for the overflow chevron. The transform starts at `CanvasTransform.fitting(imagePixelSize:in:inset: 24, captureScale:)`, never above natural size. Later editors are placed by `EditorWindowGeometry.cascaded(from:size:visibleFrame:)`, 22 pt down and to the right, clamped to the screen.
+- **Size and placement.** There is no frame autosave. `EditorWindowGeometry.initialContentSize(imagePixels:scale:chrome:visibleFrame:)` sizes the window to the image's natural point size plus chrome and a 24 pt inset. The size is at least 640x420, at least the toolbar's width, and at most 90% of the visible frame of the screen under the mouse. The toolbar's width comes from `EditorWindowGeometry.toolbarWidth(windowButtonsMaxX:titleWidth:toolSegments:buttons:prominentButtons:viewWidths:fixedSpaces:)`: the window buttons and the title (counted up to 96 pt, since a unified toolbar truncates its title first) are measured, the zoom pop-up has a fixed width, and the items AppKit draws itself use `EditorWindowGeometry.ToolbarMetrics`. `toolSegments` is `EditorTool.toolbarOrder.count`, one 36 pt segment per tool, so the toolbar with twelve tools, the widest title and (from 7c) the Background button is 1062 pt (4b without that button was 1016, the 4a toolbar 800), within 90% of a 1280 pt display; `toolbarWithEveryToolFitsASmallDisplay` pins the tool count and the width. `minimumContentWidth(toolbarWidth:)` (at least 640) becomes `contentMinSize.width` and the initial size's minimum, so the window never gets narrow enough for the overflow chevron. The transform starts at `CanvasTransform.fitting(imagePixelSize:in:inset: 24, captureScale:)`, never above natural size. Later editors are placed by `EditorWindowGeometry.cascaded(from:size:visibleFrame:)`, 22 pt down and to the right, clamped to the screen.
 - **Showing.** `present()` calls `NSApplication.shared.activate(ignoringOtherApps: true)`, then `makeKeyAndOrderFront(nil)`, then `orderFrontRegardless()` if the app is still inactive. This is the codebase's proven idiom: a plain `activate()` is refused when called from the non-activating overlay.
 - **Toolbar** (EditorToolbar.swift). `NSToolbar(identifier: "AnnotationEditor")`, `.iconOnly`, no customisation. The items, in order:
-  - `.tools`: an `NSToolbarItemGroup` with images, `.selectOne` and `controlRepresentation = .automatic`, built from `EditorTool.toolbarOrder`: in 4b twelve tools, Select, Redact, Pixelate, Blur, Rectangle, Arrow, Ellipse, Line, Pencil, Highlighter, Text and Crop, each with a tool tip such as `Ellipse (E)`;
-  - `.space`, `.color`, `.toolOptions`, `.flexibleSpace`;
+  - `.tools`: an `NSToolbarItem` whose view is a `ToolSegmentedControl` (an `NSSegmentedControl` with images, `.selectOne`, every segment 28 pt, and one tool tip rect per equal share of its bounds; changed 2026-10-22 because an `NSToolbarItemGroup` shows no sub-item tool tips and `setToolTip(_:forSegment:)` places tips by narrower segments than the macOS 26 toolbar draws), built from `EditorTool.toolbarOrder`: in 4b twelve tools, Select, Redact, Pixelate, Blur, Rectangle, Arrow, Ellipse, Line, Pencil, Highlighter, Text and Crop, each with a tool tip such as `Ellipse (E)`;
+  - `.space`, `.color`, `.toolOptions`, `.background`, `.flexibleSpace`;
   - `.zoom`: a pop-up with Fit, 50 %, 100 %, 200 % and 400 %;
   - `.copyImage`: `doc.on.doc`, label `Copy`, tool tip `Copy the image (⌘C)`;
   - `.save`: `square.and.arrow.down`, label `Save`, tool tip `Save (⌘S)`;
@@ -719,7 +719,10 @@ The selection overlay, the panel, the stream and real event posting are covered 
 - Whole-branch review fixes (2026-10-21): each wheel event of an auto-scroll step checks the pointer and the grant, and the grant is not asked while paused (Auto-scroll driver); a stream that stops by itself records its reason instead of sending an event that could drop a buffered frame (Frame source); a change in place is `.still`, not `.lost` (Overlap finder, step 8); the driver ends through the session's own finish task; the ImageIO thumbnail path crops tall images (Height cap and tall images).
 - Cap raised to 65,536 px (2026-10-21, decision 2): the editor tiles a tall image (`ImageTiling`, `BaseImageView`, the highlighter backdrop, `EditorFlattener`), the clipboard drops the TIFF above 16,384 px, the live preview keeps its newest 2,048 rows, and the hover preview decodes a tall PNG subsampled; see Height cap and tall images. The suite then reads `Test run with 600 tests in 75 suites passed`.
 - Not done in code, by decision: no entitlement and no `project.yml` change (the diff of both against `main` is empty); the delivery fallback of the Risks list is built but not switched on (see the first Risk).
-- Observations from the checklist run are still to be written down here by Tim: what Safari and Chrome do with the fixed spinner, footer and overlay scrollbar; the time at the 65,536 px cap and from Done to the overlay; natural scrolling, from halfway and from the top; the stitched-versus-one-shot comparison and the profile and DPI; how the editor behaves at 65,536 px; what a chat's typing dots do; and whether PostEvent delivery works (see the first Risk). None of the GUI checks had been run when this was written.
+- - Review fixes (after the whole-branch review): `BackgroundLayout` also has `maximumCanvasArea` (16,384 x 16,384 pixels), and `make` returns nil above it as it does above the side limits; a 1:1 canvas for a 16,000 px tall 2x scrolling capture would otherwise have been about 1 GB, and the editor's caption for a nil layout is unchanged. With the area limit the side limit can only be reached by padding that the area limit also refuses; it stays as the check that runs first. `WallpaperSource.wallpapers(only:)` takes an optional display and captures only that display's wallpaper window; `BackgroundFillSource.desktopPicture` uses it, so a window capture with a desktop-picture fill no longer captures every display inside the capture lock. The desktop covers still call `wallpapers()` for all displays. The filter sits inside the ScreenCaptureKit call and is not pure, so it has no unit test. The editor clears its cached desktop picture and renders the fill again on `windowDidChangeScreen` and on `NSWorkspace`'s `activeSpaceDidChangeNotification`, only while a desktop-picture background shows; the observer is removed in `windowWillClose`. `CustomBackgroundStore.preview(maxSide:)` uses `ThumbnailMaker.scaled`, so the swatch shows the whole of a tall image, not its top. When `compose` or `fill` has no image for a desktop-picture or custom-image fill, it logs `Background: no image for <fill>, drawing the first gradient` once per call before drawing preset 0.
+- Colour space: the composed output is always sRGB, while an export without a background keeps the capture's colour space. A Display P3 capture is therefore converted to sRGB once a background is on.
+
+Observations from the checklist run are still to be written down here by Tim: what Safari and Chrome do with the fixed spinner, footer and overlay scrollbar; the time at the 65,536 px cap and from Done to the overlay; natural scrolling, from halfway and from the top; the stitched-versus-one-shot comparison and the profile and DPI; how the editor behaves at 65,536 px; what a chat's typing dots do; and whether PostEvent delivery works (see the first Risk). None of the GUI checks had been run when this was written.
 
 ### 2.9 Phase 6 design: overlay and capture polish (2026-10-21)
 
@@ -1087,6 +1090,171 @@ The hand checks go in `docs/testing/phase-7b-manual-checklist.md`.
 
 Observations from the checklist run are still to be written down here by Tim: the cold first-run time of Capture Text, what two columns and a non-Latin script came back as, how long the covers take to appear and when a wallpaper change reaches them, and how the failure notification was checked. None of the GUI checks had been run when this was written; Task 3 ran a scratch harness on Tim's Mac (one 5120 x 2880 wallpaper captured in about 120 ms, one cover at layer -2147483600, the reasons behaving as specified).
 
+### 2.11 Phase 7c design: backgrounds (2026-10-21)
+
+**Scope.** This covers the last two P2 rows of the table in 2.1, Background tool and Window with background:
+- **Editor.** A Background tool in the editor puts a capture on a background, with padding, rounded corners, a shadow and an aspect ratio.
+- **Capture setting.** A Capture-tab setting does the same to every window capture as it is taken.
+
+Both use one compositor and one style type. The work happens on the branch `phase-7c-background`, cut from `phase-7b-text-icons` because it reuses 7b's `WallpaperSource`; its PR targets that branch until 7b merges. There is no new entitlement or package; a custom background image is read through the open panel's user-selected access, which the app already has. Deferred: CleanShot's auto-balance, alignment other than centred, more than one custom image, and saving a style as a named preset.
+
+**Probe** (2026-10-21; source `docs/superpowers/research/phase-7c-probes/comp.swift`). The probe drew a two-stop gradient, then the capture clipped to a rounded rectangle inside a transparency layer with a CoreGraphics shadow (blur 48 px, offset 16 px), with 128 px of padding.
+
+| Capture | Time |
+|---|---|
+| 1600 x 1000 | 32 ms |
+| 5120 x 2880 | 139 ms |
+| 3094 x 16000 | 442 ms |
+| 3094 x 65536 | 1.9 s, several GB of memory |
+
+The shadow follows the image's alpha, so a window capture's own rounded corners cast a correctly shaped shadow. Backgrounds are therefore limited to content up to 16,384 px on its long side.
+
+#### Style
+
+`BackgroundStyle` (nonisolated, `Codable`, `Equatable`, `Sendable`). Every field decodes with `decodeIfPresent` and falls back to its default.
+- `fill: BackgroundFill`. The cases:
+  - `.gradient(Int)` holds an index into `BackgroundPresets.gradients`; an index out of range draws preset 0.
+  - `.solid(RGBA)`.
+  - `.desktopPicture` uses the wallpaper of the display concerned, captured through 7b's `WallpaperSource`.
+  - `.customImage` uses the one stored custom image.
+  - The default is `.gradient(0)`.
+- `padding: Double`, in points, 0 to 160, default 48.
+- `cornerRadius: Double`, in points, 0 to 40, default 12.
+- `shadow: Bool`, default true.
+- `aspect: BackgroundAspect`: `.auto` (default), `.square`, `.fourThree`, `.threeTwo`, `.sixteenTen`, `.sixteenNine`. Titles: `Auto`, `1:1`, `4:3`, `3:2`, `16:10`, `16:9`.
+
+**Gradients.** `BackgroundPresets.gradients` holds twelve two-stop linear gradients. Each is drawn from the top-left corner (first colour) to the bottom-right corner (second colour) of the whole background:
+
+| # | Name | First | Second |
+|---|---|---|---|
+| 0 | Sunset | `#FF7A59` | `#7B4DFF` |
+| 1 | Ocean | `#1FA2FF` | `#A6FFCB` |
+| 2 | Grape | `#8E2DE2` | `#4A00E0` |
+| 3 | Peach | `#FFD3A5` | `#FD6585` |
+| 4 | Mint | `#43E97B` | `#38F9D7` |
+| 5 | Midnight | `#232526` | `#414345` |
+| 6 | Sky | `#A1C4FD` | `#C2E9FB` |
+| 7 | Flamingo | `#F857A6` | `#FF5858` |
+| 8 | Forest | `#134E5E` | `#71B280` |
+| 9 | Lemon | `#F9F586` | `#96FBC4` |
+| 10 | Slate | `#8E9EAB` | `#EEF2F3` |
+| 11 | Berry | `#C471F5` | `#FA71CD` |
+
+**Layout** (`BackgroundLayout.make(contentSize:style:scale:) -> BackgroundLayout?`, pure, in pixels). Content is the flattened capture, or its crop.
+- `pad = round(padding × scale)`. The minimum canvas is the content plus `2 × pad` on each axis.
+- For an aspect other than `.auto`, the ratio is width:height, and is inverted when the content is taller than wide. The minimum canvas grows along one axis, never shrinks, until it has that ratio, rounded up to whole pixels.
+- The content is centred and its origin rounded down to whole pixels.
+- Returns `canvasSize` and `contentRect` (top-left origin).
+- Returns nil when the content's long side is over `BackgroundLayout.maximumContentSide` (16,384), or when the canvas would be over 32,768 px on a side.
+- `radius = cornerRadius × scale`, capped at half the content's shorter side.
+
+**Compositing** (`BackgroundCompositor.compose(_ content: CGImage, style:scale:fillImage:) -> CGImage?`, nonisolated, CoreGraphics only, no NSGraphicsContext). It makes an 8-bit premultiplied RGBA bitmap in sRGB at `canvasSize`, then:
+1. **Fill.**
+   - A gradient fills the whole canvas, drawn from its top-left corner to its bottom-right corner.
+   - A solid colour fills it flat.
+   - `fillImage` (a desktop picture or the custom image) is drawn aspect-fill and centred.
+   - When `fillImage` is nil for those two fills, preset 0 is drawn instead.
+2. **Shadow.** With `shadow` on, the compositor sets a shadow (`offset (0, -8 × scale)`, `blur 24 × scale`, black at 35%) and opens a transparency layer. The next step draws inside it, then the layer ends.
+3. **Content.** The content is clipped to the rounded rect (`contentRect`, `radius`) and drawn at its pixel size, with interpolation off.
+
+The output's scale is the content's. A window capture's transparent corners stay transparent inside the clip, so the fill shows through them. Compose returns nil when the layout is nil or no bitmap can be made. The caller then keeps the content without a background and says so (below).
+
+**Fill images.**
+- **Desktop picture.** `BackgroundFillSource.desktopPicture(displayID:) async -> CGImage?` uses `WallpaperSource`. For a window capture, the display is the captured window's. In the editor it is the display under the editor window.
+- **Custom image.** `CustomBackgroundStore` keeps one file, `Application Support/TidyShot/Backgrounds/custom.png` in the container.
+  - The style editor's `Choose Image…` opens an `NSOpenPanel` for images (`UTType.image`).
+  - The chosen file is decoded, scaled down to at most 6,000 px on its long side, and written as PNG over the previous one.
+  - An image that cannot be decoded posts `Not a usable image` with the file name, and nothing changes.
+  - When the file is missing, `.customImage` draws preset 0.
+
+#### Style editor
+
+`BackgroundOptionsView` (SwiftUI) is used in two places: the editor's Background popover and the Capture tab's style sheet. From top to bottom:
+1. A swatch grid of 15 fills, five per row: the twelve gradients in order (tool tip: the gradient's name), then `Desktop Picture`, then `Solid Colour` (a `ColorPicker` swatch), then `Custom Image`. The custom swatch shows the stored image, or a `photo` symbol with `Choose Image…` when there is none; once one is stored, a small `Choose Image…` button replaces it.
+2. Padding: a slider from 0 to 160 pt, labelled `Padding` with the value in points.
+3. Corners: a slider from 0 to 40 pt, labelled `Corner Radius`.
+4. A `Shadow` toggle.
+5. A picker labelled `Aspect Ratio` with the six titles.
+
+The selected swatch has an accent ring. The view takes a `Binding<BackgroundStyle>` and calls `onCommit` at the end of each slider drag and on every other change. A slider drag shows live, but makes one undo step in the editor.
+
+#### Editor
+
+- **Model.** `AnnotationDocument.background: BackgroundStyle?` is nil for none and decoded with `decodeIfPresent`. It is changed through `EditorModel.commit`, so it is undoable: the toggle, each swatch choice, each slider drag and each picker change is one step.
+- **Toolbar.** A `Background` button item (`rectangle.inset.filled`, tool tip `Background`) goes after Options. It opens a popover whose first row is a `Background` toggle, with `BackgroundOptionsView` below it. Turning the background on starts from the Capture tab's style (`AppSettings.backgroundStyle`). Turning it off sets nil and keeps nothing.
+  - When the content is too large (`BackgroundLayout.make` returns nil), the toggle is disabled and captioned `Backgrounds work on images up to 16,384 px.`
+  - The window's minimum width is measured again, so nothing overflows (2.6 feedback rule).
+- **Preview.** `BaseImageView` gains three layers, placed by the transform like the image layers:
+  - a background layer behind the image, at `contentRect` mapped back into image coordinates, so it extends past the image by the padding. Its contents are the fill only, rendered off the main actor at most 2,048 px on the long side whenever the style, the crop or the display changes;
+  - a shadow layer (`shadowPath` the rounded content rect, the same colour, opacity, offset and blur in view points);
+  - a rounded mask over a container holding the image and effect-tile layers.
+
+  `CanvasView` clips its drawings to the same rounded rect while a background is on. "Zoom to fit" fits the whole canvas. Annotations stay in image coordinates; the padding is not drawn on. While the Crop tool is active, the preview is hidden and fit uses the image, so the crop handles work as in 4b. The background frames the applied crop.
+- **Export.** `EditorModel.renderExport` flattens as now, crop included. When `document.background` is set, it then resolves the fill image (desktop picture for the editor's display, or the custom image) and composes, off the main actor, before returning the `ScaledImage`. Save, Save As…, Copy and Upload all get the composed image. The record's thumbnail follows from the saved file as now. If compose fails, the export fails like any other export (`Not saved` or `Not uploaded`, with `The background could not be drawn.`), and the editor stays dirty.
+
+#### Window captures
+
+- **Setting.** The Capture tab gets `Add background to window captures` (`AppSettings.windowBackground`, default false), captioned `Puts each window capture on the background below, as the editor's Background tool would.` and followed by an `Edit Background…` button. The button opens a sheet on the Settings window with `BackgroundOptionsView` bound to `AppSettings.backgroundStyle` (stored as JSON under `backgroundStyle`, default `BackgroundStyle()`) and a `Done` button. The editor's Background tool starts from the same style.
+- **When.** In `AppCoordinator.save(_:intent:)` (so for Capture Window, All-in-One's Window, a Self-Timer window and `capture-window`, including `action=copy`), when the result's target is `.window` and the setting is on, the image is replaced by the composed one before encoding. The desktop picture is the window's display's. Composing runs detached at `.userInitiated`. If it fails, the capture keeps the plain window image and logs `Background: <reason>, keeping the window capture`. No notification is posted, because a capture is never lost.
+- **Not included.** Area, fullscreen, scrolling and previous-area captures. For those, use the editor's Background tool.
+
+#### Settings summary
+
+- **Capture tab:** `Add background to window captures`, its caption and `Edit Background…`, after `Hide desktop icons while capturing`.
+- **New `AppSettings` keys:** `windowBackground` (false) and `backgroundStyle` (JSON, the default style).
+
+**Architecture.** New files:
+- `TidyShot/Background/`: `BackgroundStyle.swift` (with `BackgroundFill` and `BackgroundAspect`), `BackgroundPresets.swift`, `BackgroundLayout.swift` (pure), `BackgroundCompositor.swift`, `BackgroundFillSource.swift`, `CustomBackgroundStore.swift`, `BackgroundOptionsView.swift`, `BackgroundStyleSheet.swift`.
+
+Edits: `AnnotationDocument`, `EditorModel` (export), `EditorToolbar` and `EditorWindowController` (item, popover, minimum width), `BaseImageView` and `CanvasView` (preview, clip, fit), `CaptureSettingsView`, `AppSettings`, and `AppCoordinator.save`.
+
+**Tests (Swift Testing).**
+- `BackgroundStyleTests`:
+  - the defaults;
+  - a JSON round trip;
+  - an empty JSON object decodes to the defaults;
+  - an out-of-range preset index draws preset 0 (through the compositor);
+  - an `AnnotationDocument` without `background` decodes to nil.
+- `BackgroundPresetsTests`: twelve presets, unique names, the table's hex values for 0 and 11.
+- `BackgroundLayoutTests`:
+  - padding at 1x and 2x;
+  - each ratio growing the right axis;
+  - a portrait content inverts the ratio;
+  - content already wider than 16:9 grows its height;
+  - odd sizes centre with the origin rounded down;
+  - the radius cap;
+  - nil above 16,384 px.
+- `BackgroundCompositorTests`:
+  - the output size equals the layout's;
+  - a solid fill's corner pixel equals the fill;
+  - a content pixel equals the content;
+  - a pixel just inside the content's corner, outside the rounded clip, equals the fill (shadow off);
+  - with shadow on, a pixel just below the content is darker than the fill;
+  - a transparent content corner shows the fill;
+  - nil above the limit;
+  - a nil fill image draws preset 0.
+- `CustomBackgroundStoreTests` (a temporary directory):
+  - store, replace, scale-down of a large image;
+  - an undecodable file is refused;
+  - the image is read back.
+- `AppSettingsTests`: the two keys.
+- `EditorFlattener` export with a background (through `EditorModel.renderExport` on a test model): the canvas size and a fill pixel.
+
+The hand checks go in `docs/testing/phase-7c-manual-checklist.md`.
+
+**Phase 7c (built).** Delivered 2026-10-21 on `phase-7c-background`. The suite reads `Test run with 955 tests in 110 suites passed`; the hand checks are in `docs/testing/phase-7c-manual-checklist.md`. No entitlement and no package were added. The build follows the text above, with these points:
+- Background folder: `BackgroundAspect` also has `title`, `ratio` and `terms`, the ratio as whole numbers, so the layout rounds with integer maths. `BackgroundLayout` has a second limit constant, `maximumCanvasSide` (32,768), returns nil for empty content, and floors negative padding and radius at 0. `BackgroundCompositor` gained `fill(_:size:fillImage:)`, the fill alone, which the editor's preview uses and which shares `drawFill` with `compose`; its shadow constants are internal. The layout is top-left, so the compositor flips y for CoreGraphics. `RGBA.init(hex:)` is new, for the presets. `CustomBackgroundStore` has a `preview(maxSide:)` for the swatch, and a failure to write after a good decode is logged, not posted, since `Not a usable image` would mislead.
+- Settings: a corrupt `backgroundStyle` value, or one with a fill or aspect from a newer build, reads as the default style.
+- Style editor: once an image is stored, the small `Choose Image…` button sits under the grid and the custom swatch shows the image (2.11 said the button replaces the symbol). `BackgroundOptionsView(style:onCommit:onUnusableImage:)` takes a third, required closure that receives the file name; the Settings sheet and the editor route it to `AppCoordinator.notifyUnusableBackgroundImage(named:)`, which posts `Not a usable image`. The Solid Colour swatch shows the style's own colour. `CustomBackgroundRevision.shared` counts stored images; the swatch and the editor's preview fill key on it, so choosing another image while `.customImage` is already the fill refreshes both.
+- Editor model: `renderExport` is `async throws(EditorExportFailure)`, with `.missingTile`, `.flatten` and `.background`; only `.background` has a message, `The background could not be drawn.`. `EditorActions` gained `exportFailed(message, title)` and `unusableBackgroundImage(fileName)`. The titles are `Not saved` (Save, Save As…), `Not uploaded` (Upload, Upload as New) and, for Copy, `Could not copy image`, which 2.11 left unnamed. `export()` commits a pending background draft first. `EditorModel.backgroundDraft` holds the live style during a slider drag (not in the document or undo), `setBackground(_:)` is the toggle, `commitBackgroundDraft()` the popover's `onCommit`, and `shownBackground` the layout in image pixels, nil while the Crop tool is open. Every step is under the action name `Background`. A commit that changes only a `.solid` fill uses the coalescing key `Background Colour`, so a run of colour changes with nothing else between them is one undo step, even across popover sessions.
+- Popover: `BackgroundPopoverView` (new, beside `ToolOptionsView`) holds the switch and the options. The switch is disabled while off when the content is over the limit. `.onDisappear` commits a draft, so a drag cut short by the popover closing is still one step. `showPopover` closes the other popovers and the other way round. The toolbar's minimum width is 1062 pt (see 2.6).
+- Preview: `BaseImageView`'s root layer holds a background layer, a shadow layer and a content layer, which carries the image and effect tiles and the rounded mask. The shadow layer has no contents: `shadowPath` is the rounded rect, `shadowRadius` is half the compositor's blur (a probe confirmed a layer's radius is half CoreGraphics' `blur`), and the layer is moved down by the offset rather than using `shadowOffset`, which the flipped layer tree would reverse. The preview's shadow follows the rounded rect, while the export's follows the capture's alpha, so they differ slightly for a window with transparent corners. `CanvasView` skips the crop cover while a background shows, since the mask hides the area, and `fitRect` is the whole canvas. The fill is rendered in a detached task, cached per fill, display and custom revision, and re-rendered when the editor window changes screen. An offscreen render of the preview showed no shadow while the export had one; the preview's shadow is a hand check.
+- Window captures: `AppCoordinator.withWindowBackground` runs first in `save(_:intent:)`, so even the `copyOnly` branch gets the composed image. The log reasons are `the window is too large for a background` and `no bitmap could be made`. A desktop-picture fill adds one `WallpaperSource().wallpapers(only:)` call for the one display; its cost is a hand check.
+- If undo restores a capture over 16,384 px while a background is on, the preview hides and the export fails with `The background could not be drawn.`, as 2.11 says.
+- Tests as listed above, plus: `BackgroundLayoutTests` canvas-limit boundary and content ratio cases, gradient direction and shadow offset in the compositor tests, `EditorBackgroundExportTests` (crop then background, the undo steps, colour coalescing, the preview layers' frames) and `fillAloneHasTheSizeAndTheFill`.
+
+Observations from the checklist run are still to be written down here by Tim: whether the preview's shadow matches the export's, whether the colour panel keeps working from the popover, how a drag cut short by the popover closing behaves, the time to follow the editor window to a second display, a desktop-picture window capture's time, and how Include window shadow looks under a background. None of the GUI checks had been run when this was written.
+
 ## 3. Core workflow in detail
 
 ```
@@ -1210,7 +1378,7 @@ Delivered: 6a on 2026-10-21 on `phase-6-polish` (PR 13); 6b on 2026-10-21 on `ph
 ### Phase 7: extras (as wanted)
 - Optimise images with Clop before upload (see 2.7): merged 2026-10-21 (PR 15).
 - 7b: Capture Text (OCR via Vision, QR codes) and Hide desktop icons, on `phase-7b-text-icons`. Design in 2.10.
-- 7c: Background tool and window-with-background.
+- 7c: Background tool and window-with-background, on `phase-7c-background`. Design and what was built: 2.11.
 
 ### Later: screen recording
 Separate design document. Will reuse Uploader, Naming, History, and Overlay.

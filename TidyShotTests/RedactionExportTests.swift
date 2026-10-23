@@ -47,7 +47,7 @@ struct RedactionExportTests {
 
     /// Exports, encodes and decodes as Save and Copy do. The bytes are RGBA, top row first.
     func exportedPixels() async throws -> (scale: CGFloat, width: Int, height: Int, bytes: [UInt8]) {
-        let export = try #require(await model.renderExport())
+        let export = try await model.renderExport()
         let png = try ImageEncoder.pngData(from: export.image, scale: export.scale)
         let decoded = try #require(ImageEncoder.decode(png))
         let bytes = try rgba(of: decoded.image)

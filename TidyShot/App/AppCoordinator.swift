@@ -614,10 +614,13 @@ final class AppCoordinator {
     /// records it for this capture, so an edit can replace it later. The PNG, and the TIFF when the
     /// image goes on the clipboard now, are made in a detached task, so a tall capture does not hold
     /// up the main actor. The intent's action replaces the General one; `copyOnly` leaves after
-    /// `copyOnly(_:sender:)`; `then` opens the editor or a pin on the new record. Returns the
-    /// record, or nil when nothing was recorded.
+    /// `copyOnly(_:sender:)`; `then` opens the editor or a pin on the new record. A window capture
+    /// first goes on its background when the Capture tab asks for one (`withWindowBackground`).
+    /// Returns the record, or nil when nothing was recorded.
     @discardableResult
     func save(_ result: CaptureResult, intent: CaptureIntent = .standard) async -> CaptureRecord? {
+        // Before the copy-only branch, so `action=copy` gets the background too.
+        let result = await withWindowBackground(result)
         if intent.copyOnly {
             await copyOnly(result, sender: intent.sender)
             return nil
@@ -673,6 +676,35 @@ final class AppCoordinator {
         case .pin: await pin(recordID: record.id)
         }
         return record
+    }
+
+    /// A window capture on the Capture tab's background when `Add background to window captures` is
+    /// on (spec 2.11), so the file, clipboard, thumbnail, card and upload all get it; any other
+    /// capture as it is. The desktop picture is the window's display's, and composing runs detached.
+    /// When it fails the capture keeps the plain window image and the reason is logged, with no
+    /// notification, since nothing is lost.
+    private func withWindowBackground(_ result: CaptureResult) async -> CaptureResult {
+        guard settings.windowBackground, case .window = result.target else { return result }
+        let style = settings.backgroundStyle
+        let content = result.image
+        let scale = result.scale
+        let fillImage = await BackgroundFillSource.fillImage(for: style.fill, displayID: result.target.displayID)
+        let composed = await Task.detached(priority: .userInitiated) {
+            BackgroundCompositor.compose(content, style: style, scale: scale, fillImage: fillImage)
+        }.value
+        guard let composed else {
+            let fits = BackgroundLayout.make(contentSize: CGSize(width: content.width, height: content.height),
+                                             style: style, scale: scale) != nil
+            let reason = fits ? "no bitmap could be made" : "the window is too large for a background"
+            NSLog("Background: \(reason), keeping the window capture")
+            return result
+        }
+        return CaptureResult(image: composed, scale: scale, target: result.target)
+    }
+
+    /// The style editor's `Choose Image…` was given a file that does not decode (spec 2.11).
+    func notifyUnusableBackgroundImage(named fileName: String) {
+        notifier.notifyError(fileName, title: "Not a usable image")
     }
 
     /// `action=copy` (spec 2.9, URL scheme, Actions): the image goes on the clipboard and nothing
@@ -1944,7 +1976,9 @@ final class AppCoordinator {
                 canPaste: { Pasteboard.hasAnnotationClip }),
             upload: { [weak self] image, asNew in
                 await self?.editorUpload(recordID: recordID, image: image, asNew: asNew) ?? .refused
-            })
+            },
+            exportFailed: { [weak self] message, title in self?.notifier.notifyError(message, title: title) },
+            unusableBackgroundImage: { [weak self] fileName in self?.notifyUnusableBackgroundImage(named: fileName) })
     }
 
     /// Tells the record's open editor, if any, what it may do now: the record as it is (nil once

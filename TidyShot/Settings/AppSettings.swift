@@ -61,6 +61,8 @@ final class AppSettings {
         static let optimiseWithClop = "optimiseWithClop"
         static let hideDesktopIconsWhileCapturing = "hideDesktopIconsWhileCapturing"
         static let desktopIconsHidden = "desktopIconsHidden"
+        static let windowBackground = "windowBackground"
+        static let backgroundStyle = "backgroundStyle"
     }
 
     @ObservationIgnored private let defaults: UserDefaults
@@ -124,6 +126,12 @@ final class AppSettings {
     /// The status menu's Hide Desktop Icons (spec 2.10): the desktop stays covered until turned off,
     /// also across launches. Set through `AppCoordinator.setDesktopIconsHidden(_:)`.
     var desktopIconsHidden: Bool { didSet { defaults.set(desktopIconsHidden, forKey: Keys.desktopIconsHidden) } }
+    /// The Capture tab's Add background to window captures (spec 2.11): each window capture is put
+    /// on `backgroundStyle` as it is saved.
+    var windowBackground: Bool { didSet { defaults.set(windowBackground, forKey: Keys.windowBackground) } }
+    /// The Capture tab's background style, which the editor's Background tool also starts from.
+    /// Stored as JSON.
+    var backgroundStyle: BackgroundStyle { didSet { storeBackgroundStyle() } }
 
     /// The five editor values as one value. Setting it writes all five keys.
     var editorDefaults: EditorDefaults {
@@ -172,6 +180,7 @@ final class AppSettings {
             Keys.optimiseWithClop: false,
             Keys.hideDesktopIconsWhileCapturing: false,
             Keys.desktopIconsHidden: false,
+            Keys.windowBackground: false,
         ])
         showsCursor = defaults.bool(forKey: Keys.showsCursor)
         copyImageToClipboard = defaults.bool(forKey: Keys.copyImageToClipboard)
@@ -211,6 +220,11 @@ final class AppSettings {
         optimiseWithClop = defaults.bool(forKey: Keys.optimiseWithClop)
         hideDesktopIconsWhileCapturing = defaults.bool(forKey: Keys.hideDesktopIconsWhileCapturing)
         desktopIconsHidden = defaults.bool(forKey: Keys.desktopIconsHidden)
+        windowBackground = defaults.bool(forKey: Keys.windowBackground)
+        // Not registered: a missing value, or one that does not decode (a fill or aspect from a
+        // newer build), means the default style.
+        backgroundStyle = defaults.data(forKey: Keys.backgroundStyle)
+            .flatMap { try? JSONDecoder().decode(BackgroundStyle.self, from: $0) } ?? BackgroundStyle()
 
         // Property observers do not run during init, so templates rewritten by
         // `TemplateMigration` are stored here, once.
@@ -249,6 +263,16 @@ final class AppSettings {
             defaults.set(try JSONEncoder().encode(lastAreaRect), forKey: Keys.lastAreaRect)
         } catch {
             NSLog("The last area could not be encoded, so the stored one is kept: \(error.localizedDescription)")
+        }
+    }
+
+    /// Writes `backgroundStyle` as JSON. An encoding failure is logged and leaves the stored value
+    /// as it was.
+    private func storeBackgroundStyle() {
+        do {
+            defaults.set(try JSONEncoder().encode(backgroundStyle), forKey: Keys.backgroundStyle)
+        } catch {
+            NSLog("The background style could not be encoded, so the stored one is kept: \(error.localizedDescription)")
         }
     }
 

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct CaptureSettingsView: View {
     @Bindable private var settings = AppSettings.shared
+    @State private var editingBackground = false
 
     var body: some View {
         Form {
@@ -21,6 +22,11 @@ struct CaptureSettingsView: View {
             Text("Covers desktop icons and widgets with the desktop picture during area, window, fullscreen, previous-area, All-in-One and self-timer captures.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            Toggle("Add background to window captures", isOn: $settings.windowBackground)
+            Text("Puts each window capture on the background below, as the editor's Background tool would.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Button("Edit Background…") { editingBackground = true }
             Picker("Self-timer", selection: $settings.selfTimerSeconds) {
                 ForEach(AppSettings.selfTimerChoices, id: \.self) { seconds in
                     Text("\(seconds) seconds").tag(seconds)
@@ -28,5 +34,10 @@ struct CaptureSettingsView: View {
             }
         }
         .formStyle(.grouped)
+        .sheet(isPresented: $editingBackground) {
+            BackgroundStyleSheet(settings: settings, onUnusableImage: { name in
+                AppCoordinator.shared.notifyUnusableBackgroundImage(named: name)
+            })
+        }
     }
 }
