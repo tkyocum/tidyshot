@@ -23,53 +23,73 @@ struct ToolOptionsView: View {
 
     let model: EditorModel
 
+    /// The popover's width. A `Form` in `.columns` style gave the label column only what the
+    /// six line-width segments left over, so `Line width` wrapped one letter per line once a state
+    /// change re-laid the form out. A grid with labels that never wrap, at this width, fits every row.
+    static let width: CGFloat = 340
+
     var body: some View {
-        Form {
-            Picker("Line width", selection: lineWidth) {
-                ForEach(EditorPalette.lineWidthsPoints, id: \.self) { width in
-                    Text("\(Int(width))").tag(width)
+        Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 10) {
+            row("Line width") {
+                Picker("Line width", selection: lineWidth) {
+                    ForEach(EditorPalette.lineWidthsPoints, id: \.self) { width in
+                        Text("\(Int(width))").tag(width)
+                    }
                 }
+                .help("Keys 1 to 6")
             }
-            .pickerStyle(.segmented)
-            .help("Keys 1 to 6")
-            LabeledContent("Blur radius") {
+            row("Blur radius") {
                 HStack {
                     Slider(value: blurRadius, in: RedactionDefaults.blurRangePoints, step: 1)
                     readout(model.blurRadiusPoints)
                 }
             }
             .disabled(effectTool != .blur)
-            LabeledContent("Pixel block") {
+            row("Pixel block") {
                 HStack {
                     Slider(value: block, in: RedactionDefaults.blockRangePoints, step: 1)
                     readout(model.blockPoints)
                 }
             }
             .disabled(effectTool != .pixelate)
-            Picker("Shape", selection: spotlightShape) {
-                Text("Rectangle").tag(false)
-                Text("Ellipse").tag(true)
+            row("Shape") {
+                Picker("Shape", selection: spotlightShape) {
+                    Text("Rectangle").tag(false)
+                    Text("Ellipse").tag(true)
+                }
             }
-            .pickerStyle(.segmented)
             .disabled(!model.spotlightShapeApplies)
-            Picker("Dim", selection: spotlightDim) {
-                ForEach(EditorPalette.spotlightDims, id: \.self) { dim in
-                    Text("\(Int((dim * 100).rounded())) %").tag(dim)
+            row("Dim") {
+                Picker("Dim", selection: spotlightDim) {
+                    ForEach(EditorPalette.spotlightDims, id: \.self) { dim in
+                        Text("\(Int((dim * 100).rounded())) %").tag(dim)
+                    }
                 }
             }
-            .pickerStyle(.segmented)
             .disabled(!model.spotlightDimApplies)
-            Picker("Size", selection: counterSize) {
-                ForEach(Array(zip(Self.counterSizeLabels, EditorPalette.counterDiametersPoints)), id: \.1) { label, points in
-                    Text(label).tag(points)
+            row("Size") {
+                Picker("Size", selection: counterSize) {
+                    ForEach(Array(zip(Self.counterSizeLabels, EditorPalette.counterDiametersPoints)), id: \.1) { label, points in
+                        Text(label).tag(points)
+                    }
                 }
             }
-            .pickerStyle(.segmented)
             .disabled(!model.counterSizeApplies)
         }
-        .formStyle(.columns)
+        .pickerStyle(.segmented)
+        .labelsHidden()
         .padding(12)
-        .frame(width: 300)
+        .frame(width: Self.width)
+    }
+
+    /// One row: the label right-aligned in the first column, on one line, then the control.
+    private func row(_ label: String, @ViewBuilder control: () -> some View) -> some View {
+        GridRow {
+            OptionLabel(text: label)
+                .gridColumnAlignment(.trailing)
+            control()
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     private func readout(_ points: CGFloat) -> some View {
@@ -112,5 +132,19 @@ struct ToolOptionsView: View {
 
     private var counterSize: Binding<CGFloat> {
         Binding(get: { model.activeCounterDiameterPoints }, set: { model.applyCounterSize(points: $0) })
+    }
+}
+
+/// A row's label: one line, never squeezed, dimmed with the row when it does not apply, as a
+/// `Form` label is.
+private struct OptionLabel: View {
+    let text: String
+    @Environment(\.isEnabled) private var isEnabled
+
+    var body: some View {
+        Text(text)
+            .foregroundStyle(isEnabled ? .primary : .secondary)
+            .lineLimit(1)
+            .fixedSize()
     }
 }

@@ -139,7 +139,7 @@ says.
 - [ ] `Size`: enabled for Counter as the tool or with a counter selected, and dimmed otherwise. `Small`, `Medium`, `Large`.
 - [ ] `Line width` is always enabled. With a spotlight or a counter selected it changes only the default (the selected one does not change), and no undo step is added.
 - [ ] The Colour button is dimmed for Spotlight with nothing selected, and while a spotlight is selected, so the palette cannot quietly change the stroke colour. It is enabled with Select and a counter selected, with Arrow and with Crop. It is enabled with Spotlight as the tool and a counter selected.
-- [ ] Options popover layout: the form fits its 300 pt width. A render of the popover in the test host truncated the `Line width` label (`Line wid…`), and truncated it the same way before 4c; write down whether it truncates on screen, and whether it bothers you.
+- [ ] Options popover layout: every label (`Line width`, `Blur radius`, `Pixel block`, `Shape`, `Dim`, `Size`) shows on one line, right-aligned, with Spotlight, Counter and other tools active, and after drawing and selecting a spotlight and changing Dim. (Fixed 2026-10-23: `Line width` wrapped one letter per line once a spotlight was drawn.)
 
 ## Counter
 - [ ] `N` picks Counter; the cursor is the crosshair. A click places a filled circle in the current stroke colour (red by default) with a white ring and a white number `1`, centred on the click. The new counter is selected and shows the dashed outline round its circle's bounding square, and no handles. The tool stays Counter.
@@ -222,7 +222,7 @@ Write these into the "Phase 4c (built)" notes of spec 2.12:
 - Whether stale outlines or a stale dim ever appeared after S, V, Escape or a tool change (the partial repaint).
 - Whether the canvas matched the saved file under the highlighter, and how a window shadow's partly transparent edge looked on the canvas against the file.
 - How the saved image compared with the canvas for the counters (ring, digits) and for the dim.
-- Whether picking Shape or Size right after drawing a spotlight or placing a counter (which changes the selected one too) surprised you, and whether the `Line width` label's truncation matters.
+- Whether picking Shape or Size right after drawing a spotlight or placing a counter (which changes the selected one too) surprised you.
 - Whether a White counter's missing edge on a light capture matters.
 - The time a Save As… takes on the tall capture with a spotlight, against the same capture without.
 - Anything above that failed.
