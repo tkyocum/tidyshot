@@ -700,4 +700,299 @@ struct EditorModelTests {
         #expect(model.selection == second.id)
         #expect(undoAll(model).count == 3)
     }
+
+    // MARK: Spotlight (spec 2.12)
+
+    func spotlight(isEllipse: Bool = false) -> Annotation {
+        .spotlight(SpotlightShape(id: UUID(), rect: CGRect(x: 2, y: 2, width: 8, height: 8), isEllipse: isEllipse))
+    }
+
+    func arrow() -> Annotation {
+        .arrow(Segment(id: UUID(), from: CGPoint(x: 1, y: 1), to: CGPoint(x: 12, y: 12), color: red, lineWidth: 4))
+    }
+
+    /// ⌘A follows the hit order: the frontmost drawing, else effect, else spotlight.
+    @Test func selectAllFallsBackToASpotlight() {
+        let model = makeModel()
+        let line = add(arrow(), to: model)
+        add(spotlight(), to: model)
+        model.selectAll()
+        #expect(model.selection == line.id)
+
+        let alone = makeModel()
+        let hole = add(spotlight(), to: alone)
+        alone.selectAll()
+        #expect(alone.selection == hole.id)
+    }
+
+    @Test func aNewSpotlightTakesTheShapeDefault() throws {
+        let model = makeModel()
+        let from = CGPoint(x: 12, y: 10)
+        let to = CGPoint(x: 2, y: 4)
+        let rect = try #require(model.makeAnnotation(.spotlight, from: from, to: to)?.spotlightShape)
+        #expect(rect.rect == CGRect(x: 2, y: 4, width: 10, height: 6))
+        #expect(!rect.isEllipse)
+        model.spotlightEllipse = true
+        #expect(model.makeAnnotation(.spotlight, from: from, to: to)?.spotlightShape?.isEllipse == true)
+        #expect(model.makeAnnotation(.spotlight, from: from, to: from) == nil)
+    }
+
+    /// Shape and Dim on a selected spotlight are each one named step that undo and redo restore.
+    @Test func shapeAndDimOnASelectedSpotlightAreOneStepEach() throws {
+        let model = makeModel()
+        model.tool = .select
+        let hole = add(spotlight(), to: model)
+        let added = model.document
+        model.selection = hole.id
+
+        model.applySpotlightShape(isEllipse: true)
+        #expect(model.document.annotation(id: hole.id) == hole.withSpotlightShape(isEllipse: true))
+        #expect(model.spotlightEllipse)
+        #expect(model.activeSpotlightEllipse)
+        #expect(model.undoManager.undoActionName == EditorModel.ActionName.spotlightShape)
+        #expect(EditorModel.ActionName.spotlightShape == "Spotlight Shape")
+        let reshaped = model.document
+
+        model.applySpotlightDim(0.7)
+        #expect(model.document.effectiveSpotlightDim == 0.7)
+        #expect(model.undoManager.undoActionName == EditorModel.ActionName.spotlightDim)
+        #expect(EditorModel.ActionName.spotlightDim == "Spotlight Dim")
+        let dimmed = model.document
+
+        model.undoManager.undo()
+        #expect(model.document == reshaped)
+        model.undoManager.undo()
+        #expect(model.document == added)
+        // The selected spotlight's own shape shows again; the default stays as last picked.
+        #expect(!model.activeSpotlightEllipse)
+        #expect(model.spotlightEllipse)
+        model.undoManager.redo()
+        #expect(model.document == reshaped)
+        model.undoManager.redo()
+        #expect(model.document == dimmed)
+        #expect(undoAll(model).count == 3)
+    }
+
+    /// A run of Dim clicks is one step, whatever the selection.
+    @Test func aRunOfDimClicksIsOneStep() {
+        let model = makeModel()
+        model.tool = .spotlight
+        add(spotlight(), to: model)
+        let added = model.document
+        model.selection = nil
+        for dim in [0.3, 0.7, 0.3] {
+            model.applySpotlightDim(dim)
+        }
+        #expect(model.document.effectiveSpotlightDim == 0.3)
+        model.undoManager.undo()
+        #expect(model.document == added)
+        #expect(undoAll(model).count == 1)
+    }
+
+    /// With nothing selected, Shape sets only the default for the next spotlight.
+    @Test func shapeWithNothingSelectedChangesOnlyTheDefault() {
+        let model = makeModel()
+        model.tool = .spotlight
+        add(spotlight(), to: model)
+        let added = model.document
+        model.selection = nil
+        model.applySpotlightShape(isEllipse: true)
+        #expect(model.spotlightEllipse)
+        #expect(model.activeSpotlightEllipse)
+        #expect(model.document == added)
+        #expect(undoAll(model).count == 1)
+    }
+
+    /// A dim nothing shows adds no step and no unsaved change, and neither does the dim in effect.
+    @Test func dimWithoutASpotlightOrUnchangedAddsNoStep() {
+        let model = makeModel()
+        model.tool = .spotlight
+        model.applySpotlightDim(0.7)
+        #expect(model.document.spotlightDim == nil)
+        #expect(!model.undoManager.canUndo)
+        #expect(!model.hasUnsavedChanges)
+
+        add(spotlight(), to: model)
+        model.applySpotlightDim(0.5)
+        #expect(model.document.spotlightDim == nil)
+        #expect(model.undoManager.undoActionName == "Add")
+        model.applySpotlightDim(0.3)
+        model.applySpotlightDim(0.3)
+        #expect(undoAll(model).count == 2)
+    }
+
+    /// Shape applies to the Spotlight tool or a selected spotlight; Dim needs a spotlight in the
+    /// document as well.
+    @Test func shapeAndDimEnableRules() {
+        let model = makeModel()
+        model.tool = .rectangle
+        #expect(!model.spotlightShapeApplies)
+        #expect(!model.spotlightDimApplies)
+        model.tool = .spotlight
+        #expect(model.spotlightShapeApplies)
+        #expect(!model.spotlightDimApplies)
+
+        let hole = add(spotlight(), to: model)
+        #expect(model.spotlightDimApplies)
+        model.tool = .select
+        #expect(!model.spotlightShapeApplies)
+        #expect(!model.spotlightDimApplies)
+        model.selection = hole.id
+        #expect(model.spotlightShapeApplies)
+        #expect(model.spotlightDimApplies)
+
+        // Another kind selected under Select: neither.
+        let line = add(arrow(), to: model)
+        model.selection = line.id
+        #expect(!model.spotlightShapeApplies)
+        #expect(!model.spotlightDimApplies)
+    }
+
+    /// The Colour item is off while a spotlight is selected, and for the Spotlight tool unless the
+    /// selection has a colour; on otherwise, Crop included.
+    @Test func colorAppliesRule() {
+        let model = makeModel()
+        #expect(model.colorApplies)
+        model.tool = .spotlight
+        #expect(!model.colorApplies)
+        let hole = add(spotlight(), to: model)
+        model.selection = hole.id
+        #expect(!model.colorApplies)
+        let line = add(arrow(), to: model)
+        model.selection = line.id
+        #expect(model.colorApplies)
+
+        model.tool = .select
+        model.selection = hole.id
+        #expect(!model.colorApplies)
+        model.selection = nil
+        #expect(model.colorApplies)
+        for tool in [EditorTool.rectangle, .redact, .highlighter, .crop] {
+            model.tool = tool
+            #expect(model.colorApplies, "\(tool)")
+        }
+    }
+
+    /// A spotlight has no colour, so selecting one leaves the swatch on the default.
+    @Test func aSelectedSpotlightLeavesTheActiveColour() {
+        let model = makeModel()
+        model.tool = .select
+        let hole = add(spotlight(), to: model)
+        let before = model.activeColor
+        model.selection = hole.id
+        #expect(model.activeColor == before)
+        #expect(model.activeColor == model.strokeColor)
+    }
+
+    // MARK: Counter (spec 2.12)
+
+    func counter(number: Int = 1, at center: CGPoint = CGPoint(x: 50, y: 50), diameter: CGFloat = 64) -> Annotation {
+        .counter(CounterMark(id: UUID(), center: center, number: number, diameter: diameter, color: red))
+    }
+
+    /// A new counter is `counterDiameterPoints × scale` across, in `strokeColor`, centred on the
+    /// press and numbered next; it is clamped inside the applied crop.
+    @Test func aNewCounterTakesTheSizeAndColourDefaults() throws {
+        let model = makeModel(side: 200)
+        let press = CGPoint(x: 100, y: 80)
+        let first = try #require(model.makeAnnotation(.counter, from: press, to: CGPoint(x: 150, y: 150))?.counterMark)
+        #expect(first.diameter == EditorPalette.defaultCounterDiameterPoints * 2)
+        #expect(first.diameter == 64)
+        #expect(first.color == model.strokeColor)
+        #expect(first.center == press)
+        #expect(first.number == 1)
+
+        add(.counter(first), to: model)
+        model.counterDiameterPoints = 44
+        model.strokeColor = blue
+        let second = try #require(model.makeAnnotation(.counter, from: press, to: press)?.counterMark)
+        #expect(second.diameter == 88)
+        #expect(second.color == blue)
+        #expect(second.number == 2)
+
+        // Within the crop: the whole circle inside it.
+        model.commit(model.document.withCrop(CGRect(x: 60, y: 40, width: 100, height: 100)), actionName: "Crop")
+        let clamped = try #require(model.makeAnnotation(.counter, from: CGPoint(x: 62, y: 139), to: press)?.counterMark)
+        #expect(clamped.center == CGPoint(x: 104, y: 96))
+    }
+
+    /// Size on a selected counter is one `Counter Size` step that keeps its centre, a run of picks
+    /// is one step, and undo and redo restore it. It also sets the default.
+    @Test func sizeOnASelectedCounterIsOneStepAboutItsCentre() throws {
+        let model = makeModel(side: 200)
+        model.tool = .select
+        let mark = add(counter(at: CGPoint(x: 70, y: 60), diameter: 64), to: model)
+        let added = model.document
+        model.selection = mark.id
+        #expect(model.activeCounterDiameterPoints == 32)
+
+        model.applyCounterSize(points: 24)
+        model.applyCounterSize(points: 44)
+        #expect(model.document.annotation(id: mark.id) == mark.withCounterDiameter(88))
+        #expect(model.document.annotation(id: mark.id)?.counterMark?.center == CGPoint(x: 70, y: 60))
+        #expect(model.counterDiameterPoints == 44)
+        #expect(model.activeCounterDiameterPoints == 44)
+        #expect(model.undoManager.undoActionName == EditorModel.ActionName.counterSize)
+        #expect(EditorModel.ActionName.counterSize == "Counter Size")
+        let resized = model.document
+
+        model.undoManager.undo()
+        #expect(model.document == added)
+        // The selected counter's own size shows again; the default stays as last picked.
+        #expect(model.activeCounterDiameterPoints == 32)
+        #expect(model.counterDiameterPoints == 44)
+        model.undoManager.redo()
+        #expect(model.document == resized)
+        #expect(undoAll(model).count == 2)
+    }
+
+    /// With nothing selected, Size sets only the default for the next counter.
+    @Test func sizeWithNothingSelectedChangesOnlyTheDefault() {
+        let model = makeModel(side: 200)
+        model.tool = .counter
+        add(counter(), to: model)
+        let added = model.document
+        model.selection = nil
+        model.applyCounterSize(points: 24)
+        #expect(model.counterDiameterPoints == 24)
+        #expect(model.activeCounterDiameterPoints == 24)
+        #expect(model.document == added)
+        #expect(undoAll(model).count == 1)
+    }
+
+    /// Size applies while Counter is the tool or a counter is selected.
+    @Test func sizeEnableRule() {
+        let model = makeModel(side: 200)
+        model.tool = .rectangle
+        #expect(!model.counterSizeApplies)
+        model.tool = .counter
+        #expect(model.counterSizeApplies)
+        let mark = add(counter(), to: model)
+        model.tool = .select
+        #expect(!model.counterSizeApplies)
+        model.selection = mark.id
+        #expect(model.counterSizeApplies)
+        let line = add(arrow(), to: model)
+        model.selection = line.id
+        #expect(!model.counterSizeApplies)
+        model.tool = .counter
+        #expect(model.counterSizeApplies)
+    }
+
+    /// A counter has a colour: selected, the swatch shows it and a pick recolours it as `Color`.
+    @Test func aSelectedCounterShowsAndTakesTheColour() {
+        let model = makeModel(side: 200)
+        model.tool = .select
+        let mark = add(counter(), to: model)
+        model.selection = mark.id
+        #expect(model.activeColor == red)
+        #expect(model.colorApplies)
+        model.applyColor(blue)
+        #expect(model.document.annotation(id: mark.id) == mark.withColor(blue))
+        #expect(model.activeColor == blue)
+        #expect(model.undoManager.undoActionName == EditorModel.ActionName.color)
+        model.undoManager.undo()
+        #expect(model.document.annotation(id: mark.id) == mark)
+        #expect(model.activeColor == red)
+    }
 }

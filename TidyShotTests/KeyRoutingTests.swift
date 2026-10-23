@@ -37,6 +37,15 @@ struct KeyRoutingTests {
         #expect(action("vd") == ignored)
     }
 
+    /// 4c: S and N. Save is ⌘S, which never reaches `action`, and N has no editor chord.
+    @Test func sAndNPickSpotlightAndCounter() {
+        for (key, tool) in [("s", EditorTool.spotlight), ("n", .counter)] {
+            #expect(action(key) == .selectTool(tool))
+            #expect(action(key.uppercased()) == .selectTool(tool))
+            #expect(action(key, command: true) == ignored)
+        }
+    }
+
     @Test func digitsOneToSixPickWidths() {
         for digit in 1...6 {
             #expect(action(String(digit)) == .lineWidth(index: digit - 1))

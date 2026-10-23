@@ -12,11 +12,14 @@ struct EditorBackgroundExportTests {
     let blue = RGBA(red: 0, green: 0, blue: 1)
 
     /// A 16 x 16 capture at 2x whose pixel (x, y) is (x * 16, y * 16, 0), so a framed crop can be
-    /// told apart from the rest.
-    func makeModel(width: Int = 16, height: Int = 16, scale: CGFloat = 2) -> EditorModel {
+    /// told apart from the rest. `clearCorner` makes the top-left 2 x 2 pixels transparent, as a
+    /// window capture's rounded corner is.
+    func makeModel(width: Int = 16, height: Int = 16, scale: CGFloat = 2, clearCorner: Bool = false) -> EditorModel {
         var bytes: [UInt8] = []
         for y in 0..<height {
-            for x in 0..<width { bytes += [UInt8((x * 16) % 256), UInt8((y * 16) % 256), 0, 255] }
+            for x in 0..<width {
+                bytes += clearCorner && x < 2 && y < 2 ? [0, 0, 0, 0] : [UInt8((x * 16) % 256), UInt8((y * 16) % 256), 0, 255]
+            }
         }
         let image = CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32,
                             bytesPerRow: width * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
@@ -71,6 +74,27 @@ struct EditorBackgroundExportTests {
         #expect(bitmap[8, 8] == [32, 48, 0, 255])
         #expect(bitmap[8 + 9, 8 + 7] == [176, 160, 0, 255])
         #expect(bitmap[8 + 10, 8 + 8] == [0, 0, 255, 255])
+    }
+
+    /// The overlay belongs to the content and keeps its alpha (spec 2.12, Crop and Alpha): the
+    /// fill shows undimmed through a transparent corner outside every spotlight, and in the padding,
+    /// while the opaque capture outside the hole is dimmed.
+    @Test func aTransparentCornerShowsTheUndimmedFill() async throws {
+        let model = makeModel(clearCorner: true)
+        model.commit(model.document.appending(.spotlight(SpotlightShape(id: UUID(), rect: CGRect(x: 8, y: 8, width: 4, height: 4),
+                                                                        isEllipse: false))),
+                     actionName: "Add Spotlight")
+        model.setBackground(solid(red))
+        let bitmap = try EditorFlattenerTests.Bitmap(try await model.renderExport().image)
+        // The capture sits 8 px in: canvas (8, 8) and (9, 9) are its transparent corner.
+        #expect(bitmap[8, 8] == [255, 0, 0, 255])
+        #expect(bitmap[9, 9] == [255, 0, 0, 255])
+        #expect(bitmap[0, 0] == [255, 0, 0, 255])
+        // Capture (10, 10) is inside the hole; capture (15, 15), (240, 240, 0), is dimmed by half.
+        #expect(bitmap[18, 18] == [160, 160, 0, 255])
+        let dimmed = bitmap[23, 23]
+        #expect((119...121).contains(Int(dimmed[0])) && (119...121).contains(Int(dimmed[1])), "\(dimmed)")
+        #expect(dimmed[2] == 0 && dimmed[3] == 255)
     }
 
     @Test func noBackgroundExportsTheCaptureAsBefore() async throws {

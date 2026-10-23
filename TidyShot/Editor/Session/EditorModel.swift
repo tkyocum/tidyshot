@@ -81,6 +81,9 @@ final class EditorModel: CanvasEditing {
         static let textSize = "Text Size"
         static let crop = "Crop"
         static let background = "Background"
+        static let spotlightShape = "Spotlight Shape"
+        static let spotlightDim = "Spotlight Dim"
+        static let counterSize = "Counter Size"
     }
 
     let recordID: UUID
@@ -143,6 +146,10 @@ final class EditorModel: CanvasEditing {
     var highlightWidthPoints = EditorPalette.highlighterWidthPoints
     var blurRadiusPoints: CGFloat
     var blockPoints: CGFloat
+    /// The Shape option: new spotlights are ellipses when true.
+    var spotlightEllipse: Bool
+    /// The Size option: a new counter's diameter in points.
+    var counterDiameterPoints: CGFloat
     /// The size for new text, in points; keys 1 to 6 with the Text tool change it.
     var textSizePoints: CGFloat = EditorPalette.defaultTextSizePoints
     /// The text being typed, or nil. While it is set, CanvasView shows an NSTextView over it.
@@ -173,6 +180,8 @@ final class EditorModel: CanvasEditing {
         lineWidthPoints = defaults.lineWidthPoints
         blurRadiusPoints = defaults.blurRadiusPoints
         blockPoints = defaults.blockPoints
+        spotlightEllipse = defaults.spotlightEllipse
+        counterDiameterPoints = defaults.counterDiameterPoints
         // Natural size until the window controller fits the image to its view.
         transform = CanvasTransform(zoom: 1 / image.scale, offset: .zero)
         let undoManager = UndoManager()
@@ -264,6 +273,15 @@ final class EditorModel: CanvasEditing {
             return nil  // Strokes come from `makeStroke`.
         case .text:
             return nil  // Text is placed by `beginTextEditing`, not by a drag.
+        case .spotlight:
+            guard !rect.isEmpty else { return nil }
+            return .spotlight(SpotlightShape(id: id, rect: rect, isEllipse: spotlightEllipse))
+        case .counter:
+            // Placed at the press; the drag's other end is ignored.
+            let diameter = counterDiameterPoints * scale
+            let bounds = document.crop ?? CGRect(origin: .zero, size: imageSize)
+            return .counter(CounterMark(id: id, center: CounterLayout.center(forPress: start, diameter: diameter, within: bounds),
+                                        number: document.nextCounterNumber, diameter: diameter, color: strokeColor))
         }
     }
 
@@ -336,9 +354,9 @@ final class EditorModel: CanvasEditing {
         }
     }
 
-    /// ⌘A with one selection: the frontmost annotation, drawings before effects as in HitTester.
-    /// Nothing while cropping, which shows no selection. With a crop applied, only annotations that
-    /// reach into the crop count: the rest are hidden.
+    /// ⌘A with one selection: the frontmost annotation in HitTester's order, the frontmost drawing,
+    /// else effect, else spotlight. Nothing while cropping, which shows no selection. With a crop
+    /// applied, only annotations that reach into the crop count: the rest are hidden.
     func selectAll() {
         guard tool != .crop else { return }
         let visible: (Annotation) -> Bool = { [document, scale] annotation in
@@ -346,7 +364,8 @@ final class EditorModel: CanvasEditing {
             let bounds = annotation.effectRect ?? AnnotationGeometry.bounds(of: annotation, scale: scale)
             return bounds.intersects(crop)
         }
-        selection = (document.drawings.last(where: visible) ?? document.effects.last(where: visible))?.id
+        selection = (document.drawings.last(where: visible) ?? document.effects.last(where: visible)
+            ?? document.spotlights.last(where: visible))?.id
     }
 
     // MARK: Crop
@@ -506,6 +525,16 @@ final class EditorModel: CanvasEditing {
         textEditing?.box.color ?? Self.color(of: selectedAnnotation) ?? (editsRedactColor ? redactColor : editsHighlighter ? highlightColor : strokeColor)
     }
 
+    /// Whether the toolbar's Colour item is enabled (spec 2.12, Selection chrome and colour): not
+    /// while a spotlight is selected, nor with the Spotlight tool while the selection has no
+    /// colour, so the palette never quietly changes `strokeColor` with nothing to show for it.
+    /// Nothing disables it for Crop.
+    var colorApplies: Bool {
+        if selectedAnnotation?.isSpotlight == true { return false }
+        if tool == .spotlight, Self.color(of: selectedAnnotation) == nil { return false }
+        return true
+    }
+
     /// Redact, or Select with a redaction selected, edits the fill; everything else the stroke.
     private var editsRedactColor: Bool {
         if tool == .redact { return true }
@@ -578,6 +607,61 @@ final class EditorModel: CanvasEditing {
                coalescingKey: "\(actionName)-\(selected.id.uuidString)")
     }
 
+    /// The options popover's Shape row is enabled while Spotlight is the tool or a spotlight is
+    /// selected.
+    var spotlightShapeApplies: Bool {
+        tool == .spotlight || selectedAnnotation?.isSpotlight == true
+    }
+
+    /// The Dim row is enabled under the Shape rule, and only while the document has a spotlight.
+    var spotlightDimApplies: Bool {
+        !document.spotlights.isEmpty && spotlightShapeApplies
+    }
+
+    /// The shape the Shape row shows: the selected spotlight's, else the default for new ones.
+    var activeSpotlightEllipse: Bool {
+        selectedAnnotation?.spotlightShape?.isEllipse ?? spotlightEllipse
+    }
+
+    /// Always sets the default for new spotlights. With a spotlight selected, also changes it as
+    /// one coalesced step, `Spotlight Shape`.
+    func applySpotlightShape(isEllipse: Bool) {
+        spotlightEllipse = isEllipse
+        guard let selected = selectedAnnotation, selected.isSpotlight else { return }
+        commit(document.replacing(selected.withSpotlightShape(isEllipse: isEllipse)), actionName: ActionName.spotlightShape,
+               coalescingKey: "\(ActionName.spotlightShape)-\(selected.id.uuidString)")
+    }
+
+    /// The options popover's Size row is enabled while Counter is the tool or a counter is selected.
+    var counterSizeApplies: Bool {
+        tool == .counter || selectedAnnotation?.counterMark != nil
+    }
+
+    /// The size the Size row shows, in points: the selected counter's, else the default for new
+    /// ones.
+    var activeCounterDiameterPoints: CGFloat {
+        selectedAnnotation?.counterMark.map { $0.diameter / scale } ?? counterDiameterPoints
+    }
+
+    /// Always sets the default for new counters. With a counter selected, also resizes it about its
+    /// centre as one coalesced step, `Counter Size`.
+    func applyCounterSize(points: CGFloat) {
+        counterDiameterPoints = points
+        guard let selected = selectedAnnotation, selected.counterMark != nil else { return }
+        commit(document.replacing(selected.withCounterDiameter(points * scale)), actionName: ActionName.counterSize,
+               coalescingKey: "\(ActionName.counterSize)-\(selected.id.uuidString)")
+    }
+
+    /// The overlay's dim, one value for the whole document, so it is not an editor default.
+    /// Nothing happens while the document has no spotlight, so a dim nothing shows adds no step and
+    /// no unsaved change. A run of changes is one step, `Spotlight Dim`, under one key, and the
+    /// dim in effect commits nothing.
+    func applySpotlightDim(_ dim: Double) {
+        guard !document.spotlights.isEmpty else { return }
+        commit(document.withSpotlightDim(dim), actionName: ActionName.spotlightDim, coalescingKey: ActionName.spotlightDim)
+    }
+
+    /// Exhaustive, so a new kind decides here whether the swatch shows its colour.
     private static func color(of annotation: Annotation?) -> RGBA? {
         switch annotation {
         case .rectangle(let box)?, .ellipse(let box)?: return box.color
@@ -585,7 +669,8 @@ final class EditorModel: CanvasEditing {
         case .pencil(let stroke)?, .highlighter(let stroke)?: return stroke.color
         case .text(let box)?: return box.color
         case .redact(_, let fill)?: return fill
-        default: return nil
+        case .counter(let mark)?: return mark.color
+        case .blur?, .pixelate?, .spotlight?, nil: return nil
         }
     }
 

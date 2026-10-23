@@ -2,15 +2,17 @@ import CoreGraphics
 import Foundation
 import Synchronization
 
-/// Burns the effect tiles and the drawings into a copy of the capture, at the capture's own pixel
-/// size, or at the crop's when the document has one, for Save, Save As…, Copy and Upload.
-/// `EditorModel.renderExport` calls it inside `Task.detached(priority: .userInitiated)`. It uses
-/// no NSGraphicsContext, which is MainActor.
+/// Burns the effect tiles, the spotlight overlay and the drawings into a copy of the capture, at
+/// the capture's own pixel size, or at the crop's when the document has one, for Save, Save As…,
+/// Copy and Upload. `EditorModel.renderExport` calls it inside
+/// `Task.detached(priority: .userInitiated)`. It uses no NSGraphicsContext, which is MainActor.
 ///
-/// For an 8-bit RGB base, every pixel outside the effects and drawings equals the base byte for
-/// byte, alpha included, so window captures keep their transparent corners. Each tile replaces
-/// the pixels of its rect (blend mode copy), so nothing of the base shows through a tile, and a
-/// solid redaction over a transparent corner paints opaque pixels.
+/// For an 8-bit RGB base, every pixel outside the effects, the drawings and the overlay equals the
+/// base byte for byte, alpha included, and alpha survives everywhere, under the overlay too (spec
+/// 2.12 amends 2.6 Export): window captures keep their transparent corners and shadow margins.
+/// Each tile replaces the pixels of its rect (blend mode copy), so nothing of the base shows
+/// through a tile, and a solid redaction over a transparent corner paints opaque pixels, which the
+/// overlay then dims like any other.
 nonisolated enum EditorFlattener {
     /// Nil when no bitmap can be made, or when an effect inside the image has no tile for its
     /// current value: the export fails rather than ship the pixels that effect should hide. An
@@ -43,10 +45,25 @@ nonisolated enum EditorFlattener {
             context.draw(tile.image, in: ImageRects.bottomLeft(rect, imageHeight: height))
         }
 
-        // 3. The drawings, in top-left image pixels as on the canvas, through the same routine.
+        // 3. The spotlight overlay, then the drawings, in top-left image pixels as on the canvas,
+        // through the same routines. The overlay is one transparency layer as big as the clip, so
+        // it is drawn once per `ImageTiling` strip: whole, a 65,536 px capture would allocate
+        // another 811 MB layer on top of the bitmap. The strips are integral, so they meet without
+        // a seam.
         context.setBlendMode(.normal)
         context.translateBy(x: 0, y: CGFloat(height))
         context.scaleBy(x: 1, y: -1)
+        if !document.spotlights.isEmpty {
+            let shapes = document.spotlights.compactMap(\.spotlightShape)
+            let imageRect = CGRect(origin: .zero, size: size)
+            for strip in ImageTiling.tiles(width: width, height: height) {
+                context.saveGState()
+                context.clip(to: strip)
+                AnnotationDrawing.drawSpotlightOverlay(shapes, dim: document.effectiveSpotlightDim, in: context,
+                                                       imageRect: imageRect, coverage: nil)
+                context.restoreGState()
+            }
+        }
         for drawing in document.drawings {
             AnnotationDrawing.draw(drawing, in: context, scale: scale)
         }

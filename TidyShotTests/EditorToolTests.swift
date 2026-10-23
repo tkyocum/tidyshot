@@ -12,6 +12,15 @@ struct EditorToolTests {
         #expect(letters.allSatisfy { $0.isASCII && $0.isUppercase })
         #expect(phase4a.map(\.letter) == ["V", "D", "X", "B", "R", "A"])
         #expect([EditorTool.ellipse, .line].map(\.letter) == ["E", "L"])
+        #expect([EditorTool.spotlight, .counter].map(\.letter) == ["S", "N"])
+    }
+
+    /// 4c's Spotlight sits after Blur, with the effects it works like, and Counter after Text.
+    @Test func fourteenToolsInToolbarOrder() {
+        let expected: [EditorTool] = [.select, .redact, .pixelate, .blur, .spotlight, .rectangle, .arrow, .ellipse,
+                                      .line, .pencil, .highlighter, .text, .counter, .crop]
+        #expect(EditorTool.toolbarOrder == expected)
+        #expect(EditorTool.allCases.count == 14)
     }
 
     @Test func toolForKeyIsCaseInsensitive() {
@@ -39,11 +48,16 @@ struct EditorToolTests {
         #expect(EditorTool.redact.tooltip == "Redact (D)")
         #expect(EditorTool.ellipse.tooltip == "Ellipse (E)")
         #expect(EditorTool.line.tooltip == "Line (L)")
+        #expect(EditorTool.spotlight.tooltip == "Spotlight (S)")
+        #expect(EditorTool.counter.tooltip == "Counter (N)")
+        #expect([EditorTool.spotlight, .counter].map(\.symbolName) == ["light.max", "1.circle"])
         #expect(phase4a.map(\.title) == ["Select", "Redact", "Pixelate", "Blur", "Rectangle", "Arrow"])
     }
 
     @Test func effectToolsAreRedactPixelateBlur() {
         #expect(EditorTool.allCases.filter(\.isEffect) == [.redact, .pixelate, .blur])
+        // Spotlight works on the picture but makes no tile.
+        #expect(!EditorTool.spotlight.isEffect)
     }
 
     @Test func toolbarOrderCoversEveryToolOnce() {
@@ -54,7 +68,8 @@ struct EditorToolTests {
         // Redact leads the drawing tools because it is the only safe redaction. 4b inserts its
         // tools without reordering these.
         #expect(order.filter { phase4a.contains($0) } == phase4a)
-        // Ellipse and Line follow the 4a tools. Later 4b tools go after them.
-        #expect(Array(order.dropFirst(phase4a.count).prefix(2)) == [.ellipse, .line])
+        // Spotlight sits before Rectangle, so Arrow is the seventh tool. Ellipse and Line follow
+        // Arrow; later tools go after them.
+        #expect(Array(order.dropFirst(phase4a.count).prefix(2)) == [.arrow, .ellipse])
     }
 }

@@ -19,22 +19,25 @@ nonisolated enum HitTester {
         tolerancePoints / zoom
     }
 
-    /// Boxes (the rectangle, the ellipse and every effect) have eight handles, clockwise from the
-    /// top-left corner: 0 top-left, 1 top-middle, 2 top-right, 3 middle-right, 4 bottom-right,
-    /// 5 bottom-middle, 6 bottom-left, 7 middle-left. Top is minY. A segment (arrow or line) has
-    /// two: 0 the tail (`from`) and 1 the head (`to`). A stroke has none: it moves and does not
-    /// resize. Text has none: its size comes from the size keys.
+    /// Boxes (the rectangle, the ellipse, a spotlight and every effect) have eight handles,
+    /// clockwise from the top-left corner: 0 top-left, 1 top-middle, 2 top-right, 3 middle-right,
+    /// 4 bottom-right, 5 bottom-middle, 6 bottom-left, 7 middle-left. Top is minY. A segment
+    /// (arrow or line) has two: 0 the tail (`from`) and 1 the head (`to`). A stroke has none: it
+    /// moves and does not resize. Text has none: its size comes from the size keys. A counter has
+    /// none: its size comes from the Size option.
     static func handles(for annotation: Annotation) -> [CGPoint] {
         switch annotation {
         case .rectangle(let shape), .ellipse(let shape):
             boxHandles(shape.rect)
         case .redact(let region, _), .blur(let region, _), .pixelate(let region, _):
             boxHandles(region.rect)
+        case .spotlight(let shape):
+            boxHandles(shape.rect)
         case .arrow(let segment), .line(let segment):
             [segment.from, segment.to]
         case .pencil, .highlighter:
             []
-        case .text:
+        case .text, .counter:
             []
         }
     }
@@ -47,11 +50,14 @@ nonisolated enum HitTester {
         return bodyContains(annotation, point, tolerance: tolerance) ? .body : nil
     }
 
-    /// Two passes, every handle first and then every body, each over the drawings front to back
-    /// and then the effects front to back. Effects render beneath every drawing, so a drawing
-    /// wins over an effect created after it, and a handle wins over a body in front of it.
+    /// Two passes, every handle first and then every body, each over the drawings front to back,
+    /// then the effects front to back, then the spotlights front to back (spec 2.12 amends 2.6's
+    /// Select row). Effects render beneath every drawing, so a drawing wins over an effect created
+    /// after it, and a handle wins over a body in front of it. A spotlight ranks last: its hole
+    /// hides nothing, so whatever shows through it is picked first, whichever was made first, and
+    /// a click on bare image inside it picks the spotlight.
     static func topmost(in document: AnnotationDocument, at point: CGPoint, tolerance: CGFloat) -> (id: UUID, hit: Hit)? {
-        let frontToBack = Array((document.effects + document.drawings).reversed())
+        let frontToBack = Array((document.spotlights + document.effects + document.drawings).reversed())
         for annotation in frontToBack {
             if let index = handleIndex(of: annotation, at: point, tolerance: tolerance) {
                 return (annotation.id, .handle(index))
@@ -65,7 +71,8 @@ nonisolated enum HitTester {
 
     /// The annotation with handle `handle` dragged to `point`. A box handle goes through
     /// `resizedRect`; an arrow end moves, snapped to 45 degrees around the other end when
-    /// `square` (Shift) is held. Id, colour, line width and effect parameter are kept.
+    /// `square` (Shift) is held. Id, colour, line width, effect parameter and a spotlight's shape
+    /// are kept. Kinds without handles come back unchanged.
     static func resized(_ annotation: Annotation, handle: Int, to point: CGPoint, square: Bool) -> Annotation {
         switch annotation {
         case .rectangle(var shape):
@@ -88,7 +95,7 @@ nonisolated enum HitTester {
             default: break
             }
             return .line(segment)
-        case .pencil, .highlighter, .text:
+        case .pencil, .highlighter, .text, .counter:
             return annotation
         case .redact(var region, let fill):
             region.rect = resizedRect(region.rect, handle: handle, to: point, square: square)
@@ -99,6 +106,9 @@ nonisolated enum HitTester {
         case .pixelate(var region, let block):
             region.rect = resizedRect(region.rect, handle: handle, to: point, square: square)
             return .pixelate(region, block: block)
+        case .spotlight(var shape):
+            shape.rect = resizedRect(shape.rect, handle: handle, to: point, square: square)
+            return .spotlight(shape)
         }
     }
 
@@ -185,7 +195,9 @@ nonisolated enum HitTester {
     /// the rect inset by `lineWidth + tolerance`. An arrow's body is its shaft line, and a line's
     /// the whole segment, within `lineWidth / 2 + tolerance`. A stroke's body is its smoothed path
     /// stroked at its width plus the tolerance on each side. An effect is filled: its rect grown
-    /// by `tolerance`.
+    /// by `tolerance`. A spotlight is filled too, since its hole hides nothing: its rect, or the
+    /// ellipse in it, grown by `tolerance`, with no band. A counter's body is its circle, within
+    /// `diameter / 2 + tolerance` of its centre.
     private static func bodyContains(_ annotation: Annotation, _ point: CGPoint, tolerance: CGFloat) -> Bool {
         switch annotation {
         case .rectangle(let shape):
@@ -206,6 +218,11 @@ nonisolated enum HitTester {
             return TextLayout.frame(for: box).insetBy(dx: -tolerance, dy: -tolerance).contains(point)
         case .redact(let region, _), .blur(let region, _), .pixelate(let region, _):
             return region.rect.standardized.insetBy(dx: -tolerance, dy: -tolerance).contains(point)
+        case .spotlight(let shape):
+            let grown = shape.rect.standardized.insetBy(dx: -tolerance, dy: -tolerance)
+            return shape.isEllipse ? ellipseContains(grown, point) : grown.contains(point)
+        case .counter(let mark):
+            return hypot(point.x - mark.center.x, point.y - mark.center.y) <= mark.diameter / 2 + tolerance
         }
     }
 }

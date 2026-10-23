@@ -17,7 +17,8 @@ extension EditorModel {
     /// This editor's colours and sizes, in the shape AppSettings stores.
     var currentDefaults: EditorDefaults {
         EditorDefaults(strokeColor: strokeColor, redactColor: redactColor, lineWidthPoints: lineWidthPoints,
-                       blurRadiusPoints: blurRadiusPoints, blockPoints: blockPoints)
+                       blurRadiusPoints: blurRadiusPoints, blockPoints: blockPoints,
+                       spotlightEllipse: spotlightEllipse, counterDiameterPoints: counterDiameterPoints)
     }
 }
 
@@ -85,7 +86,7 @@ extension EditorWindowController: NSToolbarDelegate, NSToolbarItemValidation {
             return makeButtonItem(.color, label: "Colour", toolTip: "Colour",
                                   image: swatchImage(model.activeColor), action: #selector(showColorPalette(_:)))
         case .toolOptions:
-            return makeButtonItem(.toolOptions, label: "Options", toolTip: "Line width, blur radius and pixel block",
+            return makeButtonItem(.toolOptions, label: "Options", toolTip: "Tool options",
                                   image: symbol("slider.horizontal.3", "Options"), action: #selector(showToolOptions(_:)))
         case .background:
             return makeButtonItem(.background, label: "Background", toolTip: "Background",
@@ -111,11 +112,13 @@ extension EditorWindowController: NSToolbarDelegate, NSToolbarItemValidation {
 
     // MARK: Validation
 
-    /// Copy, Save and Upload follow the same answer as their shortcuts (Task 13's gate); the rest
-    /// are always enabled.
+    /// Copy, Save and Upload follow the same answer as their shortcuts (Task 13's gate). Colour
+    /// follows `EditorModel.colorApplies`: off for the Spotlight tool with no coloured selection and
+    /// with a spotlight selected. The rest are always enabled.
     func validateToolbarItem(_ item: NSToolbarItem) -> Bool {
         switch item.itemIdentifier {
         case .copyImage, .save, .upload: validateUserInterfaceItem(item)
+        case .color: model.colorApplies
         default: true
         }
     }
@@ -165,6 +168,10 @@ extension EditorWindowController: NSToolbarDelegate, NSToolbarItemValidation {
         if new.lineWidthPoints != old.lineWidthPoints { settings.editorLineWidthPoints = Double(new.lineWidthPoints) }
         if new.blurRadiusPoints != old.blurRadiusPoints { settings.editorBlurRadiusPoints = Double(new.blurRadiusPoints) }
         if new.blockPoints != old.blockPoints { settings.editorPixelBlockPoints = Double(new.blockPoints) }
+        if new.spotlightEllipse != old.spotlightEllipse { settings.editorSpotlightEllipse = new.spotlightEllipse }
+        if new.counterDiameterPoints != old.counterDiameterPoints {
+            settings.editorCounterDiameterPoints = Double(new.counterDiameterPoints)
+        }
     }
 
     // MARK: Actions

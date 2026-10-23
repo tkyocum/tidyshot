@@ -47,7 +47,7 @@ nonisolated enum EditorWindowGeometry {
     enum ToolbarMetrics {
         /// The window buttons' trailing edge, for a window whose buttons are not laid out yet.
         static let windowButtons: CGFloat = 76
-        /// One segment per tool in EditorTool.toolbarOrder: six in 4a, eight with Ellipse and Line, twelve after 4b.
+        /// One segment per tool in EditorTool.toolbarOrder: six in 4a, eight with Ellipse and Line, twelve after 4b, fourteen in 4c.
         static let segment: CGFloat = 36
         static let groupPadding: CGFloat = 8
         static let button: CGFloat = 36

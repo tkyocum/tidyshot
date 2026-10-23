@@ -74,7 +74,7 @@ nonisolated enum CropGeometry {
 
     /// How a press at `point` is handled under `crop`, the applied crop (nil: none, or Crop is open and
     /// shows the whole capture). Outside the crop Select deselects unless the press is on a handle of
-    /// `selected`, Text ignores it, and the drawing tools start at the edge.
+    /// `selected`, Text and Counter ignore it, and the drawing tools and Spotlight start at the edge.
     static func press(at point: CGPoint, crop: CGRect?, tool: EditorTool, selected: Annotation?,
                       tolerance: CGFloat) -> Press {
         guard let crop else { return .asPressed }
@@ -86,9 +86,9 @@ nonisolated enum CropGeometry {
                 return .asPressed
             }
             return .deselect
-        case .text:
+        case .text, .counter:
             return .ignore
-        case .redact, .pixelate, .blur, .rectangle, .arrow, .ellipse, .line, .pencil, .highlighter, .crop:
+        case .redact, .pixelate, .blur, .spotlight, .rectangle, .arrow, .ellipse, .line, .pencil, .highlighter, .crop:
             return .clampedToEdge
         }
     }

@@ -2,12 +2,13 @@ import AppKit
 import Observation
 
 /// The editor's interactive layer, on top of `BaseImageView`: it turns pointer and key events into
-/// tool calls and model changes, and draws placeholders, drawings, the shape in progress and the
-/// selection. Viewport-sized; zoom and pan are `model.transform`.
+/// tool calls and model changes, and draws placeholders, the spotlight overlay, drawings, the shape
+/// in progress and the selection. Viewport-sized; zoom and pan are `model.transform`.
 final class CanvasView: NSView {
     /// What the canvas last drew from. A change to `transient` alone repaints only the area it
-    /// covered before and after; any other change repaints the whole view.
-    private struct Shown: Equatable {
+    /// covered before and after (`allowsPartialRepaint(since:)`); any other change repaints the
+    /// whole view.
+    struct Shown: Equatable {
         var document: AnnotationDocument
         var transient: Annotation?
         var selection: UUID?
@@ -20,6 +21,22 @@ final class CanvasView: NSView {
         /// The background shown (`EditorModel.shownBackground`). A change repaints the whole view,
         /// since the drawings are clipped to its rounded content rect.
         var background: ShownBackground?
+        /// Any spotlight displayed, the transient included. A change repaints the whole view, since
+        /// the overlay dims all of it: the first spotlight's drag begins, Escape cancels it, or its
+        /// rect falls below the minimum size or grows back. While it stays true, a hole's move or
+        /// resize changes the overlay only inside its old and new rects.
+        var hasSpotlights: Bool
+        /// The Spotlight tool is active, so every displayed spotlight shows its outline. A change
+        /// repaints the whole view: a tool change alone changes nothing else here.
+        var showsSpotlightOutlines: Bool
+
+        /// Whether repainting the transient's old and new rects is enough to go from `previous` to
+        /// this: only `transient` may differ.
+        func allowsPartialRepaint(since previous: Shown) -> Bool {
+            document == previous.document && selection == previous.selection && transform == previous.transform
+                && cropDraft == previous.cropDraft && editingID == previous.editingID && background == previous.background
+                && hasSpotlights == previous.hasSpotlights && showsSpotlightOutlines == previous.showsSpotlightOutlines
+        }
     }
 
     /// True while a text annotation is being typed. EditorWindow reads it to let the clipboard and
@@ -51,15 +68,19 @@ final class CanvasView: NSView {
     private var panStart: (viewPoint: CGPoint, transform: CanvasTransform)?
     /// One element per annotation id, kept so VoiceOver focus survives a refresh.
     private var accessibilityElements: [UUID: AnnotationAccessibilityElement] = [:]
+    /// False for a base with no alpha channel: the spotlight overlay then needs no coverage mask.
+    private let baseHasAlpha: Bool
 
     init(model: EditorModel, baseView: BaseImageView) {
         self.model = model
         self.baseView = baseView
         activeToolKind = model.tool
         activeTool = makeTool(for: model.tool)
-        shown = Shown(document: model.document, transient: model.transient, selection: model.selection,
-                      transform: model.transform, editingID: model.textEditing?.box.id, cropDraft: model.cropDraft,
-                      background: model.shownBackground)
+        shown = Self.shown(of: model)
+        switch model.base.alphaInfo {
+        case .none, .noneSkipFirst, .noneSkipLast: baseHasAlpha = false
+        default: baseHasAlpha = true
+        }
         super.init(frame: .zero)
         wantsLayer = true
         layerContentsRedrawPolicy = .onSetNeedsDisplay
@@ -510,9 +531,7 @@ final class CanvasView: NSView {
             window?.invalidateCursorRects(for: self)
         }
         syncTextView()
-        let now = Shown(document: model.document, transient: model.transient, selection: model.selection,
-                        transform: model.transform, editingID: model.textEditing?.box.id, cropDraft: model.cropDraft,
-                        background: model.shownBackground)
+        let now = Self.shown(of: model)
         guard now != shown else { return }
         let previous = shown
         shown = now
@@ -536,8 +555,7 @@ final class CanvasView: NSView {
             NSLog("Editor: undo \"\(model.undoManager.undoActionName)\", redo \"\(model.undoManager.redoActionName)\"")
         }
         #endif
-        if now.document == previous.document, now.selection == previous.selection, now.transform == previous.transform,
-           now.cropDraft == previous.cropDraft, now.editingID == previous.editingID, now.background == previous.background {
+        if now.allowsPartialRepaint(since: previous) {
             setNeedsDisplay(repaintRect(for: previous.transient, in: previous.document)
                 .union(repaintRect(for: now.transient, in: now.document)))
         } else {
@@ -548,6 +566,15 @@ final class CanvasView: NSView {
             != fitRect(document: previous.document, cropDraft: previous.cropDraft, background: previous.background) {
             fitToView()
         }
+    }
+
+    /// What the canvas shows of `model` now; `init` and `refresh()` both build it here.
+    private static func shown(of model: EditorModel) -> Shown {
+        Shown(document: model.document, transient: model.transient, selection: model.selection,
+              transform: model.transform, editingID: model.textEditing?.box.id, cropDraft: model.cropDraft,
+              background: model.shownBackground,
+              hasSpotlights: !SpotlightGeometry.displayedSpotlights(in: model.document, transient: model.transient).isEmpty,
+              showsSpotlightOutlines: model.tool == .spotlight)
     }
 
     /// The view area a transient shape covers, together with the document copy it replaces while
@@ -624,15 +651,21 @@ final class CanvasView: NSView {
         RedactionTileCache.orderedEffects(in: model.document, transient: model.transient)
     }
 
+    /// The spotlights the overlay shows: the document's, with `transient` in place of its document
+    /// copy or last when it is new, so a drag, move or resize dims live.
+    private var displayedSpotlights: [Annotation] {
+        SpotlightGeometry.displayedSpotlights(in: model.document, transient: model.transient)
+    }
+
     /// Drawings in creation order, with `transient` in place of its document copy and drawn last
     /// (spec 2.6: the shape in progress is drawn after the drawings). Drawings always sit above
     /// effects, so their order cannot expose a redaction. A text being re-edited is left out: the
-    /// text view shows it instead.
+    /// text view shows it instead. A transient effect or spotlight is never a drawing.
     private var displayedDrawings: [Annotation] {
         let transient = model.transient
         let editingID = model.textEditing?.box.id
         var drawings = model.document.drawings.filter { $0.id != transient?.id && $0.id != editingID }
-        if let transient, !transient.isEffect { drawings.append(transient) }
+        if let transient, !transient.isEffect, !transient.isSpotlight { drawings.append(transient) }
         return drawings
     }
 
@@ -786,16 +819,33 @@ final class CanvasView: NSView {
 
     // MARK: Drawing
 
+    /// The capture as the canvas shows it, in image pixels: the base view's layer crops
+    /// (`baseView.baseTiles`, one for most captures, 16,384 px strips for a taller one), then the
+    /// shown effect tiles. The highlighter backdrop copies it, and the spotlight overlay is masked
+    /// by its alpha. Nothing new is decoded or rendered; these are the images the layers hold.
+    private var backdropLayers: [(rect: CGRect, image: CGImage)] {
+        var layers = baseView.baseTiles
+        for effect in displayedEffects {
+            if let tile = shownTile(for: effect) { layers.append((rect: tile.rect, image: tile.image)) }
+        }
+        return layers
+    }
+
+    /// How `backdropLayers` are drawn, following `BaseImageView`: nearest from 2 device pixels per
+    /// image pixel up, bilinear from 1, and the highest quality below.
+    private var backdropInterpolationQuality: CGInterpolationQuality {
+        let devicePixelsPerImagePixel = model.transform.zoom * backingScale
+        return devicePixelsPerImagePixel >= 2 ? .none : devicePixelsPerImagePixel >= 1 ? .low : .high
+    }
+
     /// For each highlighter meeting `visible` (including the one in progress): clip to its stroked
-    /// outline, then draw the capture's layer crops that meet the clip (`baseView.baseTiles`, one
-    /// for most captures, 16,384 px strips for a taller one) and the shown effect tiles into that
-    /// clip. The copy equals what `baseView` shows there, so the picture does not change, and the
-    /// multiply that follows in `AnnotationDrawing.draw` has real pixels to multiply. Runs before
-    /// every other drawing, so shapes made before the highlighter lie under it and shapes made
-    /// after lie over it, as in the export. The CTM is image pixels, top-left origin. The clip is
-    /// stroked 1 view point wider on each side so anti-aliased edge pixels get a whole backdrop, as
-    /// in the export. Interpolation follows `BaseImageView`: nearest from 2 device pixels per image
-    /// pixel up, bilinear from 1, and the highest quality below.
+    /// outline, then draw `backdropLayers` that meet the clip into it. The copy equals what
+    /// `baseView` shows there, so the picture does not change, and the multiply that follows in
+    /// `AnnotationDrawing.draw` has real pixels to multiply. Runs before every other drawing, so
+    /// shapes made before the highlighter lie under it and shapes made after lie over it, as in the
+    /// export, and the spotlight overlay drawn after it dims the copy once, as the export dims its
+    /// bitmap. The CTM is image pixels, top-left origin. The clip is stroked 1 view point wider on
+    /// each side so anti-aliased edge pixels get a whole backdrop, as in the export.
     private func drawHighlighterBackdrops(in context: CGContext, visible: CGRect) {
         var strokes: [Stroke] = []
         for drawing in displayedDrawings {
@@ -804,9 +854,8 @@ final class CanvasView: NSView {
             }
         }
         guard !strokes.isEmpty else { return }
-        let devicePixelsPerImagePixel = model.transform.zoom * backingScale
-        let quality: CGInterpolationQuality = devicePixelsPerImagePixel >= 2 ? .none
-            : devicePixelsPerImagePixel >= 1 ? .low : .high
+        let quality = backdropInterpolationQuality
+        let layers = backdropLayers
         for stroke in strokes {
             context.saveGState()
             context.addPath(StrokeSmoothing.path(for: stroke.points))
@@ -816,21 +865,37 @@ final class CanvasView: NSView {
             context.replacePathWithStrokedPath()
             context.clip()
             context.interpolationQuality = quality
-            var layers = baseView.baseTiles
-            for effect in displayedEffects {
-                if let tile = shownTile(for: effect) { layers.append((rect: tile.rect, image: tile.image)) }
-            }
             HighlighterBackdrop.draw(layers, in: context)
             context.restoreGState()
         }
     }
 
-    /// Spec 2.6 Rendering: (1) image-pixel CTM; (2) placeholders for effects with no tile yet;
-    /// (3) drawings meeting the dirty rect, then the transient shape; (4) back in view space, the
-    /// crop chrome and readout while cropping, else the cover outside an applied crop and the
-    /// selection handles or dashed outline. No Core Image or GPU work happens here. With a
-    /// background shown, steps 2 and 3 are clipped to its rounded content rect, as the export
-    /// clips the capture, and the background replaces the crop cover.
+    /// The spotlight overlay over the whole capture, while any spotlight is displayed. It is drawn
+    /// on every `draw(_:)` with no bounds test, because the layer is not opaque and only the dirty
+    /// rect is painted: a dirty rect that misses every hole still needs its dim. Only holes that
+    /// miss the dirty rect are skipped. The view's clip bounds the overlay's layer. It is masked by
+    /// `backdropLayers`, so a transparent corner stays undimmed, unless the base has no alpha
+    /// channel to mask with.
+    private func drawSpotlightOverlay(in context: CGContext, visible: CGRect) {
+        let spotlights = displayedSpotlights
+        guard !spotlights.isEmpty else { return }
+        let shapes = spotlights.compactMap(\.spotlightShape).filter { $0.rect.standardized.intersects(visible) }
+        context.saveGState()
+        context.interpolationQuality = backdropInterpolationQuality
+        AnnotationDrawing.drawSpotlightOverlay(shapes, dim: model.document.effectiveSpotlightDim, in: context,
+                                               imageRect: CGRect(origin: .zero, size: imagePixelSize),
+                                               coverage: baseHasAlpha ? backdropLayers : [])
+        context.restoreGState()
+    }
+
+    /// Spec 2.6 Rendering, with 2.12's overlay: (1) image-pixel CTM; (2) highlighter backdrops,
+    /// then placeholders for effects with no tile yet; (3) the spotlight overlay; (4) drawings
+    /// meeting the dirty rect, then the transient shape; (5) back in view space, the crop chrome
+    /// and readout while cropping, else the cover outside an applied crop, the Spotlight tool's
+    /// outlines, and the selection handles or dashed outline. No Core Image or GPU work happens
+    /// here. With a background shown, steps 2 to 4 are clipped to its rounded content rect, as the
+    /// export clips the capture, and the background replaces the crop cover. The overlay is never
+    /// drawn after the image-pixel block, which would dim the drawings and escape that clip.
     override func draw(_ dirtyRect: NSRect) {
         guard let context = NSGraphicsContext.current?.cgContext else { return }
         let transform = model.transform
@@ -848,6 +913,7 @@ final class CanvasView: NSView {
             guard let rect = effect.effectRect, rect.intersects(visible) else { continue }
             AnnotationDrawing.drawPlaceholder(for: effect, in: context)
         }
+        drawSpotlightOverlay(in: context, visible: visible)
         for drawing in displayedDrawings where imageBounds(of: drawing).intersects(visible) {
             AnnotationDrawing.draw(drawing, in: context, scale: model.scale)
         }
@@ -863,6 +929,13 @@ final class CanvasView: NSView {
             // Resolved under the view's appearance, which AppKit makes current inside draw(_:).
             AnnotationDrawing.drawCropCover(keeping: crop, bounds: bounds, transform: transform,
                                             color: NSColor.windowBackgroundColor.cgColor, scale: backingScale, in: context)
+        }
+        if model.tool == .spotlight {
+            // Every displayed spotlight's edge, the one being drawn included; chrome, never exported,
+            // and not clipped to an applied crop, as the selection outline is not.
+            for shape in displayedSpotlights.compactMap(\.spotlightShape) {
+                AnnotationDrawing.drawSpotlightOutline(shape, transform: transform, scale: backingScale, in: context)
+            }
         }
         if let selected = selectedAnnotation {
             // The view's backing scale snaps the outline and handles to device pixels; the drawings

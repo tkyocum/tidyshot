@@ -32,6 +32,45 @@ struct CanvasAccessibilityTests {
         #expect(CanvasAccessibility.canvasLabel == "Annotation canvas")
     }
 
+    /// Spotlights paint between the effects and the drawings (spec 2.12), so VoiceOver reads them
+    /// there, numbered on their own in creation order.
+    @Test func spotlightsReadBetweenEffectsAndDrawings() {
+        func spotlight(_ x: CGFloat) -> Annotation {
+            .spotlight(SpotlightShape(id: UUID(), rect: CGRect(x: x, y: 0, width: 20, height: 20), isEllipse: x > 50))
+        }
+        let firstArrow = arrow(10)
+        let firstSpotlight = spotlight(0)
+        let redact = redaction(0)
+        let secondSpotlight = spotlight(60)
+        let document = AnnotationDocument(annotations: [firstArrow, firstSpotlight, redact, secondSpotlight])
+        let items = CanvasAccessibility.items(in: document, scale: 1)
+        #expect(items.map(\.id) == [redact.id, firstSpotlight.id, secondSpotlight.id, firstArrow.id])
+        #expect(items.map(\.label) == ["Redact 1", "Spotlight 1", "Spotlight 2", "Arrow 1"])
+        #expect(items.allSatisfy { $0.value == nil })
+    }
+
+    /// A counter reads its own number, not a count, and has no value, so after a middle counter is
+    /// deleted VoiceOver still reads what the picture shows.
+    @Test func countersReadTheirOwnNumbers() {
+        func counter(_ number: Int) -> Annotation {
+            .counter(CounterMark(id: UUID(), center: CGPoint(x: 20 * CGFloat(number), y: 20), number: number,
+                                 diameter: 16, color: red))
+        }
+        let first = arrow(10)
+        let one = counter(1)
+        let two = counter(2)
+        let three = counter(3)
+        let document = AnnotationDocument(annotations: [one, first, two, three])
+        let items = CanvasAccessibility.items(in: document, scale: 1)
+        #expect(items.map(\.id) == [one.id, first.id, two.id, three.id])
+        #expect(items.map(\.label) == ["Counter 1", "Arrow 1", "Counter 2", "Counter 3"])
+        #expect(items.allSatisfy { $0.value == nil })
+
+        let afterDelete = CanvasAccessibility.items(in: document.removing(id: two.id), scale: 1)
+        #expect(afterDelete.map(\.label) == ["Counter 1", "Arrow 1", "Counter 3"])
+        #expect(afterDelete.allSatisfy { $0.value == nil })
+    }
+
     @Test func textItemReadsItsString() {
         let text = Annotation.text(TextBox(id: UUID(), string: "Click here", origin: CGPoint(x: 4, y: 4),
                                            fontSize: 40, color: red))

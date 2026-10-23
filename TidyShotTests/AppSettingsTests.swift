@@ -25,6 +25,9 @@ struct AppSettingsTests {
         #expect(settings.editorLineWidthPoints == 4)
         #expect(settings.editorBlurRadiusPoints == 8)
         #expect(settings.editorPixelBlockPoints == 10)
+        // 4c: a rectangle spotlight and a 32 pt counter.
+        #expect(settings.editorSpotlightEllipse == false)
+        #expect(settings.editorCounterDiameterPoints == 32)
         #expect(settings.editorDefaults == EditorDefaults.standard)
     }
 
@@ -87,19 +90,22 @@ struct AppSettingsTests {
         #expect(!String(decoding: stored, as: UTF8.self).contains("{app}"))
     }
 
-    /// The five editor values persist under the keys spec 2.6 names, and a second instance (the
-    /// next launch) reads them back.
+    /// The seven editor values persist under the keys specs 2.6 and 2.12 name, and a second
+    /// instance (the next launch) reads them back.
     @Test func editorDefaultsRoundTripThroughSecondInstance() {
         let defaults = freshDefaults()
         let chosen = EditorDefaults(strokeColor: RGBA(red: 0, green: 0.5, blue: 1, alpha: 1),
                                     redactColor: RGBA(red: 1, green: 1, blue: 1, alpha: 1),
-                                    lineWidthPoints: 12, blurRadiusPoints: 20, blockPoints: 6)
+                                    lineWidthPoints: 12, blurRadiusPoints: 20, blockPoints: 6,
+                                    spotlightEllipse: true, counterDiameterPoints: 44)
         let first = AppSettings(defaults: defaults)
         first.editorDefaults = chosen
         #expect(first.editorDefaults == chosen)
         #expect(defaults.double(forKey: "editorLineWidthPoints") == 12)
         #expect(defaults.double(forKey: "editorBlurRadiusPoints") == 20)
         #expect(defaults.double(forKey: "editorPixelBlockPoints") == 6)
+        #expect(defaults.bool(forKey: "editorSpotlightEllipse") == true)
+        #expect(defaults.double(forKey: "editorCounterDiameterPoints") == 44)
 
         let second = AppSettings(defaults: defaults)
         #expect(second.editorDefaults == chosen)
@@ -107,6 +113,34 @@ struct AppSettingsTests {
         // One value set on its own is stored too.
         second.editorBlurRadiusPoints = 4
         #expect(AppSettings(defaults: defaults).editorDefaults.blurRadiusPoints == 4)
+    }
+
+    /// A fresh store reads a rectangle spotlight and a 32 pt counter. 32 is registered, because
+    /// `double(forKey:)` reads 0 for a missing key.
+    @Test func spotlightAndCounterDefaultsAreRegistered() {
+        let defaults = freshDefaults()
+        let settings = AppSettings(defaults: defaults)
+        #expect(settings.editorSpotlightEllipse == false)
+        #expect(settings.editorCounterDiameterPoints == 32)
+        #expect(defaults.bool(forKey: "editorSpotlightEllipse") == false)
+        #expect(defaults.double(forKey: "editorCounterDiameterPoints") == 32)
+
+        settings.editorSpotlightEllipse = true
+        settings.editorCounterDiameterPoints = 24
+        let next = AppSettings(defaults: defaults)
+        #expect(next.editorSpotlightEllipse)
+        #expect(next.editorCounterDiameterPoints == 24)
+    }
+
+    /// Only Small, Medium and Large are counter sizes; anything else stored reads as 32.
+    @Test func aStoredCounterSizeOutsideTheStopsReadsAs32() {
+        let defaults = freshDefaults()
+        for stored in [40.0, 0, -24, 1000] {
+            defaults.set(stored, forKey: "editorCounterDiameterPoints")
+            #expect(AppSettings(defaults: defaults).editorCounterDiameterPoints == 32)
+        }
+        defaults.set(44.0, forKey: "editorCounterDiameterPoints")
+        #expect(AppSettings(defaults: defaults).editorCounterDiameterPoints == 44)
     }
 
     /// Colours are stored as JSON `Data` that decodes as `RGBA`. Nothing is written until a colour

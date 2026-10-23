@@ -13,12 +13,30 @@ nonisolated struct AnnotationDocument: Codable, Equatable, Sendable {
     /// What export puts the capture (or its crop) on (spec 2.11); nil for none. Optional, so a
     /// document without the key, written before 7c, decodes with no background.
     var background: BackgroundStyle? = nil
+    /// The spotlight overlay's black alpha (spec 2.12), one value for the whole document; nil reads
+    /// as `defaultSpotlightDim`, which `withSpotlightDim` stores as nil. Optional, so a document
+    /// written before 4c decodes with the default.
+    var spotlightDim: Double? = nil
+
+    static let defaultSpotlightDim = 0.5
+
+    var effectiveSpotlightDim: Double { spotlightDim ?? Self.defaultSpotlightDim }
 
     /// Redact, blur and pixelate, in creation order. They render first, on the base layer.
     var effects: [Annotation] { annotations.filter(\.isEffect) }
 
-    /// Every other annotation, in creation order, drawn above all effects.
-    var drawings: [Annotation] { annotations.filter { !$0.isEffect } }
+    /// The spotlights, in creation order: a third list, painted as one overlay between the effects
+    /// and the drawings.
+    var spotlights: [Annotation] { annotations.filter(\.isSpotlight) }
+
+    /// Every other annotation, in creation order, drawn above all effects and the spotlight overlay.
+    var drawings: [Annotation] { annotations.filter { !$0.isEffect && !$0.isSpotlight } }
+
+    /// The number a new counter gets (spec 2.12, Number): one more than the largest counter number,
+    /// or 1 with none. Deleting a counter renumbers nothing.
+    var nextCounterNumber: Int {
+        (annotations.compactMap { $0.counterMark?.number }.max() ?? 0) + 1
+    }
 
     func annotation(id: UUID) -> Annotation? {
         annotations.first { $0.id == id }
@@ -60,6 +78,13 @@ nonisolated struct AnnotationDocument: Codable, Equatable, Sendable {
     func withBackground(_ background: BackgroundStyle?) -> AnnotationDocument {
         var copy = self
         copy.background = background
+        return copy
+    }
+
+    /// The default is stored as nil, so picking it again equals a document that never had a dim.
+    func withSpotlightDim(_ dim: Double) -> AnnotationDocument {
+        var copy = self
+        copy.spotlightDim = dim == Self.defaultSpotlightDim ? nil : dim
         return copy
     }
 }

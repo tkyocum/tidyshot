@@ -2,19 +2,22 @@ import CoreGraphics
 import CoreText
 
 /// The one CoreGraphics routine for annotations. The canvas and the export both draw through it,
-/// so the export equals the preview. `draw` and `drawPlaceholder` work in image pixels with a
-/// top-left origin: the canvas concatenates `transform.affine` on its flipped view, and the
-/// flattener flips its bitmap. `drawSelection` works in view space. Nothing here uses
-/// NSGraphicsContext, so the export can run off the main actor.
+/// so the export equals the preview. `draw`, `drawPlaceholder` and `drawSpotlightOverlay` work in
+/// image pixels with a top-left origin: the canvas concatenates `transform.affine` on its flipped
+/// view, and the flattener flips its bitmap. `drawSelection` and `drawSpotlightOutline` work in
+/// view space. Nothing here uses NSGraphicsContext, so the export can run off the main actor.
 nonisolated enum AnnotationDrawing {
     /// Selection handles are squares this many points wide at every zoom.
     static let handleSide: CGFloat = 8
     /// The dash pattern of a selected effect's outline, in points.
     static let outlineDash: [CGFloat] = [4, 4]
+    /// The width of a counter's white ring, in points.
+    static let counterRingPoints: CGFloat = 1.5
 
     /// Draws a drawing in image pixels. Effects draw nothing here, because they are tiles on the
-    /// base layer. `scale` is the capture scale, which sizes the arrow head only; the other
-    /// drawings are sized by their stored line widths.
+    /// base layer, and neither does a spotlight, which the overlay draws. `scale` is the capture
+    /// scale, which sizes the arrow head and a counter's ring only; the other drawings are sized by
+    /// their stored line widths.
     static func draw(_ annotation: Annotation, in context: CGContext, scale: CGFloat) {
         switch annotation {
         case .rectangle(let box):
@@ -31,7 +34,9 @@ nonisolated enum AnnotationDrawing {
             drawStroke(stroke, blend: .multiply, in: context)
         case .text(let box):
             drawText(box, in: context)
-        case .redact, .blur, .pixelate:
+        case .counter(let mark):
+            drawCounter(mark, in: context, scale: scale)
+        case .redact, .blur, .pixelate, .spotlight:
             break
         }
     }
@@ -54,32 +59,97 @@ nonisolated enum AnnotationDrawing {
         context.fill(rect)
     }
 
-    /// Selection chrome in view space, so it keeps its size at every zoom. A selected effect gets
-    /// a dashed outline of its rect, white under black so it shows on any background, because a
-    /// blur has no edge of its own. A selected stroke gets the same dashed outline around its
-    /// bounds (it has no handles), and a selected text the same around its frame (text has no
-    /// handles either). Every selection then gets an 8 pt white square with a dark
-    /// border at each point of `HitTester.handles(for:)`. `scale` is the view's backing scale
-    /// factor: edges snap to device pixels so the 1 pt lines stay sharp.
+    /// Selection chrome in view space, so it keeps its size at every zoom. The dashed outline,
+    /// white under black so it shows on any background, goes around
+    /// `AnnotationGeometry.selectionOutline(of:)`: a selected effect's rect, because a blur has no
+    /// edge of its own; a stroke's bounds and a text's frame, which have no handles; a spotlight's
+    /// rect, since its outline is never drawn into the image; and a counter's bounding square, as it
+    /// has no handles either. Every selection then gets an 8 pt white square with a dark border at
+    /// each point of `HitTester.handles(for:)`. `scale` is the view's backing scale factor: edges
+    /// snap to device pixels so the 1 pt lines stay sharp.
     static func drawSelection(for annotation: Annotation, transform: CanvasTransform, scale: CGFloat, in context: CGContext) {
-        let device = max(scale, 1)
-        func snap(_ value: CGFloat) -> CGFloat { (value * device).rounded() / device }
+        if let rect = AnnotationGeometry.selectionOutline(of: annotation) {
+            // Null when the rect is under a point wide or tall: then there is no outline to draw.
+            let outline = snapped(transform.viewRect(rect), scale: scale).insetBy(dx: 0.5, dy: 0.5)
+            if !outline.isNull { strokeTwoTone(CGPath(rect: outline, transform: nil), in: context) }
+        }
+        drawHandles(HitTester.handles(for: annotation), transform: transform, scale: scale, in: context)
+    }
+
+    /// The Spotlight tool's outline of one spotlight, in view space: the shape's own edge (the
+    /// rect, or the ellipse in it), 1 pt, white under black dashes as the selection outline is
+    /// drawn. Chrome only; the shape's edge is never drawn into the image. `scale` is the view's
+    /// backing scale factor: the rect snaps to device pixels, as the selection outline's does.
+    static func drawSpotlightOutline(_ shape: SpotlightShape, transform: CanvasTransform, scale: CGFloat,
+                                     in context: CGContext) {
+        let outline = snapped(transform.viewRect(shape.rect.standardized), scale: scale).insetBy(dx: 0.5, dy: 0.5)
+        guard !outline.isNull else { return }
+        strokeTwoTone(shape.isEllipse ? CGPath(ellipseIn: outline, transform: nil) : CGPath(rect: outline, transform: nil),
+                      in: context)
+    }
+
+    /// `path` stroked 1 pt white, then in black `outlineDash` dashes over it, so it shows on any
+    /// background.
+    private static func strokeTwoTone(_ path: CGPath, in context: CGContext) {
         context.saveGState()
         defer { context.restoreGState() }
         context.setLineWidth(1)
-        if let rect = annotation.effectRect ?? AnnotationGeometry.strokeOutline(of: annotation) ?? textFrame(of: annotation) {
-            let view = transform.viewRect(rect)
-            let outline = CGRect(x: snap(view.minX), y: snap(view.minY),
-                                 width: snap(view.maxX) - snap(view.minX),
-                                 height: snap(view.maxY) - snap(view.minY)).insetBy(dx: 0.5, dy: 0.5)
-            context.setStrokeColor(CGColor(gray: 1, alpha: 1))
-            context.stroke(outline)
-            context.setStrokeColor(CGColor(gray: 0, alpha: 1))
-            context.setLineDash(phase: 0, lengths: outlineDash)
-            context.stroke(outline)
-            context.setLineDash(phase: 0, lengths: [])
+        context.addPath(path)
+        context.setStrokeColor(CGColor(gray: 1, alpha: 1))
+        context.strokePath()
+        context.addPath(path)
+        context.setStrokeColor(CGColor(gray: 0, alpha: 1))
+        context.setLineDash(phase: 0, lengths: outlineDash)
+        context.strokePath()
+    }
+
+    /// The spotlight overlay (spec 2.12, Rendering), in image pixels with a top-left origin under
+    /// whatever CTM the caller set up for them: black at `dim` over `imageRect`, with each shape (its
+    /// rect, or the ellipse in it) cleared, so overlapping holes form one union. It is one
+    /// transparency layer, which is as big as the clip, so it sets no clip of its own and every
+    /// caller sets one. The state is saved and restored.
+    ///
+    /// The overlay darkens the picture, never its transparency:
+    /// - `coverage` nil (the export): the layer composites with `.sourceAtop`, which keeps the
+    ///   destination's alpha exactly and on an opaque pixel equals `.normal`. Probed at a 0.5 dim,
+    ///   alpha 0 stays `[0,0,0,0]`, and alpha 128 stays 128 with its colour halved.
+    /// - `coverage` set (the canvas): the canvas holds none of the capture's pixels, so `.sourceAtop`
+    ///   would draw nothing and the layer composites with `.normal`. When the list is not empty
+    ///   (the base tiles, then the shown effect tiles), it is drawn through `HighlighterBackdrop.draw`
+    ///   into a nested layer composited `.destinationIn`, which multiplies the overlay's alpha by
+    ///   the capture's: none over a transparent corner, the dim over opaque pixels, and full over a
+    ///   redaction on a corner, as in the export. An empty list, for a base with no alpha channel,
+    ///   skips that layer. Partly transparent pixels come out a little darker than in the export:
+    ///   probed, alpha 128 shows as 160 on the canvas at a 0.5 dim.
+    ///
+    /// A blend mode set before a layer begins is the one it composites with; beginning a layer
+    /// resets it to `.normal`, so each fill inside sets the mode it needs.
+    static func drawSpotlightOverlay(_ shapes: [SpotlightShape], dim: Double, in context: CGContext, imageRect: CGRect,
+                                     coverage: [(rect: CGRect, image: CGImage)]?) {
+        context.saveGState()
+        defer { context.restoreGState() }
+        context.setBlendMode(coverage == nil ? .sourceAtop : .normal)
+        context.beginTransparencyLayer(auxiliaryInfo: nil)
+        context.setBlendMode(.normal)
+        context.setFillColor(CGColor(gray: 0, alpha: dim))
+        context.fill(imageRect)
+        context.setBlendMode(.clear)
+        for shape in shapes {
+            let rect = shape.rect.standardized
+            if shape.isEllipse {
+                context.fillEllipse(in: rect)
+            } else {
+                context.fill(rect)
+            }
         }
-        drawHandles(HitTester.handles(for: annotation), transform: transform, scale: scale, in: context)
+        if let coverage, !coverage.isEmpty {
+            context.setBlendMode(.destinationIn)
+            context.beginTransparencyLayer(auxiliaryInfo: nil)
+            context.setBlendMode(.normal)
+            HighlighterBackdrop.draw(coverage, in: context)
+            context.endTransparencyLayer()
+        }
+        context.endTransparencyLayer()
     }
 
     /// An 8 pt white square with a dark border at each of `points` (image pixels), in view space.
@@ -143,12 +213,6 @@ nonisolated enum AnnotationDrawing {
                       width: snap(rect.maxX) - snap(rect.minX), height: snap(rect.maxY) - snap(rect.minY))
     }
 
-    /// A text annotation's frame, outlined when it is selected because text has no handles.
-    private static func textFrame(of annotation: Annotation) -> CGRect? {
-        guard case .text(let box) = annotation else { return nil }
-        return TextLayout.frame(for: box)
-    }
-
     /// Stroked inset by half the line width, so the stroke sits inside the rect. A box no wider
     /// or taller than the line is filled instead, because the inset rect would be empty.
     private static func drawRectangle(_ box: ShapeBox, in context: CGContext) {
@@ -209,6 +273,40 @@ nonisolated enum AnnotationDrawing {
             context.textPosition = origin
             CTLineDraw(TextLayout.line(text, font: font, color: colour), context)
         }
+    }
+
+    /// A circle filled in the counter's colour, with a white ring `counterRingPoints × scale` wide
+    /// stroked inset by half its width, so nothing paints outside the diameter. The number goes on
+    /// top in `EditorPalette.contrastingTextColor(for:)`, at `CounterLayout.fontSize`, drawn as
+    /// `drawText` draws: CoreText on the bare context, the text matrix flipping the glyphs upright
+    /// and put back by hand. It is centred by the line's typographic width across and by the
+    /// font's cap height down, so the digits sit on the centre.
+    private static func drawCounter(_ mark: CounterMark, in context: CGContext, scale: CGFloat) {
+        guard mark.diameter > 0 else { return }
+        let radius = mark.diameter / 2
+        let circle = CGRect(x: mark.center.x - radius, y: mark.center.y - radius, width: mark.diameter, height: mark.diameter)
+        let ring = counterRingPoints * scale
+        let savedTextMatrix = context.textMatrix
+        context.saveGState()
+        defer {
+            context.restoreGState()
+            context.textMatrix = savedTextMatrix
+        }
+        context.setFillColor(mark.color.cgColor)
+        context.fillEllipse(in: circle)
+        context.setStrokeColor(CGColor(gray: 1, alpha: 1))
+        context.setLineWidth(ring)
+        context.strokeEllipse(in: circle.insetBy(dx: ring / 2, dy: ring / 2))
+
+        let fontSize = CounterLayout.fontSize(number: mark.number, diameter: mark.diameter)
+        guard fontSize > 0 else { return }
+        let font = TextLayout.font(size: fontSize)
+        let line = TextLayout.line(String(mark.number), font: font,
+                                   color: EditorPalette.contrastingTextColor(for: mark.color).cgColor)
+        let width = CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
+        context.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
+        context.textPosition = CGPoint(x: mark.center.x - width / 2, y: mark.center.y + CTFontGetCapHeight(font) / 2)
+        CTLineDraw(line, context)
     }
 
     /// The smoothed path stroked once with round caps and joins. A single stroke operation paints
