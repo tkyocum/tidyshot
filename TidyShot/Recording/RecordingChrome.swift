@@ -12,6 +12,9 @@ protocol RecordingChrome: AnyObject {
     /// `Discard this recording?` with `<m:ss> of recording will be deleted.`. True for Discard,
     /// false for Save.
     func askToDiscard(elapsed: TimeInterval) async -> Bool
+    /// Answers a waiting `askToDiscard` with Save, for a quit. An alert not yet on screen never
+    /// shows; one already on screen stays until answered, and that answer is ignored.
+    func answerDiscardWithSave()
     func close()
 }
 
@@ -30,6 +33,8 @@ final class RecordingScreenChrome: RecordingChrome {
     private let panel: RecordingPanel
     private let frameWindow: ScrollAreaFrameWindow?
     private let panelFrame: CGRect
+    /// `askToDiscard`'s answer, from its call until the alert or a quit gives it.
+    private var discardAnswer: CheckedContinuation<Bool, Never>?
 
     init(placement: RecordingChromePlacement) {
         let size = RecordingPanelView.size
@@ -72,11 +77,15 @@ final class RecordingScreenChrome: RecordingChrome {
 
     /// Runs as `confirmRemoveFromHistory` does: in a block the run loop performs only in its
     /// default mode, so `runModal()` never starts inside a menu's tracking loop, with TidyShot
-    /// activated so the alert takes Return. Save is the default; Discard has no key.
+    /// activated so the alert takes Return. Save is the default; Discard has no key. While AppKit
+    /// holds a quit the run loop stays out of that mode, so the quit answers with
+    /// `answerDiscardWithSave()` and the block, when it runs, shows nothing.
     func askToDiscard(elapsed: TimeInterval) async -> Bool {
         await withCheckedContinuation { (done: CheckedContinuation<Bool, Never>) in
+            discardAnswer = done
             RunLoop.main.perform(inModes: [.default]) {
                 MainActor.assumeIsolated {
+                    guard self.discardAnswer != nil else { return }
                     let alert = NSAlert()
                     alert.messageText = RecordingEnd.discardQuestion
                     alert.informativeText = RecordingEnd.discardDetail(elapsed: elapsed)
@@ -86,10 +95,20 @@ final class RecordingScreenChrome: RecordingChrome {
                     discard.hasDestructiveAction = true
                     discard.keyEquivalent = ""
                     NSApplication.shared.activate(ignoringOtherApps: true)
-                    done.resume(returning: alert.runModal() == .alertSecondButtonReturn)
+                    self.answerDiscard(alert.runModal() == .alertSecondButtonReturn)
                 }
             }
         }
+    }
+
+    func answerDiscardWithSave() {
+        answerDiscard(false)
+    }
+
+    /// Gives `askToDiscard` its answer, once.
+    private func answerDiscard(_ discards: Bool) {
+        discardAnswer?.resume(returning: discards)
+        discardAnswer = nil
     }
 
     func close() {

@@ -106,6 +106,8 @@ final class RecordingController {
     private var onStarted: () -> Void = {}
     /// The first end, and the elapsed time when it came.
     private var cause: EndCause?
+    /// A quit has come: a Cancel's question is answered Save.
+    private var quitting = false
     private var elapsedAtEnd: TimeInterval = 0
     /// Set at `recordingStarted`; nil before the first frame.
     private var firstFrame: ContinuousClock.Instant?
@@ -166,7 +168,7 @@ final class RecordingController {
         return await finish(driver)
     }
 
-    /// The panel's Stop, the shortcuts, the menu and a quit.
+    /// The panel's Stop, the shortcuts and the menu. A quit calls `quit()`.
     func stop() {
         end(.end(.stop))
     }
@@ -174,6 +176,17 @@ final class RecordingController {
     /// The panel's Cancel.
     func cancel() {
         end(.cancel)
+    }
+
+    /// A quit (design, Quit, log out and restart) ends the recording as Stop does, and never waits
+    /// for a Cancel's question: when a Cancel came first, the answer is Save, which carries on as
+    /// Stop, whether the alert waits to show or is still to come. The real alert shows only in the
+    /// run loop's default mode, which AppKit does not enter while it holds the quit.
+    func quit() {
+        guard isRunning else { return }
+        quitting = true
+        chrome?.answerDiscardWithSave()
+        stop()
     }
 
     /// Closes the chrome, ends the activity and stops observing sleep and the user switch. Call
@@ -201,6 +214,7 @@ final class RecordingController {
         self.chrome = chrome
         self.onStarted = onStarted
         cause = nil
+        quitting = false
         elapsedAtEnd = 0
         firstFrame = nil
         startedAt = nil
@@ -330,13 +344,8 @@ final class RecordingController {
         let kind: RecordingEndKind
         switch cause {
         case .cancel:
-            if RecordingLimits.asksBeforeDiscarding(elapsed: elapsedAtEnd),
-               let chrome, !(await chrome.askToDiscard(elapsed: elapsedAtEnd)) {
-                // Save carries on as Stop.
-                kind = .stop
-            } else {
-                kind = .discardingCancel
-            }
+            // Save carries on as Stop.
+            kind = await cancelDiscards() ? .discardingCancel : .stop
         case .end(let endKind):
             kind = endKind
         }
@@ -354,6 +363,14 @@ final class RecordingController {
             environment.removeFile(url)
             return .nothing(notice: notice)
         }
+    }
+
+    /// A Cancel discards under 5 s, and from 5 s asks: true for Discard. After a quit the answer is
+    /// Save, with no question.
+    private func cancelDiscards() async -> Bool {
+        guard RecordingLimits.asksBeforeDiscarding(elapsed: elapsedAtEnd), let chrome else { return true }
+        guard !quitting else { return false }
+        return await chrome.askToDiscard(elapsed: elapsedAtEnd)
     }
 
     /// Calls the driver's stop, then waits until it has returned and the output's finish or fail

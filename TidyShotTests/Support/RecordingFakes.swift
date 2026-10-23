@@ -111,10 +111,14 @@ final class FakeRecordingChrome: RecordingChrome {
     var windowNumbers: Set<CGWindowID> = [41, 42]
     /// What `askToDiscard` answers: true for Discard, false for Save.
     var discards = true
+    /// When true, `askToDiscard` waits until `answerDiscardWithSave()`, like the real alert while
+    /// AppKit holds a quit and the run loop never enters its default mode.
+    var holdsAsk = false
     private(set) var calls: [String] = []
     private(set) var elapsedShown: [TimeInterval] = []
     private var onStop: (() -> Void)?
     private var onCancel: (() -> Void)?
+    private var askGate: CheckedContinuation<Bool, Never>?
 
     init(log: RecordingTestLog) {
         self.log = log
@@ -138,7 +142,17 @@ final class FakeRecordingChrome: RecordingChrome {
     func askToDiscard(elapsed: TimeInterval) async -> Bool {
         calls.append("ask \(RecordingClock.format(elapsed))")
         log.append("ask")
-        return discards
+        guard holdsAsk else { return discards }
+        return await withCheckedContinuation { askGate = $0 }
+    }
+
+    /// True while a held `askToDiscard` waits.
+    var isAsking: Bool { askGate != nil }
+
+    func answerDiscardWithSave() {
+        calls.append("answer save")
+        askGate?.resume(returning: false)
+        askGate = nil
     }
 
     func close() {

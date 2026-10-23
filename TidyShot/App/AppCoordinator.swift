@@ -3091,12 +3091,13 @@ final class AppCoordinator {
     /// A quit, a log out or a restart, after `reviewEditorsBeforeQuit` let it go ahead (design,
     /// Quit, log out and restart): a count-in is cancelled and records nothing, a recording stops
     /// as Stop does, with the stop wait and the end rule, and its save runs in quit mode, with an
-    /// open folder panel closed so the file goes to `pending/`. Returns once nothing is left
-    /// (`recordingPhase` is `.idle`), the thumbnail of a save written.
+    /// open folder panel closed so the file goes to `pending/`. A Cancel's question is answered
+    /// Save (`recorder.quit()`), as it cannot show while the quit is held. Returns once nothing is
+    /// left (`recordingPhase` is `.idle`), the thumbnail of a save written.
     func finishRecordingForQuit() async {
         isQuitting = true
         selfTimer.cancel()
-        recorder.stop()
+        recorder.quit()
         saveLocation.cancelFolderChoice()
         while recordingPhase != .idle {
             try? await Task.sleep(for: Self.quitPollInterval)

@@ -716,6 +716,74 @@ struct RecordingControllerTests {
         controller.close()
     }
 
+    // MARK: A quit
+
+    @Test func aQuitStopsAsStopDoes() async throws {
+        let driver = FakeRecordingDriver(log: world.log)
+        let chrome = FakeRecordingChrome(log: world.log)
+        let (controller, run) = await begin(areaRequest, driver: driver, chrome: chrome)
+        driver.send(.recordingStarted)
+        await world.advance(by: .seconds(3))
+        controller.quit()
+
+        let outcome = await run.value
+        #expect(outcome.kept != nil)
+        #expect(outcome.notice == nil)
+        #expect(entriesAfterFirstFrame() == ["activity begun", "stop", "recordingFinished", "stop returned", "inspect", "poster"])
+        controller.close()
+    }
+
+    /// The real alert shows only in the run loop's default mode, which AppKit never enters while it
+    /// holds a quit, so a quit that waited for the answer would never reply.
+    @Test func aQuitAnswersACancelsWaitingQuestionWithSave() async throws {
+        let driver = FakeRecordingDriver(log: world.log)
+        let chrome = FakeRecordingChrome(log: world.log)
+        chrome.holdsAsk = true
+        let (controller, run) = await begin(areaRequest, driver: driver, chrome: chrome)
+        driver.send(.recordingStarted)
+        await world.advance(by: .seconds(5))
+        chrome.pressCancel()
+        await world.advance(by: .seconds(1))
+        #expect(chrome.isAsking)
+
+        controller.quit()
+        await world.advance(by: .zero)
+        try #require(!controller.isRunning)
+        let outcome = await run.value
+        // Save carries on as Stop.
+        #expect(outcome.kept != nil)
+        #expect(outcome.notice == nil)
+        #expect(!chrome.isAsking)
+        #expect(entriesAfterFirstFrame() == ["activity begun", "stop", "recordingFinished", "stop returned", "ask", "inspect",
+                                             "poster"])
+        controller.close()
+    }
+
+    @Test func aQuitDuringACancelsStopWaitSavesWithoutAsking() async throws {
+        let driver = FakeRecordingDriver(log: world.log)
+        driver.finishTiming = .never
+        let chrome = FakeRecordingChrome(log: world.log)
+        chrome.holdsAsk = true
+        let (controller, run) = await begin(areaRequest, driver: driver, chrome: chrome)
+        driver.send(.recordingStarted)
+        await world.advance(by: .seconds(5))
+        chrome.pressCancel()
+        await world.advance(by: .seconds(1))
+        controller.quit()
+        // The Cancel came first, so the stream is not stopped again.
+        #expect(driver.stopCount == 1)
+        driver.send(.recordingFinished)
+        await world.advance(by: .zero)
+        try #require(!controller.isRunning)
+
+        let outcome = await run.value
+        #expect(outcome.kept != nil)
+        #expect(outcome.notice == nil)
+        #expect(!chrome.calls.contains { $0.hasPrefix("ask") })
+        #expect(entriesAfterFirstFrame() == ["activity begun", "stop", "stop returned", "recordingFinished", "inspect", "poster"])
+        controller.close()
+    }
+
     // MARK: The activity and close
 
     @Test func theActivityBeginsAtTheFirstFrameAndEndsAtClose() async throws {
