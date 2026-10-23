@@ -213,6 +213,63 @@ struct RecordingSavePlanTests {
         #expect(left.notification == .none)
     }
 
+    // MARK: Sound not muted (design, Privacy rule)
+
+    let unmuted = [MuteInterval(start: 1.9, end: 5.3)]
+
+    /// The folder is skipped before it is chosen: `saveRecording` never asks for one or moves into
+    /// one for a marked recording.
+    @Test func aMarkedRecordingTargetsPendingForEveryAction() {
+        for action in [AfterCaptureAction.save, .upload, .uploadOnly] {
+            #expect(RecordingSavePlan.target(for: action, unmutedIntervals: unmuted) == .pending)
+            #expect(RecordingSavePlan.target(for: action, unmutedIntervals: [])
+                == RecordingSavePlan.target(for: action))
+        }
+        #expect(RecordingSavePlan.target(for: .save, unmutedIntervals: []) == .saveFolder)
+        #expect(RecordingSavePlan.target(for: .upload, unmutedIntervals: []) == .saveFolder)
+        #expect(RecordingSavePlan.target(for: .uploadOnly, unmutedIntervals: []) == .pending)
+    }
+
+    /// No upload, no file reference and no `lastCaptureURL`, the state `.none`, in normal and quit
+    /// mode, with or without a destination. `Sound not muted` posts in normal mode only.
+    @Test(arguments: [true, false])
+    func aMarkedRecordingIsKeptAndNeverLeaves(quit: Bool) {
+        for action in [AfterCaptureAction.save, .upload, .uploadOnly] {
+            for destination in [true, false] {
+                let marked = RecordingSavePlan.make(action: action, hasDestination: destination, result: .pending,
+                                                    copyImage: true, alsoCopyImage: true, quitMode: quit,
+                                                    unmutedIntervals: unmuted)
+                #expect(marked.makesRecord)
+                #expect(marked.fileIsTemporary)
+                #expect(marked.uploadState == .none)
+                #expect(!marked.uploads)
+                #expect(!marked.copiesFileReference)
+                #expect(!marked.setsLastCaptureURL)
+                #expect(marked.showsCard == !quit)
+                #expect(marked.notConfiguredWarning == nil)
+                #expect(marked.notification == (quit ? .none : .notice(RecordingSavePlan.soundNotMutedNotice)))
+            }
+        }
+    }
+
+    @Test func aMarkedRecordingLeftInTmpMakesNoRecord() {
+        let left = RecordingSavePlan.make(action: .save, hasDestination: true,
+                                          result: .leftInTmp(reason: "The disk is full.", path: "/tmp/A.mp4"),
+                                          copyImage: true, alsoCopyImage: false, quitMode: false,
+                                          unmutedIntervals: unmuted)
+        #expect(!left.makesRecord)
+        #expect(!left.uploads)
+        #expect(!left.copiesFileReference)
+        #expect(left.notification == .notice(RecordingNotice(
+            title: "Not saved to a folder", body: "The disk is full. The recording is still at /tmp/A.mp4.")))
+    }
+
+    @Test func soundNotMutedHasTheRecordsText() {
+        #expect(RecordingSavePlan.soundNotMutedNotice == RecordingNotice(
+            title: "Sound not muted",
+            body: "Muting failed. The recording is kept in TidyShot and not uploaded. Trim it to fix the sound, or delete it."))
+    }
+
     // MARK: Clipboard after the upload
 
     @Test func urlReplacesTheClipboardOnlyWhenItIsUnchanged() {

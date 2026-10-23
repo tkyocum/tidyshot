@@ -9,9 +9,11 @@ extension AppCoordinator {
     /// card appears. The name and the source are worked out here; the copy runs detached. The
     /// card's `dragFileURL` is nil until it is done. A record with no readable file uses its kept
     /// copy, or, uploaded, a quiet download (`prefetchDragFile`). A recording goes through
-    /// `stageVideoDragFile`, which reuses its copy and never downloads.
+    /// `stageVideoDragFile`, which reuses its copy and never downloads. A recording marked `Sound not
+    /// muted` stages nothing, so its card has no file to drag.
     func prepareDragFile(recordID: UUID) {
-        guard let record = history.record(id: recordID), overlay.isShowing(recordID: recordID) else { return }
+        guard let record = history.record(id: recordID), overlay.isShowing(recordID: recordID),
+              record.uploadBlockedReason == nil else { return }
         dragCleanups.removeValue(forKey: recordID)?.cancel()
         if record.isTimeBased {
             Task { await stageVideoDragFile(recordID: recordID) }

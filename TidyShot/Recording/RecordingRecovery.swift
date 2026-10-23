@@ -50,6 +50,78 @@ nonisolated enum RecordingRecovery {
         return records.contains { $0.id == id && $0.mediaKind == .gif }
     }
 
+    /// What the launch check does with a found file before its move (design, Relaunch).
+    enum Prepared: Equatable {
+        /// Its GIF was saved already (`isSavedAsGIF`): the file is removed, not recovered.
+        case savedAsGIF
+        /// Recovered, marked with `unmutedIntervals` when its muting failed, with `bodySuffix` added
+        /// to `Recovered a recording`'s body, and its mute log removed once the record exists.
+        case recover(unmutedIntervals: [MuteInterval], bodySuffix: String?, removesLogAfterRecord: Bool)
+    }
+
+    static let mutedSuffix = "The muted parts were silenced."
+    static let soundRemovedSuffix = "It was saved without sound."
+    static let notMutedSuffix = "Its sound is not muted, so it was not uploaded."
+
+    /// Decides a found file before its move. A file whose GIF was saved is `.savedAsGIF`. A file with
+    /// a mute log in `muteDirectory`, found by the UUID in its name (`found.id`, not the record's
+    /// id), goes through the ladder: `resolve(file, duration, intervals, lag)`, with the log's
+    /// intervals and lag, or the whole file, `[0, duration]`, when the log cannot be read. An open
+    /// interval closes at the file's duration in the ladder's segments. A file with no log is
+    /// recovered as it is.
+    static func prepare(_ found: Found, records: [CaptureRecord], muteDirectory: URL,
+                        resolve: (URL, TimeInterval, [MuteInterval], TimeInterval) async -> RecordingMute.Resolution)
+        async -> Prepared {
+        if isSavedAsGIF(found, records: records) { return .savedAsGIF }
+        let unchanged = Prepared.recover(unmutedIntervals: [], bodySuffix: nil, removesLogAfterRecord: false)
+        guard let id = found.id else { return unchanged }
+        let duration = found.facts.duration
+        let intervals: [MuteInterval]
+        let lag: TimeInterval
+        switch MuteLog.read(muteDirectory.appending(path: "\(id.uuidString).json", directoryHint: .notDirectory)) {
+        case .none:
+            return unchanged
+        case .unreadable:
+            (intervals, lag) = ([MuteInterval(start: 0, end: duration)], RecordingMute.defaultLag)
+        case .log(let log):
+            guard !log.intervals.isEmpty else {
+                return .recover(unmutedIntervals: [], bodySuffix: nil, removesLogAfterRecord: true)
+            }
+            (intervals, lag) = (log.intervals, log.lag)
+        }
+        let resolution = await resolve(found.url, duration, intervals, lag)
+        switch resolution.outcome {
+        case .muted:
+            return .recover(unmutedIntervals: [], bodySuffix: mutedSuffix, removesLogAfterRecord: true)
+        case .soundRemoved:
+            return .recover(unmutedIntervals: [], bodySuffix: soundRemovedSuffix, removesLogAfterRecord: true)
+        case .notMuted:
+            return .recover(unmutedIntervals: resolution.segments, bodySuffix: notMutedSuffix, removesLogAfterRecord: true)
+        }
+    }
+
+    /// After the launch check's loop: every file in `muteDirectory` whose name's stem has no
+    /// `<stem>.mp4` in `recordingDirectory` goes, the logs of recovered files and partial rewrites a
+    /// crash left. A file whose move failed keeps its log for the next launch, and a recording
+    /// started since launch keeps its own. A missing folder is fine.
+    static func sweepMuteFolder(_ muteDirectory: URL, recordingDirectory: URL) {
+        let manager = FileManager.default
+        guard let urls = try? manager.contentsOfDirectory(at: muteDirectory, includingPropertiesForKeys: nil) else { return }
+        for url in urls {
+            let stem = url.deletingPathExtension().lastPathComponent
+            let recording = recordingDirectory.appending(path: "\(stem).\(MediaKind.video.fileExtension)",
+                                                         directoryHint: .notDirectory)
+            guard !manager.fileExists(atPath: recording.path(percentEncoded: false)) else { continue }
+            do {
+                try manager.removeItem(at: url)
+            } catch CocoaError.fileNoSuchFile {
+                // A recovered file's log, removed meanwhile.
+            } catch {
+                RecordingLog.note("Recording: \(url.lastPathComponent) could not be removed from tmp/Mute: \(error.localizedDescription)")
+            }
+        }
+    }
+
     /// The UUID in a `<UUID>.mp4` name, as `Recording.fileURL(for:)` names a recording.
     private static func id(of url: URL) -> UUID? {
         guard url.pathExtension == MediaKind.video.fileExtension else { return nil }

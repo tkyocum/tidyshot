@@ -4,11 +4,14 @@ import AppKit
 extension AppCoordinator {
     /// Copies the link (`linkURL`, which also covers an editor upload that is running or was
     /// interrupted), or the local file for a capture that has no link. A recording's file goes
-    /// through Copy File, so a pending file is referenced through its drag copy.
+    /// through Copy File, so a pending file is referenced through its drag copy. A recording marked
+    /// `Sound not muted` copies nothing: its file still holds the muted sound (design, Privacy rule).
     func copyLinkOrFile(recordID: UUID) {
         guard let record = history.record(id: recordID) else { return }
         if let url = record.linkURL {
             Pasteboard.copy(url: url)
+        } else if record.uploadBlockedReason != nil {
+            return
         } else if record.isTimeBased {
             Task { await copyFile(recordID: recordID) }
         } else if let fileURL = record.fileURL {
@@ -21,9 +24,11 @@ extension AppCoordinator {
     /// and reuse as drag-out), so the reference does not dangle once the upload removes the
     /// pending file; its change count goes into `copyFileCounts`, so the drag clean-up leaves
     /// that copy while the clipboard holds it. A clean-up already due is cancelled first, as a
-    /// press does, and with no card showing (a Recent Captures row) one is scheduled afterwards.
+    /// press does, and with no card showing (a Recent Captures row) one is scheduled afterwards. A
+    /// recording marked `Sound not muted` is never copied.
     func copyFile(recordID: UUID) async {
-        guard let record = history.record(id: recordID), record.isTimeBased, let fileURL = record.fileURL else { return }
+        guard let record = history.record(id: recordID), record.isTimeBased, record.uploadBlockedReason == nil,
+              let fileURL = record.fileURL else { return }
         guard record.fileIsTemporary else {
             Pasteboard.copy(fileURL: fileURL)
             return
@@ -100,8 +105,10 @@ extension AppCoordinator {
     }
 
     /// Save As… from a Quick Access card (and from a pin's menu, 6b): runs `saveCopy`, or
-    /// `saveVideoCopy` for a recording, after any menu tracking (`afterMenuTracking`).
+    /// `saveVideoCopy` for a recording, after any menu tracking (`afterMenuTracking`). A recording
+    /// marked `Sound not muted` is never written anywhere.
     func saveAs(recordID: UUID) {
+        guard history.record(id: recordID)?.uploadBlockedReason == nil else { return }
         afterMenuTracking { [weak self] in
             guard let self else { return }
             if self.history.record(id: recordID)?.isTimeBased == true {

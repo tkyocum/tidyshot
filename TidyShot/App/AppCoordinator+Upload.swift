@@ -96,6 +96,12 @@ extension AppCoordinator {
         // Look the record up before marking it uploading, so a missing record never leaves an
         // id in `uploadingIDs` (and the menu bar icon spinning) with no job to clear it.
         guard let record = history.record(id: recordID) else { return }
+        // A backstop: every caller a user drives has refused with its own notice already, and Retry
+        // Failed Uploads skips the record. Nothing changes and nothing posts.
+        if let refusal = Self.uploadRefusal(for: record) {
+            NSLog("%@", "Upload: refused for \(record.fileURL?.lastPathComponent ?? recordID.uuidString): \(refusal)")
+            return
+        }
         let lane = queue ?? makeLane(for: destination)
         queue = lane
         uploadingIDs.insert(recordID)
@@ -318,10 +324,22 @@ extension AppCoordinator {
         retry(recordID: recordID, destination: destination)
     }
 
+    /// Why the record must not be uploaded, or nil: a recording marked `Sound not muted`, whose file
+    /// still holds the sound its user muted (design, Privacy rule).
+    nonisolated static func uploadRefusal(for record: CaptureRecord) -> String? {
+        record.uploadBlockedReason
+    }
+
+    /// The failed records Retry Failed Uploads starts again: not one being deleted, and not one
+    /// `uploadRefusal` refuses, which is skipped without a notice.
+    nonisolated static func failedRecordsToRetry(_ records: [CaptureRecord], deletingIDs: Set<UUID>) -> [CaptureRecord] {
+        records.filter { !deletingIDs.contains($0.id) && uploadRefusal(for: $0) == nil }
+    }
+
     /// Retries every failed upload with one keychain read. Without a destination, posts one
     /// notification instead of one per record.
     func retryFailedUploads() {
-        let failed = history.failedRecords.filter { !deletingIDs.contains($0.id) }
+        let failed = Self.failedRecordsToRetry(history.failedRecords, deletingIDs: deletingIDs)
         guard !failed.isEmpty else { return }
         guard let destination = makeDestination() else {
             notifier.notifyError("Set up a destination in Settings > Upload, then retry.", title: "Upload not configured")
@@ -334,8 +352,13 @@ extension AppCoordinator {
 
     /// Starts the record's upload again from its file with `destination`. A record whose delete
     /// is in progress is never re-enqueued, so a retry cannot re-upload what Delete is removing.
-    /// An interrupted or failed replace re-PUTs its own key, so its URL stays.
+    /// An interrupted or failed replace re-PUTs its own key, so its URL stays. A record
+    /// `uploadRefusal` refuses posts `Not uploaded` with the reason instead.
     private func retry(recordID: UUID, destination: S3Destination) {
+        if let refusal = history.record(id: recordID).flatMap(Self.uploadRefusal(for:)) {
+            notifier.notifyError(refusal, title: "Not uploaded")
+            return
+        }
         guard !deletingIDs.contains(recordID), let record = history.record(id: recordID) else { return }
         let payload: UploadPayload
         do {

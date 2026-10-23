@@ -66,8 +66,14 @@ nonisolated struct RecordingSavePlan: Equatable, Sendable {
     static let uploadOnlyNotConfiguredWarning =
         "Set up a destination in Settings > Upload, then retry from Recent Captures. TidyShot keeps the recording until then."
 
-    static func target(for action: AfterCaptureAction) -> RecordingFileTarget {
-        action == .uploadOnly ? .pending : .saveFolder
+    /// `Sound not muted`, posted by the save of a recording whose muting failed (design, Privacy rule).
+    static let soundNotMutedNotice = RecordingNotice(title: CaptureRecord.soundNotMutedTitle,
+                                                     body: CaptureRecord.soundNotMutedBody)
+
+    /// `pending/` for `.uploadOnly`, and for every action when the recording's muting failed
+    /// (`unmutedIntervals`), so no folder is asked for and its sound never enters the save folder.
+    static func target(for action: AfterCaptureAction, unmutedIntervals: [MuteInterval] = []) -> RecordingFileTarget {
+        action == .uploadOnly || !unmutedIntervals.isEmpty ? .pending : .saveFolder
     }
 
     /// `copyImage` is `Copy image to clipboard`, `alsoCopyImage` is `Also copy image…`. With no
@@ -75,13 +81,23 @@ nonisolated struct RecordingSavePlan: Equatable, Sendable {
     /// settings say. A `.upload` file that fell back to `pending/` with a destination behaves as
     /// `.uploadOnly` from here on. Quit mode skips the upload (an uploading record is written as
     /// interrupted), the card, the notifications and the warning; the clipboard rule still applies.
+    /// A recording whose muting failed (`unmutedIntervals`) is kept in `pending/` with no upload, no
+    /// file reference and no `lastCaptureURL`, its state `.none` in either mode, and `Sound not
+    /// muted` posts outside quit mode.
     static func make(action: AfterCaptureAction, hasDestination: Bool, result: RecordingFileResult,
-                     copyImage: Bool, alsoCopyImage: Bool, quitMode: Bool) -> RecordingSavePlan {
+                     copyImage: Bool, alsoCopyImage: Bool, quitMode: Bool,
+                     unmutedIntervals: [MuteInterval] = []) -> RecordingSavePlan {
         if case .leftInTmp(let reason, let path) = result {
             let notice = RecordingNotice(title: notSavedTitle, body: "\(reason) The recording is still at \(path).")
             return RecordingSavePlan(makesRecord: false, fileIsTemporary: true, uploadState: .none, uploads: false,
                                      copiesFileReference: false, setsLastCaptureURL: false, showsCard: false,
                                      notification: quitMode ? .none : .notice(notice), notConfiguredWarning: nil)
+        }
+        guard unmutedIntervals.isEmpty else {
+            return RecordingSavePlan(makesRecord: true, fileIsTemporary: true, uploadState: .none, uploads: false,
+                                     copiesFileReference: false, setsLastCaptureURL: false, showsCard: !quitMode,
+                                     notification: quitMode ? .none : .notice(soundNotMutedNotice),
+                                     notConfiguredWarning: nil)
         }
 
         let inSaveFolder = result == .saveFolder

@@ -237,11 +237,21 @@ extension AppCoordinator {
     /// file's attributes, with its poster as the thumbnail; `Recovered a recording` posts and no
     /// card shows. The id is the name's UUID unless a record has it. A file whose move fails stays
     /// for the next launch. An MP4 whose GIF was saved already (`isSavedAsGIF`) is removed instead.
+    /// Before its move, a file with a mute log goes through the mute ladder with the same live steps
+    /// as the end of a recording (`RecordingRecovery.prepare`): its record is marked when the
+    /// muting failed, the body says how it went, and the log goes once the record exists. After
+    /// the loop, `tmp/Mute` keeps only what belongs to a file still in `tmp/Recording`.
     func recoverRecordings() async {
         let ext = MediaKind.video.fileExtension
         for found in await RecordingRecovery.scan(Recording.directory) {
             let (source, pending) = (found.url, pendingFiles)
-            if RecordingRecovery.isSavedAsGIF(found, records: history.records) {
+            let prepared = await RecordingRecovery.prepare(found, records: history.records,
+                                                           muteDirectory: MuteLog.directory) { file, duration, intervals, lag in
+                // `prepare` runs the ladder only for a file named by its UUID, which has a log.
+                await RecordingMute.resolve(file: file, output: RecordingMute.rewriteURL(for: found.id ?? UUID()),
+                                            duration: duration, intervals: intervals, lag: lag, steps: .live)
+            }
+            guard case .recover(let unmutedIntervals, let bodySuffix, let removesLog) = prepared else {
                 let removed = await Task.detached(priority: .utility) { try FileManager.default.removeItem(at: source) }.result
                 if case .failure(let error) = removed {
                     RecordingLog.note("Recording: \(source.lastPathComponent) was saved as a GIF and could not be removed: \(error.localizedDescription)")
@@ -253,6 +263,7 @@ extension AppCoordinator {
             // Read before the move, so only the rename comes between the move and the record.
             let poster = await PosterFrame.image(of: source)
             let id = found.id.flatMap { history.record(id: $0) == nil ? $0 : nil } ?? UUID()
+            // The size is the moved file's: after a mute step, the rewritten one's.
             let moved = await Task.detached(priority: .utility) { () throws -> (url: URL, byteCount: Int?) in
                 let url = try pending.moveIn(source, id: id, ext: ext)
                 return (url, FileSizes.byteCount(of: url))
@@ -267,21 +278,31 @@ extension AppCoordinator {
             let record = CaptureRecord(id: id, timestamp: found.created, fileURL: fileURL, fileIsTemporary: true,
                                        pixelWidth: Int(size.width.rounded()), pixelHeight: Int(size.height.rounded()),
                                        appName: nil, uploadState: .none,
-                                       mediaKind: .video, durationSeconds: found.facts.duration, byteCount: byteCount)
+                                       mediaKind: .video, durationSeconds: found.facts.duration, byteCount: byteCount,
+                                       unmutedIntervals: unmutedIntervals)
             history.add(record)
+            // By the file name's UUID, not the record's id, which can be a fresh one.
+            if removesLog, let logID = found.id {
+                Recording.removeFile(at: MuteLog.url(for: logID))
+            }
             if let poster {
                 makeThumbnail(from: poster, for: id)
             }
             RecordingLog.note("Recording: \(source.lastPathComponent) recovered as \(fileURL.lastPathComponent)")
-            notifier.notifyError("\(fileURL.lastPathComponent), \(RecordingClock.format(found.facts.duration)). Find it in Recent Captures.",
-                                 title: "Recovered a recording")
+            let body = "\(fileURL.lastPathComponent), \(RecordingClock.format(found.facts.duration)). Find it in Recent Captures."
+            notifier.notifyError(bodySuffix.map { "\(body) \($0)" } ?? body, title: "Recovered a recording")
         }
+        let (mute, recordings) = (MuteLog.directory, Recording.directory)
+        await Task.detached(priority: .utility) {
+            RecordingRecovery.sweepMuteFolder(mute, recordingDirectory: recordings)
+        }.value
     }
 
     /// After the capture lock: a kept file is handed to `saveRecording`, with `Recording stopped`
     /// when something other than the user's Stop ended it, through a GIF conversion for a GIF
-    /// recording; otherwise the recorder's notice, if any, posts, in `RecordingNoticeOrder`'s order.
-    /// `record.circle` goes as the file is handed on, or once it was removed.
+    /// recording and through the mute ladder for a muted one; otherwise the recorder's notice, if
+    /// any, posts, in `RecordingNoticeOrder`'s order. `record.circle` goes as the file is handed on,
+    /// or once it was removed.
     private func endRecording(_ outcome: RecordingOutcome?, intent: CaptureIntent) async {
         guard let outcome else { return }
         isRecording = false
@@ -289,11 +310,44 @@ extension AppCoordinator {
         case .keep(let recording, let notice):
             if let gif = recording.gif {
                 await makeGIF(from: recording, settings: gif, intent: intent, stopNotice: notice)
+            } else if !recording.muteIntervals.isEmpty {
+                await muteAndSave(recording, intent: intent, stopNotice: notice)
             } else {
                 await saveRecording(recording, intent: intent, stopNotice: notice)
             }
         case .nothing(let notice):
             postAfterStop(save: nil, stop: notice, quitMode: isQuitting, revealing: nil)
+        }
+    }
+
+    // MARK: Muting
+
+    /// Silences a kept MP4's muted stretches before its save (design, After the end, Privacy rule),
+    /// in quit mode too: the recording already counts in `recordingSavesInFlight`, so a quit waits
+    /// for it. The ladder runs off the main actor with the live steps, which `-MuteFailure` makes
+    /// fail in Debug builds. `.muted` and `.soundRemoved` remove the log and save, the second with
+    /// `Sound removed` (nothing posts in quit mode; the ladder's log line is the trace). `.notMuted`
+    /// saves the file marked with the segments, and the log goes once the record exists; with none
+    /// (`.leftInTmp`) it stays for the next launch.
+    private func muteAndSave(_ recording: Recording, intent: CaptureIntent, stopNotice: RecordingNotice?) async {
+        let log = MuteLog.url(for: recording.id)
+        let resolution = await RecordingMute.resolve(file: recording.fileURL,
+                                                     output: RecordingMute.rewriteURL(for: recording.id),
+                                                     duration: recording.duration, intervals: recording.muteIntervals,
+                                                     lag: recording.lag, steps: .live)
+        switch resolution.outcome {
+        case .muted:
+            Recording.removeFile(at: log)
+            await saveRecording(recording, intent: intent, stopNotice: stopNotice)
+        case .soundRemoved:
+            Recording.removeFile(at: log)
+            await saveRecording(recording, intent: intent, stopNotice: stopNotice,
+                                saveNotice: RecordingMute.soundRemovedNotice)
+        case .notMuted:
+            if await saveRecording(recording, intent: intent, stopNotice: stopNotice,
+                                   unmutedIntervals: resolution.segments) != nil {
+                Recording.removeFile(at: log)
+            }
         }
     }
 
@@ -356,12 +410,15 @@ extension AppCoordinator {
     /// (`Recording stopped`) post last, in `RecordingNoticeOrder`'s order, `Recording stopped`
     /// revealing the file, in place of `Recording saved`. Quit mode (`mode`, or `isQuitting` once
     /// set) never asks for a folder and has no Clop, upload, card or notification; it returns once
-    /// the thumbnail is written. `intent.then` and `intent.copyOnly` are ignored. Returns the
-    /// record, or nil when the file stayed in `tmp/Recording`, where the notice names
-    /// `recording.recoveryURL`, the file the launch check recovers.
+    /// the thumbnail is written. `intent.then` and `intent.copyOnly` are ignored. `unmutedIntervals`
+    /// (the mute ladder's `.notMuted` segments) keep the file in `pending/` with no folder asked for,
+    /// no upload and nothing on the clipboard, mark the record, and post `Sound not muted` (design,
+    /// Privacy rule). Returns the record, or nil when the file stayed in `tmp/Recording`, where the
+    /// notice names `recording.recoveryURL`, the file the launch check recovers.
     @discardableResult
     func saveRecording(_ recording: Recording, intent: CaptureIntent = .standard, stopNotice: RecordingNotice? = nil,
-                       mode: RecordingSaveMode = .normal, saveNotice: RecordingNotice? = nil) async -> CaptureRecord? {
+                       mode: RecordingSaveMode = .normal, saveNotice: RecordingNotice? = nil,
+                       unmutedIntervals: [MuteInterval] = []) async -> CaptureRecord? {
         // Its only callers, the record functions and their GIF conversions, counted the recording in
         // when the recorder kept it.
         // It leaves the count once, on whichever return: right after `history.add` (nothing below it
@@ -375,12 +432,12 @@ extension AppCoordinator {
         latestCapture = nil
         latestCaptureArea = nil
         let action = intent.action
-        // One keychain read per recording, as for a screenshot.
-        let destination = action.uploads ? makeDestination() : nil
+        // One keychain read per recording, as for a screenshot; none for a marked one, which never uploads.
+        let destination = action.uploads && unmutedIntervals.isEmpty ? makeDestination() : nil
 
         var folder: (url: URL, baseName: String)?
         var noFolderReason: String?
-        if RecordingSavePlan.target(for: action) == .saveFolder {
+        if RecordingSavePlan.target(for: action, unmutedIntervals: unmutedIntervals) == .saveFolder {
             // A quit closes an open folder panel (`cancelFolderChoice`), which then gives nil.
             let chosen = quitMode ? saveLocation.currentURL : await saveLocation.ensureFolder()
             quitMode = mode == .quit || isQuitting
@@ -405,7 +462,8 @@ extension AppCoordinator {
 
         let plan = RecordingSavePlan.make(action: action, hasDestination: destination != nil, result: result,
                                           copyImage: settings.copyImageToClipboard,
-                                          alsoCopyImage: settings.alsoCopyImageWhenUploading, quitMode: quitMode)
+                                          alsoCopyImage: settings.alsoCopyImageWhenUploading, quitMode: quitMode,
+                                          unmutedIntervals: unmutedIntervals)
         guard plan.makesRecord else {
             if case .notice(let notice) = plan.notification {
                 notifier.notifyError(notice.body, title: notice.title)
@@ -424,7 +482,8 @@ extension AppCoordinator {
                                    fileIsTemporary: plan.fileIsTemporary,
                                    pixelWidth: recording.pixelWidth, pixelHeight: recording.pixelHeight,
                                    appName: nil, uploadState: plan.uploadState,
-                                   mediaKind: kind, durationSeconds: recording.duration, byteCount: byteCount)
+                                   mediaKind: kind, durationSeconds: recording.duration, byteCount: byteCount,
+                                   unmutedIntervals: unmutedIntervals)
         let notification: SaveNotification
         switch plan.notification {
         case .none: notification = .none

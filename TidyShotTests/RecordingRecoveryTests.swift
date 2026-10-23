@@ -100,6 +100,203 @@ struct RecordingRecoveryTests {
         #expect(!RecordingRecovery.isSavedAsGIF(unnamed, records: [record(id, .gif)]))
     }
 
+    // MARK: The mute log (design, Relaunch)
+
+    /// `tmp/Recording` and `tmp/Mute`, side by side under `dir`.
+    var recordings: URL { dir.appending(path: "Recording", directoryHint: .isDirectory) }
+    var mute: URL { dir.appending(path: "Mute", directoryHint: .isDirectory) }
+
+    func found(_ id: UUID, seconds: TimeInterval = 4) -> RecordingRecovery.Found {
+        RecordingRecovery.Found(url: recordings.appending(path: "\(id.uuidString).mp4"), id: id,
+                                facts: .playable(seconds: seconds), created: .now)
+    }
+
+    func writeLog(_ log: MuteLog, for id: UUID) throws {
+        try MuteLog.write(log, to: mute.appending(path: "\(id.uuidString).json"))
+    }
+
+    func exists(_ url: URL) -> Bool {
+        FileManager.default.fileExists(atPath: url.path(percentEncoded: false))
+    }
+
+    /// What `prepare`'s ladder was asked: the file, its duration, the intervals and the lag.
+    final class LadderCalls {
+        var calls: [(file: URL, duration: TimeInterval, intervals: [MuteInterval], lag: TimeInterval)] = []
+        var outcome = RecordingMute.Outcome.muted
+        let segments = [MuteInterval(start: 1.9, end: 3.3)]
+
+        func resolve(_ file: URL, _ duration: TimeInterval, _ intervals: [MuteInterval],
+                     _ lag: TimeInterval) async -> RecordingMute.Resolution {
+            calls.append((file, duration, intervals, lag))
+            return RecordingMute.Resolution(outcome: outcome, segments: segments)
+        }
+    }
+
+    func prepare(_ found: RecordingRecovery.Found, records: [CaptureRecord] = [],
+                 ladder: LadderCalls) async -> RecordingRecovery.Prepared {
+        await RecordingRecovery.prepare(found, records: records, muteDirectory: mute, resolve: ladder.resolve)
+    }
+
+    /// The real ladder over a tone fixture: the muted stretch comes back silent, and the log goes once
+    /// the file has left `tmp/Recording`.
+    @Test func aFoundFileWithALogComesBackMutedAndItsLogIsRemoved() async throws {
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let id = UUID()
+        try FileManager.default.createDirectory(at: recordings, withIntermediateDirectories: true)
+        let file = recordings.appending(path: "\(id.uuidString).mp4")
+        try await VideoFixtures.makeMP4(at: file, width: 320, height: 200, seconds: 4, audio: true, tone: [0...4])
+        try writeLog(MuteLog(intervals: [MuteInterval(start: 1.0, end: 2.0)], lag: 0.3, sequence: 2), for: id)
+        let rewrite = mute.appending(path: "\(id.uuidString).mp4")
+
+        let found = try #require(await RecordingRecovery.scan(recordings).first)
+        let prepared = await RecordingRecovery.prepare(found, records: [], muteDirectory: mute) { file, duration, intervals, lag in
+            await RecordingMute.resolve(file: file, output: rewrite, duration: duration, intervals: intervals, lag: lag,
+                                        hasRoom: { _ in true },
+                                        apply: { try await RecordingMute.apply($0, intervals: $1, to: $2) },
+                                        stripAudio: { try await RecordingMute.stripAudio($0, to: $1) },
+                                        replace: { try RecordingMute.replaceOriginal($0, with: $1) })
+        }
+        #expect(prepared == .recover(unmutedIntervals: [], bodySuffix: RecordingRecovery.mutedSuffix,
+                                     removesLogAfterRecord: true))
+        let audio = try #require(try await MovieSamples.audio(of: file))
+        // [0.9, 2.3] after the lead and the lag, less the edges' smear.
+        #expect(audio.peak(from: 0.95, to: 2.25) < 0.01)
+        #expect(audio.peak(from: 2.35, to: 3.9) > 0.5)
+        #expect(!exists(rewrite))
+
+        // The move to `pending/` takes the file out of `tmp/Recording`; the sweep then removes its log.
+        try FileManager.default.removeItem(at: file)
+        RecordingRecovery.sweepMuteFolder(mute, recordingDirectory: recordings)
+        #expect(!exists(mute.appending(path: "\(id.uuidString).json")))
+    }
+
+    @Test func aFoundFileWithNoLogIsLeftAsItIs() async throws {
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let ladder = LadderCalls()
+        let prepared = await prepare(found(UUID()), ladder: ladder)
+        #expect(prepared == .recover(unmutedIntervals: [], bodySuffix: nil, removesLogAfterRecord: false))
+        #expect(ladder.calls.isEmpty)
+        // A file whose name carries no id has no log either.
+        let unnamed = RecordingRecovery.Found(url: recordings.appending(path: "clip.mp4"), id: nil,
+                                              facts: .playable(seconds: 4), created: .now)
+        #expect(await prepare(unnamed, ladder: ladder)
+            == .recover(unmutedIntervals: [], bodySuffix: nil, removesLogAfterRecord: false))
+        #expect(ladder.calls.isEmpty)
+    }
+
+    @Test func anUnreadableLogMutesTheWholeFile() async throws {
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let id = UUID()
+        try FileManager.default.createDirectory(at: mute, withIntermediateDirectories: true)
+        try Data("{\"intervals\": [".utf8).write(to: mute.appending(path: "\(id.uuidString).json"))
+        let ladder = LadderCalls()
+        let prepared = await prepare(found(id, seconds: 6.5), ladder: ladder)
+        #expect(prepared == .recover(unmutedIntervals: [], bodySuffix: RecordingRecovery.mutedSuffix,
+                                     removesLogAfterRecord: true))
+        let call = try #require(ladder.calls.first)
+        #expect(ladder.calls.count == 1)
+        #expect(call.file == found(id).url)
+        #expect(call.duration == 6.5)
+        #expect(call.intervals == [MuteInterval(start: 0, end: 6.5)])
+    }
+
+    /// The log's intervals and lag go to the ladder, whose segments close an open interval at the
+    /// file's end.
+    @Test func anOpenIntervalClosesAtTheFilesEnd() async throws {
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let id = UUID()
+        let log = MuteLog(intervals: [MuteInterval(start: 1, end: 1.5), MuteInterval(start: 3, end: nil)],
+                          lag: 0.6, sequence: 3)
+        try writeLog(log, for: id)
+        let ladder = LadderCalls()
+        _ = await prepare(found(id, seconds: 5), ladder: ladder)
+        let call = try #require(ladder.calls.first)
+        #expect(call.duration == 5)
+        #expect(call.intervals == log.intervals)
+        #expect(call.lag == 0.6)
+
+        var applied: [MuteInterval]?
+        _ = await RecordingMute.resolve(file: call.file, output: mute.appending(path: "\(id.uuidString).mp4"),
+                                        duration: call.duration, intervals: call.intervals, lag: call.lag,
+                                        hasRoom: { _ in true }, apply: { _, segments, _ in applied = segments },
+                                        stripAudio: { _, _ in }, replace: { _, _ in })
+        let last = try #require(applied?.last)
+        #expect(abs(last.start - 2.9) < 1e-9)
+        #expect(last.end == 5)
+    }
+
+    @Test(arguments: [
+        (RecordingMute.Outcome.muted, RecordingRecovery.mutedSuffix),
+        (.soundRemoved, RecordingRecovery.soundRemovedSuffix),
+    ])
+    func eachOutcomeAddsItsSentence(outcome: RecordingMute.Outcome, suffix: String) async throws {
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let id = UUID()
+        try writeLog(MuteLog(intervals: [MuteInterval(start: 2, end: 3)], lag: 0.3, sequence: 1), for: id)
+        let ladder = LadderCalls()
+        ladder.outcome = outcome
+        #expect(await prepare(found(id), ladder: ladder)
+            == .recover(unmutedIntervals: [], bodySuffix: suffix, removesLogAfterRecord: true))
+    }
+
+    /// The record is marked with the ladder's segments, and the log goes only once it exists.
+    @Test func aLadderThatGivesNotMutedMarksTheRecord() async throws {
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let id = UUID()
+        try writeLog(MuteLog(intervals: [MuteInterval(start: 2, end: 3)], lag: 0.3, sequence: 1), for: id)
+        let ladder = LadderCalls()
+        ladder.outcome = .notMuted
+        let prepared = await prepare(found(id), ladder: ladder)
+        #expect(prepared == .recover(unmutedIntervals: ladder.segments, bodySuffix: RecordingRecovery.notMutedSuffix,
+                                     removesLogAfterRecord: true))
+        // `prepare` itself leaves the log in place.
+        #expect(exists(mute.appending(path: "\(id.uuidString).json")))
+    }
+
+    @Test func aFoundFileWithAGIFRecordIsSavedAsAGIF() async throws {
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let id = UUID()
+        try writeLog(MuteLog(intervals: [MuteInterval(start: 2, end: 3)], lag: 0.3, sequence: 1), for: id)
+        let gif = CaptureRecord(id: id, fileURL: nil, pixelWidth: 1, pixelHeight: 1, appName: nil, mediaKind: .gif)
+        let ladder = LadderCalls()
+        #expect(await prepare(found(id), records: [gif], ladder: ladder) == .savedAsGIF)
+        #expect(ladder.calls.isEmpty)
+        let video = CaptureRecord(id: id, fileURL: nil, pixelWidth: 1, pixelHeight: 1, appName: nil, mediaKind: .video)
+        #expect(await prepare(found(id), records: [video], ladder: ladder) != .savedAsGIF)
+    }
+
+    /// Logs and partial rewrites whose recording has left `tmp/Recording` go; a recording still there
+    /// (a failed move, or one started since launch) keeps its own.
+    @Test func theSweepRemovesWhatHasNoRecording() throws {
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let (kept, gone) = (UUID(), UUID())
+        try FileManager.default.createDirectory(at: recordings, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: mute, withIntermediateDirectories: true)
+        try Data("movie".utf8).write(to: recordings.appending(path: "\(kept.uuidString).mp4"))
+        for id in [kept, gone] {
+            try Data("{}".utf8).write(to: mute.appending(path: "\(id.uuidString).json"))
+            try Data("partial".utf8).write(to: mute.appending(path: "\(id.uuidString).mp4"))
+        }
+        try Data("stray".utf8).write(to: mute.appending(path: "stray.txt"))
+
+        RecordingRecovery.sweepMuteFolder(mute, recordingDirectory: recordings)
+        let left = try FileManager.default.contentsOfDirectory(atPath: mute.path(percentEncoded: false)).sorted()
+        #expect(left == ["\(kept.uuidString).json", "\(kept.uuidString).mp4"])
+        #expect(exists(recordings.appending(path: "\(kept.uuidString).mp4")))
+    }
+
+    @Test func theSweepOfAMissingFolderDoesNothing() {
+        defer { try? FileManager.default.removeItem(at: dir) }
+        RecordingRecovery.sweepMuteFolder(mute, recordingDirectory: recordings)
+        #expect(!exists(mute))
+    }
+
+    @Test func theSentencesHaveTheDesignsText() {
+        #expect(RecordingRecovery.mutedSuffix == "The muted parts were silenced.")
+        #expect(RecordingRecovery.soundRemovedSuffix == "It was saved without sound.")
+        #expect(RecordingRecovery.notMutedSuffix == "Its sound is not muted, so it was not uploaded.")
+    }
+
     @Test func aMissingFolderFindsNothing() async {
         defer { try? FileManager.default.removeItem(at: dir) }
         let found = await RecordingRecovery.scan(dir.appending(path: "missing", directoryHint: .isDirectory))

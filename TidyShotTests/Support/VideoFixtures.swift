@@ -4,8 +4,8 @@ import CoreVideo
 import Foundation
 
 /// Movies made on the spot for the video tests: H.264 at 10 fps from `AVAssetWriter`, or at given
-/// frame times, with a silent mono AAC track when asked. Nothing needs Screen Recording or a real
-/// recording.
+/// frame times, with a mono AAC track when asked, silent or with a tone. Nothing needs Screen
+/// Recording or a real recording.
 nonisolated enum VideoFixtures {
     enum FixtureError: Error {
         case cannotAddInput
@@ -16,14 +16,20 @@ nonisolated enum VideoFixtures {
 
     private static let framesPerSecond = 10
     private static let sampleRate = 44_100
+    /// The tone: 1 kHz at −6 dBFS.
+    static let toneFrequency = 1_000.0
+    static let toneAmplitude = 0.5012
 
     /// Writes an `.mp4` of `seconds` at `width` × `height` to `url`, replacing any file there.
     /// Frame `n` is a grey of level `64 + 16n mod 128`, or with `pattern` white with a 2 px black
     /// vertical line from that even column. It is at `n / 10` s, or at `frameTimes[n]` when given,
-    /// for gaps and low source rates; the movie still ends at `seconds`.
+    /// for gaps and low source rates; the movie still ends at `seconds`. With `audio` the sound is
+    /// silent, or with `tone` a 1 kHz sine at −6 dBFS within those ranges (seconds) and silent
+    /// elsewhere.
     @concurrent
     static func makeMP4(at url: URL, width: Int, height: Int, seconds: Double, audio: Bool,
-                        pattern: Int? = nil, frameTimes: [Double]? = nil) async throws {
+                        pattern: Int? = nil, frameTimes: [Double]? = nil,
+                        tone: [ClosedRange<Double>]? = nil) async throws {
         try? FileManager.default.removeItem(at: url)
         let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
 
@@ -62,7 +68,7 @@ nonisolated enum VideoFixtures {
 
         // The small margin keeps 0.3 s at three frames despite 0.3 × 10 not being exact.
         let frameCount = frameTimes?.count ?? max(1, Int((seconds * Double(framesPerSecond) - 1e-9).rounded(.up)))
-        let format = sound == nil ? nil : try silentFormat()
+        let format = sound == nil ? nil : try monoFormat()
         let sampleCount = sound == nil ? 0 : Int((seconds * Double(sampleRate)).rounded())
         var frame = 0
         var sample = 0
@@ -87,7 +93,7 @@ nonisolated enum VideoFixtures {
             }
             if let sound, let format, sample < sampleCount, sound.isReadyForMoreMediaData {
                 let count = min(sampleRate / framesPerSecond, sampleCount - sample)
-                let samples = try silence(format: format, start: sample, count: count)
+                let samples = try audioSamples(format: format, start: sample, count: count, tone: tone ?? [])
                 guard sound.append(samples) else {
                     throw FixtureError.appendFailed(writer.error?.localizedDescription ?? "audio at \(sample)")
                 }
@@ -145,7 +151,7 @@ nonisolated enum VideoFixtures {
     }
 
     /// 16-bit mono linear PCM at `sampleRate`.
-    private static func silentFormat() throws -> CMAudioFormatDescription {
+    private static func monoFormat() throws -> CMAudioFormatDescription {
         var description = AudioStreamBasicDescription(
             mSampleRate: Float64(sampleRate), mFormatID: kAudioFormatLinearPCM,
             mFormatFlags: kLinearPCMFormatFlagIsSignedInteger | kLinearPCMFormatFlagIsPacked,
@@ -159,8 +165,10 @@ nonisolated enum VideoFixtures {
         return format
     }
 
-    /// `count` zero samples starting at sample `start`.
-    private static func silence(format: CMAudioFormatDescription, start: Int, count: Int) throws -> CMSampleBuffer {
+    /// `count` samples starting at sample `start`: the tone where its time is inside a `tone` range,
+    /// zero elsewhere.
+    private static func audioSamples(format: CMAudioFormatDescription, start: Int, count: Int,
+                                     tone: [ClosedRange<Double>]) throws -> CMSampleBuffer {
         let byteCount = count * 2
         var block: CMBlockBuffer?
         var status = CMBlockBufferCreateWithMemoryBlock(allocator: nil, memoryBlock: nil, blockLength: byteCount,
@@ -170,6 +178,19 @@ nonisolated enum VideoFixtures {
         guard status == noErr, let block else { throw FixtureError.writeFailed("audio block \(status)") }
         status = CMBlockBufferFillDataBytes(with: 0, blockBuffer: block, offsetIntoDestination: 0, dataLength: byteCount)
         guard status == noErr else { throw FixtureError.writeFailed("audio fill \(status)") }
+        if !tone.isEmpty {
+            var values = [Int16](repeating: 0, count: count)
+            for offset in 0..<count {
+                let time = Double(start + offset) / Double(sampleRate)
+                guard tone.contains(where: { $0.contains(time) }) else { continue }
+                values[offset] = Int16((toneAmplitude * 32_767 * sin(2 * .pi * toneFrequency * time)).rounded())
+            }
+            status = values.withUnsafeBytes {
+                CMBlockBufferReplaceDataBytes(with: $0.baseAddress!, blockBuffer: block, offsetIntoDestination: 0,
+                                              dataLength: byteCount)
+            }
+            guard status == noErr else { throw FixtureError.writeFailed("audio tone \(status)") }
+        }
         var sample: CMSampleBuffer?
         status = CMAudioSampleBufferCreateReadyWithPacketDescriptions(
             allocator: nil, dataBuffer: block, formatDescription: format, sampleCount: count,

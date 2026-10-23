@@ -22,6 +22,11 @@ nonisolated struct Recording: Sendable {
     /// `GIF frame rate` and `GIF size` as they were at the start, for a GIF recording's MP4; nil
     /// for an MP4 recording.
     var gif: GIFSettings?
+    /// The muted stretches on the recording's clock, closed at its end; empty when it was never
+    /// muted. A non-empty list is applied to the file before `saveRecording` (design, After the end).
+    var muteIntervals: [MuteInterval] = []
+    /// How far the recording's sound sits behind its clock (design, Lag), added after each interval.
+    var lag: TimeInterval = RecordingMute.defaultLag
 
     init(id: UUID, fileURL: URL, startedAt: Date, pixelWidth: Int, pixelHeight: Int, duration: TimeInterval,
          poster: CGImage?, displayID: CGDirectDisplayID, mediaKind: MediaKind = .video, recoveryURL: URL? = nil,
