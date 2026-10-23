@@ -133,7 +133,8 @@ final class AppCoordinator {
     /// Bumped by every `prepareDragFile` for a record. A stage hands its file to the card only
     /// while it is still the newest, so an older stage never sets a file a newer one replaced.
     @ObservationIgnored private var dragStageSeqs: [UUID: Int] = [:]
-    /// Drag folders waiting `dragCleanupDelay` after their card closed.
+    /// Drag folders waiting `dragCleanupDelay` after their card closed, or after a Copy File with
+    /// no card.
     @ObservationIgnored private var dragCleanups: [UUID: Task<Void, Never>] = [:]
     /// Restored cards whose drag file is downloading, so a press does not start a second GET.
     @ObservationIgnored private var prefetchingDragIDs: Set<UUID> = []
@@ -142,8 +143,8 @@ final class AppCoordinator {
     /// for it, so a large file is copied across volumes once.
     @ObservationIgnored private(set) var stagingVideoIDs: [UUID: Task<URL?, Never>] = [:]
     /// Per recording, the clipboard's change count after Copy File put a staged drag copy there.
-    /// While the clipboard still has that count, the drag folder's clean-up leaves the copy, and
-    /// the launch sweep removes it later (Gap 7).
+    /// While the clipboard still has that count, the drag folder's clean-up leaves the copy and
+    /// waits again; it removes the copy once the count has moved on (Gap 7).
     @ObservationIgnored private(set) var copyFileCounts: [UUID: Int] = [:]
 
     private(set) var isCapturing = false
@@ -1840,19 +1841,26 @@ final class AppCoordinator {
     /// Copy File (design, Quick Access card): a recording's file reference on the clipboard. A file
     /// in the save folder goes on as itself. A pending file goes on as its drag copy (the same stage
     /// and reuse as drag-out), so the reference does not dangle once the upload removes the
-    /// pending file; its change count goes into `copyFileCounts`, so the card's clean-up leaves
-    /// that copy while the clipboard holds it.
+    /// pending file; its change count goes into `copyFileCounts`, so the drag clean-up leaves
+    /// that copy while the clipboard holds it. A clean-up already due is cancelled first, as a
+    /// press does, and with no card showing (a Recent Captures row) one is scheduled afterwards.
     func copyFile(recordID: UUID) async {
         guard let record = history.record(id: recordID), record.isVideo, let fileURL = record.fileURL else { return }
         guard record.fileIsTemporary else {
             Pasteboard.copy(fileURL: fileURL)
             return
         }
-        guard let staged = await stageVideoDragFile(recordID: recordID) else {
+        // Otherwise a clean-up due for a closed card could remove the copy this stage reuses.
+        dragCleanups.removeValue(forKey: recordID)?.cancel()
+        if let staged = await stageVideoDragFile(recordID: recordID) {
+            copyFileCounts[recordID] = Pasteboard.copy(fileURL: staged)
+        } else {
             NSLog("Copy File: \(fileURL.lastPathComponent) could not be staged")
-            return
         }
-        copyFileCounts[recordID] = Pasteboard.copy(fileURL: staged)
+        // No card close will schedule the copy's clean-up.
+        if !overlay.isShowing(recordID: recordID) {
+            scheduleDragCleanup(recordID)
+        }
     }
 
     /// A recording's thumbnail click: its local file in the default app (QuickTime), holding the
@@ -2607,20 +2615,34 @@ final class AppCoordinator {
         overlay.close(recordID: recordID, reason: .draggedOut)
     }
 
-    /// A card closed, for any reason: its drag folder goes after `dragCleanupDelay`, unless the
-    /// card shows again first (`prepareDragFile` cancels this). A recording's folder stays while
-    /// the clipboard still holds Copy File's reference to its copy; the launch sweep removes it
-    /// later (Gap 7).
+    /// A card closed, for any reason, or Copy File staged a copy with no card showing: the drag
+    /// folder goes after `dragCleanupDelay`, unless a card shows the record again first
+    /// (`prepareDragFile` and Copy File cancel this). While the clipboard still holds Copy File's
+    /// reference to a recording's copy, it waits again, so the copy goes once the clipboard has
+    /// moved on; the launch sweep is the backstop (Gap 7).
     private func scheduleDragCleanup(_ id: UUID) {
         dragCleanups[id]?.cancel()
         dragCleanups[id] = Task { [weak self] in
             try? await Task.sleep(for: Self.dragCleanupDelay)
             guard !Task.isCancelled, let self else { return }
             self.dragCleanups[id] = nil
-            guard !self.overlay.isShowing(recordID: id) else { return }
-            if let count = self.copyFileCounts[id], count == NSPasteboard.general.changeCount { return }
-            self.removeDragFolder(id)
+            switch Self.dragCleanupStep(isShowing: self.overlay.isShowing(recordID: id),
+                                        copyFileCount: self.copyFileCounts[id],
+                                        changeCount: NSPasteboard.general.changeCount) {
+            case .leave: break
+            case .waitAgain: self.scheduleDragCleanup(id)
+            case .remove: self.removeDragFolder(id)
+            }
         }
+    }
+
+    /// A drag clean-up whose delay is over: nothing while a card shows the record (its close
+    /// schedules the next one), another wait while the clipboard's change count is still the one
+    /// Copy File left, and otherwise the folder goes.
+    nonisolated static func dragCleanupStep(isShowing: Bool, copyFileCount: Int?, changeCount: Int) -> DragCleanupStep {
+        if isShowing { return .leave }
+        if let copyFileCount, copyFileCount == changeCount { return .waitAgain }
+        return .remove
     }
 
     /// Removes the record's drag folder now (Delete, or the delayed clean-up), and makes any stage
@@ -3435,6 +3457,15 @@ nonisolated enum RecordingShortcutAction: Equatable, Sendable {
     case start
     case cancelCountIn
     case stop
+}
+
+/// What a drag clean-up does when its delay is over (`AppCoordinator.dragCleanupStep`).
+nonisolated enum DragCleanupStep: Equatable, Sendable {
+    /// A card shows the record again.
+    case leave
+    /// The clipboard still holds Copy File's reference to the copy: wait another delay.
+    case waitAgain
+    case remove
 }
 
 /// Why Copy Image had nothing to put on the clipboard.

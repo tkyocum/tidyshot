@@ -7,9 +7,10 @@ payload, the video branches of the card, Recent Captures, drag-out and Save As�
 the pure decisions (configuration and the 4096 cap, clock, limits, the end rule, the save plan), the
 controller against a fake stream (stop order, timeout, first end wins, quit), the streamed hash and
 file upload, Clop's acceptance rules, recovery of a leftover file, and the card, row, drag, naming
-and thumbnail rules for a video. Everything here needs a real screen, Screen Recording, real
-windows, sleep, the network, Clop or eyes. The 6a, 6b and 7b checklists still cover the capture,
-overlay and cover paths for images; run them too after a change to those.
+and thumbnail rules for a video, with the drag clean-up's wait while Copy File's reference is on the
+clipboard. Everything here needs a real screen, Screen Recording, real windows, sleep, the network,
+Clop or eyes. The 6a, 6b and 7b checklists still cover the capture, overlay and cover paths for
+images; run them too after a change to those.
 
 Several steps are probes: they run a small program next to the app, or read the app's log, and ask
 you to write down what the system did. Those results settle the design's "Still to probe" list and
@@ -23,15 +24,18 @@ Setup: a fresh **Release** build (`xcodebuild -project TidyShot.xcodeproj -schem
 `Config/Local.xcconfig`), "Show notification" and "Play sound" on in Settings > General, Allow URL
 commands on, an upload destination that works, and Clop (direct or Setapp) installed and running.
 You also need a Retina display, a second display, the 5K display for Large output, and a save
-folder on a volume other than the startup volume (an external disk, or a disk image below). Start
-from the defaults, then relaunch:
+folder on a volume other than the startup volume (an external disk, or a disk image below). Quit
+TidyShot, start from the defaults, then open it again:
 ```bash
 for k in recordingFrameRate recordingRetina recordingSystemAudio recordingShowsCursor recordingCountdown \
-         recordingFileNameTemplate hideDesktopIconsWhileCapturing desktopIconsHidden; do
+         recordingFileNameTemplate hideDesktopIconsWhileCapturing desktopIconsHidden \
+         KeyboardShortcuts_recordScreen KeyboardShortcuts_recordFullscreen; do
   defaults delete io.tky.tidyshot $k
 done
 ```
-`afterCaptureAction` and `optimiseWithClop` are set by the steps that need them; put them back at the end.
+A key that was never set prints `does not exist`, which is fine. The last two put `Record screen:`
+back to ⌃⇧8 and clear `Record fullscreen:`, which a step below sets. `afterCaptureAction` and
+`optimiseWithClop` are set by the steps that need them; put them back at the end.
 
 Make the working folder, the probes and a disk image once.
 ```bash
@@ -79,7 +83,7 @@ The three after-capture actions are named in the picker as `Save and copy image`
 - [ ] Settings > General has `Recording file name` under `File name`, `Recording {date} at {time}`, above the `Tokens:` caption. Emptying it and recording later gives a file called `Recording.mp4`. Under the copy toggle: `For recordings, the file is copied.` The upload-only caption begins `The file is kept inside TidyShot only until the upload succeeds`. The section that held `Images` is `Optimization`, with `Optimize images and videos with Clop` and the caption `Clop greatly reduces file size. It keeps its own copy of each image and video it optimizes, so long recordings also take space in Clop's cache.`
 - [ ] Settings > Shortcuts lists `Record screen:` (⌃⇧8) and `Record fullscreen:` (empty) after `Capture text:`. Settings > Upload's key caption reads `The file's extension (.png or .mp4) is added.` The save-folder panel says `Choose where TidyShot saves screenshots and recordings.`
 - [ ] The menu bar menu has `Record Screen  ⌃⇧8` and `Record Fullscreen` after `Capture Text`, both greyed while a screenshot capture runs.
-- [ ] `defaults read io.tky.tidyshot recordingFrameRate` and the other five keys read the defaults after a change and a relaunch: `30`, `1`, `0`, `1`, `1` and the file-name template. A value other than 30 or 60 written by hand reads as 30 in the picker (`defaults write io.tky.tidyshot recordingFrameRate -int 45`, relaunch, then delete the key).
+- [ ] Settings persist. After the reset, `defaults read io.tky.tidyshot recordingFrameRate` prints `does not exist`: the six defaults are registered, not written, so a key exists only once its setting has been changed. Change each (`60 fps`, `Standard`, Record system audio on, Show cursor in recordings off, Count down before recording off, Recording file name `Clip {time}`), quit and reopen: the panes still show them, and `defaults read io.tky.tidyshot <key>` (one key per call) reads `60`, `0`, `1`, `0`, `0` and `Clip {time}` for `recordingFrameRate`, `recordingRetina`, `recordingSystemAudio`, `recordingShowsCursor`, `recordingCountdown` and `recordingFileNameTemplate`. Put them back with the reset loop (quit first) and reopen. A value other than 30 or 60 written by hand reads as 30 in the picker (`defaults write io.tky.tidyshot recordingFrameRate -int 45`, relaunch, then delete the key).
 
 ## Relaunch, then save and upload
 The sandbox only lets TidyShot read a save-folder file after a relaunch if the upload holds the folder's scope. A test in the same launch as the folder choice passes even without that, so relaunch first.
@@ -95,7 +99,7 @@ Settings > General > After capture = `Save and copy image` unless a step says ot
 - [ ] Neither the frame, the panel nor the count-in badge is in the file. The covers (below) are.
 - [ ] Window: ⌃⇧8 and click a window. The count-in frames the window, there is no dashed frame during the recording, and the panel sits beside the window's starting frame and does not follow the window.
 - [ ] Fullscreen: Record Fullscreen from the menu, with the pointer on the second display. The display under the pointer records, the badge is centred on it with no frame, and the panel is at the bottom centre of its visible frame, a little above the Dock or the screen edge.
-- [ ] Stop each way, one recording each, whichever way it was started: the panel's Stop, ⌃⇧8, Record Fullscreen's shortcut (set one first), and `Stop Recording` in the menu. Each ends the recording once, plays the shutter, and saves one file and one card.
+- [ ] Stop each way, one recording each, whichever way it was started: the panel's Stop, ⌃⇧8, Record Fullscreen's shortcut (set one in Settings > Shortcuts first; the reset loop clears it), and `Stop Recording` in the menu. Each ends the recording once, plays the shutter, and saves one file and one card.
 - [ ] The panel never takes focus. Click Stop while another app is frontmost: the other app stays frontmost and keeps its menu bar. Drag the panel by its background, and by the digits: it moves, and the recording does not show it moving.
 - [ ] Escape does nothing during a recording (type it in a text editor that has focus). During the count-in, Escape cancels, and so do ⌃⇧8 and the fullscreen shortcut. After a cancelled count-in nothing is recorded, no file is made, the covers are gone and a new recording starts normally.
 - [ ] An area smaller than 32 x 32 pt posts `Select a larger area to record.` (titled `Screen recording`) and records nothing. An area recording does not become the Previous Area: ⌃⇧6 still uses the earlier image capture's rect.
@@ -169,7 +173,7 @@ cd ~/Desktop/rec-r1 && ./record-window audio.mp4 12 audio window <id>
 for i in 1 2 3; do afplay /System/Library/Sounds/Submarine.aiff; done
 afinfo audio.mp4
 ```
-Does the file have a `soun` track? ______ Is the other app's sound in it (play it)? ______ Is TidyShot's own sound absent (`excludesCurrentProcessAudio`)? ______
+Does the file have a `soun` track? ______ Is the other app's sound in it (play it)? ______ (`excludesCurrentProcessAudio` leaves out only the probe's own sound, and the probe plays none, so there is nothing to check for it here.)
 
 In the app, the same changes. Settings > General > After capture = `Save and copy image`. Record a window of another app with ⌃⇧8 (a Safari window), make each change, and read the log line after each recording.
 ```bash
@@ -248,8 +252,14 @@ Each row for an `Upload and copy URL` recording (`.upload`) and a `Save and copy
 - [ ] Quit with an unsaved editor open and a recording: the editor's save sheet comes first. Cancel in the sheet cancels the quit and the recording runs on. Choosing Save or Don't Save then stops and saves the recording.
 - [ ] A Cancel's question held by a quit: with an unsaved editor open, record for more than 5 s, quit (the editor's save sheet is up), press Cancel on the panel, then answer the sheet. The quit finishes and the recording is saved in quit mode, not discarded, and it does not hang waiting for the discard question.
 - [ ] A second quit during a held quit does nothing (no second reply).
+- [ ] A log out during a held quit is cancelled. Record, open an unsaved editor, Quit from the menu (the editor's save sheet is up), then Log Out from the Apple menu. The second terminate gets `.terminateCancel`, so macOS cancels the log out (it usually names the app that cancelled it); the held quit goes on, and answering the sheet with Save or Don't Save quits TidyShot with the recording saved. Log out again afterwards if you meant to. Write down what macOS showed: ______
 - [ ] `kill -9` mid-recording. Record for at least 10 s, then `pkill -9 -x TidyShot`. Open TidyShot again: `Recovered a recording` posts with `<file name>, <m:ss>. Find it in Recent Captures.`, no card shows, the recording is in Recent Captures with its poster, and it plays (QuickTime) at about the recorded length. `tmp/Recording` is empty afterwards and the file is in `pending`. The log has `Recording: <name> recovered as <name>`. Write down the recorded length against the recovered length: ______
-- [ ] `kill -9` between Stop and the save. Choose a long recording (60 s or the 5K display) with the save folder on `/Volumes/RecOff`, so the move takes a moment. Press Stop and run `pkill -9 -x TidyShot` straight after (type the command first). Relaunch. Either the recording is recovered (as above) or it is already in the save folder with its record; check which, and that it plays. Write down which: ______
+- [ ] `kill -9` between Stop and the save. Choose a long recording (60 s or the 5K display) with the save folder on `/Volumes/RecOff`, so the move takes a moment. Press Stop and run `pkill -9 -x TidyShot` straight after (type the command first). Relaunch, then look in Recent Captures, `/Volumes/RecOff`, `tmp/Recording` and `pending`. One of three things happened; each is expected, and the recording plays wherever it is:
+  1. The kill came before the move finished. `Recovered a recording` posts and the recording is in `pending` with its record, as above. The move to another volume is a copy, so a copy of it, partial or complete, may also be left in `/Volumes/RecOff` with no record; note it if so.
+  2. The kill came after the record. The recording is in `/Volumes/RecOff` with its record in Recent Captures, and nothing posts.
+  3. The kill came in the few milliseconds between the move and the record (design, Where the file lands, The tmp file). The recording is in `/Volumes/RecOff` and plays, but Recent Captures does not list it and nothing posts. (With no save folder it would be in `pending` with no record, and nothing finds it.)
+
+  Write down which, and the files you found: ______
 - [ ] A leftover that does not play (`echo junk > "$C/tmp/Recording/x.mp4"`, then relaunch) is removed with `Recording: x.mp4 could not be played, removed`.
 
 ## Upload resilience
@@ -270,13 +280,16 @@ Use `Upload only, keep no local file` for the first and `Upload and copy URL` fo
 
 ## Copy File
 - [ ] Copy File on a pending video (`Upload only` while it uploads) from the card's menu, then wait for the upload to end and paste in Finder: the file pastes (it is a staged copy in `tmp/Drag`, not the pending file that the upload removed).
-- [ ] Let the card close (or close it), wait more than a minute and paste again: the file still pastes, because the one-minute cleanup skips a record while the clipboard still holds its Copy File reference (Gap 7). `ls $C/tmp/Drag/*` still lists the copy. The launch sweep of `tmp/Drag` removes it at the next launch, so a paste after quitting and reopening TidyShot finds no file (expected; write down what Finder does: ______).
+- [ ] Let the card close (or close it), wait more than a minute and paste again: the file still pastes, because the one-minute clean-up waits again, a minute at a time, while the clipboard still holds its Copy File reference (Gap 7). `ls $C/tmp/Drag/*` still lists the copy. Now copy some text in another app and wait more than a minute: `tmp/Drag` no longer has the copy.
+- [ ] With no card showing for it, Copy File from the Recent Captures row of a `Kept in TidyShot` video (its file stays in `pending`) and paste: the file pastes. Copy some text and wait more than a minute: the copy has gone from `tmp/Drag`, though no card closed after the Copy File.
+- [ ] Close a `Kept in TidyShot` video's card (restore it first if it is closed) and, within the minute, Copy File from its row: the file pastes, and still pastes a minute later (Copy File cancels the clean-up that was due, as a press does, and schedules its own).
+- [ ] Copy File once more, then quit and reopen TidyShot without copying anything else: the launch sweep of `tmp/Drag` removes the copy, so a paste finds no file (expected; write down what Finder does: ______).
 - [ ] Copy File on a recording in the save folder puts the file itself on the clipboard.
 - [ ] Recent Captures: a video row has `Copy File` (`doc.on.doc`) where Copy Image is for screenshots. A click on the row copies the link, or the file when there is none.
 - [ ] With `{counter}` in the Recording file name template, press a pending video's card for a drag after Copy File: the clipboard's file still pastes (the staged copy is reused under the name it has).
 
 ## Clop
-Settings > General > Optimization > `Optimize images and videos with Clop` on, Clop running. The `Clop:` log lines come from `NSLog`, which `log show` prints as `<private>` on this Mac (the `Recording:` lines use `Logger` and read fine). To read them, start TidyShot with its stderr in a file: `open -n --stderr ~/Desktop/rec-r1/tidyshot.err ~/git/tidyshot/.build-rel/Build/Products/Release/TidyShot.app`, then `grep 'Clop:' ~/Desktop/rec-r1/tidyshot.err`. If that file stays empty, say so in the Observations and judge by the object's size and tracks instead.
+Settings > General > Optimization > `Optimize images and videos with Clop` on, Clop running. The `Clop:` log lines come from `NSLog`, which `log show` prints as `<private>` on this Mac (the `Recording:` lines use `Logger` and read fine). To read them, start TidyShot with its stderr in a file. Quit TidyShot from its menu first: `open -n` starts a new copy even while one runs, and two copies would both take the shortcuts. Then `open -n --stderr ~/Desktop/rec-r1/tidyshot.err ~/git/tidyshot/.build-rel/Build/Products/Release/TidyShot.app`, check that `pgrep -x TidyShot` prints one id, and later `grep 'Clop:' ~/Desktop/rec-r1/tidyshot.err`. If that file stays empty, say so in the Observations and judge by the object's size and tracks instead.
 - [ ] The queue. Record about 2 minutes (more than a 20 s Clop run) and Stop. While the card says `Optimizing…`, take a screenshot (⌃⇧4). Write down whether the screenshot uploads at once, times out and uploads the original, or waits for the video: ______ (Clop's image and video requests are on separate queues in TidyShot; if Clop answers one port request at a time, an image request sent during a video times out after 32 s and the original uploads. That is the accepted worst case.)
 - [ ] Audio. Settings > Capture > Record system audio on, Clop on, and Clop's own "Remove audio on optimised videos" preference on. Record a window or area with sound (`afplay`), upload, then `curl -s -o ~/Desktop/rec-r1/out.mp4 "<url>"; afinfo ~/Desktop/rec-r1/out.mp4`. The object still has an audio track and plays with sound. If the sound is gone, the `Clop:` line says `Clop: the result lost its audio, uploading the original`, and the original uploaded (the object is as big as the saved file). Write down which: ______
 - [ ] A silent recording: the same, with no audio track on either side, is accepted and smaller (a 79 % saving on the probe's scrolling page).
@@ -287,7 +300,7 @@ Settings > General > Optimization > `Optimize images and videos with Clop` on, C
 ## Cards and Recent Captures
 - [ ] A card, with a local file: the poster with the badge and the duration (`0:42` form), click opens the file in QuickTime (tool tip `Open`), the side column has only Delete (no Annotate, no Pin to screen), and the right-click menu has `Copy URL` (once uploaded), `Copy File`, `Save As…`, `Reveal in Finder`, `Close` and `Delete…`, and no Copy Image, Annotate or Pin to Screen.
 - [ ] A card for an upload-only video that finished: a click opens the URL. A video with neither a file nor a link does nothing on click.
-- [ ] A card for a temporary file with `.none` shows `Kept in TidyShot` and `Not in your save folder. Use Save As… to keep a copy.`, not a green `Saved`. Get one by cancelling the folder panel (see Save folder problems).
+- [ ] A card for a temporary file with `.none` shows `Kept in TidyShot` and `Not in your save folder. Use Save As… to keep a copy.`, not a green `Saved`. Get one by cancelling the folder panel (see Save folder problems). A click on its poster opens the `pending` file in QuickTime.
 - [ ] Recent Captures: the row shows the poster with the badge, a `film` symbol for a video with no stored thumbnail, `· Optimizing…` while Clop runs; the hover preview shows the stored thumbnail at its own size; there is no Annotate and no Copy Image button.
 - [ ] Annotate and Pin are absent everywhere for a video: the card, its menu, the row and the Recent Captures menus. (`Videos cannot be annotated.` is a safety net that nothing in the UI reaches.)
 - [ ] Save As… from the card. To a new file: a copy appears, `Saved` posts. Over an existing file, on the same volume and on `/Volumes/RecOff`: the file is replaced (the replacement-folder step must work under the sandbox across volumes; write down what happened: ______). With no local file and no drag copy: `Saving a copy…` / `Downloading <key>` posts and the download lands in the file.
@@ -318,7 +331,7 @@ The plan filled these where the design was silent; each was built as written. Wr
 - [ ] 4. Fallbacks: `.upload` with no destination falls back exactly as `.save` (a forced file reference, `.none`); a `.save` fallback's clipboard reference points at the pending file; over 5 GiB, where the file is decides: a pending file moves into the save folder and a save-folder file stays. ______
 - [ ] 5. Quit mode skips only the folder prompt, Clop, the upload, the card, the notifications and the not-configured warning; the clipboard rule and the shutter still apply. ______
 - [ ] 6. Strings: `<reason> The recording is still at <path>.` when even the rename failed (not reachable by hand); `Recovered a recording` reads `<file name>, <m:ss>. Find it in Recent Captures.` and shows no card; the recovered record's time is the file's creation date. ______
-- [ ] 7. Copy File's drag copy outlives the upload and the card: a pending video's staged copy is kept at `.uploaded`, and `scheduleDragCleanup` skips it while the clipboard still holds the reference. (See Copy File.) ______
+- [ ] 7. Copy File's drag copy outlives the upload and the card: a pending video's staged copy is kept at `.uploaded`, and `scheduleDragCleanup` waits again while the clipboard still holds the reference, then removes the copy once the clipboard has moved on. A Copy File with no card schedules the same clean-up. (See Copy File.) ______
 - [ ] 8. Panel geometry: a 172 x 44 pt bar; the fullscreen panel sits `ScrollPanelGeometry.gap` above the bottom of the visible frame. Is the bar the right size and place? ______
 - [ ] 9. Start races: the quit hold's count-in phase covers the whole hand-off, so a quit between the selection and the first frame records nothing; a window or display that goes between the hand-off's last read and the driver's own read gives `Recording failed` / `The window is no longer on screen.` or `The display is no longer connected.` ______
 

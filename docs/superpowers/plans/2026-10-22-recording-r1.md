@@ -843,5 +843,6 @@ The design leaves these open. Each is this plan's call. Task 9 records them in t
 | Task 5 | Task 4 plus `SaveLocationMoveTests` (1 new suite) and the `PendingFileStoreTests`, `FileNamerTests` and `AppSettingsTests` additions |
 | Task 6 | Task 5 plus the `ShortcutsTests` and `SelectionOutcomeTests` additions |
 | Task 7 | Task 6 plus `QuitHoldTests` and `RecordingRecoveryTests` (2 new suites) |
-| Task 8 | Task 7 plus `QuickAccessModelTests` (1 new suite) and the `RecentCaptureFormattingTests`, `EditorInputTests`, `DragFileNameTests`, `EditorNamingTests`, `DragFileStoreTests` and `ThumbnailProviderTests` additions |
-| Task 9 | unchanged, 124 suites |
+| Task 8 | Task 7 plus `QuickAccessModelTests` (1 new suite) and the `RecentCaptureFormattingTests`, `EditorInputTests`, `DragFileNameTests`, `EditorNamingTests`, `DragFileStoreTests` and `ThumbnailProviderTests` additions; a review fix added `FileReplacementTests` (1 new suite) |
+| Task 9 | unchanged, 125 suites (1189 tests) |
+| Whole-branch review fixes | Task 9 plus `DragCleanupTests` (1 new suite): 1193 tests in 126 suites |

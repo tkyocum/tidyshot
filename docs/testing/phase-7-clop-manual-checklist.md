@@ -33,7 +33,7 @@ Clop version (Clop > About); the fixtures come from 3.6.2.
 
 ## Fallbacks
 - [ ] Quit Clop, toggle on, capture: the original uploads, the log shows `Clop: Clop is not running, uploading the original`, no notification, and TidyShot does not launch Clop.
-- [ ] Clop set to convert PNG to another format (Clop > Settings > Images): the original PNG uploads, with `Clop: Clop converted the image to another format, uploading the original`. Set it back.
+- [ ] Clop set to convert PNG to another format (Clop > Settings > Images): the original PNG uploads, with `Clop: Clop converted the file to another format, uploading the original`. Set it back.
 - [ ] Free-tier Clop past its cap, if you can reach it: uploads still succeed, unoptimised, with a `Clop:` line.
 - [ ] Quit Clop mid-optimisation: capture the 65,536 px scrolling capture (or retry it from Recent Captures) and quit Clop at once (Clop > Quit) while the card shows the upload at 0 %. The upload still finishes within about 30 seconds with the original bytes (the object is as big as the saved file), the log shows a `Clop:` line saying why, no error notification appears and the capture is not lost. Quit TidyShot during the request and relaunch it: the container's `tmp/Clop` is empty after relaunch.
 

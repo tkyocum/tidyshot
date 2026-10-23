@@ -213,7 +213,9 @@ The map of every place the app assumes an image is in `docs/superpowers/research
     - `.upload` behaves as `.uploadOnly` from here on, the clipboard included. After a successful upload, only the uploaded object remains.
     - `lastCaptureURL` is not set to a pending file.
   - **The notification** always posts. Title `Not saved to a folder`. The body is the reason (`No folder was chosen.` or the error's description), then `TidyShot keeps the recording. Use Save As… on its card.` For `.upload`, the second sentence is `The recording uploads without a local copy.`
-  - **The tmp file.** It is never removed before a record points at the new place. If even the rename fails, it stays in `tmp/Recording` and the notification gives its path. The launch check recovers it.
+  - **The tmp file.** The save never deletes it: it is moved (a rename into `pending/`, or a move into the save folder, which across volumes is a copy and then a removal), and the record is written right after the move returns. If even the rename fails, it stays in `tmp/Recording` and the notification gives its path. The launch check recovers it.
+    - **Between the move and the record** there is a window of a few milliseconds (the hop back to the main actor, the plan, the clipboard and the record before `history.add`) in which the file is at its new place and no record names it. A quit waits through it (`recordingSavesInFlight`). A kill or a crash inside it leaves the file where it went with no record: in the save folder, Finder has it and Recent Captures does not; in `pending/`, nothing finds it, because the launch check reads only `tmp/Recording`. Accepted for R1, as the file is on disk; a launch sweep of `pending/` for files no record names is listed for R2.
+    - A kill during a move to another volume leaves the tmp file, which the launch check recovers, and can leave a partial copy in the save folder.
 - **Record.** It has `mediaKind: .video` and `durationSeconds`, and its pixel size is the video's. The poster frame becomes the thumbnail through `makeThumbnail(from:for:)`. `showOverlay` gets the poster for the card, but `latestCapture` is never set for a video. `lastCaptureURL` is set as for a screenshot.
 - **Feedback.**
   - Play sound plays the shutter when the recording stops.
@@ -462,7 +464,8 @@ The hand checks go in `docs/testing/recording-r1-manual-checklist.md`. They incl
 - **Relaunch.** Relaunch first, then record with `Save and upload` to a save folder off the startup volume, and Retry a failed upload. A same-launch test passes even without the scope fix.
 - **Quitting.**
   - Quit from the menu, log out, and quit with the folder panel open after Stop, each during a `.save` recording and an `.upload` recording.
-  - `kill -9` mid-recording and again between Stop and the save, then relaunch. Each time `Recovered a recording` posts and the file plays.
+  - `kill -9` mid-recording, then relaunch: `Recovered a recording` posts and the file plays.
+  - `kill -9` between Stop and the save, then relaunch. The recording is recovered, or it is saved with its record, or (a kill between the move and the record, see The tmp file) it is at its new place with no record. The checklist records which, and the file plays in each case.
 - **Count-in off.** Record a Safari window: its title bar is active in the first frame, and typing reaches Safari.
 - **Exclusions.** During a fullscreen recording, open the status menu, Settings and Recent Captures, restore a card, and stop from the menu. None of them appears in the file.
 - **Window changes.**
@@ -487,7 +490,7 @@ The hand checks go in `docs/testing/recording-r1-manual-checklist.md`. They incl
 
 ## R1 built notes (2026-10-22)
 
-R1 is built on `recording-r1` in nine tasks. The suite reads `Test run with 1189 tests in 125 suites passed`; the baseline was 961 in 111, and a review fix added `FileReplacementTests`, so the plan's 124 suites became 125. No entitlement and no package was added. The text above is the specification. These notes say where the build differs from it and how the plan filled what it left open, in the form of the 7b notes in the screenshot design.
+R1 is built on `recording-r1` in nine tasks. The suite reads `Test run with 1193 tests in 126 suites passed`; the baseline was 961 in 111. Two review fixes added `FileReplacementTests` and `DragCleanupTests`, so the plan's 124 suites became 126. No entitlement and no package was added. The text above is the specification. These notes say where the build differs from it and how the plan filled what it left open, in the form of the 7b notes in the screenshot design.
 
 **Open when this was written.**
 - No hand check in `docs/testing/recording-r1-manual-checklist.md` has run. Every rebuild changes the ad-hoc signature, so the build had no Screen Recording grant, and only Tim grants it. The panel, the alert, the cards and the quit paths were checked by unit tests against fakes and, for the views, by offscreen renders. One real run happened: the launch check on a planted file (Task 7).
@@ -512,7 +515,7 @@ R1 is built on `recording-r1` in nine tasks. The suite reads `Test run with 1189
 - **The after-capture action** is read when the record function starts, not at the save. A change in Settings during a recording applies to the next one.
 - **A shareable-content read that fails** posts `Recording failed`, not `Capture failed`. `Screen recording` is for refusals only.
 - **Record Fullscreen reads the content twice**: once to find the display under the pointer, before the count-in, and once at hand-off step 5. A record shortcut during the settle delay or that second read does nothing, because the phase is the count-in and there is nothing to cancel.
-- **The 32 pt check, the source and the frame** use the selection clamped to the display's fresh frame. A window's scale is `CaptureEngine.scale(forDisplayID:)` of the display containing its fresh frame.
+- **The 32 pt check** uses the selection clamped to the display's frame as the selection saw it, before the count-in. **The source and the frame** use the selection clamped to the display's fresh frame at hand-off step 5, and the check is not run again on that: a display whose frame changed during the count-in (a resolution change) can leave an area under 32 pt, which is not refused a second time. A window's scale is `CaptureEngine.scale(forDisplayID:)` of the display containing its fresh frame.
 - **GB is decimal** in the free-space limits (2,000,000,000 and 1,000,000,000 bytes, as Finder counts), and in Clop's 1 GB headroom. The upload limit is the binary 5 GiB.
 - **Output size.** Even rounding never gives a zero side (a 1 px side becomes 2). Only window plans set `scalesToFit`; area and display plans leave it off, as probed.
 - **The panel** is a capsule of `.regularMaterial`, dragged by `isMovableByWindowBackground` and `WindowDragGesture`. In the fallback exclusion the chrome windows must be found (else `cannotHideOwnWindows`), and a card that is not found still shows.
@@ -532,11 +535,12 @@ R1 is built on `recording-r1` in nine tasks. The suite reads `Test run with 1189
   - The timeout uses `record.durationSeconds ?? 0` (60 s with no duration). A reply at another path reports `.converted`. An unreadable free-space value counts as enough, with no log line.
   - `VideoValidation.inspect` clears its URL's cached resource values: a rewritten file read its old size, which would have refused every Clop result as not smaller.
 - **Pruning a record** ends the upload activity even if its job is still queued.
+- **The move and the record.** The text first said the tmp file is never removed before a record points at the new place. The move removes it, and the record follows a few milliseconds later; Where the file lands (The tmp file) now says so, with what a kill in that window leaves.
 
 **Cards, drag-out and Save As…, as built.**
 - **`QuickAccessStatus`** has seven cases. `.kept` is any `.none` record with a temporary local file, drawn in orange with `exclamationmark.circle.fill`; no screenshot path makes one today.
 - **A thumbnail click** needs a local file or a link and otherwise does nothing. `openCapture` falls back to the link when the file is missing or unreadable.
-- **Copy File** posts nothing on success, and logs a failed stage.
+- **Copy File** posts nothing on success, and logs a failed stage. For a pending file it cancels a drag clean-up that is due, as a press does, and with no card showing (a Recent Captures row) it schedules one, which no card close would.
 - **Drag-out reuse.** `stage(…reusingMatch:)` returns any copy in `Drag/<id>/` whose size and modification date match the source, under the name it has (the asked name first), not only under the same name. This replaces "the same name, size and modification date" above. A video's drag name can therefore stay the earlier name after the upload, which Gap 7 needs. With no local file, the drag file is the folder's existing copy under its own name. The dates compare exactly: `copyItem` kept them on APFS, HFS+ and exFAT. `stagingVideoIDs` keeps one stage per record, and a press or Copy File during a stage awaits it.
 - **A recording's name suggestions** (drag fallback and Save As…) use the time the recording started, not the time of the press, so the name is stable from press to press.
 - **The badge** sits in the corner of the 96 × 72 well, 10 pt on the card and 8 pt on the row. `linkNotCopiedIDs` clears when a later upload's URL does replace the clipboard.
@@ -549,7 +553,7 @@ R1 is built on `recording-r1` in nine tasks. The suite reads `Test run with 1189
 4. **Fallbacks.** `.upload` with no destination is saved as `.save` is: `.none`, and a forced file reference. A `.save` fallback keeps the table's clipboard rule, so the reference points at the pending file. Over 5 GiB, where the file is decides (`RecordingSavePlan.oversizedMoves(fileIsTemporary:)`): a pending file moves into the save folder, a save-folder file stays.
 5. **Quit mode** skips only the folder prompt, Clop, the upload, the card, the notifications and the not-configured warning. The clipboard rule and the shutter apply. `leftInTmp` posts nothing in quit mode, and the launch check recovers the file.
 6. **Strings.** When even the rename fails, `Not saved to a folder` reads `<the rename's error> The recording is still at <path>.` `Recovered a recording` reads `<file name>, <m:ss>. Find it in Recent Captures.` with no card. The record's time is the file's creation date, and its id is the file name's UUID when that parses and is not in history, otherwise a new one.
-7. **Copy File's drag copy.** At `.uploaded`, a video whose drag folder holds a staged copy keeps it and removes the pending file (`keepForDragOut` returns false). `scheduleDragCleanup` skips a record while `copyFileCounts[id]` equals the clipboard's change count, and the launch sweep removes the copy later.
+7. **Copy File's drag copy.** At `.uploaded`, a video whose drag folder holds a staged copy keeps it and removes the pending file (`keepForDragOut` returns false). While `copyFileCounts[id]` equals the clipboard's change count, `scheduleDragCleanup` waits another `dragCleanupDelay` (`AppCoordinator.dragCleanupStep`), so the copy goes once the clipboard has moved on, not only at the next launch; the launch sweep is the backstop. (The whole-branch review found the first build skipped the record once and never looked again, so a recording-sized copy could stay for weeks in an app that is rarely relaunched.)
 8. **Panel geometry.** A 172 × 44 pt bar. `bottomCentre` rounds x to a whole point and sits `ScrollPanelGeometry.gap` above the bottom of the visible frame.
 9. **Start races.** The quit hold's count-in phase covers the hand-off from the selection to `recorder.run`; `isQuitting` is read between `recordingCountIn = false` and `recorder.run` with no suspension, so a quit there records nothing. The driver's own content read gives `Recording failed` / `The window is no longer on screen.` or `The display is no longer connected.`
 
@@ -563,5 +567,6 @@ R1 is built on `recording-r1` in nine tasks. The suite reads `Test run with 1189
   - S3 multipart for files over 5 GB, with resumable uploads;
   - a separate upload lane for videos;
   - drag-out of an uploaded video with no local file, as a file download with progress;
-  - URL commands `record-screen` and `stop-recording`.
+  - URL commands `record-screen` and `stop-recording`;
+  - a launch sweep of `pending/` for files no record names, left by a kill between a save's move and its record (Where the file lands).
 - **R3:** click highlights, keystroke overlay, webcam bubble.

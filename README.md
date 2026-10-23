@@ -270,10 +270,10 @@ than 2 GB free, and stops and saves one that has under 1 GB left. Stop waits up 
 macOS to finish writing the file.
 
 TidyShot logs one `Recording:` line for each stream and output callback, with the time recorded so
-far: `log show --last 10m --predicate 'process == "TidyShot"' | grep "Recording:"`. The microphone,
-GIF export, trimming, Pause, uploads over 5 GiB, a separate upload lane for videos, dragging an
-uploaded video that has no local copy, and URL commands for recording are planned for a later
-release (R2 in the recording design).
+far: `/usr/bin/log show --last 10m --style compact --predicate 'process == "TidyShot"' | grep "Recording:"`
+(the full path, because zsh has a `log` builtin). The microphone, GIF export, trimming, Pause,
+uploads over 5 GiB, a separate upload lane for videos, dragging an uploaded video that has no local
+copy, and URL commands for recording are planned for a later release (R2 in the recording design).
 
 ## URL scheme
 
