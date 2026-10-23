@@ -1441,6 +1441,41 @@ There is no colour (Shared, Selection chrome and colour). Shape and Dim are in t
 
 Observations from the checklist run are still to be written down here by Tim: whether the 14-tool toolbar fits at 1280 pt with a long title and the narrowest width the window allowed, whether a stale outline or a stale dim ever appeared after S, V, Escape or a tool change, whether the canvas matched the saved file under a highlighter and at a window shadow's edge, how the counters' ring and digits compared with the saved file, whether Shape or Size changing the selected annotation right after it was drawn surprised him, and how long Save As… took on the tall capture with a spotlight. None of the GUI checks had been run when this was written.
 
+### 2.13 Small changes (2026-10-23)
+
+Two changes Tim asked for after testing recording R1. They are on the branch `small-tweaks`, stacked on `coordinator-split`.
+
+**Ask before deleting.**
+- **Setting.** General gets `Ask before deleting`, on by default, stored as `AppSettings.confirmBeforeDeleting` (key `confirmBeforeDeleting`, default true). It sits after `Play sound`, with the caption `Delete removes the file, the upload and the Recent Captures entry. When this is off, Delete acts at once.`
+- **Off.** `deleteCapture(recordID:)` skips `confirmDelete(of:)`: the card's, pin's and row's Delete then act at once.
+- **Unchanged.** The second alert (`confirmRemoveFromHistory`), which appears only after the storage `DELETE` failed or a save-folder file could not be removed, still appears. It asks what to do about something that could not be deleted, which a routine confirmation does not cover.
+- **No other gate.** Nothing else reads the setting; retention pruning never asked and still does not.
+
+**Size in Recent Captures.**
+- **Format.** Each row's detail reads `3 hours ago · 5 KB`: the relative time, a middle dot with a space either side, then the size. The upload state follows as now, `3 hours ago · 5 KB · Uploading`.
+- **Formatting.** `ByteCountFormatter` with `countStyle = .file`, the same decimal units Finder shows. Zero and unknown sizes show no size part.
+- **Where the size comes from.** `CaptureRecord.byteCount: Int?` (`decodeIfPresent`, nil for old records) holds the size of the object the record's link or file points at:
+  - **On save:** the bytes written, for a screenshot (the PNG) and for a recording (the file after its move).
+  - **Edits and replaces:** an editor Save, or a Trim when R2 adds it, sets the new file's size.
+  - **On upload:** `.uploaded` sets the size of the bytes sent, which is Clop's result when Clop's result was accepted. The size shown is then the uploaded object's.
+  - **Not changed:** a failed upload, or a delete of the local file alone.
+- **Old records.** At launch, records with no `byteCount` and a local file get it from the file's `fileSizeKey` resource value. That is `pending/` directly, and the save folder under its scope, all in one pass off the main actor. The file is never read. Records with neither a size nor a local file show no size.
+- **Pure parts.** `RecentCaptureFormatting.detail(for:now:locale:isOptimizing:)` takes the size from the record. The size text comes from `RecentCaptureFormatting.sizeText(_:locale:)`.
+
+**Tests (Swift Testing).**
+- `RecentCaptureFormattingTests`:
+  - time and size;
+  - time, size and each upload state;
+  - no size when nil or zero;
+  - the middle-dot separator;
+  - `sizeText` for 999 bytes, 5 KB, 1.2 MB and 3.4 GB in the en_US locale.
+- `CaptureRecordTests`: `byteCount` round-trips, and old JSON decodes as nil.
+- `AppSettingsTests`: `confirmBeforeDeleting` defaults to true and persists.
+- `CaptureDeletionTests` or a pure helper: whether Delete asks, for each value of the setting. The alert itself is a hand check.
+- A backfill helper test over a temporary folder: sizes are read from attributes; missing files are skipped.
+
+Hand checks: turn the setting off and delete from a card, a row and a pin (no alert); make a remote delete fail with the setting off (the second alert still appears); check rows for a screenshot, a recording, an upload-only capture before and after upload, and a capture saved before this change.
+
 ## 3. Core workflow in detail
 
 ```
