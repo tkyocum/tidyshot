@@ -43,6 +43,11 @@ final class QuickAccessController {
         var saveAs: (UUID) -> Void
         /// Copy Image for the card's menu item; see `AppCoordinator.copyImage(recordID:)`.
         var copyImage: (UUID) -> Void
+        /// A recording's thumbnail click: the file in its default app, or the link; see
+        /// `AppCoordinator.openCapture(recordID:)`.
+        var open: (UUID) -> Void
+        /// Copy File for a recording's menu item; see `AppCoordinator.copyFile(recordID:)`.
+        var copyFile: (UUID) -> Void
         /// Stages the card's drag file; see `AppCoordinator.prepareDragFile(recordID:)`.
         var prepareDrag: (UUID) -> Void
         /// A drag-out ended; true when a receiver took the file.
@@ -152,6 +157,20 @@ final class QuickAccessController {
         }
     }
 
+    /// Tells the card showing `recordID` whether its recording waits for Clop (`Optimizing…`).
+    /// Does nothing when no card shows the record.
+    func setOptimizing(_ isOptimizing: Bool, for recordID: UUID) {
+        guard let model = cards.first(where: { $0.id == recordID })?.model, model.isOptimizing != isOptimizing else { return }
+        model.isOptimizing = isOptimizing
+    }
+
+    /// Tells the card showing `recordID` whether its URL replaced the clipboard (`URL copied`) or
+    /// not (`Uploaded`). Does nothing when no card shows the record.
+    func setLinkWasCopied(_ linkWasCopied: Bool, for recordID: UUID) {
+        guard let model = cards.first(where: { $0.id == recordID })?.model, model.linkWasCopied != linkWasCopied else { return }
+        model.linkWasCopied = linkWasCopied
+    }
+
     /// Hands the card showing `recordID` its staged drag file, or nil while one is being made.
     /// Does nothing when no card shows the record.
     func setDragFile(_ url: URL?, for recordID: UUID) {
@@ -176,6 +195,8 @@ final class QuickAccessController {
         model.onPin = { actions.pin(id) }
         model.onSaveAs = { actions.saveAs(id) }
         model.onCopyImage = { actions.copyImage(id) }
+        model.onOpen = { actions.open(id) }
+        model.onCopyFile = { actions.copyFile(id) }
         model.onPrepareDrag = { actions.prepareDrag(id) }
         model.onDragEnded = { accepted in actions.dragEnded(id, accepted) }
         let card = Card(model: model, autoCloseSeconds: autoCloseSeconds)

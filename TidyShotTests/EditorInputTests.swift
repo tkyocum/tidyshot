@@ -92,4 +92,22 @@ struct EditorInputTests {
         #expect(EditorInput.source(for: old, retainedID: nil, saveFolder: nil)
                 == .unavailable(EditorInput.outsideSaveFolderText))
     }
+
+    /// A video is checked first: whatever the editor could otherwise load from, it cannot annotate one.
+    @Test func aVideoIsUnavailable() {
+        #expect(EditorInput.videoText == "Videos cannot be annotated.")
+        let recording = URL(fileURLWithPath: "/Users/tim/Pictures/TidyShot/Recording.mp4")
+        let pendingVideo = URL(fileURLWithPath: "/Users/tim/Library/Containers/TidyShot/Data/pending/A.mp4")
+        let videos = [
+            CaptureRecord(fileURL: recording, pixelWidth: 10, pixelHeight: 10, appName: nil, mediaKind: .video),
+            CaptureRecord(fileURL: pendingVideo, fileIsTemporary: true, pixelWidth: 10, pixelHeight: 10, appName: nil,
+                          uploadState: .uploading(fraction: 0.2), mediaKind: .video),
+            CaptureRecord(fileURL: nil, pixelWidth: 10, pixelHeight: 10, appName: nil,
+                          uploadState: .uploaded(url: link, key: "aB3dE9.mp4"), objectLocation: location, mediaKind: .video),
+        ]
+        for video in videos {
+            #expect(EditorInput.source(for: video, retainedID: video.id, saveFolder: folder)
+                    == .unavailable(EditorInput.videoText))
+        }
+    }
 }

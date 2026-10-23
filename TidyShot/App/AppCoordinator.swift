@@ -137,6 +137,14 @@ final class AppCoordinator {
     @ObservationIgnored private var dragCleanups: [UUID: Task<Void, Never>] = [:]
     /// Restored cards whose drag file is downloading, so a press does not start a second GET.
     @ObservationIgnored private var prefetchingDragIDs: Set<UUID> = []
+    /// Recordings whose drag copy is being staged, each with its stage (design, Drag-out with a
+    /// local file). One stage per record runs at a time: a press or a Copy File during it waits
+    /// for it, so a large file is copied across volumes once.
+    @ObservationIgnored private(set) var stagingVideoIDs: [UUID: Task<URL?, Never>] = [:]
+    /// Per recording, the clipboard's change count after Copy File put a staged drag copy there.
+    /// While the clipboard still has that count, the drag folder's clean-up leaves the copy, and
+    /// the launch sweep removes it later (Gap 7).
+    @ObservationIgnored private(set) var copyFileCounts: [UUID: Int] = [:]
 
     private(set) var isCapturing = false
     /// From a recording's first frame until its file is handed to `saveRecording` or removed: the
@@ -1393,6 +1401,7 @@ final class AppCoordinator {
         let thumbnail = shown.map { NSImage(cgImage: $0, size: NSSize(width: CGFloat($0.width) / scale, height: CGFloat($0.height) / scale)) }
         overlay.show(record: record, thumbnail: thumbnail, screen: screen,
                      autoCloseSeconds: settings.overlayAutoCloseSeconds, actions: overlayActions())
+        pushCardFlags(for: record.id)
         // After `show`: a card it pushed out of the stack has already reported its capture.
         if retainsImage {
             latestCapture = image.map { (id: record.id, image: ScaledImage(image: $0, scale: scale)) }
@@ -1410,6 +1419,8 @@ final class AppCoordinator {
             pin: { [weak self] id in self?.afterMenuTracking { Task { await self?.pin(recordID: id) } } },
             saveAs: { [weak self] id in self?.saveAs(recordID: id) },
             copyImage: { [weak self] id in self?.afterMenuTracking { Task { await self?.copyImage(recordID: id) } } },
+            open: { [weak self] id in self?.openCapture(recordID: id) },
+            copyFile: { [weak self] id in self?.afterMenuTracking { Task { await self?.copyFile(recordID: id) } } },
             prepareDrag: { [weak self] id in self?.prepareDragFile(recordID: id) },
             dragEnded: { [weak self] id, accepted in self?.dragDidEnd(recordID: id, accepted: accepted) })
     }
@@ -1457,7 +1468,8 @@ final class AppCoordinator {
         defer { isRestoring = false }
         overlay.show(record: current, thumbnail: thumbnail, screen: screen,
                      autoCloseSeconds: settings.overlayAutoCloseSeconds, actions: overlayActions())
-        // A record without a local file starts its quiet download now.
+        pushCardFlags(for: id)
+        // A record without a local file starts its quiet download now (never a recording's).
         prepareDragFile(recordID: id)
     }
 
@@ -1584,6 +1596,7 @@ final class AppCoordinator {
         clopWaitsPerLane[laneID, default: 0] += 1
         if isFile && optimises {
             optimizingVideoIDs.insert(recordID)
+            refreshOverlay(for: recordID)
         }
         let duration = record.durationSeconds ?? 0
         Task {
@@ -1601,7 +1614,9 @@ final class AppCoordinator {
                 return
             }
             optimisingIDs[recordID] = nil
-            optimizingVideoIDs.remove(recordID)
+            if optimizingVideoIDs.remove(recordID) != nil {
+                refreshOverlay(for: recordID)
+            }
             guard history.record(id: recordID) != nil else {
                 // Removed from history meanwhile: nothing would point at the object.
                 uploadingIDs.remove(recordID)
@@ -1809,13 +1824,59 @@ final class AppCoordinator {
     }
 
     /// Copies the link (`linkURL`, which also covers an editor upload that is running or was
-    /// interrupted), or the local file for a capture that has no link.
+    /// interrupted), or the local file for a capture that has no link. A recording's file goes
+    /// through Copy File, so a pending file is referenced through its drag copy.
     func copyLinkOrFile(recordID: UUID) {
         guard let record = history.record(id: recordID) else { return }
         if let url = record.linkURL {
             Pasteboard.copy(url: url)
+        } else if record.isVideo {
+            Task { await copyFile(recordID: recordID) }
         } else if let fileURL = record.fileURL {
             Pasteboard.copy(fileURL: fileURL)
+        }
+    }
+
+    /// Copy File (design, Quick Access card): a recording's file reference on the clipboard. A file
+    /// in the save folder goes on as itself. A pending file goes on as its drag copy (the same stage
+    /// and reuse as drag-out), so the reference does not dangle once the upload removes the
+    /// pending file; its change count goes into `copyFileCounts`, so the card's clean-up leaves
+    /// that copy while the clipboard holds it.
+    func copyFile(recordID: UUID) async {
+        guard let record = history.record(id: recordID), record.isVideo, let fileURL = record.fileURL else { return }
+        guard record.fileIsTemporary else {
+            Pasteboard.copy(fileURL: fileURL)
+            return
+        }
+        guard let staged = await stageVideoDragFile(recordID: recordID) else {
+            NSLog("Copy File: \(fileURL.lastPathComponent) could not be staged")
+            return
+        }
+        copyFileCounts[recordID] = Pasteboard.copy(fileURL: staged)
+    }
+
+    /// A recording's thumbnail click: its local file in the default app (QuickTime), holding the
+    /// save folder's scope for a file there, or, with only the upload left, its link.
+    func openCapture(recordID: UUID) {
+        guard let record = history.record(id: recordID) else { return }
+        if let fileURL = record.fileURL {
+            let scope = UploadPayload.scope(for: fileURL, isTemporary: record.fileIsTemporary,
+                                            saveFolder: saveLocation.currentURL)
+            let accessing = scope?.startAccessingSecurityScopedResource() ?? false
+            if FileManager.default.fileExists(atPath: fileURL.path(percentEncoded: false)) {
+                // The scope is held until the default app has the file.
+                NSWorkspace.shared.open(fileURL, configuration: NSWorkspace.OpenConfiguration()) { _, error in
+                    if accessing { scope?.stopAccessingSecurityScopedResource() }
+                    if let error {
+                        NSLog("Could not open \(fileURL.lastPathComponent): \(error.localizedDescription)")
+                    }
+                }
+                return
+            }
+            if accessing { scope?.stopAccessingSecurityScopedResource() }
+        }
+        if let link = record.linkURL {
+            NSWorkspace.shared.open(link)
         }
     }
 
@@ -1833,7 +1894,7 @@ final class AppCoordinator {
     /// capture can be tens of megabytes; only the finished PNG and TIFF data are written to the
     /// clipboard here, on the main actor.
     func copyImage(recordID: UUID) async {
-        guard let record = history.record(id: recordID) else { return }
+        guard let record = history.record(id: recordID), !record.isVideo else { return }
         do {
             let png = try await imageData(of: record)
             let converted = await Task.detached(priority: .userInitiated) { () -> (decoded: Bool, tiff: Data?) in
@@ -1852,12 +1913,100 @@ final class AppCoordinator {
         }
     }
 
-    /// Save As… from a Quick Access card (and from a pin's menu, 6b): runs `saveCopy` after any
-    /// menu tracking (`afterMenuTracking`).
+    /// Save As… from a Quick Access card (and from a pin's menu, 6b): runs `saveCopy`, or
+    /// `saveVideoCopy` for a recording, after any menu tracking (`afterMenuTracking`).
     func saveAs(recordID: UUID) {
         afterMenuTracking { [weak self] in
-            Task { await self?.saveCopy(recordID: recordID) }
+            guard let self else { return }
+            if self.history.record(id: recordID)?.isVideo == true {
+                Task { await self.saveVideoCopy(recordID: recordID) }
+            } else {
+                Task { await self.saveCopy(recordID: recordID) }
+            }
         }
+    }
+
+    /// A recording's Save As…: asks for a place (`.mpeg4Movie` only), then copies the movie there,
+    /// never through memory. It copies, in a detached task, the local file under its scope, else
+    /// the drag copy, else downloads the object with `download(key:to:)`, posting `Downloading
+    /// <key>`. An existing file the panel confirmed is replaced with `FileManager.replaceItemAt`.
+    /// `Saved` or `Not saved` posts as for an image. The record, its link, `lastCaptureURL` and
+    /// the clipboard stay as they are.
+    func saveVideoCopy(recordID: UUID) async {
+        guard history.record(id: recordID) != nil else { return }
+        let panel = EditorNaming.savePanel(for: saveAsSuggestion(recordID: recordID))
+        NSApplication.shared.activate(ignoringOtherApps: true)
+        guard await panel.begin() == .OK, let url = panel.url else { return }
+        // Read again: the upload may have finished, or the capture been deleted, while the panel was open.
+        guard let record = history.record(id: recordID) else {
+            NSLog("Save As: \(recordID) was deleted while the panel was open")
+            return
+        }
+        let local = record.fileURL.map {
+            (file: $0, scope: UploadPayload.scope(for: $0, isTemporary: record.fileIsTemporary,
+                                                  saveFolder: saveLocation.currentURL))
+        }
+        let drag = dragFiles
+        do {
+            let copied = try await Task.detached(priority: .userInitiated) {
+                try Self.copyVideo(from: local, orDragCopyOf: recordID, in: drag, to: url)
+            }.value
+            if !copied {
+                // Read again, as for an image: an upload that finished meanwhile has the key.
+                let current = history.record(id: recordID) ?? record
+                if record.fileURL != nil, current.uploadedKey == nil || current.objectLocation == nil {
+                    throw CopyImageError.unreadableFile
+                }
+                guard let key = current.uploadedKey else { throw CopyImageError.nothingToCopy }
+                guard let location = current.objectLocation else { throw CopyImageError.unknownLocation }
+                guard let credentials = loadCredentials() else { throw UploadError.notConfigured }
+                if settings.showNotification {
+                    notifier.notify(title: "Saving a copy…", body: "Downloading \(key)")
+                }
+                let destination = S3Destination(config: location.config, credentials: credentials)
+                // Its file work runs where it is called.
+                try await Task.detached(priority: .userInitiated) {
+                    try await destination.download(key: key, to: url)
+                }.value
+            }
+        } catch {
+            NSLog("Save As failed: \(error.localizedDescription)")
+            notifier.notifyError(error.localizedDescription, title: "Not saved")
+            return
+        }
+        if settings.showNotification {
+            notifier.notifySaved(fileURL: url, title: "Saved")
+        }
+    }
+
+    /// Copies a recording to `destination`: the local file, holding its scope, when it exists,
+    /// else the record's drag copy. False when there is neither, for the caller to download. An
+    /// existing destination is replaced with `replaceItemAt`, from a copy made first in the
+    /// replacement folder on its volume (it fails across volumes), so a failed copy leaves it as
+    /// it was. Runs in a detached task.
+    nonisolated private static func copyVideo(from local: (file: URL, scope: URL?)?, orDragCopyOf id: UUID,
+                                              in dragFiles: DragFileStore, to destination: URL) throws -> Bool {
+        let fileManager = FileManager.default
+        var source: URL?
+        let accessing = local?.scope?.startAccessingSecurityScopedResource() ?? false
+        defer { if accessing { local?.scope?.stopAccessingSecurityScopedResource() } }
+        if let file = local?.file, fileManager.isReadableFile(atPath: file.path(percentEncoded: false)) {
+            source = file
+        } else {
+            source = dragFiles.stagedFile(id: id)
+        }
+        guard let source else { return false }
+        guard fileManager.fileExists(atPath: destination.path(percentEncoded: false)) else {
+            try fileManager.copyItem(at: source, to: destination)
+            return true
+        }
+        let staging = try fileManager.url(for: .itemReplacementDirectory, in: .userDomainMask,
+                                          appropriateFor: destination, create: true)
+        defer { try? fileManager.removeItem(at: staging) }
+        let staged = staging.appending(path: destination.lastPathComponent)
+        try fileManager.copyItem(at: source, to: staged)
+        _ = try fileManager.replaceItemAt(destination, withItemAt: staged)
+        return true
     }
 
     /// Activates the app, asks for a place with the editor's suggestion, then writes the capture's
@@ -1892,6 +2041,8 @@ final class AppCoordinator {
     /// read in a detached task, as `ThumbnailProvider` does: a temporary file in `pending`
     /// directly, a saved one through the folder's security scope.
     private func imageData(of record: CaptureRecord, downloadTitle: String = "Copying image…") async throws -> Data {
+        // A recording is never read into memory.
+        guard !record.isVideo else { throw CopyImageError.notAnImage }
         let fileURL = record.fileURL
         let temporary = record.fileIsTemporary
         let folder = temporary ? nil : saveLocation.currentURL
@@ -2100,6 +2251,7 @@ final class AppCoordinator {
         optimizingVideoIDs.remove(id)
         fileUploadIDs.remove(id)
         videoClipboardCounts[id] = nil
+        linkNotCopiedIDs.remove(id)
         thumbnailProvider.forget(id)
         forgetLatestCapture(id)
         overlay.close(recordID: id, reason: .deleted)
@@ -2173,6 +2325,8 @@ final class AppCoordinator {
             optimizingVideoIDs.remove(record.id)
             fileUploadIDs.remove(record.id)
             videoClipboardCounts[record.id] = nil
+            linkNotCopiedIDs.remove(record.id)
+            copyFileCounts[record.id] = nil
             thumbnailProvider.forget(record.id)
             if let name = record.thumbnailFileName {
                 thumbnails.remove(fileName: name)
@@ -2197,11 +2351,19 @@ final class AppCoordinator {
 
     /// Pushes the record's current state into the overlay, if the overlay is showing it, and into
     /// the record's editor, so every upload progress, success, failure and retry reaches both.
+    /// Every change to `optimizingVideoIDs` or `linkNotCopiedIDs` calls it too.
     private func refreshOverlay(for id: UUID) {
         if let record = history.record(id: id) {
             overlay.update(record: record)
         }
+        pushCardFlags(for: id)
         pushEditorState(for: id)
+    }
+
+    /// The card's two flags that are not on the record: `Optimizing…` and whether the URL was copied.
+    private func pushCardFlags(for id: UUID) {
+        overlay.setOptimizing(optimizingVideoIDs.contains(id), for: id)
+        overlay.setLinkWasCopied(!linkNotCopiedIDs.contains(id), for: id)
     }
 
     /// `location` is where the queue that sent `event` uploads to.
@@ -2213,7 +2375,9 @@ final class AppCoordinator {
             if let clopResult = clopResults.removeValue(forKey: id) {
                 removeClopFile(clopResult)
             }
-            optimizingVideoIDs.remove(id)
+            if optimizingVideoIDs.remove(id) != nil {
+                refreshOverlay(for: id)
+            }
             fileUploadIDs.remove(id)
         case .started, .progress:
             break
@@ -2276,6 +2440,7 @@ final class AppCoordinator {
                     notifier.notifyUploaded(url: url, copied: false)
                 }
             } else {
+                linkNotCopiedIDs.remove(id)
                 Pasteboard.copy(url: url)
                 if EditorUploadPlan.shouldPostCacheNote(prior: before.priorUpload, uploadedKey: key, at: location,
                                                         alreadyPosted: postedCacheNote) {
@@ -2347,10 +2512,15 @@ final class AppCoordinator {
     /// Stages the record's drag file for its card: at a press on the card, and when a restored
     /// card appears. The name and the source are worked out here; the copy runs detached. The
     /// card's `dragFileURL` is nil until it is done. A record with no readable file uses its kept
-    /// copy, or, uploaded, a quiet download (`prefetchDragFile`).
+    /// copy, or, uploaded, a quiet download (`prefetchDragFile`). A recording goes through
+    /// `stageVideoDragFile`, which reuses its copy and never downloads.
     func prepareDragFile(recordID: UUID) {
         guard let record = history.record(id: recordID), overlay.isShowing(recordID: recordID) else { return }
         dragCleanups.removeValue(forKey: recordID)?.cancel()
+        if record.isVideo {
+            Task { await stageVideoDragFile(recordID: recordID) }
+            return
+        }
         let name = DragFileName.name(for: record, suggestion: saveAsSuggestion(recordID: recordID))
         let generation = dragGenerations[recordID, default: 0]
         dragStageSeqs[recordID, default: 0] += 1
@@ -2396,9 +2566,10 @@ final class AppCoordinator {
     }
 
     /// A quiet signed GET (no notification) of an uploaded capture that has no local file, into
-    /// its drag folder. A failure is only logged; the card then cannot be dragged.
+    /// its drag folder. A failure is only logged; the card then cannot be dragged. Never for a
+    /// recording: a silent download of hundreds of MB on a click would surprise (R2).
     private func prefetchDragFile(recordID: UUID, name: String) async {
-        guard !prefetchingDragIDs.contains(recordID), let record = history.record(id: recordID),
+        guard !prefetchingDragIDs.contains(recordID), let record = history.record(id: recordID), !record.isVideo,
               record.uploadedKey != nil, record.objectLocation != nil else { return }
         prefetchingDragIDs.insert(recordID)
         defer { prefetchingDragIDs.remove(recordID) }
@@ -2421,9 +2592,12 @@ final class AppCoordinator {
 
     /// `.uploaded` for an upload-only capture: when a card shows it, moves the pending file to
     /// `Drag/<id>/<key name>` and hands it to the card. False when no card shows the record or the
-    /// move failed (logged); the caller then removes the pending file as before.
+    /// move failed (logged); the caller then removes the pending file as before. A recording whose
+    /// drag folder already holds a staged copy keeps that copy, which a Copy File reference may
+    /// point at and an adopt would delete, so its pending file is removed instead (Gap 7).
     private func keepForDragOut(_ fileURL: URL, record: CaptureRecord, url: URL, key: String) -> Bool {
         guard overlay.isShowing(recordID: record.id) else { return false }
+        if record.isVideo, dragFiles.stagedFile(id: record.id) != nil { return false }
         var uploaded = record
         uploaded.uploadState = .uploaded(url: url, key: key)
         let name = DragFileName.name(for: uploaded, suggestion: saveAsSuggestion(recordID: record.id))
@@ -2446,7 +2620,9 @@ final class AppCoordinator {
     }
 
     /// A card closed, for any reason: its drag folder goes after `dragCleanupDelay`, unless the
-    /// card shows again first (`prepareDragFile` cancels this).
+    /// card shows again first (`prepareDragFile` cancels this). A recording's folder stays while
+    /// the clipboard still holds Copy File's reference to its copy; the launch sweep removes it
+    /// later (Gap 7).
     private func scheduleDragCleanup(_ id: UUID) {
         dragCleanups[id]?.cancel()
         dragCleanups[id] = Task { [weak self] in
@@ -2454,6 +2630,7 @@ final class AppCoordinator {
             guard !Task.isCancelled, let self else { return }
             self.dragCleanups[id] = nil
             guard !self.overlay.isShowing(recordID: id) else { return }
+            if let count = self.copyFileCounts[id], count == NSPasteboard.general.changeCount { return }
             self.removeDragFolder(id)
         }
     }
@@ -2463,7 +2640,55 @@ final class AppCoordinator {
     private func removeDragFolder(_ id: UUID) {
         dragCleanups.removeValue(forKey: id)?.cancel()
         dragGenerations[id, default: 0] += 1
+        copyFileCounts[id] = nil
         dragFiles.remove(id: id)
+    }
+
+    /// A recording's drag copy (design, Drag-out with a local file), for a press on its card and
+    /// for Copy File. The local file is staged with `reusingMatch`: a copy already there with the
+    /// same name, size and modification date is kept, so a large file is copied across volumes
+    /// once. With no local file (an uploaded upload-only recording) the copy the folder holds is
+    /// used as it is, under the name it has, so a Copy File reference to it stays good; nothing
+    /// is downloaded (R2). One stage per record runs at a time, and a second caller waits for it.
+    /// The card showing the record has no drag file while the copy runs, and gets the result.
+    @discardableResult
+    private func stageVideoDragFile(recordID: UUID) async -> URL? {
+        if let running = stagingVideoIDs[recordID] { return await running.value }
+        guard let record = history.record(id: recordID) else { return nil }
+        let name = DragFileName.name(for: record, suggestion: saveAsSuggestion(recordID: recordID))
+        let generation = dragGenerations[recordID, default: 0]
+        let store = dragFiles
+        let source = record.fileURL
+        let scope = record.fileIsTemporary ? nil : saveLocation.currentURL
+        overlay.setDragFile(nil, for: recordID)
+        let stage = Task { [weak self] () -> URL? in
+            var staged = await Task.detached(priority: .userInitiated) { () -> URL? in
+                if let source, let url = try? store.stage(id: recordID, name: name, from: source, scope: scope,
+                                                          reusingMatch: true) {
+                    return url
+                }
+                return store.stagedFile(id: recordID)
+            }.value
+            guard let self else { return nil }
+            if self.dragGenerations[recordID, default: 0] != generation {
+                // The folder was removed (Delete, the clean-up) or the pending file adopted while
+                // the copy ran. A card still showing gets what the folder holds now; otherwise the
+                // folder this stage recreated goes.
+                if self.overlay.isShowing(recordID: recordID) {
+                    staged = await Task.detached(priority: .userInitiated) { store.stagedFile(id: recordID) }.value
+                } else {
+                    self.dropStaleDragFolder(recordID)
+                    staged = nil
+                }
+            }
+            self.stagingVideoIDs[recordID] = nil
+            if self.overlay.isShowing(recordID: recordID) {
+                self.overlay.setDragFile(staged, for: recordID)
+            }
+            return staged
+        }
+        stagingVideoIDs[recordID] = stage
+        return await stage.value
     }
 
     /// A stage or download finished after its folder was removed or replaced: unless a card shows
@@ -2535,6 +2760,10 @@ final class AppCoordinator {
     /// editor and Pin to screen use it.
     func loadImage(for record: CaptureRecord, downloadTitle: String = "Opening the capture…",
                    failureTitle: String = "Could not open the capture") async -> ScaledImage? {
+        guard !record.isVideo else {
+            notifier.notifyError(EditorInput.videoText, title: failureTitle)
+            return nil
+        }
         do {
             let png = try await imageData(of: record, downloadTitle: downloadTitle)
             let decoded = await Task.detached(priority: .userInitiated) { () -> ScaledImage? in
@@ -2560,7 +2789,7 @@ final class AppCoordinator {
     /// from, any other centred on the pointer's screen. A second Pin on a pinned capture brings
     /// its pin forward. A capture deleted during the load is not pinned.
     func pin(recordID: UUID) async {
-        guard let record = history.record(id: recordID), !deletingIDs.contains(recordID) else { return }
+        guard let record = history.record(id: recordID), !record.isVideo, !deletingIDs.contains(recordID) else { return }
         guard !pins.bringToFront(recordID: recordID), pinningIDs.insert(recordID).inserted else { return }
         defer { pinningIDs.remove(recordID) }
         let image: ScaledImage
@@ -2890,10 +3119,17 @@ final class AppCoordinator {
 
     /// The Save As… suggestion for `recordID`, the editor's and the card's: its file name in the
     /// save folder, or the file name template's name with the current `{counter}` (none is drawn).
+    /// A recording's template name uses the time it started, as its file name and key do, so its
+    /// drag copy keeps one name from press to press.
     private func saveAsSuggestion(recordID: UUID) -> EditorNaming.SaveAsSuggestion {
-        EditorNaming.saveAsSuggestion(for: history.record(id: recordID), saveFolder: saveLocation.currentURL,
-                                      namer: FileNamer(template: settings.fileNameTemplate),
-                                      currentCounter: settings.currentCounter)
+        let record = history.record(id: recordID)
+        let startedAt = record?.timestamp ?? Date()
+        return EditorNaming.saveAsSuggestion(
+            for: record, saveFolder: saveLocation.currentURL,
+            namer: FileNamer(template: settings.fileNameTemplate),
+            recordingNamer: FileNamer(template: settings.recordingFileNameTemplate,
+                                      fallbackName: FileNamer.recordingFallbackName, now: { startedAt }),
+            currentCounter: settings.currentCounter)
     }
 
     /// Upload (⌘U) and Upload as New (⌥⌘U). The edit is written locally first, so the file equals

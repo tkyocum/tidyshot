@@ -59,4 +59,30 @@ struct DragFileNameTests {
         #expect(DragFileName.name(for: record(state: uploaded("p/a:b.PNG")), suggestion: suggestion) == "a-b.PNG")
         #expect(DragFileName.name(for: record(state: uploaded("shots/")), suggestion: suggestion) == suggestion.fileName)
     }
+
+    func video(file: URL? = nil, temporary: Bool = false, state: CaptureRecord.UploadState = .none) -> CaptureRecord {
+        CaptureRecord(fileURL: file, fileIsTemporary: temporary, pixelWidth: 1600, pixelHeight: 1000, appName: nil,
+                      uploadState: state, mediaKind: .video, durationSeconds: 42)
+    }
+
+    /// A recording's key keeps its own extension; `.png` is added only to images.
+    @Test func anMP4KeyKeepsItsName() {
+        #expect(DragFileName.name(for: video(state: uploaded("shots/aSIS7.mp4")), suggestion: suggestion) == "aSIS7.mp4")
+        #expect(DragFileName.name(for: video(state: uploaded("p/aSIS7")), suggestion: suggestion) == "aSIS7")
+        #expect(DragFileName.name(for: video(state: uploaded("p/a:b.MP4")), suggestion: suggestion) == "a-b.MP4")
+    }
+
+    /// Without a key, the Save As… suggestion names the file, with the record's extension.
+    @Test func theFallbackUsesTheRecordsExtension() {
+        let folder = URL(filePath: "/Users/tim/Pictures/TidyShot", directoryHint: .isDirectory)
+        let started = DateComponents(calendar: .current, year: 2026, month: 10, day: 22, hour: 10, minute: 0, second: 0).date!
+        let namer = FileNamer(template: FileNamer.defaultTemplate, now: { started }, hostname: "miffle")
+        let recordingNamer = FileNamer(template: FileNamer.recordingDefaultTemplate, fallbackName: FileNamer.recordingFallbackName,
+                                       now: { started }, hostname: "miffle")
+        let pending = video(file: URL(fileURLWithPath: "/tmp/pending/\(UUID().uuidString).mp4"), temporary: true,
+                            state: .uploading(fraction: 0.5))
+        let suggestion = EditorNaming.saveAsSuggestion(for: pending, saveFolder: folder, namer: namer,
+                                                       recordingNamer: recordingNamer, currentCounter: 3)
+        #expect(DragFileName.name(for: pending, suggestion: suggestion) == "Recording 2026-10-22 at 10.00.00.mp4")
+    }
 }

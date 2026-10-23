@@ -6,7 +6,8 @@ import AppKit
 /// is shown (the record is updated once that finishes), or a placeholder (nil) when it has no
 /// readable file, and such a record is not tried again. Previews are read and decoded from the
 /// local file off the main thread and fall back to the thumbnail. Every file read happens in a
-/// detached task: a capture can be tens of megabytes.
+/// detached task: a capture can be tens of megabytes. A recording's file is never read: its
+/// thumbnail and its preview are the stored poster, or the placeholder.
 final class ThumbnailProvider {
     static let previewCacheLimit = 8
     static let thumbnailCacheLimit = 64
@@ -47,7 +48,9 @@ final class ThumbnailProvider {
         self.readFile = readFile
     }
 
-    /// The 320 px thumbnail, or nil for a placeholder.
+    /// The 320 px thumbnail, or nil for a placeholder. A recording with none stored (its poster
+    /// is still being written, or could not be made) gets the placeholder, never one made from its
+    /// file.
     func thumbnail(for record: CaptureRecord) async -> NSImage? {
         let id = record.id
         if let cached = thumbnails[id] { return cached }
@@ -62,8 +65,8 @@ final class ThumbnailProvider {
             }
         }
         // No stored thumbnail (a record from before Phase 3, or one whose capture-time thumbnail
-        // is still being written): make one from the local file, once.
-        guard !unavailable.contains(id) else { return nil }
+        // is still being written): make one from the local file, once. Not from a video.
+        guard !record.isVideo, !unavailable.contains(id) else { return nil }
         guard let source = readSource(for: record) else {
             unavailable.insert(id)
             return nil
@@ -92,7 +95,8 @@ final class ThumbnailProvider {
         return image
     }
 
-    /// Up to 1200 px from the local file, or the thumbnail when the record has no file left.
+    /// Up to 1200 px from the local file, or the thumbnail when the record has no file left. A
+    /// recording's is always its stored thumbnail, at its own size: no larger poster is stored.
     /// Cancelling the calling task stops the load before a read or a decode it has not started
     /// yet and returns nil, without the thumbnail fallback and without caching anything. That holds
     /// with or without a local file: a call already cancelled when it starts returns a cached
@@ -102,7 +106,7 @@ final class ThumbnailProvider {
         if let cached = previews[id] { return cached }
         guard !Task.isCancelled else { return nil }
         let generation = generations[id, default: 0]
-        guard let source = readSource(for: record) else { return await thumbnail(for: record) }
+        guard !record.isVideo, let source = readSource(for: record) else { return await thumbnail(for: record) }
         let readFile = readFile
         let load = Task.detached(priority: .userInitiated) { () -> CGImage? in
             guard !Task.isCancelled, let data = try? readFile(source.file, source.folder),

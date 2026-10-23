@@ -44,12 +44,16 @@ nonisolated struct DragFileStore: Sendable {
 
     /// Copies `source` to `Drag/<id>/<name>` and returns it, replacing what the folder held.
     /// `FileManager.copyItem` clones on APFS when source and folder share a volume (`pending`
-    /// always does; a save folder on the startup disk does), and copies the bytes otherwise.
-    /// `scope` (the save folder) is held for the copy; nil for a file in the container. Staging
-    /// the staged file as itself returns it. Throws, leaving the folder as it was, when `source`
-    /// does not exist or cannot be read.
+    /// always does; a save folder on the startup disk does), and copies the bytes otherwise. It
+    /// keeps the source's modification date. `scope` (the save folder) is held for the copy; nil
+    /// for a file in the container. Staging the staged file as itself returns it. With
+    /// `reusingMatch` (a recording, which is never rewritten), a copy already there under `name`
+    /// with the source's size and modification date is returned as it is, so a large file is
+    /// copied across volumes once; an image is copied again on every stage, because an edit
+    /// rewrites it. Throws, leaving the folder as it was, when `source` does not exist or cannot
+    /// be read.
     @discardableResult
-    func stage(id: UUID, name: String, from source: URL, scope: URL?) throws -> URL {
+    func stage(id: UUID, name: String, from source: URL, scope: URL?, reusingMatch: Bool = false) throws -> URL {
         let fileManager = FileManager.default
         let destination = folder(for: id).appending(path: name)
         let accessing = scope?.startAccessingSecurityScopedResource() ?? false
@@ -58,6 +62,9 @@ nonisolated struct DragFileStore: Sendable {
             throw CocoaError(.fileNoSuchFile)
         }
         if source.standardizedFileURL.path(percentEncoded: false) == destination.standardizedFileURL.path(percentEncoded: false) {
+            return destination
+        }
+        if reusingMatch, Self.sameSizeAndDate(source, destination) {
             return destination
         }
         return try place(destination) { try fileManager.copyItem(at: source, to: $0) }
@@ -109,6 +116,19 @@ nonisolated struct DragFileStore: Sendable {
             try? fileManager.removeItem(at: entry)
         }
         return destination
+    }
+
+    /// True when both files exist with the same size and modification date. The attributes are
+    /// read from the file system, not a URL's resource cache, which can hold a stale size.
+    private static func sameSizeAndDate(_ source: URL, _ copy: URL) -> Bool {
+        let fileManager = FileManager.default
+        guard let original = try? fileManager.attributesOfItem(atPath: source.path(percentEncoded: false)),
+              let staged = try? fileManager.attributesOfItem(atPath: copy.path(percentEncoded: false)),
+              let size = original[.size] as? NSNumber, let stagedSize = staged[.size] as? NSNumber,
+              let date = original[.modificationDate] as? Date, let stagedDate = staged[.modificationDate] as? Date else {
+            return false
+        }
+        return size == stagedSize && date == stagedDate
     }
 
     private static func entries(in folder: URL) -> [URL] {
