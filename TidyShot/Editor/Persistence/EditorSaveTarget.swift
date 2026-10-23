@@ -114,6 +114,9 @@ nonisolated enum EditorAvailability {
     static let deletingRefusal = "This capture is being deleted."
     static let uploadingRefusal = "This capture is still uploading."
     static let notUploadedRefusal = "This capture has no link yet. Use Upload."
+    /// While a Trim pass runs on the record (`AppCoordinator.trimmingIDs`): Retry, `Upload Trimmed`
+    /// and `startUpload` refuse with it.
+    static let trimmingRefusal = "This capture is being trimmed."
 
     static func actions(record: CaptureRecord?, saveFolder: URL?, isDeleting: Bool) -> Set<EditorAction> {
         Set(EditorAction.allCases.filter {
@@ -124,14 +127,17 @@ nonisolated enum EditorAvailability {
     /// Nil when `action` may run; otherwise the reason, posted as the body of `Not saved` or
     /// `Not uploaded`. Copy and Save As… are never refused: they work on the editor's own image,
     /// also for a deleted, deleting or uploading record. Save is not refused for want of a file
-    /// to write over: `EditorSaveCommand` sends it to Save As… then.
-    static func refusal(for action: EditorAction, record: CaptureRecord?, saveFolder: URL?, isDeleting: Bool) -> String? {
+    /// to write over: `EditorSaveCommand` sends it to Save As… then. `isTrimming` is true while a
+    /// Trim pass runs on the record; the pass itself asks with false.
+    static func refusal(for action: EditorAction, record: CaptureRecord?, saveFolder: URL?, isDeleting: Bool,
+                        isTrimming: Bool = false) -> String? {
         switch action {
         case .copy, .saveAs:
             return nil
         case .save, .upload, .uploadAsNew:
             guard let record else { return deletedRefusal }
             if isDeleting { return deletingRefusal }
+            if isTrimming { return trimmingRefusal }
             if record.isUploading { return uploadingRefusal }
             if action == .uploadAsNew, record.linkURL == nil { return notUploadedRefusal }
             return nil

@@ -295,6 +295,26 @@ struct CaptureRecordTests {
         #expect(never.editedAt == edited)
     }
 
+    /// A trim (design, Trim, Save) changes the length and `editedAt`. The pixel size stays, and so
+    /// does `uploadIsStale`: the Trim pass sets it itself, before the put, and clears it if the put fails.
+    @Test func localTrimSetsTheDurationAndEditedAtOnly() {
+        let location = ObjectLocation(endpoint: "https://s3.us-west-2.amazonaws.com", region: "us-west-2",
+                                      bucket: "snap.tky.io", usePathStyle: true)
+        let edited = Date(timeIntervalSince1970: 1_792_411_200)
+        for stale in [false, true] {
+            var record = CaptureRecord(fileURL: URL(filePath: "/tmp/pending/x.mp4"), fileIsTemporary: true,
+                                       pixelWidth: 2560, pixelHeight: 1664, appName: nil,
+                                       uploadState: .uploaded(url: URL(string: "https://snap.tky.io/x.mp4")!, key: "x.mp4"),
+                                       objectLocation: location, uploadIsStale: stale, mediaKind: .video,
+                                       durationSeconds: 64.2)
+            record.recordLocalTrim(duration: 12.4, at: edited)
+            #expect(record.durationSeconds == 12.4)
+            #expect(record.editedAt == edited)
+            #expect(record.pixelWidth == 2560 && record.pixelHeight == 1664)
+            #expect(record.uploadIsStale == stale)
+        }
+    }
+
     // MARK: Media kind (recording R1)
 
     @Test func historyWithoutMediaKindDecodesAsImages() throws {

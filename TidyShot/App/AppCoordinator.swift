@@ -171,6 +171,13 @@ final class AppCoordinator {
     /// shows no second alert, and a retry does not re-enqueue them.
     @ObservationIgnored var deletingIDs: Set<UUID> = []
 
+    // MARK: Trim state (AppCoordinator+Trim.swift)
+    // +Upload and +Delete read trimmingIDs.
+    /// Records whose Trim pass runs (design, Write-time checks): from Save or Save and Upload through
+    /// the put and its bookkeeping. While a record is here, Retry, `Upload Trimmed`, `startUpload` and
+    /// Delete refuse it, and Retry Failed Uploads skips it.
+    @ObservationIgnored var trimmingIDs: Set<UUID> = []
+
     // MARK: Drag-out state (AppCoordinator+DragOut.swift)
     // +RecordActions' Copy File writes dragCleanups and copyFileCounts; +Delete's prune clears copyFileCounts.
     /// Bumped when a record's drag folder is removed or its pending file adopted. A stage or
@@ -226,6 +233,8 @@ final class AppCoordinator {
         dragFiles.sweep()
         // A quit or crash mid-request leaves a full-size capture in tmp/Clop.
         try? FileManager.default.removeItem(at: ClopApp.workDirectory)
+        // Trim's downloads and working copies: a quit does not wait for a pass, and a crash can leave one.
+        try? FileManager.default.removeItem(at: RecordingTrim.directory)
         notifier.setUp()
         history.load()
         // Records from before 2.13 have no size; those with a local file get it from the file.

@@ -286,6 +286,15 @@ struct EditorUploadPlanTests {
         #expect(EditorUploadPlan.supersededStep(for: stale, of: interrupted) == .delete)
     }
 
+    /// A failed replace names what the link still shows: an image, or a recording for a trimmed MP4
+    /// (design, Trim, Save and Upload).
+    @Test func failedReplaceMessageFollowsTheKind() {
+        #expect(EditorUploadPlan.failedReplaceRecordingMessage == "Upload failed. The link still shows the earlier recording.")
+        #expect(EditorUploadPlan.failedReplaceMessage(for: .image) == "Upload failed. The link still shows the earlier image.")
+        #expect(EditorUploadPlan.failedReplaceMessage(for: .video) == EditorUploadPlan.failedReplaceRecordingMessage)
+        #expect(EditorUploadPlan.failedReplaceMessage(for: .gif) == EditorUploadPlan.failedReplaceRecordingMessage)
+    }
+
     @Test func cacheNoteOnlyOnFirstSameKeyReplace() {
         let replace = PriorUpload(url: link, key: key, location: here, isReplace: true)
         #expect(EditorUploadPlan.cacheNote == "Replaced. Copies opened before now may stay cached for a while.")

@@ -2,8 +2,8 @@ import Foundation
 import Testing
 @testable import TidyShot
 
-/// The Privacy rule's upload gates (design, Sound not muted): Retry and `startUpload` refuse a record
-/// marked `Sound not muted`, and Retry Failed Uploads skips it.
+/// The upload gates: Retry and `startUpload` refuse a record marked `Sound not muted` (design,
+/// Privacy rule) or being trimmed (design, Write-time checks), and Retry Failed Uploads skips it.
 struct UploadRefusalTests {
     func record(_ kind: MediaKind = .video, unmuted: [MuteInterval] = [],
                 state: CaptureRecord.UploadState = .failed(message: "Upload was interrupted.")) -> CaptureRecord {
@@ -21,6 +21,22 @@ struct UploadRefusalTests {
         for kind in [MediaKind.image, .video, .gif] {
             #expect(AppCoordinator.uploadRefusal(for: record(kind)) == nil)
         }
+    }
+
+    /// While its Trim pass runs (design, Write-time checks): Retry, `Upload Trimmed` and `startUpload`
+    /// refuse with the trimming text, also for a marked record, whose pass is what fixes it.
+    @Test func aRecordBeingTrimmedIsRefusedWithTheTrimmingText() {
+        #expect(AppCoordinator.uploadRefusal(for: record(), isTrimming: true) == "This capture is being trimmed.")
+        #expect(AppCoordinator.uploadRefusal(for: record(unmuted: [MuteInterval(start: 0, end: 1)]), isTrimming: true)
+                == "This capture is being trimmed.")
+        #expect(AppCoordinator.uploadRefusal(for: record(), isTrimming: false) == nil)
+    }
+
+    @Test func retryFailedUploadsLeavesOutARecordBeingTrimmed() {
+        let (first, trimming, last) = (record(), record(), record(.image))
+        let retried = AppCoordinator.failedRecordsToRetry([first, trimming, last], deletingIDs: [],
+                                                          trimmingIDs: [trimming.id])
+        #expect(retried.map(\.id) == [first.id, last.id])
     }
 
     @Test func retryFailedUploadsLeavesOutMarkedAndDeletingRecords() {

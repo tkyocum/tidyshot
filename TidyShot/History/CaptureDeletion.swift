@@ -13,6 +13,8 @@ nonisolated enum CaptureDeletion {
     /// (any object this capture alone owned has been deleted by then; shared keys and pre-Phase 3
     /// records keep theirs). Its buttons are Remove and Cancel.
     static let fileFailureText = "Remove it from history anyway? The file stays where it is."
+    /// Posted, titled "Not deleted", in place of the first alert while a Trim pass runs on the record.
+    static let trimmingRefusal = "This capture is being trimmed. Delete it when the trim finishes."
 
     /// Whether Delete shows the first alert, from General's `Ask before deleting` (spec 2.13). Off,
     /// the card's, pin's and row's Delete act at once. Nothing else reads the setting: the second

@@ -203,6 +203,14 @@ nonisolated struct CaptureRecord: Codable, Identifiable, Equatable, Sendable {
         }
     }
 
+    /// What a trim written to a recording's file changes on the record (design, Trim, Save): its
+    /// length and `editedAt`. The pixel size stays, and `uploadIsStale` is the Trim pass's own: it
+    /// sets it before the put for a record with a link and clears it when the put fails.
+    mutating func recordLocalTrim(duration: Double, at editedAt: Date) {
+        durationSeconds = duration
+        self.editedAt = editedAt
+    }
+
     var hasLocalFile: Bool { fileURL != nil }
 
     /// A recording, MP4 or GIF: no image actions, no editor, and its file is never read for a

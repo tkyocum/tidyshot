@@ -25,19 +25,27 @@ nonisolated enum VideoFixtures {
     /// vertical line from that even column. It is at `n / 10` s, or at `frameTimes[n]` when given,
     /// for gaps and low source rates; the movie still ends at `seconds`. With `audio` the sound is
     /// silent, or with `tone` a 1 kHz sine at −6 dBFS within those ranges (seconds) and silent
-    /// elsewhere.
+    /// elsewhere. With `keyframeInterval` a sync sample comes at least every that many frames, with
+    /// frame reordering off, so decode order is presentation order.
     @concurrent
     static func makeMP4(at url: URL, width: Int, height: Int, seconds: Double, audio: Bool,
                         pattern: Int? = nil, frameTimes: [Double]? = nil,
-                        tone: [ClosedRange<Double>]? = nil) async throws {
+                        tone: [ClosedRange<Double>]? = nil, keyframeInterval: Int? = nil) async throws {
         try? FileManager.default.removeItem(at: url)
         let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
 
-        let video = AVAssetWriterInput(mediaType: .video, outputSettings: [
+        var settings: [String: Any] = [
             AVVideoCodecKey: AVVideoCodecType.h264,
             AVVideoWidthKey: width,
             AVVideoHeightKey: height,
-        ])
+        ]
+        if let keyframeInterval {
+            settings[AVVideoCompressionPropertiesKey] = [
+                AVVideoMaxKeyFrameIntervalKey: keyframeInterval,
+                AVVideoAllowFrameReorderingKey: false,
+            ]
+        }
+        let video = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
         video.expectsMediaDataInRealTime = false
         let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: video, sourcePixelBufferAttributes: [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,

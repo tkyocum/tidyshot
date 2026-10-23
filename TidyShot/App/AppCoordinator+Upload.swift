@@ -98,7 +98,7 @@ extension AppCoordinator {
         guard let record = history.record(id: recordID) else { return }
         // A backstop: every caller a user drives has refused with its own notice already, and Retry
         // Failed Uploads skips the record. Nothing changes and nothing posts.
-        if let refusal = Self.uploadRefusal(for: record) {
+        if let refusal = Self.uploadRefusal(for: record, isTrimming: trimmingIDs.contains(recordID)) {
             NSLog("%@", "Upload: refused for \(record.fileURL?.lastPathComponent ?? recordID.uuidString): \(refusal)")
             return
         }
@@ -313,10 +313,16 @@ extension AppCoordinator {
         return (payload, nil)
     }
 
-    /// Re-reads the file and uploads it again.
+    /// Re-reads the file and uploads it again. A record `uploadRefusal` refuses posts `Not uploaded`
+    /// with the reason before the destination is read, so it is never marked failed for want of one.
     func retryUpload(recordID: UUID) {
         // Ignore a second click while the record is already in flight; otherwise it would upload twice.
-        guard history.record(id: recordID) != nil, !uploadingIDs.contains(recordID), !deletingIDs.contains(recordID) else { return }
+        guard let record = history.record(id: recordID), !uploadingIDs.contains(recordID),
+              !deletingIDs.contains(recordID) else { return }
+        if let refusal = Self.uploadRefusal(for: record, isTrimming: trimmingIDs.contains(recordID)) {
+            notifier.notifyError(refusal, title: "Not uploaded")
+            return
+        }
         guard let destination = makeDestination() else {
             markFailed(recordID, message: UploadError.notConfigured.localizedDescription)
             return
@@ -324,22 +330,27 @@ extension AppCoordinator {
         retry(recordID: recordID, destination: destination)
     }
 
-    /// Why the record must not be uploaded, or nil: a recording marked `Sound not muted`, whose file
-    /// still holds the sound its user muted (design, Privacy rule).
-    nonisolated static func uploadRefusal(for record: CaptureRecord) -> String? {
-        record.uploadBlockedReason
+    /// Why the record must not be uploaded, or nil: a Trim pass runs on it (`isTrimming`, design,
+    /// Write-time checks), or it is a recording marked `Sound not muted`, whose file still holds the
+    /// sound its user muted (design, Privacy rule).
+    nonisolated static func uploadRefusal(for record: CaptureRecord, isTrimming: Bool = false) -> String? {
+        if isTrimming { return EditorAvailability.trimmingRefusal }
+        return record.uploadBlockedReason
     }
 
     /// The failed records Retry Failed Uploads starts again: not one being deleted, and not one
-    /// `uploadRefusal` refuses, which is skipped without a notice.
-    nonisolated static func failedRecordsToRetry(_ records: [CaptureRecord], deletingIDs: Set<UUID>) -> [CaptureRecord] {
-        records.filter { !deletingIDs.contains($0.id) && uploadRefusal(for: $0) == nil }
+    /// `uploadRefusal` refuses (being trimmed, or marked), which is skipped without a notice.
+    nonisolated static func failedRecordsToRetry(_ records: [CaptureRecord], deletingIDs: Set<UUID>,
+                                                 trimmingIDs: Set<UUID> = []) -> [CaptureRecord] {
+        records.filter {
+            !deletingIDs.contains($0.id) && uploadRefusal(for: $0, isTrimming: trimmingIDs.contains($0.id)) == nil
+        }
     }
 
     /// Retries every failed upload with one keychain read. Without a destination, posts one
     /// notification instead of one per record.
     func retryFailedUploads() {
-        let failed = Self.failedRecordsToRetry(history.failedRecords, deletingIDs: deletingIDs)
+        let failed = Self.failedRecordsToRetry(history.failedRecords, deletingIDs: deletingIDs, trimmingIDs: trimmingIDs)
         guard !failed.isEmpty else { return }
         guard let destination = makeDestination() else {
             notifier.notifyError("Set up a destination in Settings > Upload, then retry.", title: "Upload not configured")
@@ -355,7 +366,9 @@ extension AppCoordinator {
     /// An interrupted or failed replace re-PUTs its own key, so its URL stays. A record
     /// `uploadRefusal` refuses posts `Not uploaded` with the reason instead.
     private func retry(recordID: UUID, destination: S3Destination) {
-        if let refusal = history.record(id: recordID).flatMap(Self.uploadRefusal(for:)) {
+        if let refusal = history.record(id: recordID).flatMap({
+            Self.uploadRefusal(for: $0, isTrimming: trimmingIDs.contains(recordID))
+        }) {
             notifier.notifyError(refusal, title: "Not uploaded")
             return
         }
@@ -506,18 +519,24 @@ extension AppCoordinator {
             let replacesClipboard = !before.isTimeBased
                 || RecordingSavePlan.replacesClipboard(savedChangeCount: videoClipboardCounts.removeValue(forKey: id),
                                                        currentChangeCount: NSPasteboard.general.changeCount)
+            // The first same-key replace of this launch posts the cache note in place of the usual
+            // notification, also with Show notification off, whether or not the URL was copied.
+            let postsCacheNote = EditorUploadPlan.shouldPostCacheNote(prior: before.priorUpload, uploadedKey: key,
+                                                                      at: location, alreadyPosted: postedCacheNote)
+            if postsCacheNote {
+                postedCacheNote = true
+            }
             if !replacesClipboard {
                 linkNotCopiedIDs.insert(id)
-                if settings.showNotification {
+                if postsCacheNote {
+                    notifier.notify(title: "Uploaded", body: EditorUploadPlan.cacheNote)
+                } else if settings.showNotification {
                     notifier.notifyUploaded(url: url, copied: false)
                 }
             } else {
                 linkNotCopiedIDs.remove(id)
                 Pasteboard.copy(url: url)
-                if EditorUploadPlan.shouldPostCacheNote(prior: before.priorUpload, uploadedKey: key, at: location,
-                                                        alreadyPosted: postedCacheNote) {
-                    // In place of the usual notification, and also with Show notification off.
-                    postedCacheNote = true
+                if postsCacheNote {
                     notifier.notify(title: "Uploaded, URL copied", body: EditorUploadPlan.cacheNote)
                 } else if settings.showNotification {
                     notifier.notifyUploaded(url: url)
@@ -526,17 +545,17 @@ extension AppCoordinator {
             refreshOverlay(for: id)
             Task { [weak self] in await self?.deleteSupersededObjects(of: id) }
         case .failed(let id, let message):
-            guard history.record(id: id)?.priorUpload != nil else {
+            guard let failing = history.record(id: id), failing.priorUpload != nil else {
                 markFailed(id, message: message)
                 return
             }
             // An upload of a record that has a link: the old object is untouched, so the record
-            // goes back to it, and keeps the edited file and the stale note.
+            // goes back to it, and keeps the edited or trimmed file and the stale note.
             NSLog("Upload failed, the earlier link is kept: \(message)")
             uploadingIDs.remove(id)
             history.update(id: id) { $0 = EditorUploadPlan.applyingFailure(to: $0, message: message) }
             refreshOverlay(for: id)
-            notifier.notifyError(EditorUploadPlan.failedReplaceMessage, title: "Not uploaded")
+            notifier.notifyError(EditorUploadPlan.failedReplaceMessage(for: failing.mediaKind), title: "Not uploaded")
         case .cancelled(let id, let reservedKey):
             // Requested by the delete flow, which removes the record next; no notification.
             uploadingIDs.remove(id)

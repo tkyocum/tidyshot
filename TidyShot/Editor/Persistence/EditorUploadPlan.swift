@@ -29,9 +29,16 @@ nonisolated enum EditorUploadPlan {
     static let legacyNotice = "The earlier upload stays in the bucket."
     /// Posted, titled "Not uploaded", when the upload of a record that has a link fails.
     static let failedReplaceMessage = "Upload failed. The link still shows the earlier image."
+    /// The same for a recording, after a trimmed MP4's Save and Upload or `Upload Trimmed`.
+    static let failedReplaceRecordingMessage = "Upload failed. The link still shows the earlier recording."
     /// Posted once per launch on the first successful same-key replace, whatever Show
     /// notification says: a CDN or a browser may still serve the original.
     static let cacheNote = "Replaced. Copies opened before now may stay cached for a while."
+
+    /// `failedReplaceMessage` for an image, `failedReplaceRecordingMessage` for a recording.
+    static func failedReplaceMessage(for kind: MediaKind) -> String {
+        kind == .image ? failedReplaceMessage : failedReplaceRecordingMessage
+    }
 
     /// The record's link: its uploaded key where it went, or else the link that an editor upload
     /// in flight or interrupted keeps in `priorUpload`. `location` is nil for a capture uploaded

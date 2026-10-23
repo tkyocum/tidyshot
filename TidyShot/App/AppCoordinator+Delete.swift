@@ -13,6 +13,11 @@ extension AppCoordinator {
     /// notification.
     func deleteCapture(recordID: UUID) async {
         guard !deletingIDs.contains(recordID), let record = history.record(id: recordID) else { return }
+        // A Trim pass may be putting the file in place: refused before any alert (design, Write-time checks).
+        if trimmingIDs.contains(recordID) {
+            notifier.notifyError(CaptureDeletion.trimmingRefusal, title: "Not deleted")
+            return
+        }
         deletingIDs.insert(recordID)
         // The record's editor drops Save and Upload before the alert shows, through
         // `cancelUpload`, `deleteObjects` and the second alert, and learns the outcome either way.
