@@ -573,6 +573,7 @@ afterwards, so opening it again in the editor starts from the composed picture.
 
 - Design: `docs/superpowers/specs/2026-10-19-tidyshot-screenshot-design.md`
 - Screen recording design: `docs/superpowers/specs/2026-10-21-tidyshot-screen-recording-design.md`
+- Coordinator split design: `docs/superpowers/specs/2026-10-23-coordinator-split-design.md`
 - Plans: `docs/superpowers/plans/`
 - Phase 1 manual test checklist: `docs/testing/phase-1-manual-checklist.md`
 - Phase 2 manual test checklist: `docs/testing/phase-2-manual-checklist.md`
@@ -588,3 +589,4 @@ afterwards, so opening it again in the editor starts from the composed picture.
 - Phase 7b (Capture Text, Hide desktop icons) manual test checklist: `docs/testing/phase-7b-manual-checklist.md`
 - Phase 7c (Backgrounds) manual test checklist: `docs/testing/phase-7c-manual-checklist.md`
 - Recording R1 (screen recording) manual test checklist: `docs/testing/recording-r1-manual-checklist.md`
+- Coordinator split manual test checklist: `docs/testing/coordinator-split-manual-checklist.md`
