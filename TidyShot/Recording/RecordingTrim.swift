@@ -249,4 +249,10 @@ nonisolated enum RecordingTrim {
         case .saveTarget, .refuse: return .keepFile
         }
     }
+
+    /// How the export cuts (design, Method): `.passthrough` when the start is on a sync sample,
+    /// else `.reencode`.
+    enum TrimMethod: Equatable, Sendable {
+        case passthrough, reencode
+    }
 }
