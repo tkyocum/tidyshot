@@ -118,6 +118,7 @@ struct GIFEncoderTests {
         #expect(decoded.count == expected.count)
         #expect(summary.gifFrameCount == expected.count)
         for (shown, wanted) in zip(decoded, expected) {
+            #expect(shown.count == wanted.count)
             #expect(zip(shown, wanted).filter { $0 != $1 }.count == 0)
         }
         return summary
@@ -186,8 +187,9 @@ struct GIFEncoderTests {
         #expect(summary == GIFEncoderSummary(gifFrameCount: 2, transparentFrameCount: 1, opaqueFrameCount: 1,
                                              byteCount: bytes.count))
         let decoded = GIFBlocks.decodedFrames(Data(bytes))
-        #expect(decoded.count == 2)
-        #expect(decoded.first == decoded.last)
+        try #require(decoded.count == 2)
+        #expect(decoded[0].count == Self.width * Self.height)
+        #expect(decoded[0] == decoded[1])
     }
 
     /// Fails its third write: the encoder's first frame, after the header.
