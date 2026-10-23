@@ -1933,49 +1933,25 @@ final class AppCoordinator {
     /// `Saved` or `Not saved` posts as for an image. The record, its link, `lastCaptureURL` and
     /// the clipboard stay as they are.
     func saveVideoCopy(recordID: UUID) async {
-        guard history.record(id: recordID) != nil else { return }
-        let panel = EditorNaming.savePanel(for: saveAsSuggestion(recordID: recordID))
-        NSApplication.shared.activate(ignoringOtherApps: true)
-        guard await panel.begin() == .OK, let url = panel.url else { return }
-        // Read again: the upload may have finished, or the capture been deleted, while the panel was open.
-        guard let record = history.record(id: recordID) else {
-            NSLog("Save As: \(recordID) was deleted while the panel was open")
-            return
-        }
+        guard let target = await askSaveAsTarget(recordID: recordID) else { return }
+        let record = target.record
+        let url = target.url
         let local = record.fileURL.map {
             (file: $0, scope: UploadPayload.scope(for: $0, isTemporary: record.fileIsTemporary,
                                                   saveFolder: saveLocation.currentURL))
         }
         let drag = dragFiles
-        do {
+        await performSaveAs(to: url) {
             let copied = try await Task.detached(priority: .userInitiated) {
                 try Self.copyVideo(from: local, orDragCopyOf: recordID, in: drag, to: url)
             }.value
-            if !copied {
-                // Read again, as for an image: an upload that finished meanwhile has the key.
-                let current = history.record(id: recordID) ?? record
-                if record.fileURL != nil, current.uploadedKey == nil || current.objectLocation == nil {
-                    throw CopyImageError.unreadableFile
-                }
-                guard let key = current.uploadedKey else { throw CopyImageError.nothingToCopy }
-                guard let location = current.objectLocation else { throw CopyImageError.unknownLocation }
-                guard let credentials = loadCredentials() else { throw UploadError.notConfigured }
-                if settings.showNotification {
-                    notifier.notify(title: "Saving a copy…", body: "Downloading \(key)")
-                }
-                let destination = S3Destination(config: location.config, credentials: credentials)
-                // Its file work runs where it is called.
-                try await Task.detached(priority: .userInitiated) {
-                    try await destination.download(key: key, to: url)
-                }.value
-            }
-        } catch {
-            NSLog("Save As failed: \(error.localizedDescription)")
-            notifier.notifyError(error.localizedDescription, title: "Not saved")
-            return
-        }
-        if settings.showNotification {
-            notifier.notifySaved(fileURL: url, title: "Saved")
+            guard !copied else { return }
+            let (key, destination) = try self.downloadSource(of: self.uploadedFallback(for: record),
+                                                             title: "Saving a copy…")
+            // Its file work runs where it is called.
+            try await Task.detached(priority: .userInitiated) {
+                try await destination.download(key: key, to: url)
+            }.value
         }
     }
 
@@ -2003,25 +1979,33 @@ final class AppCoordinator {
     /// PNG there unchanged (`imageData(of:)`: the local file, or a signed GET). A copy only: the
     /// record, its link, `lastCaptureURL` and the clipboard stay as they are.
     private func saveCopy(recordID: UUID) async {
-        guard history.record(id: recordID) != nil else { return }
-        let panel = EditorNaming.savePanel(for: saveAsSuggestion(recordID: recordID))
-        // Reached from a non-activating card while another app is active; a plain activate() can
-        // be refused and the panel would open behind that app (as in SaveLocation.chooseFolder).
-        NSApplication.shared.activate(ignoringOtherApps: true)
-        guard await panel.begin() == .OK, let url = panel.url else { return }
-        // Read again: the upload may have finished, or the capture been deleted, while the panel was open.
-        guard let record = history.record(id: recordID) else {
-            NSLog("Save As: \(recordID) was deleted while the panel was open")
-            return
-        }
+        guard let target = await askSaveAsTarget(recordID: recordID) else { return }
         let png: Data
         do {
-            png = try await imageData(of: record, downloadTitle: "Saving a copy…")
+            png = try await imageData(of: target.record, downloadTitle: "Saving a copy…")
         } catch {
             notifier.notifyError(error.localizedDescription, title: "Not saved")
             return
         }
-        await writeSaveAsCopy(png, to: url)
+        await writeSaveAsCopy(png, to: target.url)
+    }
+
+    /// A card's Save As… panel, for an image and for a recording: activates the app and asks for a
+    /// place with the record's suggestion (`EditorNaming.savePanel(for:)`). Then the record is read
+    /// again, since the upload may have finished, or the capture been deleted, while the panel was
+    /// open. Nil when the panel was cancelled or the capture is gone.
+    private func askSaveAsTarget(recordID: UUID) async -> (record: CaptureRecord, url: URL)? {
+        guard history.record(id: recordID) != nil else { return nil }
+        let panel = EditorNaming.savePanel(for: saveAsSuggestion(recordID: recordID))
+        // Reached from a non-activating card while another app is active; a plain activate() can
+        // be refused and the panel would open behind that app (as in SaveLocation.chooseFolder).
+        NSApplication.shared.activate(ignoringOtherApps: true)
+        guard await panel.begin() == .OK, let url = panel.url else { return nil }
+        guard let record = history.record(id: recordID) else {
+            NSLog("Save As: \(recordID) was deleted while the panel was open")
+            return nil
+        }
+        return (record, url)
     }
 
     /// The capture's PNG: the local file when it can be read, otherwise the uploaded object. Copy
@@ -2052,26 +2036,40 @@ final class AppCoordinator {
             return drag.stagedFile(id: id).flatMap { try? Data(contentsOf: $0) }
         }.value
         if let local { return local }
-        // The record is read again: an upload-only capture whose upload finished during the read
-        // has lost its `pending` file and gained the key that the snapshot above lacks.
+        return try await downloadImage(of: uploadedFallback(for: record), title: downloadTitle)
+    }
+
+    /// The record to download when its local copy could not be read, an image's for
+    /// `imageData(of:)` and a recording's for `saveVideoCopy`. It is read again: an upload-only
+    /// capture whose upload finished during the read has lost its `pending` file and gained the
+    /// key that `record` lacks.
+    private func uploadedFallback(for record: CaptureRecord) throws -> CaptureRecord {
         let current = history.record(id: record.id) ?? record
         if record.fileURL != nil, current.uploadedKey == nil || current.objectLocation == nil {
             // The file is recorded but cannot be read, and there is no upload to fall back on.
             throw CopyImageError.unreadableFile
         }
-        return try await downloadImage(of: current, title: downloadTitle)
+        return current
     }
 
-    /// The uploaded object's bytes, from where the record says it went, signed with the
-    /// credentials stored now. A nil title downloads quietly (a restored card's drag file).
+    /// The uploaded object's bytes, from where the record says it went (`downloadSource`).
     private func downloadImage(of record: CaptureRecord, title: String?) async throws -> Data {
+        let (key, destination) = try downloadSource(of: record, title: title)
+        return try await destination.download(key: key)
+    }
+
+    /// Where the record's uploaded object is: its key, and the bucket the record says it went to
+    /// signed with the credentials stored now. Posts `Downloading <key>` under `title` when
+    /// notifications are on; a nil title downloads quietly (a restored card's drag file). Images
+    /// download into memory (`downloadImage`), a recording to a file (`saveVideoCopy`).
+    private func downloadSource(of record: CaptureRecord, title: String?) throws -> (key: String, destination: S3Destination) {
         guard let key = record.uploadedKey else { throw CopyImageError.nothingToCopy }
         guard let location = record.objectLocation else { throw CopyImageError.unknownLocation }
         guard let credentials = loadCredentials() else { throw UploadError.notConfigured }
         if let title, settings.showNotification {
             notifier.notify(title: title, body: "Downloading \(key)")
         }
-        return try await S3Destination(config: location.config, credentials: credentials).download(key: key)
+        return (key, S3Destination(config: location.config, credentials: credentials))
     }
 
     func reveal(recordID: UUID) {
@@ -3095,10 +3093,20 @@ final class AppCoordinator {
     /// or the error as `Not saved`. Touches no record.
     @discardableResult
     private func writeSaveAsCopy(_ png: Data, to url: URL) async -> Bool {
-        do {
+        await performSaveAs(to: url) {
             try await Task.detached(priority: .userInitiated) {
                 try png.write(to: url, options: .atomic)
             }.value
+        }
+    }
+
+    /// Runs a Save As… write to `url`, an image's (`writeSaveAsCopy`) or a recording's
+    /// (`saveVideoCopy`), and posts how it went: `Saved` with the file name when notifications
+    /// are on, or the error as `Not saved`. False when the write threw.
+    @discardableResult
+    private func performSaveAs(to url: URL, _ write: () async throws -> Void) async -> Bool {
+        do {
+            try await write()
         } catch {
             NSLog("Save As failed: \(error.localizedDescription)")
             notifier.notifyError(error.localizedDescription, title: "Not saved")
