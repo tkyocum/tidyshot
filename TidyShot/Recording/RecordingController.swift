@@ -91,6 +91,10 @@ final class RecordingController {
     private let makeDriver: () -> any RecordingStreamDriver
     /// From `run`'s call to its return.
     private(set) var isRunning = false
+    /// Counts the runs. A driver's events, its stop's return and the timers carry their run's
+    /// number, and anything from an earlier run is dropped: a stop that outlived its wait still
+    /// holds that run's driver, whose late finish must not end the next run's wait.
+    private var runNumber = 0
 
     private var chrome: (any RecordingChrome)?
     private var request: RecordingRequest?
@@ -128,6 +132,8 @@ final class RecordingController {
         guard !isRunning else { return .nothing(notice: nil) }
         isRunning = true
         defer { isRunning = false }
+        runNumber += 1
+        let run = runNumber
         reset(for: request, chrome: chrome, onStarted: onStarted)
         observeWorkspace()
         // The chrome is on screen before the driver reads the shareable content, so the
@@ -139,7 +145,8 @@ final class RecordingController {
         let driver = makeDriver()
         do {
             try await driver.start(request.configuration, outputURL: request.outputURL, exclusions: exclusions) { [weak self] event in
-                self?.handle(event)
+                guard let self, runNumber == run else { return }
+                handle(event)
             }
         } catch {
             // Nothing is recording, so there is nothing to wait for. Later callbacks are ignored.
@@ -244,6 +251,7 @@ final class RecordingController {
         guard let firstFrame else { return }
         let clock = environment.clock
         let diskCheckTicks = max(1, Int(RecordingLimits.diskCheckInterval / .seconds(1)))
+        let run = runNumber
         ticking = Task { [weak self] in
             var ticks = 0
             while true {
@@ -253,7 +261,8 @@ final class RecordingController {
                 } catch {
                     return
                 }
-                self?.tick(checksDisk: ticks % diskCheckTicks == 0)
+                guard let self, runNumber == run else { return }
+                tick(checksDisk: ticks % diskCheckTicks == 0)
             }
         }
     }
@@ -349,10 +358,12 @@ final class RecordingController {
     private func stopAndWait(_ driver: any RecordingStreamDriver) async -> Bool {
         stopReturned = false
         let clock = environment.clock
+        let run = runNumber
         let timeout = Task { [weak self] in
             do { try await clock.sleep(for: RecordingLimits.stopTimeout) } catch { return }
+            guard let self, runNumber == run else { return }
             RecordingLog.note("Recording: the stop wait timed out after \(RecordingLimits.stopTimeout)")
-            self?.resumeStopWaiter(timedOut: true)
+            resumeStopWaiter(timedOut: true)
         }
         defer { timeout.cancel() }
         Task { [weak self] in
@@ -361,8 +372,10 @@ final class RecordingController {
             } catch {
                 RecordingLog.note("Recording: stopCapture threw: \(error.localizedDescription)")
             }
-            self?.stopReturned = true
-            self?.resumeStopWaiter()
+            // A stop from an earlier run, which outlived its wait, is dropped.
+            guard let self, runNumber == run else { return }
+            stopReturned = true
+            resumeStopWaiter()
         }
         return await withCheckedContinuation { stopWaiter = $0 }
     }

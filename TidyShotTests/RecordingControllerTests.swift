@@ -240,6 +240,105 @@ struct RecordingControllerTests {
         controller.close()
     }
 
+    // MARK: One controller, two runs
+
+    /// Runs a recording on `first` whose stop never returns, so its wait times out, then starts
+    /// a second on `second` with the same controller, as the app reuses one, 3 s past its first
+    /// frame. `first`'s stop is still held.
+    func runAgainAfterAStopThatHangs(first: FakeRecordingDriver, second: FakeRecordingDriver,
+                                     chrome: FakeRecordingChrome) async -> (RecordingController, Task<RecordingOutcome, Never>) {
+        first.finishTiming = .never
+        first.holdsStop = true
+        var drivers = [first, second]
+        let controller = RecordingController(environment: world.environment, makeDriver: { drivers.removeFirst() })
+        let firstChrome = FakeRecordingChrome(log: world.log)
+        let firstRun = Task { await controller.run(areaRequest, chrome: firstChrome, onStarted: {}) }
+        await world.clock.advance(by: .zero)
+        first.send(.recordingStarted)
+        await world.clock.advance(by: .seconds(3))
+        firstChrome.pressStop()
+        await world.clock.advance(by: RecordingLimits.stopTimeout)
+        _ = await firstRun.value
+        controller.close()
+
+        let run = Task { await controller.run(areaRequest, chrome: chrome, onStarted: {}) }
+        await world.clock.advance(by: .zero)
+        second.send(.recordingStarted)
+        await world.clock.advance(by: .seconds(3))
+        return (controller, run)
+    }
+
+    @Test func aLateFinishFromTheLastRunDoesNotEndThisRunsWait() async throws {
+        let first = FakeRecordingDriver(log: world.log)
+        let second = FakeRecordingDriver(log: world.log)
+        second.finishTiming = .never
+        let chrome = FakeRecordingChrome(log: world.log)
+        let (controller, run) = await runAgainAfterAStopThatHangs(first: first, second: second, chrome: chrome)
+        #expect(first.isHoldingStop)
+        let accesses = world.log.fileAccesses.count
+        chrome.pressStop()
+        await world.clock.advance(by: .seconds(1))
+        #expect(second.stopCount == 1)
+        // The first run's output finishes long after its wait timed out.
+        first.send(.recordingFinished)
+        await world.clock.advance(by: .seconds(1))
+        #expect(world.log.fileAccesses.count == accesses)
+        #expect(controller.isRunning)
+
+        second.send(.recordingFinished)
+        let outcome = await run.value
+        #expect(outcome.kept != nil)
+        #expect(outcome.notice == nil)
+        #expect(world.log.entries.suffix(3) == ["recordingFinished", "inspect", "poster"])
+        first.releaseStop()
+        controller.close()
+    }
+
+    @Test func aLateFinishFromTheLastRunDoesNotEndThisRecording() async throws {
+        let first = FakeRecordingDriver(log: world.log)
+        let second = FakeRecordingDriver(log: world.log)
+        let chrome = FakeRecordingChrome(log: world.log)
+        let (controller, run) = await runAgainAfterAStopThatHangs(first: first, second: second, chrome: chrome)
+        first.send(.recordingFinished)
+        first.send(.outputFailed("The file could not be written."))
+        await world.clock.advance(by: .seconds(1))
+        #expect(controller.isRunning)
+        #expect(second.stopCount == 0)
+        #expect(!chrome.calls.contains("stop disabled"))
+
+        chrome.pressStop()
+        let outcome = await run.value
+        // A Stop, saved silently.
+        #expect(outcome.kept != nil)
+        #expect(outcome.notice == nil)
+        first.releaseStop()
+        controller.close()
+    }
+
+    @Test func aLateStopFromTheLastRunDoesNotEndThisRunsWait() async throws {
+        let first = FakeRecordingDriver(log: world.log)
+        let second = FakeRecordingDriver(log: world.log)
+        // The finish comes first, then the stop holds.
+        second.holdsStop = true
+        let chrome = FakeRecordingChrome(log: world.log)
+        let (controller, run) = await runAgainAfterAStopThatHangs(first: first, second: second, chrome: chrome)
+        let accesses = world.log.fileAccesses.count
+        chrome.pressStop()
+        await world.clock.advance(by: .seconds(1))
+        #expect(second.isHoldingStop)
+        // The first run's stop returns at last.
+        first.releaseStop()
+        await world.clock.advance(by: .seconds(1))
+        #expect(world.log.fileAccesses.count == accesses)
+        #expect(controller.isRunning)
+
+        second.releaseStop()
+        let outcome = await run.value
+        #expect(outcome.kept != nil)
+        #expect(world.log.entries.suffix(3) == ["stop returned", "inspect", "poster"])
+        controller.close()
+    }
+
     // MARK: While recording
 
     @Test func elapsedStartsAtTheFirstFrameAndStartedAtIsThatMoment() async throws {

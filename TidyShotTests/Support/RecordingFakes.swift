@@ -37,6 +37,9 @@ final class FakeRecordingDriver: RecordingStreamDriver {
     var holdsStart = false
     /// Thrown by `start` when set, after any hold.
     var startError: (any Error)?
+    /// When true, `stop` suspends after any finish it sends first, until `releaseStop()`, like a
+    /// `stopCapture()` that does not return.
+    var holdsStop = false
     private(set) var startCount = 0
     private(set) var stopCount = 0
     private(set) var configuration: RecordingConfiguration?
@@ -44,6 +47,7 @@ final class FakeRecordingDriver: RecordingStreamDriver {
     private(set) var exclusions: RecordingExclusions?
     private var events: ((RecordingStreamEvent) -> Void)?
     private var startGate: CheckedContinuation<Void, Never>?
+    private var stopGate: CheckedContinuation<Void, Never>?
 
     init(log: RecordingTestLog) {
         self.log = log
@@ -72,6 +76,7 @@ final class FakeRecordingDriver: RecordingStreamDriver {
         case .never:
             break
         }
+        if holdsStop { await withCheckedContinuation { stopGate = $0 } }
         log.append("stop returned")
     }
 
@@ -82,6 +87,15 @@ final class FakeRecordingDriver: RecordingStreamDriver {
         holdsStart = false
         startGate?.resume()
         startGate = nil
+    }
+
+    /// True while a held `stop` waits.
+    var isHoldingStop: Bool { stopGate != nil }
+
+    func releaseStop() {
+        holdsStop = false
+        stopGate?.resume()
+        stopGate = nil
     }
 
     /// Delivers `event` as the real driver does, on the main actor.
