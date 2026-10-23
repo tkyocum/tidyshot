@@ -569,4 +569,5 @@ R1 is built on `recording-r1` in nine tasks. The suite reads `Test run with 1193
   - drag-out of an uploaded video with no local file, as a file download with progress;
   - URL commands `record-screen` and `stop-recording`;
   - a launch sweep of `pending/` for files no record names, left by a kill between a save's move and its record (Where the file lands).
+  - (The coordinator's part of the microphone, GIF export and trim lands in the files named in the coordinator split design, section 6: `docs/superpowers/specs/2026-10-23-coordinator-split-design.md`.)
 - **R3:** click highlights, keystroke overlay, webcam bubble.

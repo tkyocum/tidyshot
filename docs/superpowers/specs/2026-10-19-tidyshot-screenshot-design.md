@@ -131,7 +131,7 @@ The cases keep their meaning: `.dark` over light pixels (black line, white halo)
 
 XcodeGen's recursive `TidyShot` source path picks the folders up with `xcodegen generate` alone.
 
-The coordinator side lives in `AppCoordinator.swift` itself, under `// MARK: Editor`. It has to, because it calls `private` (file-scoped) members: `makeThumbnail(from:for:)`, `showOverlay(for:image:scale:)`, `startUpload(recordID:data:destination:)`, `imageData(of:)`, `deleteObjects(_:at:)`, `removeRecord(id:)`, `removeFiles(ofPruned:)`, `refreshOverlay(for:)`, `notifier`, `overlay` and `deletingIDs`. Every branch the coordinator takes comes from a tested helper in `Editor/Persistence/`.
+The coordinator side lives in `AppCoordinator+Editor.swift`, an `extension AppCoordinator` file. It calls internal members of the coordinator declared in the coordinator's other files, for example `startUpload(recordID:payload:destination:fixedKey:)`, `imageData(of:downloadTitle:)`, `deleteObjects(_:at:)`, `keepOnClipboard(_:png:alreadyOnClipboard:)`, `refreshOverlay(for:)`, `notifier`, `overlay` and `deletingIDs`. Every branch the coordinator takes comes from a tested helper in `Editor/Persistence/`.
 
 A new `nonisolated struct ScaledImage: Sendable { let image: CGImage; let scale: CGFloat }` (TidyShot/Output/ScaledImage.swift) is the only type that crosses between the editor and the coordinator. It exists because `CaptureResult` requires a MainActor `CaptureTarget`. `CaptureResult` gains `var scaled: ScaledImage`. The editor never writes files, never touches the pasteboard and never enqueues uploads. AppCoordinator stays the one save path, the one upload path and the one delete path.
 
@@ -1494,7 +1494,23 @@ Each module is a Swift Package target or a folder with one clear owner. Names ar
 - **Annotator** (P1): separate window and document model. Not in the MVP, but the `CaptureRecord` file URL is its input.
 - **Pinner** (P1): floating `NSPanel` showing an image with opacity and lock mode.
 - **Settings**: SwiftUI `Settings` scene. Tabs: General (hotkeys, after-capture action, save folder), Capture (cursor, shadow, freeze, timer, format), Upload (destinations list, test button, naming), Overlay (position, auto-close). There is no Advanced tab: URL commands are in General and history retention in Overlay (2.9).
-- **AppCoordinator**: menu bar item, hotkey registration, and the single place that wires hotkey to overlay to engine to queue to UI. Also handles the URL scheme.
+- **AppCoordinator**: menu bar item, hotkey registration, and the single place that wires hotkey to overlay to engine to queue to UI. Also handles the URL scheme. One `@Observable final class` of `TidyShot/App/`, split across eleven files with no change in behaviour (`2026-10-23-coordinator-split-design.md`): the root keeps every stored property and the extensions hold the members, moved byte for byte.
+  - `AppCoordinator.swift`: every stored property, grouped by area; `shared`, `init`, `start`, shortcut registration, the URL command and desktop-icon wiring, quit, and `loadContent` and `withCaptureLock`, which image capture and recording share.
+  - `AppCoordinator+Capture.swift`: the image capture entry points (area, window, fullscreen, previous area, All-in-One, self-timer, scrolling, text), `capture(_:excludingWindows:duringSelection:)` and `revealLastCapture`.
+  - `AppCoordinator+Recording.swift`: Record Screen and Record Fullscreen, stop, the hand-off, recovery of a leftover recording, and the recording save; `RecordingSaveMode`, `RecordingPhase` and `RecordingShortcutAction`.
+  - `AppCoordinator+Save.swift`: the one save path (`save`, `finishSave`), the file and pending-file writes, the clipboard rule and the thumbnail.
+  - `AppCoordinator+Overlay.swift`: showing, restoring and refreshing the Quick Access cards.
+  - `AppCoordinator+Upload.swift`: the upload lanes, destinations and credentials, `startUpload`, Clop's step, retry, `cancelUpload` and the upload events.
+  - `AppCoordinator+RecordActions.swift`: the actions on a record from a card, a pin or a Recent Captures row (copy, open, Save As, reveal, download); `CopyImageError`.
+  - `AppCoordinator+Delete.swift`: the one delete path (`deleteCapture`, `removeRecord`) and the teardown that retention pruning shares.
+  - `AppCoordinator+DragOut.swift`: the drag copies, their staging, prefetch and clean-up; `DragCleanupStep`.
+  - `AppCoordinator+Editor.swift`: the editor bridge (2.6): open, present, save, Save As, upload, copy and close.
+  - `AppCoordinator+Pins.swift`: Pin to screen and the retained capture.
+  - Conventions:
+    - New stored state goes in the class body in `AppCoordinator.swift`, under its area's group, with a `//` line naming any other file that writes it.
+    - New members start `private` in their area's file. Widening one is a reviewed decision, listed in the PR.
+    - A new area gets a new `AppCoordinator+<Area>.swift`.
+    - Outside `TidyShot/App/AppCoordinator*.swift`, code uses only the surface the split design lists in its 3.5 and new entry points made for it. A review that touches the coordinator greps outside the family for every member the split widened (the split design's section 6, and its plan's Task 7, have the command).
 - **Recording** (future): would add a `RecordingEngine` next to `CaptureEngine` and reuse Uploader, History, Overlay, and Naming unchanged.
 
 ## 6. Phased implementation plan

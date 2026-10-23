@@ -474,3 +474,60 @@ Each changes behaviour, so each needs Tim's word and its own PR:
   removes the drag folder (which clears the count); the two teardowns have drifted.
 - `refreshOverlay` also pushes the editor's state, so its name undersells it.
 - `afterMenuTracking` duplicates `RecentCapturesMenu.afterMenusClose`.
+
+## 9. Built
+
+Built 2026-10-23 on `coordinator-split`, cut from `main` at 3737262: the design and plan (04b24e8), the
+state regroup (16dca78) and ten file moves, one commit each (`+Pins` 5d26f7c, `+Overlay` a87c046,
+`+DragOut` 50e42d6, `+RecordActions` eaaa324, `+Delete` 6be482c, `+Upload` d91b3ca, `+Editor` 3c5d3a2,
+`+Save` 874fe0a, `+Recording` 31d68ef, `+Capture` 3111452), then this close-out. Nothing is pushed.
+
+- **Suite.** `Test run with 1272 tests in 131 suites passed` after every commit and again before the
+  close-out, and `xcodebuild -configuration Release` builds. No test, `project.yml` or source file
+  outside `TidyShot/App/AppCoordinator*.swift` changed (`git diff --name-only 3737262 HEAD`).
+- **Line counts** (`wc -l TidyShot/App/AppCoordinator*.swift`; the base is one file of 3,492 lines):
+
+  | File | Design | Built |
+  |---|---|---|
+  | `AppCoordinator.swift` | ~430 | 417 |
+  | `AppCoordinator+Capture.swift` | ~400 | 404 |
+  | `AppCoordinator+Recording.swift` | ~430 | 432 |
+  | `AppCoordinator+Save.swift` | ~310 | 309 |
+  | `AppCoordinator+Overlay.swift` | ~105 | 105 |
+  | `AppCoordinator+Upload.swift` | ~530 | 532 |
+  | `AppCoordinator+RecordActions.swift` | ~340 | 342 |
+  | `AppCoordinator+Delete.swift` | ~230 | 229 |
+  | `AppCoordinator+DragOut.swift` | ~220 | 222 |
+  | `AppCoordinator+Editor.swift` | ~480 | 482 |
+  | `AppCoordinator+Pins.swift` | ~80 | 81 |
+  | Total | ~3,600 | 3,555 |
+
+  The family is 63 lines longer than the base (imports, wrappers, headers, group notes); section 2
+  estimated about 100.
+- **Access count.** 75, the base's 151 less the 76 rows of 3.3. Each step's count fell by exactly its
+  rows, and the 75 left are the 3.4 list.
+- **The pure-move check**, run on the final tree against 3737262:
+  ```
+  pure move
+  ```
+- **The surface check** (rule 5, the plan's Task 7 greps over the 67 members widened from `private` and
+  the 9 from `private(set)`) prints nothing.
+- **What differed from the plan.** No range had to move to another file and no row of 3.3 turned out
+  needless or missing. The plan's line numbers shifted as earlier steps cut, so each cut was located by
+  member name. Otherwise:
+  - The class body's `//` notes naming another file that writes a group's state exist only under the
+    Upload, Drag-out and Editor groups, as the plan listed; the sketch in 3.2 also has them for
+    Capture, Recording, Retained capture and pins, Overlay and Delete.
+  - `showOverlay` and `finishSave` have wrapped signatures. Removing `private ` left their continuation
+    lines 8 columns further in than the declaration, which a pure move may not realign.
+  - The `///` line above `extension AppCoordinator: URLCommandTarget {}` in the root still says the URL
+    scheme's routes are the capture functions "above"; they are in `AppCoordinator+Capture.swift`. It
+    is left as it is because the pure-move check counts `///` lines and no step listed it.
+  - The root is 417 lines against about 430, and the family 3,555 against about 3,600 (table above).
+  - The checklist's pruning item differs from the plan's sketch. A Recent Captures row has no Pin, and
+    an uploaded upload-only capture has no file in `pending/` (the upload moves it to the drag folder
+    or removes it), so the item pins from the card, ages the capture with the system clock and
+    watches the thumbnail instead of the pending file.
+- **Pending.** Tim's hand pass on `docs/testing/coordinator-split-manual-checklist.md` (16 items) is
+  still to do; until then the wiring (the status icon's observation, `init`'s callbacks, the capture
+  lock) is covered by the move argument alone.
