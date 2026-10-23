@@ -12,7 +12,7 @@ nonisolated enum RecordingLimits {
     static let cancelConfirmationSeconds: TimeInterval = 5
     /// A playable file shorter than this is removed as too short.
     static let minimumDuration: TimeInterval = 0.5
-    /// How long a stop waits for the output's finish callback.
+    /// How long a stop waits for the output's finish callback, in time awake.
     static let stopTimeout: Duration = .seconds(15)
     /// 5 GiB, the largest single PUT.
     static let singleUploadBytes: Int64 = 5_368_709_120

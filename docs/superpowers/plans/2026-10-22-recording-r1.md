@@ -351,7 +351,8 @@ The design leaves these open. Each is this plan's call. Task 9 records them in t
 - Modify:
   - `TidyShot/Scrolling/ScrollPanelGeometry.swift`, adding `bottomCentre`;
   - `TidyShot/Desktop/DesktopCoverController.swift`, adding `windowNumbers`;
-  - `TidyShot/SelfTimer/SelfTimerPanel.swift`: `SelfTimerScreenStage` (:57-96) gains `showsFrame`.
+  - `TidyShot/SelfTimer/SelfTimerPanel.swift`: `SelfTimerScreenStage` (:57-96) gains `showsFrame`;
+  - `TidyShot/Scrolling/ScrollClock.swift`, adding `SuspendingScrollClock`.
 - Tests:
   - create `TidyShotTests/Support/RecordingFakes.swift`, `TidyShotTests/RecordingControllerTests.swift` and `PosterFrameTests.swift`;
   - add to `ScrollPanelGeometryTests`.
@@ -382,6 +383,7 @@ The design leaves these open. Each is this plan's call. Task 9 records them in t
   - `enum RecordingOutcome { case keep(Recording, notice: RecordingNotice?); case nothing(notice: RecordingNotice?) }`.
   - `struct RecordingEnvironment`:
     - `clock: any ScrollClock` and `now: () -> Date`;
+    - `awakeClock: any ScrollClock`, the stop wait's timeout, which counts time awake only (`SuspendingScrollClock` in the app);
     - `freeBytes: (URL) -> Int64?` and `windowIsListed: (CGWindowID) -> Bool`;
     - `cardWindowNumbers: () -> Set<CGWindowID>` and `coverWindowNumbers: (CGDirectDisplayID) -> Set<CGWindowID>`;
     - `beginActivity: () -> any NSObjectProtocol` and `endActivity: (any NSObjectProtocol) -> Void`;
@@ -397,6 +399,7 @@ The design leaves these open. Each is this plan's call. Task 9 records them in t
 - `ScrollPanelGeometry.bottomCentre(panelSize: CGSize, visibleFrame: CGRect) -> CGRect`.
 - `DesktopCoverController.windowNumbers: [CGDirectDisplayID: CGWindowID]`.
 - `SelfTimerScreenStage(subject:screenFrame:showsFrame: Bool = true)`.
+- `final class SuspendingScrollClock: ScrollClock`, on `SuspendingClock`, which stops while the Mac sleeps.
 
 **Steps:**
 - [ ] Write `RecordingFakes`:
@@ -405,7 +408,7 @@ The design leaves these open. Each is this plan's call. Task 9 records them in t
     - its `stop` sends `recordingFinished` before it returns, after it returns, or never;
     - it can send any event, and it counts `start` and `stop`.
   - `FakeRecordingChrome` records its calls and answers `askToDiscard` as scripted.
-  - A test environment on `FakeScrollClock` that logs every file access (inspect, poster, remove) and each activity begin and end, with its own `NotificationCenter`.
+  - A test environment on two `FakeScrollClock`s, the continuous `clock` and the `awakeClock`, so a test can let time pass with the Mac asleep. It logs every file access (inspect, poster, remove) and each activity begin and end, and has its own `NotificationCenter`.
 - [ ] Write the `RecordingControllerTests` items under Tests (R1), and add:
   - `willSleepNotification` ends a recording with `Your Mac went to sleep.`;
   - `sessionDidResignActiveNotification` ends it with `Another user took over the screen.`;
@@ -442,7 +445,9 @@ The design leaves these open. Each is this plan's call. Task 9 records them in t
     - `streamInactive` and `streamActive` end nothing; the driver's log lines are their only trace.
   - **Ending.**
     - The first end wins.
-    - Disable Stop, arm the waiter, then call `driver.stop()`. Wait for the first of the three callbacks, or for `stopTimeout`.
+    - Disable Stop, arm the waiter on the output's finish and fail, then call `driver.stop()`. The wait ends once `driver.stop()` has returned and the finish or fail has come, or at `stopTimeout`.
+    - `streamStopped` ends the recording but never the wait: reading the MP4 while the output is still finishing it would find it unplayable and delete it.
+    - `stopTimeout` runs on `awakeClock`, so a Mac that sleeps before the finish is not timed out on wake.
     - Cancel runs the same wait, then asks from 5 s.
     - Then `inspect`, `RecordingEnd.decide`, and, for a kept file, `poster`.
   - **`close()`** closes the chrome, ends the activity and removes the observers.

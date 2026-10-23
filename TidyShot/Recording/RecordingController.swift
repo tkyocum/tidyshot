@@ -21,7 +21,11 @@ enum RecordingOutcome {
 /// What the controller needs from the world, so its tests run on a clock they move, a date they
 /// set and a notification centre of their own, with no screen and no file.
 struct RecordingEnvironment {
+    /// The elapsed time and the ticks.
     var clock: any ScrollClock
+    /// The stop wait's timeout. In the app it stops while the Mac sleeps, so a stop that spans a
+    /// sleep is not timed out on wake for the time asleep.
+    var awakeClock: any ScrollClock
     var now: () -> Date
     /// The free space of a folder; nil when it cannot be read.
     var freeBytes: (URL) -> Int64?
@@ -42,6 +46,7 @@ struct RecordingEnvironment {
                      coverWindowNumbers: @escaping (CGDirectDisplayID) -> Set<CGWindowID>) -> RecordingEnvironment {
         RecordingEnvironment(
             clock: SystemScrollClock(),
+            awakeClock: SuspendingScrollClock(),
             now: { Date() },
             freeBytes: { RecordingLimits.freeBytes(at: $0) },
             windowIsListed: { id in
@@ -354,10 +359,12 @@ final class RecordingController {
     /// Calls the driver's stop, then waits until it has returned and the output's finish or fail
     /// has come since the end (the finish can come first), or until `stopTimeout` after the stop
     /// call, so a stop that never returns cannot hold the recording. A stream stop does not end
-    /// the wait. True when it timed out.
+    /// the wait. The timeout counts time awake only: a Mac that sleeps before the finish would
+    /// otherwise time out on wake and read a file the output has not finished. True when it timed
+    /// out.
     private func stopAndWait(_ driver: any RecordingStreamDriver) async -> Bool {
         stopReturned = false
-        let clock = environment.clock
+        let clock = environment.awakeClock
         let run = runNumber
         let timeout = Task { [weak self] in
             do { try await clock.sleep(for: RecordingLimits.stopTimeout) } catch { return }

@@ -35,7 +35,7 @@ struct RecordingControllerTests {
                onStarted: @escaping () -> Void = {}) async -> (RecordingController, Task<RecordingOutcome, Never>) {
         let controller = RecordingController(environment: world.environment, makeDriver: { driver })
         let run = Task { await controller.run(request, chrome: chrome, onStarted: onStarted) }
-        await world.clock.advance(by: .zero)
+        await world.advance(by: .zero)
         return (controller, run)
     }
 
@@ -52,7 +52,7 @@ struct RecordingControllerTests {
         let request = areaRequest
         let (controller, run) = await begin(request, driver: driver, chrome: chrome)
         driver.send(.recordingStarted)
-        await world.clock.advance(by: .seconds(3))
+        await world.advance(by: .seconds(3))
         chrome.pressStop()
 
         let outcome = await run.value
@@ -77,7 +77,7 @@ struct RecordingControllerTests {
         let chrome = FakeRecordingChrome(log: world.log)
         let (controller, run) = await begin(areaRequest, driver: driver, chrome: chrome)
         driver.send(.recordingStarted)
-        await world.clock.advance(by: .seconds(3))
+        await world.advance(by: .seconds(3))
         chrome.pressStop()
 
         let outcome = await run.value
@@ -92,13 +92,13 @@ struct RecordingControllerTests {
         let chrome = FakeRecordingChrome(log: world.log)
         let (controller, run) = await begin(areaRequest, driver: driver, chrome: chrome)
         driver.send(.recordingStarted)
-        await world.clock.advance(by: .seconds(3))
+        await world.advance(by: .seconds(3))
         chrome.pressStop()
 
-        await world.clock.advance(by: .milliseconds(14_900))
+        await world.advance(by: .milliseconds(14_900))
         #expect(world.log.fileAccesses.isEmpty)
         #expect(controller.isRunning)
-        await world.clock.advance(by: .milliseconds(100))
+        await world.advance(by: .milliseconds(100))
         let outcome = await run.value
         // The timeout never deletes a playable file, and a Stop saves it silently.
         #expect(outcome.kept != nil)
@@ -114,9 +114,9 @@ struct RecordingControllerTests {
         let chrome = FakeRecordingChrome(log: world.log)
         let (controller, run) = await begin(areaRequest, driver: driver, chrome: chrome)
         driver.send(.recordingStarted)
-        await world.clock.advance(by: .seconds(2))
+        await world.advance(by: .seconds(2))
         chrome.pressStop()
-        await world.clock.advance(by: .seconds(5))
+        await world.advance(by: .seconds(5))
         #expect(driver.stopCount == 1)
         #expect(world.log.fileAccesses.isEmpty)
 
@@ -125,6 +125,61 @@ struct RecordingControllerTests {
         #expect(outcome.kept != nil)
         #expect(entriesAfterFirstFrame() == ["activity begun", "stop", "stop returned", "recordingFinished", "inspect", "poster"])
         controller.close()
+    }
+
+    @Test func aFinishAfterASleepLongerThanTheTimeoutKeepsTheFile() async throws {
+        let driver = FakeRecordingDriver(log: world.log)
+        driver.finishTiming = .never
+        let chrome = FakeRecordingChrome(log: world.log)
+        let (controller, run) = await begin(areaRequest, driver: driver, chrome: chrome)
+        driver.send(.recordingStarted)
+        await world.advance(by: .seconds(3))
+        world.center.post(name: NSWorkspace.willSleepNotification, object: nil)
+        await world.advance(by: .seconds(1))
+        #expect(driver.stopCount == 1)
+        // The Mac sleeps before the output has finished the file, which cannot be opened until then.
+        world.facts = .unplayable
+        await world.sleepTheMac(for: RecordingLimits.stopTimeout * 4)
+        await world.advance(by: .seconds(1))
+        #expect(world.log.fileAccesses.isEmpty)
+        #expect(controller.isRunning)
+
+        world.facts = .playable(seconds: 3)
+        driver.send(.recordingFinished)
+        let outcome = await run.value
+        #expect(outcome.kept != nil)
+        #expect(outcome.notice == RecordingNotice(title: "Recording stopped", body: "Your Mac went to sleep."))
+        #expect(world.log.fileAccesses == ["inspect", "poster"])
+        controller.close()
+    }
+
+    @Test func theTimeoutCountsOnlyTimeAwake() async throws {
+        let driver = FakeRecordingDriver(log: world.log)
+        driver.finishTiming = .never
+        let chrome = FakeRecordingChrome(log: world.log)
+        let (controller, run) = await begin(areaRequest, driver: driver, chrome: chrome)
+        driver.send(.recordingStarted)
+        await world.advance(by: .seconds(3))
+        chrome.pressStop()
+
+        await world.advance(by: .seconds(5))
+        await world.sleepTheMac(for: .seconds(60))
+        await world.advance(by: .milliseconds(9_900))
+        #expect(world.log.fileAccesses.isEmpty)
+        #expect(controller.isRunning)
+        await world.advance(by: .milliseconds(100))
+        let outcome = await run.value
+        #expect(outcome.kept != nil)
+        #expect(world.log.fileAccesses == ["inspect", "poster"])
+        controller.close()
+    }
+
+    @Test func theAppTimesTheStopWaitOnTheClockThatStopsWhileTheMacSleeps() async throws {
+        let environment = RecordingEnvironment.live(cardWindowNumbers: { [] }, coverWindowNumbers: { _ in [] })
+        let clock = try #require(environment.awakeClock as? SuspendingScrollClock)
+        let before = clock.now
+        try await clock.sleep(for: .milliseconds(10))
+        #expect(clock.now - before >= .milliseconds(10))
     }
 
     // MARK: The start
@@ -253,18 +308,18 @@ struct RecordingControllerTests {
         let controller = RecordingController(environment: world.environment, makeDriver: { drivers.removeFirst() })
         let firstChrome = FakeRecordingChrome(log: world.log)
         let firstRun = Task { await controller.run(areaRequest, chrome: firstChrome, onStarted: {}) }
-        await world.clock.advance(by: .zero)
+        await world.advance(by: .zero)
         first.send(.recordingStarted)
-        await world.clock.advance(by: .seconds(3))
+        await world.advance(by: .seconds(3))
         firstChrome.pressStop()
-        await world.clock.advance(by: RecordingLimits.stopTimeout)
+        await world.advance(by: RecordingLimits.stopTimeout)
         _ = await firstRun.value
         controller.close()
 
         let run = Task { await controller.run(areaRequest, chrome: chrome, onStarted: {}) }
-        await world.clock.advance(by: .zero)
+        await world.advance(by: .zero)
         second.send(.recordingStarted)
-        await world.clock.advance(by: .seconds(3))
+        await world.advance(by: .seconds(3))
         return (controller, run)
     }
 
@@ -277,11 +332,11 @@ struct RecordingControllerTests {
         #expect(first.isHoldingStop)
         let accesses = world.log.fileAccesses.count
         chrome.pressStop()
-        await world.clock.advance(by: .seconds(1))
+        await world.advance(by: .seconds(1))
         #expect(second.stopCount == 1)
         // The first run's output finishes long after its wait timed out.
         first.send(.recordingFinished)
-        await world.clock.advance(by: .seconds(1))
+        await world.advance(by: .seconds(1))
         #expect(world.log.fileAccesses.count == accesses)
         #expect(controller.isRunning)
 
@@ -301,7 +356,7 @@ struct RecordingControllerTests {
         let (controller, run) = await runAgainAfterAStopThatHangs(first: first, second: second, chrome: chrome)
         first.send(.recordingFinished)
         first.send(.outputFailed("The file could not be written."))
-        await world.clock.advance(by: .seconds(1))
+        await world.advance(by: .seconds(1))
         #expect(controller.isRunning)
         #expect(second.stopCount == 0)
         #expect(!chrome.calls.contains("stop disabled"))
@@ -324,11 +379,11 @@ struct RecordingControllerTests {
         let (controller, run) = await runAgainAfterAStopThatHangs(first: first, second: second, chrome: chrome)
         let accesses = world.log.fileAccesses.count
         chrome.pressStop()
-        await world.clock.advance(by: .seconds(1))
+        await world.advance(by: .seconds(1))
         #expect(second.isHoldingStop)
         // The first run's stop returns at last.
         first.releaseStop()
-        await world.clock.advance(by: .seconds(1))
+        await world.advance(by: .seconds(1))
         #expect(world.log.fileAccesses.count == accesses)
         #expect(controller.isRunning)
 
@@ -346,7 +401,7 @@ struct RecordingControllerTests {
         let chrome = FakeRecordingChrome(log: world.log)
         var startedCalls = 0
         let (controller, run) = await begin(areaRequest, driver: driver, chrome: chrome) { startedCalls += 1 }
-        await world.clock.advance(by: .seconds(2))
+        await world.advance(by: .seconds(2))
         #expect(chrome.elapsedShown.isEmpty)
         #expect(startedCalls == 0)
         #expect(world.activitiesBegun == 0)
@@ -357,7 +412,7 @@ struct RecordingControllerTests {
         #expect(startedCalls == 1)
         #expect(world.activitiesBegun == 1)
         world.date = firstFrame.addingTimeInterval(60)
-        await world.clock.advance(by: .milliseconds(3_500))
+        await world.advance(by: .milliseconds(3_500))
         #expect(chrome.elapsedShown == [1, 2, 3])
         // A second start callback changes nothing.
         driver.send(.recordingStarted)
@@ -375,9 +430,9 @@ struct RecordingControllerTests {
         let (controller, run) = await begin(areaRequest, driver: driver, chrome: chrome)
         driver.send(.recordingStarted)
         driver.send(.streamInactive)
-        await world.clock.advance(by: .seconds(2))
+        await world.advance(by: .seconds(2))
         driver.send(.streamActive)
-        await world.clock.advance(by: .seconds(2))
+        await world.advance(by: .seconds(2))
         #expect(driver.stopCount == 0)
 
         chrome.pressStop()
@@ -392,7 +447,7 @@ struct RecordingControllerTests {
         let chrome = FakeRecordingChrome(log: world.log)
         let (controller, run) = await begin(areaRequest, driver: driver, chrome: chrome)
         driver.send(.recordingStarted)
-        await world.clock.advance(by: .seconds(2))
+        await world.advance(by: .seconds(2))
         world.center.post(name: NSWorkspace.willSleepNotification, object: nil)
 
         let outcome = await run.value
@@ -406,7 +461,7 @@ struct RecordingControllerTests {
         let chrome = FakeRecordingChrome(log: world.log)
         let (controller, run) = await begin(areaRequest, driver: driver, chrome: chrome)
         driver.send(.recordingStarted)
-        await world.clock.advance(by: .seconds(2))
+        await world.advance(by: .seconds(2))
         world.center.post(name: NSWorkspace.sessionDidResignActiveNotification, object: nil)
 
         let outcome = await run.value
@@ -421,11 +476,11 @@ struct RecordingControllerTests {
         let chrome = FakeRecordingChrome(log: world.log)
         let (controller, run) = await begin(windowRequest, driver: driver, chrome: chrome)
         driver.send(.recordingStarted)
-        await world.clock.advance(by: .seconds(2))
+        await world.advance(by: .seconds(2))
         world.listedWindows = []
-        await world.clock.advance(by: .milliseconds(900))
+        await world.advance(by: .milliseconds(900))
         #expect(driver.stopCount == 0)
-        await world.clock.advance(by: .milliseconds(100))
+        await world.advance(by: .milliseconds(100))
         #expect(driver.stopCount == 1)
 
         let outcome = await run.value
@@ -440,7 +495,7 @@ struct RecordingControllerTests {
         let chrome = FakeRecordingChrome(log: world.log)
         let (controller, run) = await begin(areaRequest, driver: driver, chrome: chrome)
         driver.send(.recordingStarted)
-        await world.clock.advance(by: .seconds(3))
+        await world.advance(by: .seconds(3))
         #expect(driver.stopCount == 0)
         chrome.pressStop()
         _ = await run.value
@@ -454,10 +509,10 @@ struct RecordingControllerTests {
         let request = areaRequest
         let (controller, run) = await begin(request, driver: driver, chrome: chrome)
         driver.send(.recordingStarted)
-        await world.clock.advance(by: .seconds(4))
+        await world.advance(by: .seconds(4))
         #expect(driver.stopCount == 0)
         #expect(world.freeSpaceURLs.isEmpty)
-        await world.clock.advance(by: .seconds(1))
+        await world.advance(by: .seconds(1))
         #expect(driver.stopCount == 1)
         // The free space of tmp/Recording.
         #expect(world.freeSpaceURLs == [request.outputURL.deletingLastPathComponent()])
@@ -474,9 +529,9 @@ struct RecordingControllerTests {
         let chrome = FakeRecordingChrome(log: world.log)
         let (controller, run) = await begin(areaRequest, driver: driver, chrome: chrome)
         driver.send(.recordingStarted)
-        await world.clock.advance(by: .seconds(5))
+        await world.advance(by: .seconds(5))
         world.freeBytes = nil
-        await world.clock.advance(by: .seconds(5))
+        await world.advance(by: .seconds(5))
         #expect(world.freeSpaceURLs.count == 2)
         #expect(driver.stopCount == 0)
         chrome.pressStop()
@@ -491,7 +546,7 @@ struct RecordingControllerTests {
         let chrome = FakeRecordingChrome(log: world.log)
         let (controller, run) = await begin(areaRequest, driver: driver, chrome: chrome)
         driver.send(.recordingStarted)
-        await world.clock.advance(by: .milliseconds(4_900))
+        await world.advance(by: .milliseconds(4_900))
         chrome.pressCancel()
 
         let outcome = await run.value
@@ -508,7 +563,7 @@ struct RecordingControllerTests {
         chrome.discards = false
         let (controller, run) = await begin(areaRequest, driver: driver, chrome: chrome)
         driver.send(.recordingStarted)
-        await world.clock.advance(by: .seconds(5))
+        await world.advance(by: .seconds(5))
         chrome.pressCancel()
 
         let outcome = await run.value
@@ -525,7 +580,7 @@ struct RecordingControllerTests {
         chrome.discards = true
         let (controller, run) = await begin(areaRequest, driver: driver, chrome: chrome)
         driver.send(.recordingStarted)
-        await world.clock.advance(by: .seconds(5))
+        await world.advance(by: .seconds(5))
         chrome.pressCancel()
 
         let outcome = await run.value
@@ -541,12 +596,12 @@ struct RecordingControllerTests {
         let chrome = FakeRecordingChrome(log: world.log)
         let (controller, run) = await begin(areaRequest, driver: driver, chrome: chrome)
         driver.send(.recordingStarted)
-        await world.clock.advance(by: .seconds(2))
+        await world.advance(by: .seconds(2))
         chrome.pressStop()
         world.center.post(name: NSWorkspace.willSleepNotification, object: nil)
         world.center.post(name: NSWorkspace.sessionDidResignActiveNotification, object: nil)
         controller.cancel()
-        await world.clock.advance(by: .seconds(6))
+        await world.advance(by: .seconds(6))
         // A later finish ends the wait but not the recording.
         driver.send(.recordingFinished)
 
@@ -564,15 +619,15 @@ struct RecordingControllerTests {
         let chrome = FakeRecordingChrome(log: world.log)
         let (controller, run) = await begin(areaRequest, driver: driver, chrome: chrome)
         driver.send(.recordingStarted)
-        await world.clock.advance(by: .seconds(2))
+        await world.advance(by: .seconds(2))
         #expect(!chrome.calls.contains("stop disabled"))
 
         world.center.post(name: NSWorkspace.willSleepNotification, object: nil)
-        await world.clock.advance(by: .zero)
+        await world.advance(by: .zero)
         #expect(chrome.calls.filter { $0 == "stop disabled" }.count == 1)
         chrome.pressStop()
         controller.stop()
-        await world.clock.advance(by: .zero)
+        await world.advance(by: .zero)
         #expect(driver.stopCount == 1)
 
         driver.send(.recordingFinished)
@@ -591,9 +646,9 @@ struct RecordingControllerTests {
         let chrome = FakeRecordingChrome(log: world.log)
         let (controller, run) = await begin(areaRequest, driver: driver, chrome: chrome)
         driver.send(.recordingStarted)
-        await world.clock.advance(by: .seconds(2))
+        await world.advance(by: .seconds(2))
         driver.send(.streamStopped("The display was disconnected."))
-        await world.clock.advance(by: .seconds(1))
+        await world.advance(by: .seconds(1))
         #expect(driver.stopCount == 1)
         #expect(world.log.fileAccesses.isEmpty)
 
@@ -611,13 +666,13 @@ struct RecordingControllerTests {
         let chrome = FakeRecordingChrome(log: world.log)
         let (controller, run) = await begin(windowRequest, driver: driver, chrome: chrome)
         driver.send(.recordingStarted)
-        await world.clock.advance(by: .seconds(2))
+        await world.advance(by: .seconds(2))
         world.listedWindows = []
-        await world.clock.advance(by: .seconds(1))
+        await world.advance(by: .seconds(1))
         #expect(driver.stopCount == 1)
         // The stream reports the lost window while the output is still finishing the file.
         driver.send(.streamStopped("The window is no longer available."))
-        await world.clock.advance(by: .seconds(1))
+        await world.advance(by: .seconds(1))
         #expect(world.log.fileAccesses.isEmpty)
         #expect(controller.isRunning)
 
@@ -634,7 +689,7 @@ struct RecordingControllerTests {
         let chrome = FakeRecordingChrome(log: world.log)
         let (controller, run) = await begin(areaRequest, driver: driver, chrome: chrome)
         driver.send(.recordingStarted)
-        await world.clock.advance(by: .seconds(2))
+        await world.advance(by: .seconds(2))
         driver.send(.recordingFinished)
 
         let outcome = await run.value
@@ -651,7 +706,7 @@ struct RecordingControllerTests {
         let chrome = FakeRecordingChrome(log: world.log)
         let (controller, run) = await begin(areaRequest, driver: driver, chrome: chrome)
         driver.send(.recordingStarted)
-        await world.clock.advance(by: .seconds(2))
+        await world.advance(by: .seconds(2))
         chrome.pressStop()
 
         let outcome = await run.value
@@ -667,7 +722,7 @@ struct RecordingControllerTests {
         let driver = FakeRecordingDriver(log: world.log)
         let chrome = FakeRecordingChrome(log: world.log)
         let (controller, run) = await begin(areaRequest, driver: driver, chrome: chrome)
-        await world.clock.advance(by: .seconds(1))
+        await world.advance(by: .seconds(1))
         #expect(world.activitiesBegun == 0)
         driver.send(.recordingStarted)
         #expect(world.activitiesBegun == 1)
@@ -698,7 +753,7 @@ struct RecordingControllerTests {
         let chrome = FakeRecordingChrome(log: world.log)
         let (controller, run) = await begin(windowRequest, driver: driver, chrome: chrome)
         driver.send(.recordingStarted)
-        await world.clock.advance(by: .seconds(exit == .cancelUnderFiveSeconds ? 2 : 6))
+        await world.advance(by: .seconds(exit == .cancelUnderFiveSeconds ? 2 : 6))
         switch exit {
         case .stop: chrome.pressStop()
         case .cancelUnderFiveSeconds: chrome.pressCancel()
@@ -710,16 +765,16 @@ struct RecordingControllerTests {
         case .userSwitch: world.center.post(name: NSWorkspace.sessionDidResignActiveNotification, object: nil)
         case .diskFull:
             world.freeBytes = 0
-            await world.clock.advance(by: .seconds(5))
+            await world.advance(by: .seconds(5))
         case .windowClosed:
             world.listedWindows = []
-            await world.clock.advance(by: .seconds(1))
+            await world.advance(by: .seconds(1))
         case .outputError: driver.send(.outputFailed("The file could not be written."))
         case .streamError: driver.send(.streamStopped("The stream stopped."))
         case .stopTimeout:
             driver.finishTiming = .never
             chrome.pressStop()
-            await world.clock.advance(by: RecordingLimits.stopTimeout)
+            await world.advance(by: RecordingLimits.stopTimeout)
         }
         _ = await run.value
         #expect(world.activitiesBegun == 1)

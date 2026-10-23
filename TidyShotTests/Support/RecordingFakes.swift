@@ -157,11 +157,13 @@ final class FakeRecordingChrome: RecordingChrome {
     }
 }
 
-/// The controller's world on a `FakeScrollClock`: a date the test sets, free space, the listed
-/// windows, the card and cover windows, and the file's facts. It logs every file access and each
-/// activity's begin and end, and has its own `NotificationCenter` for the workspace.
+/// The controller's world on two `FakeScrollClock`s, the continuous one and the one that stops
+/// while the Mac sleeps: a date the test sets, free space, the listed windows, the card and cover
+/// windows, and the file's facts. It logs every file access and each activity's begin and end,
+/// and has its own `NotificationCenter` for the workspace.
 final class RecordingTestWorld {
     let clock = FakeScrollClock()
+    let awakeClock = FakeScrollClock()
     let center = NotificationCenter()
     let log = RecordingTestLog()
     var date = Date(timeIntervalSinceReferenceDate: 800_000_000)
@@ -178,6 +180,7 @@ final class RecordingTestWorld {
     var environment: RecordingEnvironment {
         RecordingEnvironment(
             clock: clock,
+            awakeClock: awakeClock,
             now: { [unowned self] in date },
             freeBytes: { [unowned self] url in
                 freeSpaceURLs.append(url)
@@ -205,6 +208,17 @@ final class RecordingTestWorld {
             },
             removeFile: { [unowned self] _ in log.append("remove") },
             workspaceCenter: center)
+    }
+
+    /// Lets `duration` pass with the Mac awake: both clocks move.
+    func advance(by duration: Duration) async {
+        await clock.advance(by: duration)
+        await awakeClock.advance(by: duration)
+    }
+
+    /// Lets `duration` pass with the Mac asleep: only the continuous clock moves.
+    func sleepTheMac(for duration: Duration) async {
+        await clock.advance(by: duration)
     }
 
     private static func makePoster() -> CGImage {

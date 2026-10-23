@@ -62,7 +62,6 @@ The map of every place the app assumes an image is in `docs/superpowers/research
 2. A recorded window that is minimised, hidden or moved to another Space keeps recording. Only a closed window ends it (Window recordings).
 3. After a video upload, the URL replaces the clipboard only if the clipboard has not changed since the save. Otherwise the clipboard is left alone, and a click on the `Uploaded` notification copies the link (Clipboard after the upload).
 4. A video with a local file gets `Copy File` on its card and its Recent Captures row. For a pending file it references a drag-folder copy, so the reference outlives the upload (Quick Access card).
-5. The stop wait ends on the output's finish or fail, not on `stream(_:didStopWithError:)`, because a file read before the finish cannot be opened and the end rule would delete it. A stream error that no finish or fail follows holds Stop disabled and the lock for the 15 s timeout (Stopping).
 
 ### Starting
 
@@ -134,9 +133,10 @@ The map of every place the app assumes an image is in `docs/superpowers/research
   - **Two steps.** The controller first arms a one-shot waiter on the output's `recordingOutputDidFinishRecording(_:)` and `recordingOutput(_:didFailWithError:)`, then calls `stopCapture()`.
     - The waiter is armed first because the finish callback can arrive before `stopCapture()` returns: 9 ms before, in the area probe.
     - The file is not finished when `stopCapture()` returns: in the 5K probe it could not be opened for the 290 ms until the callback.
-    - `stream(_:didStopWithError:)` ends the recording, as any error does, but not the wait. The output may still be finishing the file then, and a file that cannot be opened is removed by the end rule.
-    - The wait ends once `stopCapture()` has returned or thrown and the output has finished or failed, or 15 s after `stopCapture()` is called. The timeout only matters on a failure, and it never deletes a playable file.
-    - A stream error that no finish or fail follows keeps Stop disabled, the lock and the covers for the full 15 s. Whether ScreenCaptureKit sends one is a Sleep and lock probe (Still to probe).
+  - **When the wait ends.** It is settled: once `stopCapture()` has returned or thrown and the output has finished or failed, or at the 15 s timeout.
+    - `stream(_:didStopWithError:)` ends the recording, as any error does, but never the wait: reading the MP4 while the output is still finishing it would find it unplayable, and the end rule would delete it.
+    - The cost: a stream error that no finish or fail follows keeps Stop disabled, the lock and the covers for at most 15 s. Whether ScreenCaptureKit sends one is a Sleep and lock probe (Still to probe).
+  - **The timeout.** 15 s of time awake from the `stopCapture()` call. It runs on the suspending clock, which stops while the Mac sleeps, so a Mac that sleeps before the finish does not time out on wake and delete a file the output has not finished. The timeout only matters on a failure, and it never deletes a playable file.
   - **Nothing touches the file before the wait ends.** Nothing reads, validates, takes a poster from, moves, copies, uploads or deletes it. Cancel waits the same way.
   - **What stays up.** The lock, the covers, `record.circle` and the panel (with Stop disabled) stay until the file is handed to `saveRecording` or removed.
   - **Stop during start.** A Stop or Cancel that arrives while the content is fetched, or while `startCapture` is suspended, wins. The controller stops the stream it has just started and removes the file, as `ScrollFrameSource.start()` does.
@@ -408,7 +408,8 @@ No new entitlement. System audio needs none, and the microphone is R2.
   - no file access happens before the wait ends;
   - a Stop during `startCapture` stops the new stream;
   - the first end wins;
-  - a stream error waits for the output's finish;
+  - a stream error, first or after another end, waits for the output's finish;
+  - a Mac asleep for longer than the timeout before the finish keeps the file, and the timeout counts time awake only;
   - a late finish or stop return from an earlier run, whose stop outlived its wait, changes nothing in the next run;
   - the activity starts and ends on every exit.
 - `RecordingLimitsTests`: refused at the start under 2 GB; stopped under 1 GB; no Cancel alert at 4.9 s, an alert at 5 s; the 5 GiB boundary.
@@ -471,7 +472,7 @@ The hand checks go in `docs/testing/recording-r1-manual-checklist.md`. They incl
 - **Covers.** With Hide desktop icons on, the icons are hidden in an area recording, and the bare desktop takes clicks during a window recording.
 - **Cancel.** Under 5 s; over 5 s with Save; over 5 s with Discard; Return in the alert saves.
 - **Display sleep.** Set it to 1 minute and record for 3 minutes: the display stays on.
-- **Sleep, lock and switch.** System sleep, ⌃⌘Q, a lid close and a fast user switch, each during a recording. Sleep and a switch stop and save; a lock keeps recording. Note whether each stop ended at once or after the 15 s timeout (`Recording: the stop wait timed out`).
+- **Sleep, lock and switch.** System sleep, ⌃⌘Q, a lid close and a fast user switch, each during a recording. Sleep and a switch stop and save; a lock keeps recording. After a system sleep or a lid close, the file is saved on wake and plays. Note whether each stop ended at once or after the 15 s timeout (`Recording: the stop wait timed out`).
 - **Upload resilience.**
   - A long upload left idle past the sleep timer finishes.
   - Wi-Fi off for 10 s mid-upload recovers without `Upload failed`.
