@@ -68,13 +68,28 @@ nonisolated struct Recording: Sendable {
     /// Removes a recording's file in a detached task. A file already gone is fine; any other
     /// failure is logged.
     static func removeFile(at url: URL) {
+        removeFiles(at: [url])
+    }
+
+    /// Removes files one after another in one detached task, so they go in order: a discarded
+    /// recording's file before its mute log, and a kill between the two never leaves a playable
+    /// file without its log (design, Privacy rule). A file already gone is fine. Any other failure
+    /// is logged and keeps the files after it, so a file that stays keeps its log for the next
+    /// launch.
+    @discardableResult
+    static func removeFiles(at urls: [URL],
+                            remove: @escaping @Sendable (URL) throws -> Void = { try FileManager.default.removeItem(at: $0) })
+        -> Task<Void, Never> {
         Task.detached {
-            do {
-                try FileManager.default.removeItem(at: url)
-            } catch CocoaError.fileNoSuchFile {
-                // A start that failed early, or a GIF never begun, wrote nothing.
-            } catch {
-                RecordingLog.note("Recording: \(url.lastPathComponent) could not be removed: \(error.localizedDescription)")
+            for url in urls {
+                do {
+                    try remove(url)
+                } catch CocoaError.fileNoSuchFile {
+                    // A start that failed early, or a GIF never begun, wrote nothing.
+                } catch {
+                    RecordingLog.note("Recording: \(url.lastPathComponent) could not be removed: \(error.localizedDescription)")
+                    return
+                }
             }
         }
     }

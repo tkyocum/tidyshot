@@ -211,7 +211,7 @@ final class RecordingTestWorld {
     let muteLogWrites = MuteLogWrites()
     /// The mute log URL of each writer made, in order.
     private(set) var muteLogWritersMade: [URL] = []
-    /// Each file removed, with how many mute log writes had landed by then.
+    /// Each removal, with how many mute log writes had landed by then.
     private(set) var removals: [Removal] = []
     /// `microphoneLossReason`'s answers, by device ID; nil for any other.
     var microphoneLossReasons: [String: String] = [:]
@@ -250,8 +250,8 @@ final class RecordingTestWorld {
                 log.append("poster")
                 return poster
             },
-            removeFile: { [unowned self] url in
-                removals.append(Removal(url: url, writesLanded: muteLogWrites.logs.count))
+            removeFiles: { [unowned self] urls in
+                removals.append(Removal(urls: urls, writesLanded: muteLogWrites.logs.count))
                 log.append("remove")
             },
             workspaceCenter: center,
@@ -265,15 +265,16 @@ final class RecordingTestWorld {
             })
     }
 
-    /// A removed file, and how many of the mute log writer's writes had landed when it went.
+    /// One removal's files, in the order given, and how many of the mute log writer's writes had
+    /// landed when it was asked for.
     struct Removal: Equatable {
-        var url: URL
+        var urls: [URL]
         var writesLanded: Int
     }
 
     /// The files removed, in order.
     var removedURLs: [URL] {
-        removals.map(\.url)
+        removals.flatMap(\.urls)
     }
 
     /// Lets `duration` pass with the Mac awake: both clocks move.

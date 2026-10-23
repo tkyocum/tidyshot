@@ -45,7 +45,8 @@ struct RecordingEnvironment {
     var endActivity: (any NSObjectProtocol) -> Void
     var inspect: (URL) async -> VideoFacts
     var poster: (URL) async -> CGImage?
-    var removeFile: (URL) -> Void
+    /// Removes the files in the order given, each only once the one before it is gone.
+    var removeFiles: ([URL]) -> Void
     /// Where sleep and the user switch are posted.
     var workspaceCenter: NotificationCenter
     /// For the recorded input's `uniqueID`, after a stream or output error: the `Recording stopped`
@@ -75,7 +76,7 @@ struct RecordingEnvironment {
             endActivity: { ProcessInfo.processInfo.endActivity($0) },
             inspect: { await VideoValidation.inspect($0) },
             poster: { await PosterFrame.image(of: $0) },
-            removeFile: { Recording.removeFile(at: $0) },
+            removeFiles: { Recording.removeFiles(at: $0) },
             workspaceCenter: NSWorkspace.shared.notificationCenter,
             microphoneLossReason: { id in
                 if !microphones.list().contains(where: { $0.uniqueID == id }) {
@@ -437,13 +438,11 @@ final class RecordingController {
         await muteLogWriter?.finish()
     }
 
-    /// Removes the recording's file, then its mute log when it was muted (design, Mute log). Call it
-    /// once `finishMuteLog` has returned, so no write lands after the removal.
+    /// Removes the recording's file, then its mute log when it was muted, in one ordered removal, so
+    /// the log never goes before the file (design, Mute log, Privacy rule). Call it once
+    /// `finishMuteLog` has returned, so no write lands after the removal.
     private func discard(_ request: RecordingRequest) {
-        environment.removeFile(request.outputURL)
-        if muteLogWriter != nil {
-            environment.removeFile(request.muteLogURL)
-        }
+        environment.removeFiles(muteLogWriter == nil ? [request.outputURL] : [request.outputURL, request.muteLogURL])
     }
 
     /// A Cancel discards under 5 s, and from 5 s asks: true for Discard. After a quit the answer is

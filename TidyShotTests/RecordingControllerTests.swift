@@ -478,8 +478,8 @@ struct RecordingControllerTests {
         case startFailure
     }
 
-    /// Each place that discards the recording removes its mute log too, after the file, and only
-    /// once the writer has finished, so no write lands after the removal.
+    /// Each place that discards the recording removes its mute log too, after the file in the same
+    /// ordered removal, and only once the writer has finished, so no write lands after the removal.
     @Test(arguments: Discard.allCases)
     func aDiscardRemovesTheMuteLogOnceTheWriterHasFinished(_ discard: Discard) async throws {
         world.muteLogWrites.holdWrites()
@@ -508,8 +508,8 @@ struct RecordingControllerTests {
         world.muteLogWrites.releaseWrites()
         let outcome = await run.value
         #expect(outcome.kept == nil)
-        #expect(world.removals == [RecordingTestWorld.Removal(url: request.outputURL, writesLanded: 1),
-                                   RecordingTestWorld.Removal(url: request.muteLogURL, writesLanded: 1)])
+        #expect(world.removals == [RecordingTestWorld.Removal(urls: [request.outputURL, request.muteLogURL],
+                                                              writesLanded: 1)])
         controller.close()
     }
 
