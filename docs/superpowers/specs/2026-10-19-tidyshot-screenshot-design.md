@@ -1255,6 +1255,99 @@ The hand checks go in `docs/testing/phase-7c-manual-checklist.md`.
 
 Observations from the checklist run are still to be written down here by Tim: whether the preview's shadow matches the export's, whether the colour panel keeps working from the popover, how a drag cut short by the popover closing behaves, the time to follow the editor window to a second display, a desktop-picture window capture's time, and how Include window shadow looks under a background. None of the GUI checks had been run when this was written.
 
+### 2.12 Phase 4c design: Spotlight and Counter (2026-10-22)
+
+**Scope.** These are the two tools deferred from the 2.1 Annotate row and the Phase 4c list.
+- **Spotlight** dims everything outside one or more rectangles or ellipses.
+- **Counter** drops numbered circles (1, 2, 3, …) for step-by-step shots.
+
+The rest of 4c stays deferred: the editable project format, and "open editor" as an after-capture action, which waits on Tim's open question about stale uploads. Work happens on the branch `editor-4c`, stacked on `recording-r1`, and its PR targets that branch. There are no new entitlements, packages or settings keys beyond the editor defaults below.
+
+#### Spotlight
+
+- **Tool.** `EditorTool.spotlight`: letter `S`, title `Spotlight`, symbol `light.max`, tool tip `Spotlight (S)`. It sits in `toolbarOrder` after Blur and before Rectangle, because it works on the picture as the effects do. It is not an effect (`isEffect` false), so it never gets a tile from `RedactionRenderer`.
+- **Model.**
+  - **Annotation.** `Annotation.spotlight(SpotlightShape)`, where `SpotlightShape { id: UUID; rect: CGRect; isEllipse: Bool }`, with the rect in image pixels and a top-left origin. It has no colour and no line width.
+  - **Dim.** `AnnotationDocument.spotlightDim: Double?` (`decodeIfPresent`, nil reads as 0.5) is the black overlay's opacity, one value for the whole document. It is shared because the overlay is a single layer with a hole per spotlight.
+  - **Kind.** The accessibility kind name is `Spotlight`.
+- **Drawing.** A drag draws the shape's rect, as Rectangle and Ellipse do, with Shift for a square or circle. The minimum side is the same as Rectangle's.
+  - The shape's outline is never drawn. While the tool is active or the spotlight is selected, the canvas shows a 1 pt dashed outline in view points as chrome. It is never exported.
+- **Rendering.** In both the canvas and `EditorFlattener`:
+  - **Order.** The overlay is drawn once, after every effect and before every drawing. Arrows, text and counters therefore stay bright over the dimmed area.
+  - **Overlay.** It is black at `spotlightDim` alpha over the whole image, with each spotlight's shape cleared from it (rect, or ellipse in the rect), so overlapping spotlights form one union.
+  - **Method.** Begin a transparency layer, fill the image rect, set `.clear` and fill each shape, end the layer.
+  - **Canvas.** `CanvasView.draw(_:)` draws it in view coordinates through `AnnotationDrawing.drawSpotlightOverlay(_:in:imageRect:)`, the routine the flattener uses.
+  - **Highlighter.** The highlighter's multiply backdrop (`HighlighterBackdrop`) includes the overlay, so a highlighter stroke over a dimmed area looks the same on the canvas and in the export.
+  - **None.** With no spotlight in the document, nothing is drawn and `spotlightDim` is ignored.
+- **Crop.** The overlay covers the whole image before the crop, as effects do; the crop is applied last.
+- **Editing.**
+  - Select picks a spotlight by its rect, inside or on its edge, using the shape box hit test that rectangles use.
+  - It moves, resizes with 8 handles, duplicates (⌘D), copies and pastes like a rectangle.
+  - Delete removes it. Undo works per commit.
+- **Options.** The Options popover for Spotlight shows:
+  - `Shape`: `Rectangle` or `Ellipse`. The new-shape default is kept in `EditorDefaults.spotlightEllipse`, AppSettings key `editorSpotlightEllipse`, default false. With a spotlight selected, it also changes that spotlight, as one commit.
+  - `Dim`: `30 %`, `50 %` or `70 %`, setting `spotlightDim` as one commit (`Change Spotlight Dim`).
+
+  There is no colour; the Colour item is disabled while Spotlight is the tool and no drawing with a colour is selected, as for Crop.
+
+#### Counter
+
+- **Tool.** `EditorTool.counter`: letter `N`, title `Counter`, symbol `1.circle`, tool tip `Counter (N)`. It sits after Text and before Crop.
+- **Model.** `Annotation.counter(CounterMark)`, where `CounterMark { id: UUID; center: CGPoint; number: Int; diameter: CGFloat; color: RGBA }`. The centre and diameter are in image pixels. The kind name is `Counter`.
+- **Placing.**
+  - A click places a counter centred on the click, clamped so the whole circle is inside the image (or the applied crop). This is one commit, `Add Counter`.
+  - A drag of more than 4 pt places it at the press, as a click does; the drag moves nothing.
+  - **Number.** The next number is `max(numbers of every counter in the document) + 1`, or 1 when there is none. Deleting a counter does not renumber the others, and undo restores the number it had.
+  - **Duplicate and paste.** Duplicate (⌘D) and paste give each new counter the next number, in the order they are added, never a repeat.
+- **Look.**
+  - A filled circle in the counter's colour, with a 1.5 pt white ring scaled to image pixels.
+  - The number is in bold system font at `0.55 × diameter`, centred.
+  - The number is white when the fill's relative luminance is under 0.5, otherwise black (`EditorPalette.contrastingTextColor(for:)`, pure).
+  - Two-digit numbers shrink the font so the text fits in `0.8 × diameter`.
+- **Sizes.** The Options popover shows `Size`: `Small` (24 pt), `Medium` (32 pt, default) and `Large` (44 pt), times the capture scale at creation. The default is stored in `EditorDefaults.counterDiameterPoints`, AppSettings key `editorCounterDiameterPoints`, default 32. With a counter selected, it resizes that counter about its centre, as one commit.
+- **Colour.** The palette's active colour, as for Rectangle. With a counter selected, a colour change applies to it.
+- **Editing.** Select picks a counter inside its circle. It moves, but has no resize handles; size comes from the option. Delete, duplicate, copy and paste work as for other drawings. The number cannot be edited in 4c.
+
+#### Shared
+
+- **Toolbar.** Fourteen tools. `toolbarWithEveryToolFitsASmallDisplay` pins the new tool count and width, and the window stays within 90 % of a 1280 pt display (the toolbar was 1062 pt with twelve tools; two 35 pt segments make it about 1132 pt). If it does not fit, the plan raises it before shipping.
+- **Keys.** `KeyRouting` maps `S` and `N`. Neither clashes: Save is ⌘S, and N has no editor chord.
+- **Undo names.**
+  - Spotlight: `Add Spotlight`, `Move Spotlight`, `Resize Spotlight`, `Change Spotlight Shape`, `Change Spotlight Dim`.
+  - Counter: `Add Counter`, `Move Counter`, `Change Counter Size`, `Change Counter Colour`.
+  - Both: `Delete`.
+- **Accessibility.** The elements are labelled `Spotlight 1` and `Counter 1`, numbered per kind as today. A counter's value is its number as text.
+- **Object clipboard.** The annotation clipboard (`AnnotationClip`) carries both new kinds. A document from before 4c decodes unchanged.
+
+**Tests (Swift Testing).**
+- `EditorToolTests`:
+  - fourteen tools in the stated order;
+  - letters unique, with `S` and `N` mapped;
+  - Spotlight is not an effect.
+- `SpotlightRenderingTests` (through `EditorFlattener` on a test image):
+  - a pixel outside every spotlight is darkened by the dim;
+  - a pixel inside a rectangle and inside an ellipse is unchanged;
+  - an ellipse's bounding-box corner is dimmed;
+  - two overlapping spotlights leave their union undimmed;
+  - an arrow drawn over the dim keeps its colour;
+  - no spotlight means nothing is dimmed;
+  - the 30 / 50 / 70 % dims give the expected darkening;
+  - the crop is applied after the overlay.
+- `CounterTests`:
+  - next number with none, after 1-2-3, and after deleting 2 (gives 4);
+  - duplicate and paste number in order;
+  - clamping inside the image and the crop;
+  - the text colour from the luminance;
+  - a rendered counter's centre pixel is the fill;
+  - a two-digit number fits.
+- `AnnotationTests` additions: bounds, move, resize and hit test for both kinds; Codable round trip; a document without `spotlightDim` decodes.
+- `KeyRoutingTests`: `S` and `N`.
+- `EditorWindowGeometryTests`: the fourteen-tool toolbar width.
+- `CanvasAccessibilityTests`: the labels.
+- `AppSettingsTests`: the two editor defaults.
+
+The hand checks go in `docs/testing/phase-4c-manual-checklist.md`.
+
 ## 3. Core workflow in detail
 
 ```
@@ -1356,7 +1449,7 @@ Each phase ends with something usable. Phases 1 and 2 deliver the headline workf
 Design in 2.6. One release in two PRs.
 - 4a: crosshair and loupe contrast; editor window with Select, Redact, Pixelate, Blur, Rectangle, Arrow, undo, colour palette, line widths and zoom; Save over (or Save As… with no file), Save As…, Copy, Upload (same key, closing the editor) and Upload as New; Annotate on the overlay and on Recent Captures rows.
 - 4b: Ellipse, Line, Pencil, Highlighter, Text, Crop; duplicate, object copy and paste, Space-drag pan, canvas accessibility.
-- 4c (later): spotlight, counter, an editable project format, and "open editor" as an after-capture action.
+- 4c: Spotlight and Counter on `editor-4c` (design in 2.12); the editable project format and "open editor" as an after-capture action stay later.
 
 Delivered 2026-10-20: 4a in PR 7 (merge commit 9193586) and 4b in PR 2 on `phase-4b-annotation`. Phase 4 is released when PR 2 merges. Design and what was built: 2.6.
 
