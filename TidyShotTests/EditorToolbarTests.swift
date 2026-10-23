@@ -34,17 +34,35 @@ struct EditorToolbarTests {
         #expect(control.fittingSize.width > CGFloat(EditorTool.toolbarOrder.count) * 20)
     }
 
-    /// The window's real minimum uses the control's measured width, not 36 pt a segment. Measured
-    /// as `minimumToolbarContentWidth()` measures it, with a long title, the fourteen tools still
-    /// fit the 90 % of a 1280 pt display an editor may open at (spec 2.12, Shared).
+    /// The window's real minimum, from a real editor with a long title: `minimumToolbarContentWidth()`
+    /// measures the tools' control as the toolbar lays it out (35 pt a segment), which is wider than
+    /// a fresh control's fitting width. The fourteen tools still fit the 90 % of a 1280 pt display
+    /// an editor may open at (spec 2.12, Shared).
     @Test func measuredToolbarFitsASmallDisplay() {
-        let toolsWidth = EditorWindowController.makeToolsControl(selected: .select).fittingSize.width
-        let width = EditorWindowGeometry.toolbarWidth(
-            windowButtonsMaxX: EditorWindowGeometry.ToolbarMetrics.windowButtons, titleWidth: 230, toolSegments: 0,
-            buttons: 5, prominentButtons: 1, viewWidths: [84, toolsWidth], fixedSpaces: 1)
+        let controller = Self.makeEditor(title: "Screenshot 2026-10-22 at 23.47.12 of a window with a very long title.png")
+        defer { controller.close() }
+        // The installed control, not the fresh one minimumToolbarContentWidth() falls back to.
+        let installed = controller.window?.toolbar?.items.first { $0.itemIdentifier == .tools }?.view
+        #expect(installed is ToolSegmentedControl)
+        let minimum = controller.minimumToolbarContentWidth()
+        #expect(controller.window?.contentMinSize.width == minimum)
         let ninetyPercent = (1280 * EditorWindowGeometry.screenFraction).rounded(.down)
         #expect(ninetyPercent == 1152)
-        #expect(EditorWindowGeometry.minimumContentWidth(toolbarWidth: width) <= ninetyPercent)
+        #expect(minimum <= ninetyPercent)
+    }
+
+    private static func makeEditor(title: String) -> EditorWindowController {
+        let context = CGContext(data: nil, width: 8, height: 8, bitsPerComponent: 8, bytesPerRow: 0,
+                                space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        let model = EditorModel(recordID: UUID(), image: ScaledImage(image: context.makeImage()!, scale: 2),
+                                renderer: FakeTileRenderer(), defaults: .standard)
+        let actions = EditorActions(
+            save: { _ in false }, saveAs: { _, _ in false },
+            saveAsSuggestion: { EditorNaming.SaveAsSuggestion(fileName: "x.png", directory: nil) },
+            copy: { _ in }, objectClipboard: EditorObjectClipboard(copy: { _ in }, paste: { nil }, canPaste: { false }),
+            upload: { _, _ in .refused }, exportFailed: { _, _ in }, unusableBackgroundImage: { _ in })
+        return EditorWindowController(model: model, actions: actions, title: title, representedURL: nil, cascadeFrom: nil)
     }
 
     /// What the editor opened with is what it stores back, the 4c defaults included.
