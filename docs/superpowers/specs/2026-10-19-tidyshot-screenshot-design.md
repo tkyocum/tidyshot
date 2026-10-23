@@ -987,7 +987,7 @@ The overlay is dismissed after the capture. Capture Text does not write `lastAre
 #### Hide desktop icons
 
 **Two ways to turn it on.**
-- **While capturing.** A Capture tab setting, `Hide desktop icons while capturing` (off). With it on, the desktop is covered for the whole run of Capture Area, Capture Window, Capture Fullscreen, All-in-One, Capture Previous Area and Self-Timer (countdown included), and of the URL commands that start them. That is from before the shareable content is read, so freeze snapshots and window lists see the covers, until the capture flow ends.
+- **While capturing.** A Capture tab setting, `Hide desktop icons while capturing` (off). With it on, the desktop is covered for the whole run of Capture Area, Capture Window, Capture Fullscreen, All-in-One, Capture Previous Area and Self-Timer (countdown included), and of the URL commands that start them, and of area and fullscreen recordings (see the recording design: the covers stay up for the whole recording and are in the video; a window recording hides them once the window is chosen, because it shows only the window). That is from before the shareable content is read, so freeze snapshots and window lists see the covers, until the capture flow ends.
   - Not Capture Scrolling: the covers would stay up for a whole session.
   - Not Capture Text: covering adds about 100 ms per display for nothing visible.
 - **Until turned off.** A status menu item `Hide Desktop Icons`, with a checkmark while on. Its state is stored as `desktopIconsHidden` (false) and restored at launch. The URL commands `hide-desktop-icons`, `show-desktop-icons` and `toggle-desktop-icons` (CleanShot's names) set the same state. They capture nothing, so Allow URL commands alone is enough; they take no parameters.
@@ -1020,7 +1020,7 @@ Capturing the wallpaper window alone is not affected by the covers above it. Aft
 
 #### Settings summary
 
-- **Capture:** `Hide desktop icons while capturing`, captioned `Covers desktop icons and widgets with the desktop picture during area, window, fullscreen, previous-area, All-in-One and self-timer captures.`, after `Include window shadow`.
+- **Capture:** `Hide desktop icons while capturing`, captioned `Covers desktop icons and widgets with the desktop picture during area, window, fullscreen, previous-area, All-in-One and self-timer captures, and area and fullscreen recordings. While covered, the desktop does not take clicks.` (the recording R1 text; it was `…self-timer captures.` in 7b), after `Include window shadow`.
 - **Shortcuts:** `Capture text:` (⌃⇧7).
 - **New `AppSettings` keys:** `hideDesktopIconsWhileCapturing` (false) and `desktopIconsHidden` (false). New shortcut: `captureText` (⌃⇧7).
 
