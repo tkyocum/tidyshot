@@ -409,14 +409,16 @@ The pencil button on the Quick Access overlay opens the capture in the editor. E
 row has the same button, which also works with the overlay turned off; a capture with no local
 file left is downloaded from the bucket first.
 
-Tools and their keys: Select `V`, Redact `D`, Pixelate `X`, Blur `B`, Rectangle `R`, Arrow `A`,
-Ellipse `E`, Line `L`, Pencil `P`, Highlighter `H`, Text `T`, Crop `C`. Shift squares a box (a
-circle for Ellipse) and snaps an arrow or a line to 45 degrees; Option draws a box from its centre.
+Tools and their keys: Select `V`, Redact `D`, Pixelate `X`, Blur `B`, Spotlight `S`, Rectangle `R`,
+Arrow `A`, Ellipse `E`, Line `L`, Pencil `P`, Highlighter `H`, Text `T`, Counter `N`, Crop `C`. Shift
+squares a box (a circle for Ellipse) and snaps an arrow or a line to 45 degrees; Option draws a box
+from its centre.
 Keys `1` to `6` set the line width to 2, 3, 4, 6, 8 or 12 points, or, with Text, the text size to
 12, 16, 20, 28, 40 or 56 points. With Select, the arrow keys move the selection by one pixel (ten
 with Shift), Delete removes it and Escape deselects. The colour and options buttons in the toolbar
-set the colour, line width, blur radius and pixel size for the tool and the selection, and the
-editor remembers them. The Background button opens the Backgrounds popover (see Backgrounds below).
+set the colour, line width, blur radius, pixel size, Spotlight Shape and Dim, and Counter Size for
+the tool and the selection, and the editor remembers them (all but Dim, which belongs to the
+picture). The Background button opens the Backgrounds popover (see Backgrounds below).
 At the right of the toolbar are Copy, Save (the downward arrow) and Upload
 (the cloud). The window is never narrower than its toolbar, so every button stays in view.
 
@@ -432,6 +434,29 @@ image, the capture's recorded size and thumbnail follow it, and nothing outside 
 saved or uploaded file. Under an applied crop the covered area is not clickable: Select deselects
 there, Text ignores the press and the drawing tools start at the crop's edge. A paste lands inside
 the crop, and VoiceOver lists only the annotations that reach into it.
+
+Spotlight dims everything outside one or more rectangles or ellipses, to draw the eye to what
+matters. Drag to cut a hole in the dim; Shift makes a square or a circle and Option draws from the
+centre. All the spotlights in a capture share one dim, black over the whole picture at 30, 50 (the
+default) or 70 %, set by Options > Dim, which is enabled while the capture has a spotlight and the
+Spotlight tool is active or a spotlight is selected. Options > Shape (Rectangle or Ellipse) sets the
+shape of new spotlights and of the selected one. While the
+Spotlight tool is active every spotlight shows a dashed outline, so you can find and pick one; the
+outline is never saved. The dim goes under the annotations: arrows, text and counters stay bright. It
+darkens the picture only, so a transparent corner of a window capture stays transparent. An applied
+crop and a Background come after it, so the Background's padding is never dimmed. A spotlight moves,
+resizes with eight handles, duplicates, copies and pastes like a rectangle, and has no colour, so the
+colour button is dimmed for it. Save, Save As…, Copy and Upload all give the dimmed image.
+
+Counter drops numbered circles for step-by-step shots. Click to place one, centred on the click and
+kept inside the image (or the applied crop); a drag places it at the press. A new counter takes the
+highest number on the capture plus one. Deleting a counter does not renumber the others, and a
+duplicate (⌘D or an Option-drag) or a pasted counter gets a new number, so a number never repeats.
+Options > Size sets Small, Medium or Large (24, 32 or 44 pt, times the capture's scale) for new
+counters and for the selected one, which grows or shrinks about its centre. The colour button sets the
+fill; the ring is white, and the digits are white or black, whichever contrasts with the fill. A
+counter moves but has no resize handles, and its number cannot be edited. VoiceOver reads it as
+`Counter 3`, using its own number.
 
 ⌘D duplicates the selection 10 points down and to the right, and with Select, dragging it with
 Option held drags a copy. ⌘C copies the selected object and ⌘V pastes it, in the same editor or
@@ -555,6 +580,7 @@ afterwards, so opening it again in the editor starts from the composed picture.
 - Phase 3.1 manual test checklist: `docs/testing/phase-3-1-manual-checklist.md`
 - Phase 4a manual test checklist: `docs/testing/phase-4a-manual-checklist.md`
 - Phase 4b manual test checklist: `docs/testing/phase-4b-manual-checklist.md`
+- Phase 4c (Spotlight, Counter) manual test checklist: `docs/testing/phase-4c-manual-checklist.md`
 - Phase 5 manual test checklist: `docs/testing/phase-5-manual-checklist.md`
 - Phase 6a manual test checklist: `docs/testing/phase-6a-manual-checklist.md`
 - Phase 6b manual test checklist: `docs/testing/phase-6b-manual-checklist.md`
