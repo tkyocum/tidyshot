@@ -5,12 +5,19 @@ import ImageIO
 
 /// Reads and builds GIF89a files for the encoder tests, written from the format itself. `parse`
 /// walks the blocks for the fields ImageIO does not report (table flags, disposal, the transparent
-/// index, sub-block lengths); `decodedFrames` and the delays go through `CGImageSource`.
+/// index, sub-block lengths), and `codeStream` reads a frame's LZW codes to end-of-information;
+/// `decodedFrames` and the delays go through `CGImageSource`.
 nonisolated enum GIFBlocks {
     enum ParseError: Error {
         case truncated
         case notAGIF
         case unknownBlock(UInt8)
+        /// The code stream ran out before end-of-information.
+        case noEndOfInformation
+        /// A whole byte or more follows end-of-information.
+        case bytesAfterEndOfInformation
+        /// A code that is neither a root, clear, end-of-information nor in the table.
+        case undefinedCode(Int)
     }
 
     struct GIFFile {
@@ -38,8 +45,26 @@ nonisolated enum GIFBlocks {
         var minimumCodeSize: Int
         /// Every sub-block's length, the closing zero-length block included.
         var subBlockLengths: [Int]
+        /// The LZW code stream: the sub-blocks' bytes, joined.
+        var codeBytes: [UInt8]
 
         var rect: GIFRect { GIFRect(x: x, y: y, width: width, height: height) }
+    }
+
+    /// A frame's code stream as `codeStream(of:)` reads it.
+    struct CodeStream {
+        /// The colour indices the codes stand for.
+        var indices: [UInt8]
+        /// Clear codes read, a leading one included.
+        var clearCount: Int
+        /// Data codes read since the last clear code.
+        var codesInLastSegment: Int
+        /// The width the last data code was read at, 0 without one.
+        var lastCodeWidth: Int
+        /// The width end-of-information was read at.
+        var endWidth: Int
+        /// The bits left in the last byte after end-of-information.
+        var paddingBits: Int
     }
 
     struct Control {
@@ -103,7 +128,8 @@ nonisolated enum GIFBlocks {
                 let blocks = try reader.subBlocks()
                 file.frames.append(Frame(control: control, x: x, y: y, width: frameWidth, height: frameHeight,
                                          hasLocalTable: hasLocalTable, isInterlaced: imagePacked & 0x40 != 0,
-                                         minimumCodeSize: minimumCodeSize, subBlockLengths: blocks.lengths))
+                                         minimumCodeSize: minimumCodeSize, subBlockLengths: blocks.lengths,
+                                         codeBytes: blocks.data.flatMap { $0 }))
                 control = nil
             case 0x3B:
                 file.endsWithTrailer = reader.isAtEnd
@@ -113,6 +139,65 @@ nonisolated enum GIFBlocks {
             }
         }
         return file
+    }
+
+    /// Reads a frame's code stream as GIF89a's LZW defines it, as a decoder does. Codes are packed
+    /// LSB first and start at `minimumCodeSize + 1` bits. Each data code after the first since a
+    /// clear adds a table entry: the previous code's string plus the first index of this one's (of
+    /// the previous string when this code is the entry being added). Once the next free code
+    /// reaches `2^width`, the width grows, up to 12 bits; a full table takes no entries until a
+    /// clear. It throws unless end-of-information is read and ends in the data's last byte.
+    static func codeStream(of frame: Frame) throws -> CodeStream {
+        let bytes = frame.codeBytes
+        let clearCode = 1 << frame.minimumCodeSize, endCode = clearCode + 1
+        let roots = (0..<clearCode).map { [UInt8($0)] } + [[], []]
+        var table = roots
+        var width = frame.minimumCodeSize + 1
+        var previous: [UInt8]?
+        var stream = CodeStream(indices: [], clearCount: 0, codesInLastSegment: 0, lastCodeWidth: 0,
+                                endWidth: 0, paddingBits: 0)
+        var bits = 0, bitCount = 0, nextByte = 0
+        while true {
+            while bitCount < width {
+                guard nextByte < bytes.count else { throw ParseError.noEndOfInformation }
+                bits |= Int(bytes[nextByte]) << bitCount
+                nextByte += 1
+                bitCount += 8
+            }
+            let code = bits & (1 << width - 1)
+            bits >>= width
+            bitCount -= width
+
+            if code == clearCode {
+                table = roots
+                width = frame.minimumCodeSize + 1
+                previous = nil
+                stream.clearCount += 1
+                stream.codesInLastSegment = 0
+                continue
+            }
+            if code == endCode {
+                guard nextByte == bytes.count else { throw ParseError.bytesAfterEndOfInformation }
+                stream.endWidth = width
+                stream.paddingBits = bitCount
+                return stream
+            }
+            let string: [UInt8]
+            // Without a previous code the table holds only the roots, clear and end-of-information.
+            if code < table.count {
+                string = table[code]
+            } else if code == table.count, let previous {
+                string = previous + [previous[0]]
+            } else {
+                throw ParseError.undefinedCode(code)
+            }
+            if let previous, table.count < 4096 { table.append(previous + [string[0]]) }
+            stream.indices += string
+            stream.codesInLastSegment += 1
+            stream.lastCodeWidth = width
+            if table.count == 1 << width && width < 12 { width += 1 }
+            previous = string
+        }
     }
 
     /// A one-frame GIF around `imageData` (a `GIFLZWWriter` block): header, logical screen, the

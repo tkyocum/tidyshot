@@ -18,7 +18,8 @@ nonisolated struct GIFLZWWriter {
     /// Codes start at `minimumCodeSize + 1` bits and are packed LSB first. After each new table
     /// entry, the width grows by one when the next free code is above `2^width` and the width is
     /// under 12. The stream starts with a clear code, clears again as soon as the next free code
-    /// reaches 4096, and ends with end-of-information.
+    /// reaches 4096, and ends with end-of-information, one bit wider when the last code leaves the
+    /// next free code at `2^width`.
     mutating func encode(_ indices: UnsafeBufferPointer<UInt8>, minimumCodeSize: Int, into output: inout [UInt8]) {
         precondition((2...8).contains(minimumCodeSize), "GIF's minimum code size is 2 to 8")
         let clearCode = 1 << minimumCodeSize
@@ -92,6 +93,9 @@ nonisolated struct GIFLZWWriter {
                     }
                 }
                 emit(Int(prefix))
+                // A decoder adds a table entry as it reads that last code and widens once its next
+                // free code reaches 2^width, so end-of-information goes out at the width it reads.
+                if nextCode >= 1 << width && width < 12 { width += 1 }
             }
         }
         emit(endCode)

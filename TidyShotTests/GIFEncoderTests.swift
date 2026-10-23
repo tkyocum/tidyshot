@@ -96,6 +96,7 @@ struct GIFEncoderTests {
             #expect(!frame.hasLocalTable)
             #expect(!frame.isInterlaced)
             #expect(frame.minimumCodeSize == max(2, Self.palette.tableBits))
+            #expect(try GIFBlocks.codeStream(of: frame).indices.count == frame.width * frame.height)
         }
         // The first frame is the whole frame, opaque.
         let first = try #require(file.frames.first)

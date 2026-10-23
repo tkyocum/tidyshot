@@ -30,7 +30,68 @@ struct GIFLZWWriterTests {
         let expected = GIFBlocks.colours(indices, in: palette)
         #expect(decoded.count == expected.count)
         #expect(zip(decoded, expected).filter { $0 != $1 }.count == 0)
-        return try GIFBlocks.parse(file)
+        let parsed = try GIFBlocks.parse(file)
+        let frame = try #require(parsed.frames.first)
+        #expect(try GIFBlocks.codeStream(of: frame).indices == indices)
+        return parsed
+    }
+
+    /// Encodes `indices` and reads the block back with `GIFBlocks.codeStream`, which throws unless
+    /// end-of-information is read and ends in the last byte.
+    func codeStream(_ indices: [UInt8], palette: GIFPalette) throws -> GIFBlocks.CodeStream {
+        var writer = GIFLZWWriter()
+        let block = encode(indices, palette: palette, writer: &writer)
+        let file = try GIFBlocks.parse(GIFBlocks.oneFrame(palette: palette, width: indices.count, height: 1,
+                                                          imageData: block))
+        let stream = try GIFBlocks.codeStream(of: try #require(file.frames.first))
+        #expect(stream.indices == indices)
+        return stream
+    }
+
+    /// Indices whose consecutive pairs never repeat, so each one is a code of its own: 0, d, 2d, ...
+    /// (mod 255) for each step d coprime to 255, 32,640 in all.
+    static func distinctPairs(count: Int) -> [UInt8] {
+        let steps = (1..<255).filter { $0 % 3 != 0 && $0 % 5 != 0 && $0 % 17 != 0 }
+        let indices = steps.flatMap { step in (0..<255).map { UInt8($0 * step % 255) } }
+        precondition(count <= indices.count)
+        return Array(indices.prefix(count))
+    }
+
+    /// When the last code leaves the next free code at `2^width`, a decoder adds its entry and
+    /// reads end-of-information one bit wider. At minimum code size 8 that is a last segment of 255,
+    /// 767 or 1,791 codes; after 0 to 7 full segments it ends at every bit offset, the byte-aligned
+    /// one included, where a narrow end-of-information leaves a decoder short of data.
+    @Test func endOfInformationIsReadAtTheEndOfTheDataAtEachWidth() throws {
+        let fullSegment = 4096 - 258
+        for lastCodes in [255, 767, 1_791] {
+            var paddings: Set<Int> = []
+            for fullSegments in 0..<8 {
+                let stream = try codeStream(Self.distinctPairs(count: fullSegments * fullSegment + lastCodes),
+                                            palette: fullPalette)
+                #expect(stream.clearCount == fullSegments + 1)
+                #expect(stream.codesInLastSegment == lastCodes)
+                #expect(stream.endWidth == stream.lastCodeWidth + 1)
+                paddings.insert(stream.paddingBits)
+            }
+            #expect(paddings == Set(0..<8))
+        }
+    }
+
+    /// The same at minimum code size 2, for every length of a seeded three-colour image up to 400,
+    /// whose last codes fill each width from 3 to 6 bits. At 11 codes a 4-bit end-of-information
+    /// would end byte-aligned.
+    @Test func endOfInformationIsReadAtTheEndOfTheDataAtMinimumCodeSizeTwo() throws {
+        let palette = GIFPalette(colours: [
+            GIFColour(r: 255, g: 0, b: 0), GIFColour(r: 0, g: 255, b: 0), GIFColour(r: 0, g: 0, b: 255),
+        ])
+        var random = SyntheticPage.LCG(seed: 5)
+        let image = (0..<400).map { _ in UInt8(random.next() % 3) }
+        var widenedAt: Set<Int> = []
+        for count in 1...image.count {
+            let stream = try codeStream(Array(image.prefix(count)), palette: palette)
+            if stream.endWidth > stream.lastCodeWidth { widenedAt.insert(stream.codesInLastSegment) }
+        }
+        #expect(widenedAt.isSuperset(of: [3, 11, 27, 59]))
     }
 
     @Test func oneColourThroughout() throws {
