@@ -10,6 +10,11 @@ extension KeyboardShortcuts.Name {
     static let capturePreviousArea = Self("capturePreviousArea", initial: .init(.six, modifiers: [.control, .shift]))
     /// Capture Text (spec 2.10): ⌃⇧7, after ⌃⇧6.
     static let captureText = Self("captureText", initial: .init(.seven, modifiers: [.control, .shift]))
+    /// Record Screen (recording design, Starting): ⌃⇧8, after ⌃⇧7. During a count-in it cancels,
+    /// during a recording it stops, as Record Fullscreen's does.
+    static let recordScreen = Self("recordScreen", initial: .init(.eight, modifiers: [.control, .shift]))
+    /// Record Fullscreen. No default; the Shortcuts tab records one.
+    static let recordFullscreen = Self("recordFullscreen")
     /// Self-Timer. No default; the Shortcuts tab records one.
     static let selfTimer = Self("selfTimer")
     /// Restore Closed Overlay. No default; the Shortcuts tab records one.

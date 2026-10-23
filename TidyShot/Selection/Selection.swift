@@ -13,6 +13,9 @@ enum SelectionMode {
     /// area; a click on the highlight returns the window (the controller returns `.window` for a
     /// click in every mode but `.scrolling`).
     case selfTimer
+    /// Record Screen: exactly as `.selfTimer`. A drag records an area; a click records the
+    /// highlighted window.
+    case recording
 }
 
 /// Result of the selection overlay. Rects are in CoreGraphics global points.

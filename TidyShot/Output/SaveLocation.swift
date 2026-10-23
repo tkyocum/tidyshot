@@ -27,7 +27,7 @@ final class SaveLocation {
         panel.canChooseFiles = false
         panel.canCreateDirectories = true
         panel.allowsMultipleSelection = false
-        panel.message = "Choose where TidyShot saves screenshots."
+        panel.message = "Choose where TidyShot saves screenshots and recordings."
         panel.prompt = "Use This Folder"
         // Reached from a global hotkey while another app is active; a plain activate() can be
         // refused and the panel would open behind that app. Marked for future deprecation; no warning today.

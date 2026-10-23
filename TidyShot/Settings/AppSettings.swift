@@ -121,7 +121,7 @@ final class AppSettings {
     static let selfTimerChoices = [3, 5, 10]
     /// All-in-One's aspect-ratio lock, as the toolbar last left it (spec 2.9).
     var allInOneAspectLock: Bool { didSet { defaults.set(allInOneAspectLock, forKey: Keys.allInOneAspectLock) } }
-    /// The General tab's Optimize images with Clop (spec 2.7). Takes effect without Save; used only
+    /// The General tab's Optimize images and videos with Clop (spec 2.7). Takes effect without Save; used only
     /// while Clop is running.
     var optimiseWithClop: Bool { didSet { defaults.set(optimiseWithClop, forKey: Keys.optimiseWithClop) } }
     /// The Capture tab's Hide desktop icons while capturing (spec 2.10): the desktop is covered with

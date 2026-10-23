@@ -310,7 +310,7 @@ final class SelectionController {
         }
     }
 
-    /// A picked window: itself in window mode (and, as in window mode, in self-timer mode); in
+    /// A picked window: itself in window mode (and, as in window mode, in self-timer and recording mode); in
     /// scrolling mode its frame, as an area of the display under its centre. Nil cancels.
     private func finishPick(_ window: SCWindow?) {
         guard let window else {

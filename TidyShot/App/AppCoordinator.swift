@@ -39,6 +39,15 @@ final class AppCoordinator {
             self?.notifier.notifyError(notice.body, title: notice.title, subtitle: notice.subtitle)
         })
     @ObservationIgnored private lazy var selfTimer = SelfTimerController()
+    /// Record Screen and Record Fullscreen (recording design): one recording at a time, run inside
+    /// the capture lock. The stream leaves out the cards and, for area and fullscreen recordings,
+    /// keeps the display's desktop cover in the picture.
+    @ObservationIgnored private lazy var recorder = RecordingController(
+        environment: .live(cardWindowNumbers: { [weak self] in self?.overlay.windowNumbers ?? [] },
+                           coverWindowNumbers: { [weak self] displayID in
+                               self?.covers.windowNumbers[displayID].map { [$0] } ?? []
+                           }),
+        makeDriver: { [engine] in ScreenRecordingDriver(engine: engine) })
     /// Hide desktop icons (spec 2.10): the wallpaper over the desktop's icons and widgets, while a
     /// capture runs or until turned off. A display it cannot cover is reported once per session;
     /// without Screen Recording, which is why nothing could be read, the permission window shows instead.
@@ -130,6 +139,17 @@ final class AppCoordinator {
     @ObservationIgnored private var prefetchingDragIDs: Set<UUID> = []
 
     private(set) var isCapturing = false
+    /// From a recording's first frame until its file is handed to `saveRecording` or removed: the
+    /// status item shows `record.circle` and the menu offers Stop Recording.
+    private(set) var isRecording = false
+    /// A recording's count-in flag: true from the selection's return (Record Fullscreen: from the
+    /// free-space check) until `recorder.run` is called or the start gives up. It covers the
+    /// count-in, the settle delay and the fresh content read, with the count-in on or off.
+    /// `selfTimer.isRunning` cannot serve: it stays true until `run`'s capture closure returns.
+    @ObservationIgnored private var recordingCountIn = false
+    /// Recordings between the recorder's `.keep` and `history.add` (in quit mode, until the
+    /// thumbnail is written), so the phase never reads `.idle` in between.
+    @ObservationIgnored private(set) var recordingSavesInFlight = 0
     /// The last capture written to the save folder (upload-only captures do not count).
     private(set) var lastCaptureURL: URL?
     /// Records with an upload in flight; drives the menu bar icon.
@@ -147,6 +167,15 @@ final class AppCoordinator {
     var isUploading: Bool { !uploadingIDs.isEmpty }
     /// The record whose image is retained, for the Annotate flag on Recent Captures rows.
     var retainedCaptureID: UUID? { latestCapture?.id }
+    /// Where Record Screen and Record Fullscreen stand: the count-in (the whole hand-off), the
+    /// recording (from `recorder.run`'s call to its return, the stop wait included), the save up to
+    /// `history.add`, or nothing.
+    var recordingPhase: RecordingPhase {
+        if recordingCountIn { return .countIn }
+        if recorder.isRunning { return .recording }
+        if recordingSavesInFlight > 0 { return .saving }
+        return .idle
+    }
 
     init() {
         let url = (try? HistoryStore.defaultFileURL())
@@ -230,11 +259,19 @@ final class AppCoordinator {
         KeyboardShortcuts.onKeyUp(for: .captureText) { [weak self] in
             Task { await self?.captureText() }
         }
+        // Either record shortcut also cancels a count-in and stops a recording, whichever of the
+        // two started it: each function checks the phase first.
+        KeyboardShortcuts.onKeyUp(for: .recordScreen) { [weak self] in
+            Task { await self?.recordScreen() }
+        }
+        KeyboardShortcuts.onKeyUp(for: .recordFullscreen) { [weak self] in
+            Task { await self?.recordFullscreen() }
+        }
         KeyboardShortcuts.onKeyUp(for: .restoreOverlay) { [weak self] in
             Task { await self?.restoreClosedOverlay() }
         }
-        // Escape must never be swallowed outside a scrolling capture or a self-timer countdown;
-        // each enables it while it runs.
+        // Escape must never be swallowed outside a scrolling capture or a self-timer countdown
+        // (a recording's count-in is one); each enables it while it runs. A recording never does.
         KeyboardShortcuts.disable(.cancelCapture)
         KeyboardShortcuts.onKeyUp(for: .cancelCapture) { [weak self] in
             // Both are no-ops unless theirs is the one running; the capture lock allows one.
@@ -431,6 +468,234 @@ final class AppCoordinator {
                 await runSelfTimer(.area(rect: rect, display: display), intent: intent)
             case .window(let window):
                 await runSelfTimer(.window(window), intent: intent)
+            }
+        }
+    }
+
+    // MARK: Recording
+
+    /// The count-in's seconds: the self-timer badge counts 3, 2, 1.
+    private static let recordingCountInSeconds = 3
+
+    /// What a record shortcut does in each phase: it cancels a count-in and stops a recording,
+    /// and otherwise starts one, also while an earlier recording is being saved.
+    nonisolated static func recordingShortcutAction(for phase: RecordingPhase) -> RecordingShortcutAction {
+        switch phase {
+        case .countIn: .cancelCountIn
+        case .recording: .stop
+        case .idle, .saving: .start
+        }
+    }
+
+    /// Record Screen (recording design, Starting): select an area or click a window, then the
+    /// hand-off and the recording. The lock is held from the selection to the end of the recording,
+    /// and the file is saved after it. An area under 32×32 pt is refused, and no area becomes the
+    /// previous area: that is for image captures.
+    func recordScreen() async {
+        guard recordShortcutStarts() else { return }
+        let intent = CaptureIntent.standard
+        var outcome: RecordingOutcome?
+        await withCaptureLock(coversDesktop: true) {
+            guard recordingCanStart() else { return }
+            guard let content = await loadContent(failureTitle: RecordingEnd.failedTitle) else { return }
+            guard let selection = await selector.select(mode: .recording, content: content) else { return }
+            let target: CaptureTarget
+            switch selection {
+            case .area(let rect, let display):
+                guard RecordingConfiguration.isLargeEnough(rect.intersection(display.frame)) else {
+                    selector.dismiss()
+                    notifier.notifyError("Select a larger area to record.", title: RecordingEnd.refusalTitle)
+                    return
+                }
+                target = .area(rect: rect, display: display)
+            case .window(let window):
+                // The stream shows only the window, so the covers add nothing. The lock's own hide
+                // is then a no-op, and a persistent Hide Desktop Icons keeps its covers.
+                covers.hide(for: .capture)
+                target = .window(window)
+            }
+            outcome = await record(target)
+        }
+        await endRecording(outcome, intent: intent)
+    }
+
+    /// Record Fullscreen: the display under the pointer, with the same re-entry, lock and checks as
+    /// Record Screen. There is no selection overlay to dismiss and no activation to give up; the
+    /// count-in is centred on the display with no frame.
+    func recordFullscreen() async {
+        guard recordShortcutStarts() else { return }
+        let intent = CaptureIntent.standard
+        var outcome: RecordingOutcome?
+        await withCaptureLock(coversDesktop: true) {
+            guard recordingCanStart() else { return }
+            recordingCountIn = true
+            guard let content = await loadContent(failureTitle: RecordingEnd.failedTitle),
+                  let display = Self.display(under: NSEvent.mouseLocation, in: content.displays) else {
+                recordingCountIn = false
+                return
+            }
+            outcome = await record(.display(display))
+        }
+        await endRecording(outcome, intent: intent)
+    }
+
+    /// The status menu's Stop Recording, as the panel's Stop. Nothing happens when no recording runs.
+    func stopRecording() {
+        recorder.stop()
+    }
+
+    /// Both record functions start here, before the capture lock, as Capture Scrolling's shortcut
+    /// reaches `advance()`: a count-in is cancelled and a recording stopped, whichever of the two
+    /// started it. True when a new recording may start.
+    private func recordShortcutStarts() -> Bool {
+        switch Self.recordingShortcutAction(for: recordingPhase) {
+        case .start:
+            return true
+        case .cancelCountIn:
+            selfTimer.cancel()
+        case .stop:
+            recorder.stop()
+        }
+        return false
+    }
+
+    /// Makes `tmp/Recording`, then reads its free space. A folder that cannot be made fails the
+    /// start with `Recording failed`; under 2 GB refuses it. An unreadable value counts as enough.
+    private func recordingCanStart() -> Bool {
+        do {
+            try Recording.makeDirectory()
+        } catch {
+            RecordingLog.note("Recording: tmp/Recording could not be made: \(error.localizedDescription)")
+            let notice = RecordingEnd.startFailure(error.localizedDescription)
+            notifier.notifyError(notice.body, title: notice.title)
+            return false
+        }
+        let freeBytes = RecordingLimits.freeBytes(at: Recording.directory)
+        if freeBytes == nil {
+            RecordingLog.note("Recording: the free space of tmp/Recording could not be read, recording anyway")
+        }
+        guard !RecordingLimits.refusesStart(freeBytes: freeBytes) else {
+            notifier.notifyError(RecordingLimits.diskFullText, title: RecordingEnd.refusalTitle)
+            return false
+        }
+        return true
+    }
+
+    /// The hand-off and the recording, with the capture lock held. `recordingCountIn` is true
+    /// until `recorder.run` is called or the start gives up. A kept file counts in
+    /// `recordingSavesInFlight` before `recorder.close()`, so the phase goes from `.recording` to
+    /// `.saving` with nothing between. Nil when nothing started.
+    private func record(_ target: CaptureTarget) async -> RecordingOutcome? {
+        recordingCountIn = true
+        let start = await recordingHandOff(target)
+        recordingCountIn = false
+        guard let start else { return nil }
+        let outcome = await recorder.run(start.request, chrome: start.chrome) { [weak self] in
+            self?.isRecording = true
+        }
+        if case .keep = outcome {
+            recordingSavesInFlight += 1
+        }
+        recorder.close()
+        return outcome
+    }
+
+    /// The hand-off (recording design, Starting), in order, with the count-in on or off:
+    /// 1. the selection overlay goes, and 2. TidyShot gives up activation, so the user's app is
+    /// frontmost and its keys work (neither for fullscreen); 3. the count-in, when it is on;
+    /// 4. the settle delay; 5. the display or window is found by id in fresh shareable content, as
+    /// `captureAfterCountdown` does, and a window is sized from its fresh frame. A cancelled
+    /// count-in, or a display or window that went (`Screen recording`), gives nil: nothing started.
+    private func recordingHandOff(_ target: CaptureTarget) async -> (request: RecordingRequest, chrome: any RecordingChrome)? {
+        let isFullscreen: Bool
+        if case .display = target { isFullscreen = true } else { isFullscreen = false }
+        if !isFullscreen {
+            selector.dismiss()
+            NSApplication.shared.deactivate()
+        }
+        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
+        if settings.recordingCountdown {
+            guard let screenFrame = CaptureEngine.screen(forDisplayID: target.displayID)?.frame ?? NSScreen.main?.frame
+            else { return nil }
+            let stage = SelfTimerScreenStage(subject: Geometry.appKitRect(fromCG: target.cgFrame, primaryHeight: primaryHeight),
+                                             screenFrame: screenFrame, showsFrame: !isFullscreen)
+            // The recording starts after `run` returns, never inside its capture closure, so
+            // `selfTimer.isRunning` is false while it records. `run` supplies the settle delay.
+            guard await selfTimer.run(seconds: Self.recordingCountInSeconds, stage: stage, capture: {}) == .finished
+            else { return nil }
+        } else {
+            try? await Task.sleep(for: SelfTimerController.settleDelay)
+        }
+
+        guard let content = await loadContent(failureTitle: RecordingEnd.failedTitle) else { return nil }
+        let source: RecordingSource
+        let placement: RecordingChromePlacement
+        let displayID: CGDirectDisplayID
+        switch target {
+        case .area(let rect, let display):
+            guard let current = connectedDisplay(display.displayID, in: content) else { return nil }
+            let area = rect.intersection(current.frame)
+            displayID = current.displayID
+            source = .area(area, on: Self.recordingDisplay(current))
+            placement = .area(Geometry.appKitRect(fromCG: area, primaryHeight: primaryHeight),
+                              visibleFrame: Self.visibleFrame(forDisplayID: displayID, cgFrame: current.frame))
+        case .display(let display):
+            guard let current = connectedDisplay(display.displayID, in: content) else { return nil }
+            displayID = current.displayID
+            source = .display(Self.recordingDisplay(current))
+            placement = .fullscreen(visibleFrame: Self.visibleFrame(forDisplayID: displayID, cgFrame: current.frame))
+        case .window(let window):
+            guard let current = content.windows.first(where: { $0.windowID == window.windowID }) else {
+                notifier.notifyError("The window is no longer on screen.", title: RecordingEnd.refusalTitle)
+                return nil
+            }
+            // Sized from the fresh frame at its display's scale, as a window capture without its shadow.
+            displayID = CaptureEngine.displayID(containing: current.frame)
+            source = .window(id: current.windowID, frame: current.frame, scale: CaptureEngine.scale(forDisplayID: displayID))
+            placement = .window(Geometry.appKitRect(fromCG: current.frame, primaryHeight: primaryHeight),
+                                visibleFrame: Self.visibleFrame(forDisplayID: displayID, cgFrame: current.frame))
+        }
+        let id = UUID()
+        let request = RecordingRequest(id: id, configuration: RecordingConfiguration.make(source, options: settings.recordingOptions),
+                                       displayID: displayID, outputURL: Recording.fileURL(for: id))
+        return (request, RecordingScreenChrome(placement: placement))
+    }
+
+    /// The display with `id` in fresh shareable content. When it is gone, `The display is no
+    /// longer connected.` posts as a refusal and the result is nil.
+    private func connectedDisplay(_ id: CGDirectDisplayID, in content: SCShareableContent) -> SCDisplay? {
+        guard let display = content.displays.first(where: { $0.displayID == id }) else {
+            notifier.notifyError("The display is no longer connected.", title: RecordingEnd.refusalTitle)
+            return nil
+        }
+        return display
+    }
+
+    private static func recordingDisplay(_ display: SCDisplay) -> RecordingDisplay {
+        RecordingDisplay(id: display.displayID, frame: display.frame, scale: CaptureEngine.scale(forDisplayID: display.displayID))
+    }
+
+    /// The visible frame of the display's screen (AppKit points), for the control panel; the
+    /// display's whole frame when no screen matches.
+    private static func visibleFrame(forDisplayID id: CGDirectDisplayID, cgFrame: CGRect) -> CGRect {
+        if let screen = CaptureEngine.screen(forDisplayID: id) {
+            return screen.visibleFrame
+        }
+        return Geometry.appKitRect(fromCG: cgFrame, primaryHeight: NSScreen.screens.first?.frame.height ?? 0)
+    }
+
+    /// After the capture lock: a kept file is handed to `saveRecording`, with `Recording stopped`
+    /// when something other than the user's Stop ended it; otherwise the recorder's notice, if any,
+    /// posts. `record.circle` goes as the file is handed on, or once it was removed.
+    private func endRecording(_ outcome: RecordingOutcome?, intent: CaptureIntent) async {
+        guard let outcome else { return }
+        isRecording = false
+        switch outcome {
+        case .keep(let recording, let notice):
+            await saveRecording(recording, intent: intent, stopNotice: notice)
+        case .nothing(let notice):
+            if let notice {
+                notifier.notifyError(notice.body, title: notice.title)
             }
         }
     }
@@ -877,6 +1142,11 @@ final class AppCoordinator {
     @discardableResult
     func saveRecording(_ recording: Recording, intent: CaptureIntent = .standard, stopNotice: RecordingNotice? = nil,
                        mode: RecordingSaveMode = .normal) async -> CaptureRecord? {
+        // Its only callers, the record functions, counted the recording in when the recorder kept it.
+        // It leaves the count once, on whichever return: right after `history.add` (nothing below it
+        // suspends, outside quit mode), in quit mode once the thumbnail is written, or with the file
+        // left in `tmp/Recording` before any record.
+        defer { recordingSavesInFlight -= 1 }
         let quitMode = mode == .quit
         // The next capture: the newest card's image is no longer kept.
         latestCapture = nil
@@ -2756,14 +3026,16 @@ final class AppCoordinator {
 
     // MARK: Helpers
 
-    /// Fetches shareable content, or shows the permission window and returns nil.
-    func loadContent() async -> SCShareableContent? {
+    /// Fetches shareable content, or shows the permission window and returns nil. With the
+    /// permission granted, the failure posts under `failureTitle`: a recording's never says
+    /// `Capture failed`.
+    func loadContent(failureTitle: String = "Capture failed") async -> SCShareableContent? {
         do {
             return try await engine.shareableContent()
         } catch {
             NSLog("Shareable content failed: \(error.localizedDescription)")
             if ScreenCapturePermission.isGranted {
-                notifier.notifyError("Could not list screens and windows: \(error.localizedDescription)")
+                notifier.notifyError("Could not list screens and windows: \(error.localizedDescription)", title: failureTitle)
             } else {
                 permissionWindow.show()
             }
@@ -2825,6 +3097,24 @@ extension AppCoordinator: URLCommandTarget {}
 nonisolated enum RecordingSaveMode: Equatable, Sendable {
     case normal
     case quit
+}
+
+/// Where Record Screen and Record Fullscreen stand (`AppCoordinator.recordingPhase`).
+nonisolated enum RecordingPhase: Equatable, Sendable {
+    case idle
+    /// The whole hand-off, from the selection to `recorder.run`, with the count-in on or off.
+    case countIn
+    /// From `recorder.run`'s call to its return, the stop wait included.
+    case recording
+    /// A kept recording on its way to `history.add`.
+    case saving
+}
+
+/// What a record shortcut does (`AppCoordinator.recordingShortcutAction(for:)`).
+nonisolated enum RecordingShortcutAction: Equatable, Sendable {
+    case start
+    case cancelCountIn
+    case stop
 }
 
 /// Why Copy Image had nothing to put on the clipboard.
