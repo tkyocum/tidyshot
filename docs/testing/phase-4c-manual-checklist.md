@@ -34,10 +34,10 @@ Take these captures first.
 - A capture of busy content (a web page with photos and text) with a bright and a dark half, at 1x if you can.
 - A scrolling capture of `tall.html` below, of the page area only, started at the top of the page and scrolled to
   the end, about 10,000 pt (20,000 px on a 2x display; check with `sips -g pixelHeight`). Its strip seam, where
-  `EditorFlattener` starts the second strip, is at pixel row 16,384 of the image: 8,192 pt from the top on a 2x
-  display. Each `row N` is exactly 100 pt tall, its 1 pt rule included, so with the capture starting at the top of
-  the page the seam is 8 pt above the top of `row 82` (7 pt above `row 81`'s rule), and a hole from the top of
-  `row 81` to the bottom of `row 82` straddles it by about 90 pt each way.
+  `EditorFlattener` starts the second strip, is at pixel row 16,384 of the image: 8,192 pt from the top of the
+  capture on a 2x display. Each `row N` is exactly 100 pt tall, its 1 pt rule included, so the labels give places on
+  the page. A capture rarely starts exactly at the page's top, so the tall section finds the seam's row in the
+  capture itself.
 
 ```bash
 mkdir -p ~/Desktop/p4c && cd ~/Desktop/p4c
@@ -50,31 +50,38 @@ import CoreGraphics
 import Foundation
 import ImageIO
 
-// Prints the premultiplied RGBA bytes at x,y (top-left origin) of an image: swift px.swift file.png x y [x y ...]
+// Prints the pixel at x,y (top-left origin) of an image, converted to sRGB, as premultiplied RGBA
+// from 0 to 255: swift px.swift file.png x y [x y ...]
 let args = CommandLine.arguments
-guard args.count >= 4, (args.count - 2) % 2 == 0,
+guard args.count >= 4, args.count % 2 == 0,
       let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: args[1]) as CFURL, nil),
-      let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+      let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
+      let context = CGContext(data: nil, width: image.width, height: image.height, bitsPerComponent: 8, bytesPerRow: 0,
+                              space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                              bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
     print("usage: swift px.swift file.png x y [x y ...]"); exit(1)
 }
 print("\(image.width) x \(image.height) px")
-var data = [UInt8](repeating: 0, count: image.width * image.height * 4)
-let context = CGContext(data: &data, width: image.width, height: image.height, bitsPerComponent: 8, bytesPerRow: image.width * 4,
-                        space: CGColorSpace(name: CGColorSpace.sRGB)!,
-                        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
 context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+let bytes = context.data!.assumingMemoryBound(to: UInt8.self)
 var index = 2
 while index + 1 < args.count {
-    let x = Int(args[index])!, y = Int(args[index + 1])!
-    let i = (y * image.width + x) * 4
-    print("(\(x), \(y)): \(data[i]) \(data[i + 1]) \(data[i + 2]) \(data[i + 3])")
+    let (xText, yText) = (args[index], args[index + 1])
     index += 2
+    guard let x = Int(xText), let y = Int(yText), (0..<image.width).contains(x), (0..<image.height).contains(y) else {
+        print("(\(xText), \(yText)): not a pixel of this image"); continue
+    }
+    let i = y * context.bytesPerRow + x * 4
+    print("(\(x), \(y)): \(bytes[i]) \(bytes[i + 1]) \(bytes[i + 2]) \(bytes[i + 3])")
 }
 SWIFT
 ```
-`swift px.swift file.png x y` prints the RGBA bytes at a pixel (`sips -g pixelWidth -g pixelHeight` gives a file's
-size). Where an item says to compare with the canvas, open the saved file in Preview at View > Actual Size, put it
-beside the editor at ⌘1 (the capture's natural scale) and look at the same place. Draw only on made-up data.
+`swift px.swift file.png x y` prints a pixel as premultiplied RGBA from 0 to 255, converted to sRGB: a Display P3
+capture reads a little differently from the bytes in its file, and the comparisons below hold because every file is
+converted alike. A point outside the image prints `not a pixel of this image`; `sips -g pixelWidth -g pixelHeight`
+gives a file's size. Where an item says to compare with the canvas, open the saved file in Preview at View > Actual
+Size, put it beside the editor at ⌘1 (the capture's natural scale) and look at the same place. Draw only on made-up
+data.
 
 Save (⌘S) and Upload write the edit over the capture's own file, and the capture then reopens flat with the marks
 in it. So the pixel comparisons below use Save As…, which leaves the capture alone, and read the original from a
@@ -126,7 +133,7 @@ says.
 ## Options and Colour
 - [ ] Open Options with the Select tool and nothing selected: `Shape`, `Dim` and `Size` are all dimmed. `Line width` is enabled and the blur radius and pixel block follow their old rules.
 - [ ] With Spotlight as the tool and no spotlight in the document: `Shape` is enabled (Rectangle, Ellipse); `Dim` is dimmed and reads 50 %. Draw the first spotlight: `Dim` is enabled (30 %, 50 %, 70 %). With Select, press Escape to deselect it, then pick Arrow: both are dimmed again. With Select, click the spotlight: both enable.
-- [ ] `Dim`: pick 70 %, then 30 %, then 50 % in a row: the whole image's dim follows each; Edit shows one `Undo Spotlight Dim` for the run, and ⌘Z returns to the dim before the first click. Picking the value already in effect adds no undo step (on the main capture, draw the first spotlight, Save As… (⇧⌘S) to `~/Desktop/p4c/clean.png`, then pick 50 %: the editor stays clean, with no edited mark in the title).
+- [ ] `Dim`: pick 70 %, then 50 %, then 30 % in a row: the whole image's dim follows each; Edit shows one `Undo Spotlight Dim` for the run, and ⌘Z returns to the dim before the first click, 50 % (a visible change from 30 %). Picking the value already in effect adds no undo step (on the main capture, draw the first spotlight, Save As… (⇧⌘S) to `~/Desktop/p4c/clean.png`, then pick 50 %: the editor stays clean, with no edited mark in the title).
 - [ ] `Dim` with no spotlight in the document (delete them all, then open Options with the Spotlight tool): it stays dimmed and adds no step, however you click.
 - [ ] `Shape`: with a spotlight selected, picking Ellipse turns it into an ellipse, `Undo Spotlight Shape`, and also makes new spotlights ellipses. With nothing selected it changes only the default and adds no undo step. Note that right after drawing a spotlight it is selected, so picking Shape then changes that spotlight too; write down whether that surprises you.
 - [ ] `Size`: enabled for Counter as the tool or with a counter selected, and dimmed otherwise. `Small`, `Medium`, `Large`.
@@ -144,12 +151,13 @@ says.
 - [ ] With a counter selected, the Colour button's swatch shows its colour; a swatch from the palette recolours it (`Undo Color`) and the digits flip to suit. Counters placed afterwards use that colour (the stroke colour changed with it).
 - [ ] Size: `Small`, `Medium`, `Large` set 24, 32 and 44 pt, times the capture scale (48, 64 and 88 px at 2x). With a counter selected, picking a Size resizes it about its centre as one step, `Undo Counter Size`, and sets the default for the next counters. Picking Size with nothing selected only changes the default.
 - [ ] Small counters on a 1x capture (24 px) over busy content are legible and their ring shows, on every colour. A counter in White has no visible edge on a white background: only its black digit shows; write down whether that is a problem.
-- [ ] Two and three digit numbers fit: zoom out (⌘-), select a counter and hold ⌘D to run the number up (each copy sits 10 pt further down and right); `10`, `42` and `100` all sit inside the circle, `100` smaller than the others. Select the last copy and drag it onto the image to look at it.
+- [ ] Two and three digit numbers fit: with Counter, click again and again in one spot, about a hundred times. Each click stacks a new counter, numbered one more, on top of the last, so the top one shows each number in turn. Stop at `10`, `42` and `100` to look: each sits inside the circle, `100` smaller than the others. (A held ⌘D is no shortcut: each copy sits 10 pt further down and right than the last, so a hundred of them walk off the image.)
 - [ ] Save As… and compare at 100 %: each counter matches the canvas in position, colour, ring and digit.
 
 ## Duplicate, copy and paste
-- [ ] Counters 1 and 2 on the capture. Select counter 1 and press ⌘D: the copy is numbered 3 (`Undo Duplicate Counter`). An ⌥-drag of counter 1 with Select shows the copy numbered 4 while you drag, and commits it as 4, leaving counter 1 as it was. Release Option mid-drag: the moved original shows its own number. ⌘C and ⌘V: the paste is numbered 5, selected (`Undo Paste Counter`). No number is ever repeated.
-- [ ] Undo the paste, the ⌥-drag copy and the ⌘D copy in turn: the numbers return to 1 and 2, and the next counter placed is 3. Redo restores each copy with its number.
+- [ ] Counters 1 and 2 on the capture. Select counter 1 and press ⌘D: the copy is numbered 3 (`Undo Duplicate Counter`). An ⌥-drag of counter 2 with Select (counter 1 now lies mostly under its copy) shows the copy numbered 4 while you drag, and commits it as 4, leaving counter 2 as it was. ⌘C and ⌘V: the paste is numbered 5, selected (`Undo Paste Counter`). No number is ever repeated.
+- [ ] Undo the paste, the ⌥-drag copy and the ⌘D copy in turn: the numbers return to 1 and 2. Redo restores each copy with its number. Undo the three again and place a counter: it is 3.
+- [ ] Start an ⌥-drag of counter 2 with Select and release Option before the mouse: the copy goes, and counter 2 itself follows the pointer, still numbered 2. Releasing the mouse moves it as one `Undo Move Counter` and uses no number: the next counter placed is 4.
 - [ ] Three pastes of one counter (⌘C once, ⌘V three times): they land 10, 20 and 30 pt down and to the right of the original, as counters with the next three numbers, not stacked on the original.
 - [ ] ⌘C a counter in one editor and ⌘V it twice in another editor open on a capture at a different scale (a 2x capture into a 1x one, and the other way): new numbers (the next ones in the target), a cascade, and the same point size as the source (a 64 px counter at 2x is 32 px at 1x).
 - [ ] The same for a spotlight: ⌘D, ⌥-drag and ⌘C, ⌘V give `Duplicate Spotlight` and `Paste Spotlight`; a second paste lands one step further. A document with two spotlights has two holes in one dim.
@@ -175,8 +183,17 @@ With a spotlight (rectangle and ellipse, Dim 70 %) and a few counters, an arrow 
 - [ ] In the same editor, pick 30 % and Save As… `dim30.png`, then 70 % and Save As… `dim70.png`: one pixel of white outside the hole reads about 179 and about 77 on a white page (`dim50.png` reads about 128), against 255 in `main-original.png`.
 
 ## A tall capture across a strip seam
-- [ ] Open the scrolling capture of `tall.html` (over 16,384 px) in the editor, at ⌘1. Scroll to 16,384 / scale points from the top (8,192 pt on a 2x display: 8 pt above the top of `row 82`, see the setup), and draw a rectangle spotlight over the left half of the page from the top of `row 81` to the bottom of `row 82`, so its hole straddles that line by about 90 pt each way and the right half stays dimmed. Draw a counter across the seam too.
-- [ ] Save As… and check the file with `px.swift`: pick a white pixel outside the hole just above the seam and one just below it, at the same x in the right half of the page, y = 16,383 and 16,384 (the page is blank white there: `row 81`'s label is at its top and its rule 7 pt below the seam). They read the same, about half of 255 at a 50 % dim, and there is no visible line at the seam in Preview at 100 % or 400 %. A pixel just inside the hole on each side of the seam (the same two rows, an x in the hole) is undimmed: it equals the same pixel of `tall-original.png`.
+First find the seam in the capture. It is pixel row 16,384 whatever the page shows there, and its row on the page
+depends on where the capture started. This cuts a band 400 px tall from the capture with the seam across its
+middle, 200 px down:
+
+```bash
+cd ~/Desktop/p4c && sips -c 400 800 --cropOffset 16184 0 tall-original.png --out seam.png && open seam.png
+```
+Note the `row N` that middle line falls in, and where in that row. (A capture that started exactly at the page's
+top has it in `row 81`, 8 pt above the top of `row 82`.)
+- [ ] Open the scrolling capture of `tall.html` (over 16,384 px) in the editor, at ⌘1. Scroll to the seam's row, and draw a rectangle spotlight over the left half of the page from the top of the row above it to the bottom of the row below it, so its hole straddles the seam by at least 100 pt each way and the right half stays dimmed. Place a counter on the seam too.
+- [ ] Save As… and check the file with `px.swift` at y = 16,383 and 16,384, the last row of the first strip and the first of the second: at an x in the right half of the page clear of the counter (outside the hole), and at an x in the hole. Read the same four pixels of `tall-original.png`. Outside the hole each reads about half the original's (about 128 where the original reads 255, at a 50 % dim), so the two rows read alike wherever the original's do; inside the hole each equals the original. In Preview at 100 % and 400 % there is no line at the seam that `seam.png` does not show.
 - [ ] Copy, Save and then Upload do the same (Upload last, since it closes the editor; check the saved file, and the pasted image in Preview). The save does not run out of memory or take noticeably longer than a capture of the same height without a spotlight; write down the time.
 - [ ] Zoom the editor's canvas to the seam and pan across it: the canvas shows the dim continuous across it too.
 
