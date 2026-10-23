@@ -14,6 +14,14 @@ nonisolated enum CaptureDeletion {
     /// records keep theirs). Its buttons are Remove and Cancel.
     static let fileFailureText = "Remove it from history anyway? The file stays where it is."
 
+    /// Whether Delete shows the first alert, from General's `Ask before deleting` (spec 2.13). Off,
+    /// the card's, pin's and row's Delete act at once. Nothing else reads the setting: the second
+    /// alert asks what to do about something that could not be deleted, which a routine
+    /// confirmation does not cover, so it shows either way; retention pruning never asks.
+    static func asksFirst(confirmBeforeDeleting: Bool) -> Bool {
+        confirmBeforeDeleting
+    }
+
     /// The keys at `record.objectLocation` that may hold the capture, in order and without
     /// duplicates: the key it was uploaded under, and the key a cancelled upload had reserved (its
     /// PUT may have completed on the server as it was cancelled). `objects(for:)` adds the objects

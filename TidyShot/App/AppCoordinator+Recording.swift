@@ -230,9 +230,10 @@ extension AppCoordinator {
 
     /// The launch check (design, Relaunch after a crash), after `history.load()`. Each playable file
     /// in `tmp/Recording` moves to `pending/<id>.mp4` and gets a record kept until it is deleted
-    /// (`fileIsTemporary`, `.none`), timestamped with the file's creation date, with its poster as
-    /// the thumbnail; `Recovered a recording` posts and no card shows. The id is the name's UUID
-    /// unless a record has it. A file whose move fails stays for the next launch.
+    /// (`fileIsTemporary`, `.none`), timestamped with the file's creation date, sized from the moved
+    /// file's attributes, with its poster as the thumbnail; `Recovered a recording` posts and no
+    /// card shows. The id is the name's UUID unless a record has it. A file whose move fails stays
+    /// for the next launch.
     func recoverRecordings() async {
         let ext = MediaKind.video.fileExtension
         for found in await RecordingRecovery.scan(Recording.directory) {
@@ -240,8 +241,11 @@ extension AppCoordinator {
             // Read before the move, so only the rename comes between the move and the record.
             let poster = await PosterFrame.image(of: source)
             let id = found.id.flatMap { history.record(id: $0) == nil ? $0 : nil } ?? UUID()
-            let moved = await Task.detached(priority: .utility) { try pending.moveIn(source, id: id, ext: ext) }.result
-            guard case .success(let fileURL) = moved else {
+            let moved = await Task.detached(priority: .utility) { () throws -> (url: URL, byteCount: Int?) in
+                let url = try pending.moveIn(source, id: id, ext: ext)
+                return (url, FileSizes.byteCount(of: url))
+            }.result
+            guard case .success(let (fileURL, byteCount)) = moved else {
                 if case .failure(let error) = moved {
                     RecordingLog.note("Recording: \(source.lastPathComponent) could not be recovered, kept for the next launch: \(error.localizedDescription)")
                 }
@@ -251,7 +255,7 @@ extension AppCoordinator {
             let record = CaptureRecord(id: id, timestamp: found.created, fileURL: fileURL, fileIsTemporary: true,
                                        pixelWidth: Int(size.width.rounded()), pixelHeight: Int(size.height.rounded()),
                                        appName: nil, uploadState: .none,
-                                       mediaKind: .video, durationSeconds: found.facts.duration)
+                                       mediaKind: .video, durationSeconds: found.facts.duration, byteCount: byteCount)
             history.add(record)
             if let poster {
                 makeThumbnail(from: poster, for: id)
@@ -321,8 +325,13 @@ extension AppCoordinator {
             }
         }
         let (source, id, pending, target) = (recording.fileURL, recording.id, pendingFiles, folder)
-        let (result, fileURL) = await Task.detached(priority: .userInitiated) {
-            Self.placeRecording(source, id: id, folder: target, noFolderReason: noFolderReason, pending: pending)
+        // The size is the file's after its move, read from its attributes under the save folder's
+        // scope when it went there.
+        let (result, fileURL, byteCount) = await Task.detached(priority: .userInitiated) {
+            let (result, url) = Self.placeRecording(source, id: id, folder: target, noFolderReason: noFolderReason,
+                                                    pending: pending)
+            let scope = if case .saveFolder = result { target?.url } else { URL?.none }
+            return (result, url, FileSizes.byteCount(of: url, scope: scope))
         }.value
         quitMode = mode == .quit || isQuitting
 
@@ -349,7 +358,7 @@ extension AppCoordinator {
                                    fileIsTemporary: plan.fileIsTemporary,
                                    pixelWidth: recording.pixelWidth, pixelHeight: recording.pixelHeight,
                                    appName: nil, uploadState: plan.uploadState,
-                                   mediaKind: .video, durationSeconds: recording.duration)
+                                   mediaKind: .video, durationSeconds: recording.duration, byteCount: byteCount)
         let notification: SaveNotification
         switch plan.notification {
         case .none: notification = .none

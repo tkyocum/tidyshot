@@ -46,6 +46,10 @@ struct GeneralSettingsView: View {
                 }
                 Toggle("Show notification", isOn: $settings.showNotification)
                 Toggle("Play sound", isOn: $settings.playSound)
+                Toggle("Ask before deleting", isOn: $settings.confirmBeforeDeleting)
+                Text("Delete removes the file, the upload and the Recent Captures entry. When this is off, Delete acts at once.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             Section("Optimization") {
                 Toggle("Optimize images and videos with Clop", isOn: $settings.optimiseWithClop)

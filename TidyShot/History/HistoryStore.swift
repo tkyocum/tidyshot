@@ -95,6 +95,18 @@ final class HistoryStore {
         save()
     }
 
+    /// Applies `change` to every record and writes the file once, only when a record changed. The
+    /// launch backfill of sizes uses it, so a long history is not written once per record.
+    func updateAll(_ change: (inout CaptureRecord) -> Void) {
+        var changed = records
+        for index in changed.indices {
+            change(&changed[index])
+        }
+        guard changed != records else { return }
+        records = changed
+        save()
+    }
+
     /// In-memory only; progress arrives often and is not worth a disk write each time. Ignored
     /// unless the record is still uploading, because a late progress callback can arrive after
     /// the upload has already finished. Returns true when the record's state changed.

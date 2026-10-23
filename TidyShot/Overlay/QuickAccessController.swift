@@ -32,7 +32,8 @@ final class QuickAccessController {
         var copy: (UUID) -> Void
         var retry: (UUID) -> Void
         var reveal: (UUID) -> Void
-        /// Deletes the capture everywhere after one confirmation; see `AppCoordinator.deleteCapture`.
+        /// Deletes the capture everywhere after one confirmation (none with `Ask before deleting`
+        /// off); see `AppCoordinator.deleteCapture`.
         var delete: (UUID) -> Void
         /// Opens the annotation editor; see `AppCoordinator.openEditor(recordID:)`. Stays enabled
         /// while the upload runs.

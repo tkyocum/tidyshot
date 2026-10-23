@@ -80,6 +80,13 @@ struct CaptureDeletionTests {
                 == "Removes it from history. The uploaded object stays in the bucket.")
     }
 
+    /// Ask before deleting (spec 2.13) decides only the first alert. The second one, after a storage
+    /// `DELETE` or a save-folder file failed, does not go through this gate.
+    @Test func deleteAsksFirstOnlyWhenTheSettingIsOn() {
+        #expect(CaptureDeletion.asksFirst(confirmBeforeDeleting: true))
+        #expect(!CaptureDeletion.asksFirst(confirmBeforeDeleting: false))
+    }
+
     @Test func alertTexts() {
         #expect(CaptureDeletion.confirmationMessage == "Delete this capture?")
         #expect(CaptureDeletion.storageFailureMessage(reason: "Server returned HTTP 403: AccessDenied: Access Denied")

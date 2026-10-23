@@ -33,6 +33,7 @@ final class AppSettings {
         static let copyImageToClipboard = "copyImageToClipboard"
         static let showNotification = "showNotification"
         static let playSound = "playSound"
+        static let confirmBeforeDeleting = "confirmBeforeDeleting"
         static let fileNameTemplate = "fileNameTemplate"
         static let counter = "captureCounter"
         static let afterCaptureAction = "afterCaptureAction"
@@ -79,6 +80,9 @@ final class AppSettings {
     var copyImageToClipboard: Bool { didSet { defaults.set(copyImageToClipboard, forKey: Keys.copyImageToClipboard) } }
     var showNotification: Bool { didSet { defaults.set(showNotification, forKey: Keys.showNotification) } }
     var playSound: Bool { didSet { defaults.set(playSound, forKey: Keys.playSound) } }
+    /// General's `Ask before deleting` (spec 2.13). Off, Delete acts at once; the second alert,
+    /// after something could not be deleted, still asks.
+    var confirmBeforeDeleting: Bool { didSet { defaults.set(confirmBeforeDeleting, forKey: Keys.confirmBeforeDeleting) } }
     var fileNameTemplate: String { didSet { defaults.set(fileNameTemplate, forKey: Keys.fileNameTemplate) } }
     var afterCaptureAction: AfterCaptureAction { didSet { defaults.set(afterCaptureAction.rawValue, forKey: Keys.afterCaptureAction) } }
     var alsoCopyImageWhenUploading: Bool { didSet { defaults.set(alsoCopyImageWhenUploading, forKey: Keys.alsoCopyImageWhenUploading) } }
@@ -196,6 +200,7 @@ final class AppSettings {
             Keys.copyImageToClipboard: true,
             Keys.showNotification: true,
             Keys.playSound: true,
+            Keys.confirmBeforeDeleting: true,
             Keys.fileNameTemplate: FileNamer.defaultTemplate,
             Keys.afterCaptureAction: AfterCaptureAction.upload.rawValue,
             Keys.alsoCopyImageWhenUploading: false,
@@ -233,6 +238,7 @@ final class AppSettings {
         copyImageToClipboard = defaults.bool(forKey: Keys.copyImageToClipboard)
         showNotification = defaults.bool(forKey: Keys.showNotification)
         playSound = defaults.bool(forKey: Keys.playSound)
+        confirmBeforeDeleting = defaults.bool(forKey: Keys.confirmBeforeDeleting)
         let storedFileNameTemplate = defaults.string(forKey: Keys.fileNameTemplate) ?? FileNamer.defaultTemplate
         fileNameTemplate = TemplateMigration.removingAppToken(from: storedFileNameTemplate, fallback: FileNamer.defaultTemplate)
         afterCaptureAction = AfterCaptureAction(rawValue: defaults.string(forKey: Keys.afterCaptureAction) ?? "") ?? .upload

@@ -175,9 +175,9 @@ extension AppCoordinator {
 
     /// The one local-edit path, for Save and for the local write before an editor Upload. It
     /// re-checks the live record and `deletingIDs` (a Save racing a delete writes nothing), writes
-    /// the PNG to the target `EditorSaveTarget.plan` picks now, records the edit, replaces the
-    /// thumbnail, applies the clipboard rule and pushes the editor's state. Returns false, with
-    /// `Not saved` posted, when nothing was written.
+    /// the PNG to the target `EditorSaveTarget.plan` picks now, records the edit and the new file's
+    /// size, replaces the thumbnail, applies the clipboard rule and pushes the editor's state.
+    /// Returns false, with `Not saved` posted, when nothing was written.
     private func applyLocalEdit(recordID: UUID, png: Data, image: ScaledImage) async -> Bool {
         let folder = saveLocation.currentURL
         let live = history.record(id: recordID)
@@ -212,6 +212,7 @@ extension AppCoordinator {
         let editedAt = Date()
         history.update(id: recordID) {
             $0.recordLocalEdit(pixelWidth: image.image.width, pixelHeight: image.image.height, at: editedAt)
+            $0.byteCount = png.count
         }
         replaceThumbnail(for: recordID, from: image.image, editedAt: editedAt)
         await replaceClipboardIfStillOriginal(recordID: recordID, png: png, image: image)

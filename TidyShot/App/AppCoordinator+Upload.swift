@@ -131,6 +131,9 @@ extension AppCoordinator {
         }
         let optimises = settings.optimiseWithClop && clopIsRunning()
         guard optimises || isFile else {
+            if case .data(let data) = payload {
+                sentByteCounts[recordID] = data.count
+            }
             Task { await lane.queue.enqueue(makeJob(payload)) }
             return
         }
@@ -153,8 +156,9 @@ extension AppCoordinator {
                 if clopWaitsPerLane[laneID] == 0 { clopWaitsPerLane[laneID] = nil }
             }
             let (sent, clopResult) = optimises ? await optimisedForUpload(payload, duration: duration) : (payload, nil)
-            // On the file actually sent: Clop's result when Clop's result was accepted.
-            let fits = await Self.fitsSingleUpload(sent)
+            // On the bytes actually sent: Clop's result when Clop's result was accepted.
+            let sentBytes = await Self.byteCount(of: sent)
+            let fits = Self.fitsSingleUpload(sent, byteCount: sentBytes)
             // Delete cancelled the upload while Clop or the size check ran (`cancelUpload` did the
             // bookkeeping), or a newer retry is waiting now. Nothing will upload this attempt's movie.
             guard optimisingIDs[recordID] == token else {
@@ -179,22 +183,30 @@ extension AppCoordinator {
             }
             // Owned until the upload ends (the top of `handle(_:at:)`).
             if let clopResult { clopResults[recordID] = clopResult }
+            sentByteCounts[recordID] = sentBytes
             await lane.queue.enqueue(makeJob(sent))
         }
     }
 
-    /// Whether `payload` fits a single PUT (5 GiB). Only a recording's file is checked: its size is
-    /// read in a detached task, holding the save folder's scope when it has one. A size that cannot
-    /// be read counts as fitting; the queue then reports the file unreadable.
-    nonisolated private static func fitsSingleUpload(_ payload: UploadPayload) async -> Bool {
-        guard case .file(let url, let scope) = payload else { return true }
-        return await Task.detached(priority: .utility) {
-            let accessing = scope?.startAccessingSecurityScopedResource() ?? false
-            defer { if accessing { scope?.stopAccessingSecurityScopedResource() } }
-            let attributes = try? FileManager.default.attributesOfItem(atPath: url.path(percentEncoded: false))
-            guard let size = attributes?[.size] as? NSNumber else { return true }
-            return RecordingLimits.fitsSingleUpload(byteCount: size.int64Value)
-        }.value
+    /// The size of what `payload` sends: the data's length, or the file's size, read in a detached
+    /// task holding the save folder's scope when it has one. Nil when the size cannot be read.
+    nonisolated private static func byteCount(of payload: UploadPayload) async -> Int? {
+        switch payload {
+        case .data(let data):
+            return data.count
+        case .file(let url, let scope):
+            return await Task.detached(priority: .utility) {
+                FileSizes.byteCount(of: url, scope: scope)
+            }.value
+        }
+    }
+
+    /// Whether `payload`, of `byteCount` bytes, fits a single PUT (5 GiB). Only a recording's file
+    /// is checked. A size that cannot be read counts as fitting; the queue then reports the file
+    /// unreadable.
+    nonisolated private static func fitsSingleUpload(_ payload: UploadPayload, byteCount: Int?) -> Bool {
+        guard case .file = payload, let byteCount else { return true }
+        return RecordingLimits.fitsSingleUpload(byteCount: Int64(byteCount))
     }
 
     /// A recording over the single-PUT limit (design, Size): no job, no key and no counter. The
@@ -394,6 +406,7 @@ extension AppCoordinator {
 
     /// `location` is where the queue that sent `event` uploads to.
     private func handle(_ event: UploadEvent, at location: ObjectLocation) {
+        var sentBytes: Int?
         switch event {
         case .uploaded(let id, _, _), .failed(let id, _), .cancelled(let id, _):
             // The upload has ended, before any early return below: Clop's movie has done its
@@ -401,6 +414,7 @@ extension AppCoordinator {
             if let clopResult = clopResults.removeValue(forKey: id) {
                 removeClopFile(clopResult)
             }
+            sentBytes = sentByteCounts.removeValue(forKey: id)
             if optimizingVideoIDs.remove(id) != nil {
                 refreshOverlay(for: id)
             }
@@ -448,6 +462,10 @@ extension AppCoordinator {
                     record.pendingObjectKey = nil
                 }
                 record.objectLocation = location
+                // The size shown is now the uploaded object's.
+                if let sentBytes {
+                    record.byteCount = sentBytes
+                }
                 if removedTemporaryFile {
                     record.fileURL = nil
                     record.fileIsTemporary = false
