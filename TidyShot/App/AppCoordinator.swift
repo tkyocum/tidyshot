@@ -27,7 +27,7 @@ final class AppCoordinator {
     /// Drag-out copies, `<container tmp>/Drag/<id>/` (spec 2.9).
     let dragFiles: DragFileStore
     let credentialStore: any CredentialStore = KeychainCredentialStore()
-    private let notifier = Notifier()
+    let notifier = Notifier()
     private let permissionWindow = PermissionWindowController()
     private let overlay = QuickAccessController(settings: AppSettings.shared)
     @ObservationIgnored private lazy var selector = SelectionController(engine: engine, settings: settings, cardWindowNumbers: { [weak self] in self?.overlay.windowNumbers ?? [] })
@@ -102,13 +102,13 @@ final class AppCoordinator {
     /// is gone. The card's NSImage wraps the same CGImage, so this costs no memory. Cleared when
     /// its card closes, by the next capture and by `removeRecord`. Older cards in the stack load
     /// from the file or the bucket.
-    @ObservationIgnored private var latestCapture: (id: UUID, image: ScaledImage)?
+    @ObservationIgnored var latestCapture: (id: UUID, image: ScaledImage)?
     /// The area the newest capture was taken from (CoreGraphics global points), so its pin opens
     /// over the spot. Kept with `latestCapture`: cleared by `save(_:intent:)`, by `forgetLatestCapture`.
-    @ObservationIgnored private var latestCaptureArea: (id: UUID, rect: CGRect)?
+    @ObservationIgnored var latestCaptureArea: (id: UUID, rect: CGRect)?
     /// Pin to screen's windows. Records whose image is loading for a pin are in `pinningIDs`.
-    @ObservationIgnored private lazy var pins = PinController()
-    @ObservationIgnored private var pinningIDs: Set<UUID> = []
+    @ObservationIgnored lazy var pins = PinController()
+    @ObservationIgnored var pinningIDs: Set<UUID> = []
 
     // MARK: Overlay state (AppCoordinator+Overlay.swift)
     /// Recently closed cards for Restore Closed Overlay. In memory only.
@@ -163,7 +163,7 @@ final class AppCoordinator {
     // MARK: Delete state (AppCoordinator+Delete.swift)
     /// Records whose delete is in progress (alert showing or requests running): a second click
     /// shows no second alert, and a retry does not re-enqueue them.
-    @ObservationIgnored private var deletingIDs: Set<UUID> = []
+    @ObservationIgnored var deletingIDs: Set<UUID> = []
 
     // MARK: Drag-out state (AppCoordinator+DragOut.swift)
     // +RecordActions' Copy File writes dragCleanups and copyFileCounts; +Delete's prune clears copyFileCounts.
@@ -202,8 +202,6 @@ final class AppCoordinator {
 
     var permissionGranted: Bool { ScreenCapturePermission.isGranted }
     var isUploading: Bool { !uploadingIDs.isEmpty }
-    /// The record whose image is retained, for the Annotate flag on Recent Captures rows.
-    var retainedCaptureID: UUID? { latestCapture?.id }
     /// Where Record Screen and Record Fullscreen stand: the count-in (the whole hand-off), the
     /// recording (from `recorder.run`'s call to its return, the stop wait included), the save up to
     /// `history.add`, or nothing.
@@ -2809,90 +2807,16 @@ final class AppCoordinator {
         }
     }
 
-    var hasPins: Bool { pins.hasPins }
-    var hasLockedPins: Bool { pins.hasLockedPins }
-    func unlockPins() { pins.unlockAll() }
-    func closePins() { pins.closeAll() }
-
-    /// Pin to screen (spec 2.9): a floating copy of the capture. The newest capture's pixels are
-    /// retained; any other is loaded with `loadImage(for:)`. An image over 8,192 px on a side is
-    /// shown from `ThumbnailMaker.scaled` at the screen's pixel size; the pin keeps the capture's
-    /// point size for Actual Size. A pin of the newest area capture opens over the spot it came
-    /// from, any other centred on the pointer's screen. A second Pin on a pinned capture brings
-    /// its pin forward. A capture deleted during the load is not pinned.
-    func pin(recordID: UUID) async {
-        guard let record = history.record(id: recordID), !record.isVideo, !deletingIDs.contains(recordID) else { return }
-        guard !pins.bringToFront(recordID: recordID), pinningIDs.insert(recordID).inserted else { return }
-        defer { pinningIDs.remove(recordID) }
-        let image: ScaledImage
-        if let retained = latestCapture, retained.id == recordID {
-            image = retained.image
-        } else {
-            guard let loaded = await loadImage(for: record, downloadTitle: "Pinning the capture…",
-                                               failureTitle: "Could not pin the capture") else { return }
-            image = loaded
-        }
-        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
-        var preferred: CGRect?
-        if let area = latestCaptureArea, area.id == recordID {
-            preferred = Geometry.appKitRect(fromCG: area.rect, primaryHeight: primaryHeight)
-        }
-        guard let screen = pinScreen(preferred: preferred) else { return }
-        var shown = image.image
-        let screenSide = Int((max(screen.frame.width, screen.frame.height) * screen.backingScaleFactor).rounded())
-        if let side = PinGeometry.downsampleMaxSide(pixelWidth: shown.width, pixelHeight: shown.height, screenPixelSide: screenSide) {
-            let source = image
-            guard let scaled = await Task.detached(priority: .userInitiated, operation: {
-                ThumbnailMaker.scaled(source.image, maxSide: side)
-            }).value else {
-                notifier.notifyError("The capture is too large to pin.", title: "Could not pin the capture")
-                return
-            }
-            shown = scaled
-        }
-        // Deleted, or its delete started, while the image loaded.
-        guard history.record(id: recordID) != nil, !deletingIDs.contains(recordID) else { return }
-        let imagePoints = CGSize(width: CGFloat(image.image.width) / image.scale,
-                                 height: CGFloat(image.image.height) / image.scale)
-        let frame = PinGeometry.initialFrame(imagePoints: imagePoints, preferred: preferred, visibleFrame: screen.visibleFrame)
-        pins.open(recordID: recordID, image: shown, imagePoints: imagePoints, frame: frame, actions: pinActions())
-    }
-
-    /// The screen holding `preferred`'s centre, otherwise the pointer's, otherwise the first.
-    private func pinScreen(preferred: CGRect?) -> NSScreen? {
-        let screens = NSScreen.screens
-        if let preferred, let screen = screens.first(where: { $0.frame.contains(CGPoint(x: preferred.midX, y: preferred.midY)) }) {
-            return screen
-        }
-        return screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? screens.first
-    }
-
-    /// The pin context menu's actions: all three work on the record, after the menu has closed.
-    private func pinActions() -> PinController.Actions {
-        PinController.Actions(
-            copyImage: { [weak self] id in self?.afterMenuTracking { Task { await self?.copyImage(recordID: id) } } },
-            saveAs: { [weak self] id in self?.saveAs(recordID: id) },
-            annotate: { [weak self] id in self?.openEditorAfterMenuTracking(recordID: id) })
-    }
-
-    /// Drops the retained image if it is `id`'s.
-    private func forgetLatestCapture(_ id: UUID) {
-        if latestCapture?.id == id {
-            latestCapture = nil
-            latestCaptureArea = nil
-        }
-    }
-
     /// Runs `work` when the run loop is back in its default mode, after any menu tracking (the
     /// card's context menu, the status menu), as `RecentCapturesMenu.afterMenusClose` does for rows.
-    private func afterMenuTracking(_ work: @escaping @MainActor () -> Void) {
+    func afterMenuTracking(_ work: @escaping @MainActor () -> Void) {
         RunLoop.main.perform(inModes: [.default]) {
             MainActor.assumeIsolated { work() }
         }
     }
 
     /// The card's Annotate.
-    private func openEditorAfterMenuTracking(recordID: UUID) {
+    func openEditorAfterMenuTracking(recordID: UUID) {
         afterMenuTracking { [weak self] in self?.openEditor(recordID: recordID) }
     }
 
