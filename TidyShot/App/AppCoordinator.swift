@@ -150,6 +150,10 @@ final class AppCoordinator {
     /// Recordings between the recorder's `.keep` and `history.add` (in quit mode, until the
     /// thumbnail is written), so the phase never reads `.idle` in between.
     @ObservationIgnored private(set) var recordingSavesInFlight = 0
+    /// Set by `finishRecordingForQuit` once the editors let the quit go ahead; never cleared, as the
+    /// app then quits. A recording's hand-off gives up before `recorder.run`, and `saveRecording`
+    /// switches to quit mode.
+    @ObservationIgnored private(set) var isQuitting = false
     /// The last capture written to the save folder (upload-only captures do not count).
     private(set) var lastCaptureURL: URL?
     /// Records with an upload in flight; drives the menu bar icon.
@@ -195,6 +199,9 @@ final class AppCoordinator {
         try? FileManager.default.removeItem(at: ClopApp.workDirectory)
         notifier.setUp()
         history.load()
+        // A recording a crash, a kill or a failed rename left in tmp/Recording is checked, not swept.
+        // The scan lists the folder first, long before a recording started now could write there.
+        Task { await recoverRecordings() }
         registerShortcuts()
         // Hide Desktop Icons stays on across launches.
         if settings.desktopIconsHidden {
@@ -546,11 +553,11 @@ final class AppCoordinator {
 
     /// Both record functions start here, before the capture lock, as Capture Scrolling's shortcut
     /// reaches `advance()`: a count-in is cancelled and a recording stopped, whichever of the two
-    /// started it. True when a new recording may start.
+    /// started it. True when a new recording may start, never once the app is quitting.
     private func recordShortcutStarts() -> Bool {
         switch Self.recordingShortcutAction(for: recordingPhase) {
         case .start:
-            return true
+            return !isQuitting
         case .cancelCountIn:
             selfTimer.cancel()
         case .stop:
@@ -584,12 +591,13 @@ final class AppCoordinator {
     /// The hand-off and the recording, with the capture lock held. `recordingCountIn` is true
     /// until `recorder.run` is called or the start gives up. A kept file counts in
     /// `recordingSavesInFlight` before `recorder.close()`, so the phase goes from `.recording` to
-    /// `.saving` with nothing between. Nil when nothing started.
+    /// `.saving` with nothing between. Nil when nothing started, also when a quit came during the
+    /// hand-off: `isQuitting` is read just before `recorder.run`, with no suspension between.
     private func record(_ target: CaptureTarget) async -> RecordingOutcome? {
         recordingCountIn = true
         let start = await recordingHandOff(target)
         recordingCountIn = false
-        guard let start else { return nil }
+        guard let start, !isQuitting else { return nil }
         let outcome = await recorder.run(start.request, chrome: start.chrome) { [weak self] in
             self?.isRecording = true
         }
@@ -605,7 +613,8 @@ final class AppCoordinator {
     /// frontmost and its keys work (neither for fullscreen); 3. the count-in, when it is on;
     /// 4. the settle delay; 5. the display or window is found by id in fresh shareable content, as
     /// `captureAfterCountdown` does, and a window is sized from its fresh frame. A cancelled
-    /// count-in, or a display or window that went (`Screen recording`), gives nil: nothing started.
+    /// count-in, a quit, or a display or window that went (`Screen recording`), gives nil: nothing
+    /// started.
     private func recordingHandOff(_ target: CaptureTarget) async -> (request: RecordingRequest, chrome: any RecordingChrome)? {
         let isFullscreen: Bool
         if case .display = target { isFullscreen = true } else { isFullscreen = false }
@@ -613,6 +622,9 @@ final class AppCoordinator {
             selector.dismiss()
             NSApplication.shared.deactivate()
         }
+        // A quit's `selfTimer.cancel()` cannot reach a count-in that has not begun, as when it came
+        // during Record Fullscreen's display read.
+        guard !isQuitting else { return nil }
         let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
         if settings.recordingCountdown {
             guard let screenFrame = CaptureEngine.screen(forDisplayID: target.displayID)?.frame ?? NSScreen.main?.frame
@@ -682,6 +694,40 @@ final class AppCoordinator {
             return screen.visibleFrame
         }
         return Geometry.appKitRect(fromCG: cgFrame, primaryHeight: NSScreen.screens.first?.frame.height ?? 0)
+    }
+
+    /// The launch check (design, Relaunch after a crash), after `history.load()`. Each playable file
+    /// in `tmp/Recording` moves to `pending/<id>.mp4` and gets a record kept until it is deleted
+    /// (`fileIsTemporary`, `.none`), timestamped with the file's creation date, with its poster as
+    /// the thumbnail; `Recovered a recording` posts and no card shows. The id is the name's UUID
+    /// unless a record has it. A file whose move fails stays for the next launch.
+    private func recoverRecordings() async {
+        let ext = MediaKind.video.fileExtension
+        for found in await RecordingRecovery.scan(Recording.directory) {
+            let (source, pending) = (found.url, pendingFiles)
+            // Read before the move, so only the rename comes between the move and the record.
+            let poster = await PosterFrame.image(of: source)
+            let id = found.id.flatMap { history.record(id: $0) == nil ? $0 : nil } ?? UUID()
+            let moved = await Task.detached(priority: .utility) { try pending.moveIn(source, id: id, ext: ext) }.result
+            guard case .success(let fileURL) = moved else {
+                if case .failure(let error) = moved {
+                    RecordingLog.note("Recording: \(source.lastPathComponent) could not be recovered, kept for the next launch: \(error.localizedDescription)")
+                }
+                continue
+            }
+            let size = found.facts.naturalSize ?? .zero
+            let record = CaptureRecord(id: id, timestamp: found.created, fileURL: fileURL, fileIsTemporary: true,
+                                       pixelWidth: Int(size.width.rounded()), pixelHeight: Int(size.height.rounded()),
+                                       appName: nil, uploadState: .none,
+                                       mediaKind: .video, durationSeconds: found.facts.duration)
+            history.add(record)
+            if let poster {
+                makeThumbnail(from: poster, for: id)
+            }
+            RecordingLog.note("Recording: \(source.lastPathComponent) recovered as \(fileURL.lastPathComponent)")
+            notifier.notifyError("\(fileURL.lastPathComponent), \(RecordingClock.format(found.facts.duration)). Find it in Recent Captures.",
+                                 title: "Recovered a recording")
+        }
     }
 
     /// After the capture lock: a kept file is handed to `saveRecording`, with `Recording stopped`
@@ -1135,10 +1181,11 @@ final class AppCoordinator {
     /// `tmp/Recording`, with no record, for the launch check. `RecordingSavePlan` then decides the
     /// upload, the clipboard and the notification, and the tail `persist` shares does the rest,
     /// with the poster as the thumbnail and the card's image. `stopNotice` (`Recording stopped`)
-    /// posts last, revealing the file, in place of `Recording saved`. Quit mode never asks for a
-    /// folder and has no Clop, upload, card or notification; it returns once the thumbnail is
-    /// written. `intent.then` and `intent.copyOnly` are ignored. Returns the record, or nil when
-    /// the file stayed in `tmp/Recording`.
+    /// posts last, revealing the file, in place of `Recording saved`. Quit mode (`mode`, or
+    /// `isQuitting` once set) never asks for a folder and has no Clop, upload, card or
+    /// notification; it returns once the thumbnail is written. `intent.then` and
+    /// `intent.copyOnly` are ignored. Returns the record, or nil when the file stayed in
+    /// `tmp/Recording`.
     @discardableResult
     func saveRecording(_ recording: Recording, intent: CaptureIntent = .standard, stopNotice: RecordingNotice? = nil,
                        mode: RecordingSaveMode = .normal) async -> CaptureRecord? {
@@ -1147,7 +1194,9 @@ final class AppCoordinator {
         // suspends, outside quit mode), in quit mode once the thumbnail is written, or with the file
         // left in `tmp/Recording` before any record.
         defer { recordingSavesInFlight -= 1 }
-        let quitMode = mode == .quit
+        // Read again after each await: a save already under way when the app starts quitting
+        // finishes in quit mode.
+        var quitMode = mode == .quit || isQuitting
         // The next capture: the newest card's image is no longer kept.
         latestCapture = nil
         latestCaptureArea = nil
@@ -1158,7 +1207,10 @@ final class AppCoordinator {
         var folder: (url: URL, baseName: String)?
         var noFolderReason: String?
         if RecordingSavePlan.target(for: action) == .saveFolder {
-            if let chosen = quitMode ? saveLocation.currentURL : await saveLocation.ensureFolder() {
+            // A quit closes an open folder panel (`cancelFolderChoice`), which then gives nil.
+            let chosen = quitMode ? saveLocation.currentURL : await saveLocation.ensureFolder()
+            quitMode = mode == .quit || isQuitting
+            if let chosen {
                 folder = (chosen, recordingBaseName(startedAt: recording.startedAt))
             } else {
                 noFolderReason = RecordingSavePlan.noFolderReason
@@ -1168,6 +1220,7 @@ final class AppCoordinator {
         let (result, fileURL) = await Task.detached(priority: .userInitiated) {
             Self.placeRecording(source, id: id, folder: target, noFolderReason: noFolderReason, pending: pending)
         }.value
+        quitMode = mode == .quit || isQuitting
 
         let plan = RecordingSavePlan.make(action: action, hasDestination: destination != nil, result: result,
                                           copyImage: settings.copyImageToClipboard,
@@ -2432,6 +2485,17 @@ final class AppCoordinator {
         editors.values.contains { $0.model.hasUnsavedChanges }
     }
 
+    /// True when a quit, a log out or a restart must wait (`.terminateLater`): an editor has unsaved
+    /// changes, or a count-in, a recording or a recording's save is under way.
+    nonisolated static func holdsQuit(hasUnsavedEditors: Bool, recording: RecordingPhase) -> Bool {
+        hasUnsavedEditors || recording != .idle
+    }
+
+    /// `holdsQuit` for the app's editors and recording, read by `applicationShouldTerminate`.
+    var quitNeedsHold: Bool {
+        Self.holdsQuit(hasUnsavedEditors: hasUnsavedEditors, recording: recordingPhase)
+    }
+
     /// Opens the annotation editor for a capture, or brings its open editor forward. The capture
     /// just taken opens at once from the image kept in memory. Any other capture is read from its
     /// file or downloaded through `imageData(of:)`, and the PNG is decoded in a detached task, which
@@ -3023,6 +3087,24 @@ final class AppCoordinator {
         }
         return true
     }
+
+    /// A quit, a log out or a restart, after `reviewEditorsBeforeQuit` let it go ahead (design,
+    /// Quit, log out and restart): a count-in is cancelled and records nothing, a recording stops
+    /// as Stop does, with the stop wait and the end rule, and its save runs in quit mode, with an
+    /// open folder panel closed so the file goes to `pending/`. Returns once nothing is left
+    /// (`recordingPhase` is `.idle`), the thumbnail of a save written.
+    func finishRecordingForQuit() async {
+        isQuitting = true
+        selfTimer.cancel()
+        recorder.stop()
+        saveLocation.cancelFolderChoice()
+        while recordingPhase != .idle {
+            try? await Task.sleep(for: Self.quitPollInterval)
+        }
+    }
+
+    /// How often `finishRecordingForQuit` checks the recording phase.
+    private static let quitPollInterval = Duration.milliseconds(50)
 
     // MARK: Helpers
 

@@ -7,6 +7,8 @@ final class SaveLocation {
     private static let bookmarkKey = "saveFolderBookmark"
 
     @ObservationIgnored private let defaults: UserDefaults
+    /// `chooseFolder`'s open panels, for `cancelFolderChoice`.
+    @ObservationIgnored private var folderPanels: [NSOpenPanel] = []
     private(set) var currentURL: URL?
 
     init(defaults: UserDefaults = .standard) {
@@ -20,7 +22,7 @@ final class SaveLocation {
         currentURL = url
     }
 
-    /// Asks the user to pick a folder. Returns nil if cancelled.
+    /// Asks the user to pick a folder. Returns nil if cancelled, also by `cancelFolderChoice`.
     func chooseFolder() async -> URL? {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
@@ -32,7 +34,9 @@ final class SaveLocation {
         // Reached from a global hotkey while another app is active; a plain activate() can be
         // refused and the panel would open behind that app. Marked for future deprecation; no warning today.
         NSApplication.shared.activate(ignoringOtherApps: true)
+        folderPanels.append(panel)
         let response = await panel.begin()
+        folderPanels.removeAll { $0 === panel }
         guard response == .OK, let url = panel.url else { return nil }
         do {
             try store(url)
@@ -41,6 +45,14 @@ final class SaveLocation {
             return nil
         }
         return url
+    }
+
+    /// Closes every open `chooseFolder` panel as its Cancel button would, so each returns nil.
+    /// A quit calls it, so a recording's save goes to `pending/` instead of waiting for an answer.
+    func cancelFolderChoice() {
+        for panel in folderPanels {
+            panel.cancel(nil)
+        }
     }
 
     /// The stored folder, or a freshly chosen one.

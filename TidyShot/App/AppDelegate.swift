@@ -53,13 +53,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         false
     }
 
-    /// Quitting does not call `windowShouldClose`, so an editor with unsaved changes is reviewed
-    /// here: the quit waits (`.terminateLater`) while `reviewEditorsBeforeQuit()` shows the close
-    /// sheet in each one, and goes ahead only when none was cancelled.
+    /// True from a held quit's `.terminateLater` until its reply.
+    private var isHoldingQuit = false
+
+    /// A quit, a log out and a restart all come here. Quitting does not call `windowShouldClose`,
+    /// and a recording must not be cut off, so while `quitNeedsHold` the quit waits
+    /// (`.terminateLater`). First `reviewEditorsBeforeQuit()` shows the close sheet in each editor
+    /// with unsaved changes; a cancel stops the quit, and a recording runs on. Then
+    /// `finishRecordingForQuit()` cancels a count-in, stops a recording and waits for its save.
+    /// The reply is sent once; a second quit while one is held is cancelled, and the held one answers.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard !Self.isRunningTests, AppCoordinator.shared.hasUnsavedEditors else { return .terminateNow }
+        guard !Self.isRunningTests else { return .terminateNow }
+        guard !isHoldingQuit else { return .terminateCancel }
+        let coordinator = AppCoordinator.shared
+        guard coordinator.quitNeedsHold else { return .terminateNow }
+        isHoldingQuit = true
         Task {
-            let proceed = await AppCoordinator.shared.reviewEditorsBeforeQuit()
+            let proceed = await coordinator.reviewEditorsBeforeQuit()
+            if proceed {
+                await coordinator.finishRecordingForQuit()
+            }
+            isHoldingQuit = false
             sender.reply(toApplicationShouldTerminate: proceed)
         }
         return .terminateLater
