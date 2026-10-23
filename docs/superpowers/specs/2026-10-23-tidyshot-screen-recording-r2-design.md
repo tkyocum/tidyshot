@@ -1,0 +1,504 @@
+# TidyShot screen recording R2: design (2026-10-23)
+
+R2 adds GIF output, the microphone, and Trim to the screen recording built in R1. R1's design is `docs/superpowers/specs/2026-10-21-tidyshot-screen-recording-design.md`, and everything there still holds unless this document changes it. R2 is built on the coordinator split (`docs/superpowers/specs/2026-10-23-coordinator-split-design.md`). Its coordinator code goes where that design's section 6 places it: GIF, the microphone, the mute ladder and recovery in `AppCoordinator+Recording.swift`; upload changes in `+Upload.swift`; the file-action gates in `+RecordActions.swift` and `+DragOut.swift`; card wiring in `+Overlay.swift`; and Trim in a new `AppCoordinator+Trim.swift`, which also changes `+Delete.swift` (its refusal, and closing the Trim window) and reaches `+Editor.swift`'s `replaceThumbnail` and `+RecordActions.swift`'s `downloadSource`, each widened by one word. Section 6's summary of R2's GIF ("ImageIO, then Clop") predates the decisions below, which replace it; the plan's last task updates it.
+
+**Tim's decisions (2026-10-23).**
+- **Format.** A single `Format` setting (MP4 or GIF), with MP4 as the default. GIF is kept as a compatibility option, knowing it makes larger files.
+- **GIF output.** GIF defaults to 15 fps with the long side capped at 1280 px; both have options. It must not look blurry. TidyShot writes it with its own encoder, and it uploads as made, without Clop (Decided 2026-10-23, 1 and 2; this replaces "Clop then shrinks it"). It carries no sound, and it gets a 30 s soft warning.
+- **Microphone.** Off by default, with a choice of input. Muting records silence. The mic mixes with system audio.
+- **Trim.** An optional action on the card and in Recent Captures, never a step after every Stop. The cut content is gone from the file, apart from at most two AAC packets of audio before a passthrough's start, which the edit list hides (Decided 2026-10-23, 3).
+- **Left out.** No pause, and no separate upload lane for videos.
+
+Tim's answers to the review's open questions are under Decided 2026-10-23 at the end.
+
+## Probes (2026-10-23, Tim's Mac; sources in `docs/superpowers/research/recording-probes/`)
+
+The review's probes and the GIF encoder spike go in the same folder, copied in with this design and its plan (the plan's Before Task 1 lists each source and name): `togif.swift` and `r2-review/gifmem*.swift` (ImageIO's GIF and its memory), `r2-review/genbench.swift` and `r2-review/order.swift` (frame reading), `r2-review/gifasset.swift` (a GIF in `AVURLAsset`), `r2-review/rewrite.swift` and `r2-review/elst.py` (the review's first rewrite and an edit-list reader), `mute-empty-edit.swift` (rejected) and `mute-rewrite.swift`, `trim.swift`, `mic.swift` and `mic2.swift`, `mute-offset.swift` (video and system audio) and `mute-offset-mic.swift` (the microphone) with `mute-offset-onsets.py` and `audio-devices.swift`, and `gif-encoder-spike/` (`gifspike.swift`, `ablate.sh`, `measure.sh`, `xdecode.py` and its `RESULTS.md`). The recordings they read and the spike's outputs are not committed.
+
+- **GIF size with ImageIO** (kept as the reason ImageIO is not used). For a 10 s scrolling-text recording made on Tim's Mac at 2560×1664 (`window.mp4`, the "original recording" below):
+  - MP4: 19.7 MB as recorded, about 4.1 MB after Clop.
+  - GIF at 15 fps and 1280×832 (ImageIO, high-quality downscale, ImageIO's default global palette): 23.0 MB, and 21.0 MB after Clop. The spike's harness re-ran it at 23.64 MB in 3.6 s; the earlier 9.5 s came from a different harness.
+  - For a 3 s mostly static area at 1200×800 (`p-area.mp4`): MP4 0.36 MB; GIF 0.62 MB, and 0.64 MB after Clop.
+  - ffmpeg's palettegen and paletteuse with rectangle diffing were larger still: 30.9 MB and 1.06 MB.
+  - ImageIO with a colour table per frame (`kCGImagePropertyGIFHasGlobalColorMap` false) keeps memory flat but loses inter-frame deltas: 30.11 MB and 4.63 MB in the spike's re-run.
+- **GIF memory with ImageIO.** With the default, ImageIO's GIF destination keeps every frame and builds one palette for the whole file inside `CGImageDestinationFinalize`. Peak footprint at 1280×832 was 887 MB for 75 frames, 1.77 GB for 150 and 3.53 GB for 300, about 11 bytes per pixel per frame; `Finalize` took 0.8, 1.7 and 3.4 s. A 30 s GIF at the defaults would need about 5 GB, and `Full size` about 100 MB per frame. With `HasGlobalColorMap` false, 300 frames peaked at 21 MB.
+- **GIF encoder spike** (option B, 2026-10-23; written from the GIF89a format and textbook algorithms, with no gifsicle, gifski or ffmpeg source read). 15 fps, long side 1280 px, Apple Silicon, macOS 27.0.1. Peak memory is `/usr/bin/time -l`'s peak footprint for the encode alone. MAE is the mean absolute error per channel (0–255) of the decoded middle frame against the scaled source frame.
+
+  | Input | Output | MP4 | ImageIO global / per-frame | **Own encoder** | Time: own / ImageIO global | Peak memory: own / ImageIO global | MAE: own / ImageIO global |
+  |---|---|---|---|---|---|---|---|
+  | `window.mp4`, scrolling text, 2560×1664, 10.33 s | 1280×832, 155 frames | 19.7 MB | 23.64 / 30.11 MB | **14.82 MB** | 3.84 / 3.63 s | **43.8 MB** / 1,844 MB | 0.56 / 2.47 |
+  | `p-area.mp4`, mostly static, 1200×800, 3.05 s | 1200×800, 46 frames | 0.36 MB | 0.627 / 4.63 MB | **0.314 MB** | 0.76 / 0.62 s | **34.0 MB** / 501 MB | 0.50 / 0.99 |
+  | `p-4096.mp4`, desktop with photos and a playing video, 4096×2304, 4.23 s | 1280×720, 64 frames | 12 MB | 2.35 / 14.57 MB | **1.39 MB** | 4.24 / 2.10 s | **44.6 MB** / 670 MB | 1.53 / 1.82 |
+
+  - The own encoder is 37 %, 50 % and 41 % smaller than ImageIO's global palette, and 51 %, 93 % and 90 % smaller than per-frame tables. The static GIF is smaller than its MP4.
+  - Memory is flat in duration and scales with pixels: 34–45 MB at 1280 px, 111 MB at 2560×1664 and 220 MB at 4096×2304. Max RSS (390, 210 and 620 MB) is the same for every encoder: VideoToolbox's decode surfaces are mapped, not footprint.
+  - Other sizes: `window` at 800 px 7.41 MB in 2.83 s (36.5 MB peak); at full size 28.5 MB in 6.7 s (111 MB); `p-4096` at full size 11.45 MB in 15.7 s (220 MB).
+  - **Decoding.** CGImageSource reads every output as `com.compuserve.gif` with the right frame count, pixel size, loop count 0 and delays (6 cs ×52 and 7 cs ×103 for `window`, 1033 cs, exactly `round(155 × 100 / 15)`). The decoded middle frame matches the encoder's own composed frame with 0 mismatched pixels in ImageIO, ffmpeg and ImageMagick, covering transparent and opaque frames, LZW clear codes and patched delays. Chrome, Firefox, Slack and GitHub were not tried.
+  - **Merging.** `mic.mp4`: 34 output frames gave 4 GIF frames (20, 7, 6, 194 cs); `muted.mp4`: 64 gave 2 (420 + 7 cs). The three main inputs change in every frame.
+  - **Sharpness.** At 3–4× zoom, text is indistinguishable from the scaled source, with no blur or fringing, and flat colours are exact. ImageIO dithers, which speckles flat backgrounds, and is why its error is 4× and its files larger.
+  - **What mattered** (ablation, one change at a time; sizes for `window` / `p-area` / `p-4096`):
+    - no palette entries spent on codec noise (a box whose RMS spread is under 2 levels is never split): without it 20.34 / 0.349 / 1.391 MB. H.264 leaves ±1–3 levels of noise on flat backgrounds; once the palette resolves it, the background speckles in index space and LZW runs break;
+    - temporal hysteresis of 4 levels on the diff: without it 15.19 / 0.466 / 1.987 MB, because noise flips pixels between neighbouring entries and the changed rectangle covers 80–95 % of the frame;
+    - transparent or opaque chosen per frame by size: always transparent 17.98 MB on `window` (+21 %), always opaque 2.246 MB on `p-area` (7×);
+    - clearing the LZW table as soon as it fills: keeping a full table is 35 % larger;
+    - no dithering: a selective ordered dither (Bayer 8×8, ±8 levels, only on pixels more than 6 levels from their nearest entry) cost +10 % on `p-4096` and +0.4 % on `window`, and softened posterised faces;
+    - 255 colours: 127 colours saved 8 % on `window`, and at 31 colours text looked the same but flat hues shifted;
+    - 8, 32 or 96 palette samples and k-means made little difference.
+  - **Risks.** One global palette posterises photos and video (blotchy faces in `p-4096`, still a lower error than ImageIO's), bands smooth gradients (not measured), and maps a colour shown only between samples to its nearest entry, which can shift its hue. The spread floor and hysteresis were tuned on three recordings only. Mapping misses its colour cache on photos: `p-4096` spends 1.3 s of 4.2 s mapping at 1280 px, and 7 s of 15.7 s at full size.
+- **GIF frame reading.** 10 s of 2560×1664, 30 fps H.264, read as 150 frames at 15 fps with zero tolerance:
+  - a loop of `AVAssetImageGenerator.image(at:)` took 5.41 s with a 2 s keyframe interval and 19.47 s with 10 s, because each request decodes again from the previous keyframe;
+  - `images(for:)` took 1.10 s and 2.23 s, but fails with `Cannot Decode` (-11821) when two requests land on the same non-key frame, as a static stretch does;
+  - `SCRecordingOutput`'s keyframes are about 2 s apart for moving content (`trim-pass.mp4`: 0 and 1.97 s), and it writes a frame only when the screen changes;
+  - one sequential `AVAssetReader` pass converted 60 s of moving content at 1280 px in about 25 s.
+- **GIF timing.** GIF delays are whole centiseconds. `1 / 15` s is stored as 7 cs, so a 15 fps GIF with one delay for every frame plays about 5 % slow (10 s plays in 10.5 s). 10 and 20 fps are exact.
+- **Trim.** `AVAssetExportSession` with `AVAssetExportPresetPassthrough` and a `timeRange` is instant: 0.02–0.03 s for 5.44 s and 2.27 s ranges. The duration matches the request to the millisecond, and the audio track is kept. A re-encode (`HighestQuality`) took 1.26 s for 2.27 s of 4096×2304.
+  - Passthrough cuts on keyframes. `trim-pass.mp4` holds 85 video samples with keyframes at 0 and 1.97 s, and its video edit starts at media time 1.21 s. ffmpeg decodes 66 frames by default and 85 with `-ignore_editlist`.
+- **Microphone.**
+  - **Access.** `AVCaptureDevice.requestAccess(for: .audio)` works. The probes ran unsandboxed, under the terminal's own grant, so the sandboxed app's first prompt and its capture are still to probe.
+  - **Inputs.** `AVCaptureDevice.DiscoverySession([.microphone, .external], .audio)` lists Tim's six inputs: TKY Microphone, Brio 500, MacBook Pro Microphone, LG UltraFine Display Audio, CalDigit TS4 Audio - Rear and RODE AI-1.
+  - **One track.** `SCStreamConfiguration.captureMicrophone` with `microphoneCaptureDeviceID` records through `SCRecordingOutput`. The microphone, with or without system audio, lands in one stereo AAC track, so the two are mixed and cannot be separated afterwards.
+  - **No mid-recording changes.** Changing `captureMicrophone` mid-recording with `updateConfiguration` finished the recording output at once, so muting cannot change the stream.
+- **Mute by empty edit (rejected).** An `AVMutableComposition` copies the video track whole and the audio track with `insertEmptyTimeRange` over the muted stretch. Exported with passthrough, it took 0.02 s, the duration was unchanged, and AVFoundation reads the audio as `[0–1.00][empty 1.00–2.50][2.50–4.25]`, with a peak of 220 inside against 15,656 outside.
+  - FFmpeg-based readers misplay a mid-track empty edit (`elst [(600, 2112), (900, empty), (1049, 51456)]`). The muted samples are not in the file; what plays is earlier sound.
+  - ffmpeg 9.0.2, the version Clop 3.6.2 bundles, replays the opening second into the stretch (quarter-second peaks 10893/9048/15656/9034 in both 0–1 s and 1–2 s). `decodeAudioData` does the same, and Chrome 131's `<video>` plays post-mute audio early.
+  - Clop took a 9 s 1080p fixture muted at 2.0–4.5 s from 14 MB to 4.8 MB, with one audio segment, loud sound across the stretch, later speech 1.0 s late, and 10.0 s of audio against 9.0 s of video. R1's Clop checks accept that file.
+- **Mute by rewrite.** `AVAssetReader` and `AVAssetWriter`: video samples copied through, audio decoded to 16-bit LPCM, zeroed inside the intervals and re-encoded to AAC (128 kbps).
+  - 0.09 s for the 4.25 s probe recording, 0.06 s for the 9 s fixture, 0.34 s for 60 s of 4K (416 MB).
+  - Video packets are byte-identical, each track has one priming edit and no empty edit.
+  - The stretch decodes silent in AVFoundation and in ffmpeg (about 300 of 32,768 in the edge buckets from AAC ringing, then 0). After Clop (14 MB to 4.7 MB) it stays silent and later tones are on time.
+- **Mute offset.** `mute-offset.swift` (system audio) and `mute-offset-mic.swift` (the microphone) fire a window flash and a 1 kHz tone at main-actor times after `recordingOutputDidStartRecording`, during an `SCRecordingOutput` recording, and `mute-offset-onsets.py` reads their file times.
+  - Video and system audio sit within 0 to 20 ms of the callback clock, so the main-queue hop to the controller is small.
+  - The microphone sits later by the input's own latency: about 0.02 s through a USB input, and 0.13 s (125 to 135 ms) through `TKY Microphone`, the iPhone input, which reports 6,000 frames of input latency. ScreenCaptureKit does not compensate.
+- **Still to probe**, inside the plan, as gates and hand checks in its Tasks 3, 4, 6 and 7 (the plan's Gates say which steps wait when one fails):
+  - the spike's GIFs (`final/*.gif`, which `measure.sh` remakes) in Chrome and Firefox: they play, loop, and hold their delays;
+  - the spike's encoder on a dark-mode recording, a low-contrast UI, a wide-gamut or HDR source and a wallpaper gradient: size, MAE and a zoomed look, to check the spread floor (2) and hysteresis (4) beyond the three tuning inputs, and how much gradients band. Posterisation or banding Tim finds poor is answered with the selective ordered dither (GIF, Encoding), not by changing the defaults;
+  - the Trim re-encode (Trim, Export) on `SCRecordingOutput` recordings of 60 s at 2560×1664 and at 4096×2304: that `AVSampleCursor` reports their sync samples, the re-encode's time and size against passthrough, that its progress moves, that text stays sharp, that the output holds no video sample before the start (`ffmpeg -ignore_editlist`), and that a passthrough keeps at most two AAC packets (2,048 sample frames) of audio before the start, hidden;
+  - the input-latency probe: `mute-offset-mic.swift` with AirPods (a Bluetooth input) and the Brio 500, comparing each input's measured offset with the latency CoreAudio reports for it, and confirming those properties can be read from the sandbox (Microphone, Lag);
+  - a sandboxed `RecordingSpike` run with `captureMicrophone` and the new entitlement, noting the first permission prompt;
+  - microphone access turned off in System Settings, and the chosen USB input unplugged, each during a recording: whether the stream stops, the output fails or the file goes on with silence, and whether the file plays.
+
+## GIF
+
+- **Setting.** Capture → Recording → `Format`: `MP4` (default) or `GIF`, stored as `recordingFormat` (`mp4`, `gif`). It is the only switch; there is no separate menu item or shortcut.
+  - With GIF, two rows appear: `GIF frame rate` (`10 fps`, `15 fps` default, `20 fps`; key `gifFrameRate`) and `GIF size` (`800 px`, `1280 px` default, `Full size`; key `gifMaxSide`, 0 for full). `Full size` keeps R1's 4096 px cap and has the caption `Full size GIFs can be very large.`
+  - With GIF, R1's `Frame rate` row is hidden, and the audio rows (`Record system audio`, `Microphone`) are disabled, with the caption `GIFs have no sound. Sound settings apply to MP4 recordings.` directly under `Microphone`.
+  - Which rows show and which are enabled comes from the pure `RecordingSettingsLayout(format:)` (`showsFrameRate`, `showsGIFRows`, `audioRowsEnabled`, `showsGIFCaption`), so the view only reads it.
+- **Recording.** A GIF recording records an MP4 as R1 does, at 30 fps and with no audio captured: `capturesAudio` and `captureMicrophone` are false whatever the settings say. Output size follows R1's `Resolution`. `SCRecordingOutput` only writes a frame when the screen changes, so a static stretch has few or no frames, and conversion holds the last one.
+  - The soft limit turns orange at 30 s for GIF, against 5:00 for MP4: `RecordingClock.isPastSoftLimit(_:format:)`, with the format given to the panel model.
+  - The control bar shows a `GIF` tag before the time, so a GIF recording is never mistaken for one with sound. It has no mute button; the tag takes that button's width, so the GIF bar is 208 × 44 like the mute bar (Mute, Bar).
+- **Conversion** is a step of the save. It runs after Stop, once R1's end rule has kept the file, between the recorder's `.keep` and `saveRecording`, inside `recordingSavesInFlight` (phase `.saving`, so a new recording may start, as in R1).
+  - `GIFMaker.make(from:to:fps:maxSide:freeBytes:progress:) async throws -> GIFResult` is `@concurrent`, so it runs off the main actor. It reads the MP4 and drives `GIFEncoder` (Encoding); it holds no GIF logic of its own. `GIFResult` holds the pixel size, the output frame count, the GIF frame count, the duration (`GIFTiming.centiseconds(through: frameCount, fps:) / 100` s) and the bytes. `freeBytes` is a `@Sendable () -> Int64?` for the volume of `tmp/Recording`, injected for tests.
+  - **Frame count.** Output frame `i` is at `i / fps`, and there are `F = max(1, ⌈duration × fps − 10⁻⁶⌉)` of them. Output frame `i` shows the latest source frame whose presentation time is at or before `i / fps` (the first frame for a time before it).
+  - **Reading.** Two sequential passes, each with its own `AVAssetReader` and an `AVAssetReaderTrackOutput` on the video track (`kCVPixelBufferPixelFormatTypeKey` = `kCVPixelFormatType_32BGRA`, `alwaysCopiesSampleData = false`). The reader holds at most the current and the next sample buffer.
+    - **Pass 1, palette.** 32 output frames spread evenly (`round(k × (F − 1) / 31)` for `k` in 0..<32, all of them when `F` ≤ 32) are scaled and added to a `GIFPaletteBuilder`. A sample that shows the same source frame as the previous sample is skipped. The reader is cancelled after the last sample.
+    - **Pass 2, encode.** For each output frame in order: one that shows the same source frame as the previous output frame is a held frame and costs nothing (no decode, scale or compare; the shown frame's delay grows). Any other is scaled and handed to `GIFEncoder.add(rgba:at:)`, which merges it as well if nothing changes in palette space.
+    - Each used source frame becomes a `CGImage` with `VTCreateCGImageFromCVPixelBuffer`. Recordings are unrotated, so no track transform is applied.
+    - `AVAssetImageGenerator` is not used (Probes, GIF frame reading).
+    - A failed reader or a missing first frame throws.
+    - `copyNextSampleBuffer`, `alwaysCopiesSampleData` and `AVAssetReader.add` are deprecated in the macOS 27 SDK in favour of `outputProvider`. The plan uses `outputProvider` if it is available on macOS 26, and otherwise accepts the warnings, as `RecordingMute.apply` must.
+  - **Scaling.** Each frame is drawn into one reused 8-bit sRGB RGBA bitmap (`premultipliedLast`, big-endian, blend mode `.copy`; frames are opaque) with `interpolationQuality = .high`, so the long side is `maxSide` (never upscaled; `Full size` keeps R1's 4096 px cap).
+  - **Progress.** `progress` is a `@Sendable (Double) -> Void`. Pass 1 reports 0 to 0.15 by the output frame reached over the last sample's, and pass 2 0.15 to 1 by output frames handled over `F`, from the spike's timing (the palette pass was 0.6 s of 3.8 s). It is called at most 10 times a second, never decreases, and always once at 1.
+  - **Disk space.** Before pass 1, free space in `tmp/Recording` must be at least 1 GB: `RecordingLimits.hasRoom(for: 0, freeBytes:)`, where an unreadable value counts as enough, as in R1. Otherwise the conversion does not start, and the MP4 is saved as on failure with `Not enough disk space to make the GIF.` as the error.
+    - While writing, `GIFFileSink` reads `freeBytes` again after every 32 MB written and throws `GIFMakerError.notEnoughSpace` (the same text) below 1 GB. A failed write throws `GIFMakerError.couldNotWrite`, described as `The GIF could not be written. The disk may be full.` Either way the MP4 is saved as on failure.
+    - An upfront upper bound is not used: LZW's worst case is 1.5 bytes per pixel of every frame, about 1.4 GB for 60 s at the defaults, against 14.8 MB measured for 10 s of scrolling text.
+  - **Cancellation.** Both passes call `try Task.checkCancellation()` before each output frame. On any throw, cancel included, `GIFMaker` closes the file and removes `<id>.gif`. The encoder writes `<id>.gif` itself, so there is no hidden temporary.
+
+  - **While it runs, no record, card or Recent Captures row exists.**
+    - The status menu shows a disabled `Making GIF… <n> %` item, and under it `Stop Making GIF`, which cancels and saves the MP4 as on failure. With more than one conversion running, the item is `Making 2 GIFs… <n> %`, where `n` covers all of them (each conversion's fraction weighted by its output frame count: `Σ fraction × F / Σ F`), and `Stop Making GIFs` cancels every one; each MP4 is saved as on failure, with its own notification. The percentage is read when the menu opens. Both titles come from the pure `GIFProgressMenu.items(_:)`, given each conversion's fraction and output frame count.
+    - The coordinator keeps each conversion's `Task` and fraction by recording id. `isRecording` clears at the hand-off as in R1, and the icon is not changed.
+  - **On success,** `saveRecording` makes the one record. `Recording` gains `mediaKind`, and the GIF's `Recording` carries the GIF's URL, pixel size and frame-derived duration, with the MP4's poster. Folder move or `pending/`, naming, upload, clipboard and notifications are R1's; the extension and content type come from the kind (Kind).
+    - `tmp/Recording/<id>.mp4` is removed only after `saveRecording` has moved the GIF out of `tmp/Recording` and returned its record. Until then the MP4 is the recording: the launch check deletes a GIF there as unplayable (`AVURLAsset` fails on one with -11828) and recovers the MP4.
+    - If the GIF stays in `tmp/Recording` (`.leftInTmp`, R1's rename-failed case), the GIF is removed and the MP4 stays. The `Not saved to a folder` notice names the MP4's path, the file the next launch recovers.
+  - **On failure,** the partial GIF is removed, and the MP4 goes to `saveRecording` as `.video`. The notification is `GIF not made` / `<error> The recording was saved as an MP4.`, in place of `Recording saved`. `Stop Making GIF` gives the same, with `Stopped.` as the error. A recording is never lost.
+  - **On quit,** when `isQuitting` is set before or during conversion, `finishRecordingForQuit` cancels or skips it, and the MP4 is saved in quit mode as `.video`, with no notification, as quit mode has none. A quit never waits for a conversion (accepted, Decided 2026-10-23).
+  - **Invariant.** Every path from the recorder's `.keep` (success, failure, `Stop Making GIF`, quit) ends in exactly one `saveRecording` call, so the recording leaves `recordingSavesInFlight` exactly once.
+  - **After a crash** during conversion there is no record. The launch check recovers `<id>.mp4` as a video and removes the partial `.gif` as unplayable.
+    - A kill after the GIF's record exists and before the MP4 is removed leaves `<id>.mp4` beside a `.gif` record with that id. `recoverRecordings` removes that MP4, with a log line, instead of recovering it under a new id. The record is the whole test, and its file is not checked: `saveRecording` makes the record only after the GIF has left `tmp/Recording`, and a save-folder file outside the current folder cannot be checked under the sandbox anyway. A GIF the user deleted since is their choice, and with its record gone the MP4 is recovered as a video.
+- **Encoding.** TidyShot's own GIF89a encoder (Decided 2026-10-23, 1). It uses no new package: AVFoundation, VideoToolbox and CoreGraphics read and scale, and the encoder is plain Swift. It is written from the GIF89a format and textbook algorithms; gifsicle, ffmpeg and gifski (GPL, or a new package) are off limits as sources and must not be read or copied. Everything below is in `TidyShot/Recording/GIF/`, `nonisolated`, with no AVFoundation, ImageIO or file system except `GIFFileSink`, so each part is tested on its own (Tests).
+  - **The file.** `GIF89a`; a logical screen of the output size; one global colour table and no local tables; a NETSCAPE2.0 block with loop count 0; then each frame: a graphic control extension with disposal 1 (do not dispose), the transparency flag for a transparent frame, the transparent index and the delay; an image descriptor for the changed rectangle, not interlaced; the LZW data. Then the trailer. This is plain GIF89a, which ImageIO, ffmpeg and ImageMagick decode exactly (Probes).
+  - **`GIFColour`**: `struct GIFColour: Hashable, Sendable { var r, g, b: UInt8 }`.
+  - **`GIFPalette`**: `struct GIFPalette: Equatable, Sendable`.
+    - `let colours: [GIFColour]`, 1 to 255 entries.
+    - `var transparentIndex: UInt8` is `colours.count` (255 for a full palette).
+    - `var tableBits: Int` is the smallest `b` ≥ 1 with `2^b ≥ colours.count + 1`; the global table is `2^b` entries, padded with black.
+    - `func nearest(_ colour: GIFColour) -> UInt8`: the entry with the least squared RGB distance, the lowest index on a tie.
+  - **`GIFPaletteBuilder`**: `struct GIFPaletteBuilder`, pass 1's palette.
+    - `init(minimumBoxSpread: Double = 2, refinementPasses: Int = 4)`.
+    - `mutating func add(rgba: UnsafeBufferPointer<UInt8>)`: each pixel (4 bytes, the fourth ignored) goes into a histogram of 6 bits per channel (2^18 bins, about 7 MB), and each bin keeps its count and the sums of its exact colours, so a bin stands for the mean of what fell in it.
+    - `func build() -> GIFPalette`: a greedy variance split over the non-empty bins. It repeatedly splits the box with the largest `sqrt(count)`-weighted squared error, on the axis and at the position that minimise the two halves' summed error, and never splits a box whose population RMS spread is under `minimumBoxSpread` levels, so no entries are spent on codec noise (Probes). It stops at 255 boxes or when no box can be split, takes each box's weighted mean, then runs `refinementPasses` k-means passes over the bins with count weights. No pixels added gives one black entry.
+  - **`GIFFrameDiffer`**: `struct GIFFrameDiffer`, the mapping and the diff.
+    - `init(width: Int, height: Int, palette: GIFPalette, hysteresis: Int = 4)`.
+    - `private(set) var shown: [UInt8]`: the composed index frame a decoder shows, starting all `transparentIndex`.
+    - `mutating func next(rgba: UnsafeBufferPointer<UInt8>) -> GIFFrameChange?`. Each pixel maps to `palette.nearest`, without dithering. A pixel whose shown entry `s` is a colour keeps it unless the Euclidean RGB distance from the source to `s` exceeds the distance to the nearest entry by more than `hysteresis`. It returns nil when no pixel changes, and otherwise updates `shown`.
+    - `GIFFrameChange` (`Equatable`) holds `rect` (x, y, width, height: the bounding box of the changed pixels), `changedOnly` (the rectangle's indices, `transparentIndex` where unchanged) and `opaque` (the rectangle's indices as now shown). The first call changes every pixel.
+    - A 64K-entry direct-mapped cache on the 24-bit colour makes `nearest` cheap; it never changes the result. A 2^18 table on 6-bit colours is the speed fix if colour-heavy GIFs are slow, and changes results only within a bin.
+  - **`GIFLZWWriter`**: `struct GIFLZWWriter`, reused across frames for its table.
+    - `mutating func encode(_ indices: UnsafeBufferPointer<UInt8>, minimumCodeSize: Int, into output: inout [UInt8])` appends one image data block: the minimum code size byte, the code stream in sub-blocks of at most 255 bytes, and a zero-length block.
+    - Codes start at `minimumCodeSize + 1` bits and are packed LSB first. After each new table entry, if the next free code is above `2^width` and the width is under 12, the width grows by one (the spike's rule, which ImageIO, ffmpeg and ImageMagick decode exactly). The stream starts with a clear code, sends a clear code as soon as the next free code reaches 4096, and ends with end-of-information. The table is a hash of (prefix code, index) pairs.
+    - The minimum code size is `max(2, palette.tableBits)`.
+  - **`GIFSink`**: `protocol GIFSink`, where the bytes go.
+    - `var count: Int { get }` (bytes written so far), `mutating func write(_ bytes: UnsafeRawBufferPointer) throws`, `mutating func overwrite(_ bytes: [UInt8], at offset: Int) throws` (patches a delay already written), `mutating func close() throws`.
+    - `GIFFileSink(url:freeBytes:)` creates the file, buffers 1 MB, writes with `write(2)`, and patches in the buffer or with `pwrite`. It checks free space every 32 MB (Disk space).
+    - `GIFDataSink` keeps the bytes in memory, for tests.
+  - **`GIFEncoder`**: `struct GIFEncoder<Sink: GIFSink>`.
+    - `init(sink: Sink, width: Int, height: Int, fps: Int, palette: GIFPalette, hysteresis: Int = 4) throws` writes the header, the global table and the loop block.
+    - `mutating func add(rgba: UnsafeBufferPointer<UInt8>, at index: Int) throws`: output frame `index` (increasing; skipped indices hold the previous frame) shows `rgba`. It runs the differ. Nil merges the frame into the previous one. Otherwise it ends the previous frame's delay at `index` and writes a new frame for the change.
+    - `mutating func finish(frameCount: Int) throws -> GIFEncoderSummary` ends the last delay at `frameCount`, writes the trailer and closes the sink. `GIFEncoderSummary` holds the GIF frame count, the transparent and opaque frame counts, and the bytes.
+    - **Transparent or opaque.** The first frame is the whole frame, opaque. For each later change both `changedOnly` (with the transparency flag) and `opaque` are LZW-encoded into two reused buffers, and the smaller is written, the transparent one on a tie. Scrolling text favours opaque and a mostly static screen transparent (Probes).
+    - **Delays.** `GIFTiming.centiseconds(through e: Int, fps: Int) -> Int` is `(e × 200 + fps) / (2 × fps)`, `e × 100 / fps` rounded half up. A frame covering output frames `i..<e` has delay `centiseconds(through: e) − centiseconds(through: i)` (7, 6, 7 at 15 fps), so the GIF's length is exact. The graphic control extension is written with delay 0 and patched with `overwrite` once the next frame or `finish` ends it, so nothing waits for a whole run. A delay over 65,535 cs, the field's maximum, is split: the frame keeps 65,535, and each further part is a 1×1 transparent frame at (0, 0) with disposal 1.
+    - **Memory.** The encoder holds `shown`, the change's two rectangles and the two LZW buffers; the reader adds the scaled frame and the decoded sample. Peak footprint is flat in duration: 34–45 MB at 1280 px, 111 MB at 2560×1664, 220 MB at 4096×2304 (Probes).
+  - **No dithering.** Text and flat UI colours stay exact, and temporal stability and file size are kept. The spike's selective ordered dither is not built in R2. It is the lever if colour-heavy GIFs look poor in the hand checks, and adding it is Tim's call.
+  - **Rejected:** ImageIO with its global palette (memory grows about 11 bytes per pixel per frame, 1.8 GB for 10 s at the defaults, and R1 has no hard stop); ImageIO with a table per frame (flat memory, but 2–15× the own encoder's size, Probes); ffmpeg, gifski or gifsicle as a tool or a source (GPL or a new package).
+- **Kind.** `MediaKind` gains `.gif` (extension `gif`, content type `image/gif`, `UTType.gif`). Old history decodes unchanged, and R1's rule that an unknown kind reads as `.video` stays.
+  - **One predicate.** `CaptureRecord.isVideo` (`mediaKind == .video`) becomes `isTimeBased` (`mediaKind != .image`), a mechanical rename done after the coordinator split lands. `isRecording` is not used because the coordinator has one. Every R1 gate on it then covers a GIF with no per-site list:
+    - no Annotate, Pin or Copy Image (`showsImageActions`), and `canCopyFile`;
+    - `EditorInput.source` returns `.unavailable`, so an editor Save can never write PNG bytes over a GIF;
+    - `loadImage`, `imageData`, `copyImage` and `pin` refuse;
+    - the poster never becomes `latestCapture` (`retainsImage`);
+    - `saveAs` takes the file-copy path, drag-out the video staging, and no file is prefetched;
+    - after an upload the URL replaces the clipboard only if it is unchanged since the save;
+    - `ThumbnailProvider` never reads the file, for the thumbnail or the hover preview;
+    - the film placeholder, the badge, and a thumbnail click that opens the file.
+  - **Only `mediaKind == .video`** (an MP4) is checked for the Trim gate (menu, row action, enabled state), `RecordingMute` and the end rule (these act on the MP4 before any record exists), and the recovery scan.
+  - **Four sites are not `isVideo` and change on their own:**
+    - `EditorNaming.saveAsSuggestion` uses `kind != .image ? recordingNamer : namer`, so a GIF's Save As… and drag fallback name is `Recording file name` plus `.gif`;
+    - `placeRecording` and `refuseOversizedUpload` take the extension from the kind instead of `MediaKind.video.fileExtension`;
+    - `uploadPayload(for:)` returns the `.file` payload for `.gif`, so a GIF streams from its file and is never read into memory;
+    - `startUpload`'s `optimises` reads `kind.isSentToClop` first (Clop).
+  - Its card and row show the poster with a `GIF` badge and the duration. Opening it uses the default app for GIFs. Save As… offers `com.compuserve.gif`.
+  - Trim does not apply to GIFs in R2.
+- **Clop.** A GIF never goes to Clop, with Clop on or off: it uploads as made (Decided 2026-10-23, 2). Clop stays for MP4s, as in R1, and for screenshots.
+  - `MediaKind.isSentToClop` is false for `.gif` and true for `.image` and `.video`. `startUpload` computes `optimises` as `kind.isSentToClop && settings.optimiseWithClop && clopIsRunning()`, so a GIF never asks whether Clop runs, never shows `Optimizing…` and never reaches `optimisedForUpload`, whose `.file` case would hand it to `optimisedVideo`. It still takes the file path's size check (`fitsSingleUpload`) and upload activity, as a movie does with Clop off.
+  - With `optimiseWithClop` on, `Clop: GIFs are not sent to Clop` is logged once per launch, at the first GIF upload.
+  - Why: Clop took 9 % off ImageIO's GIF and made the static one larger (Probes), and the own encoder's GIFs are already cropped to their changes and free of codec noise, so less is left. Nothing GIF-specific is built in `ClopOptimiser` (no `optimisedGIF`, no `differentGIF`).
+
+## Microphone
+
+- **Setting.** Capture → Recording → `Microphone`, a pop-up:
+  - the entries are `Off` (default), `System Default`, then each input by name from the discovery session above. The list refreshes when the tab appears and on `AVCaptureDevice.wasConnectedNotification` and `wasDisconnectedNotification`, because a SwiftUI `Picker` has no menu-will-open hook;
+  - stored as `recordingMicrophone` (empty for Off, `default` for System Default, the device's `uniqueID` for a device) and `recordingMicrophoneName` (the device's `localizedName`; empty for Off or `default`). The name is written when the user picks the device and refreshed whenever the list sees it, because a disconnected `uniqueID` cannot be turned back into a name;
+  - a stored device missing from the list stays the selection and shows as `<recordingMicrophoneName> (not connected)`, or `Unknown microphone (not connected)` with no name. Plugging it in again restores it.
+- **Permission.**
+  - **Entitlement and usage string.** The app gains the sandbox entitlement `com.apple.security.device.audio-input` and the `NSMicrophoneUsageDescription` `TidyShot records your microphone in screen recordings when you turn it on.`
+  - **Asking.** Choosing an input calls `AVCaptureDevice.requestAccess(for: .audio)` if the status is `notDetermined`.
+  - **Denied.** A choice made while access is denied, or refused at the prompt, goes back to `Off`. Whenever a microphone is set and the status is `.denied` or `.restricted`, the row shows `Microphone access is off for TidyShot.` with a `Privacy Settings…` button that opens `x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone`. The status is read again when the Settings window becomes key, so the note clears once access is allowed.
+- **At the start.** For an MP4 recording with a microphone set, the microphone is resolved in two parts, the prompt outside the capture lock and the choice under it. GIF and `Off` skip both, and with them the latency read (Lag) and the note: a GIF's start treats any stored microphone as `Off`, so a GIF never prompts and never posts `Recorded without the microphone` or `Recorded with …`, whatever the access or the devices.
+  - **Access, before the capture lock.** Right after `recordShortcutStarts()`, both record functions read `AVCaptureDevice.authorizationStatus(for: .audio)`. On `.notDetermined` they await `requestAccess(for: .audio)` before `withCaptureLock`, so the system prompt never shows during a count-in or a recording. Every ad-hoc rebuild loses the grant while UserDefaults keeps the choice, so this case is common.
+    - An unanswered prompt holds nothing: `isCapturing` is not set, so the other capture shortcuts, Settings and Quit work while it is up.
+    - While it waits, the coordinator's `isAskingMicrophone` is true, and `recordShortcutStarts()` returns false for both record shortcuts and menu items, logging `Recording: start ignored, the microphone prompt is open`. The system prompt cannot be dismissed from code, so there is no cancel and no timeout.
+    - After the answer, `isAskingMicrophone` clears, and the function returns, starting nothing, if `isQuitting` is set. `recordingPhase` stays `.idle` throughout, so `finishRecordingForQuit` has nothing to wait for: nothing has been selected or recorded.
+    - Otherwise it goes on into the capture lock, whatever the answer; a refusal records without the microphone (below).
+  - **Device, under the capture lock.** A synchronous step beside the disk-space check, before the selection overlay (Record Screen) or the count-in (Record Fullscreen), reads the status again and calls the pure `MicrophoneChoice.resolve(stored:devices:defaultDevice:access:)`. Nothing under the lock awaits. `resolve` gives the device to record from, or none, and a note:
+    - `Off`: no microphone;
+    - access not `.authorized` (denied, restricted, or a refused prompt): no microphone, the setting kept, and the note `Recorded without the microphone` / `Microphone access is off for TidyShot.`;
+    - `default`: the default input;
+    - a present device: that device;
+    - a missing device: the default input, and the note `Recorded with <default input name>` / `<name> is not connected.` (Decided 2026-10-23, 4: the narration is kept, and the note says which input recorded it);
+    - a missing device, or `default`, with no input at all (`AVCaptureDevice.default(for: .audio)` is nil): no microphone, and the note `Recorded without the microphone` / `No microphone is connected.` (`<name> is not connected.` if a device was stored).
+  - The result is carried in `RecordingOptions`; `RecordingConfiguration.make` never reads AVFoundation, and R1's step 5 re-read does not choose again. The stream is never started with `captureMicrophone = true` unless the status was `.authorized`, because ScreenCaptureKit's behaviour otherwise is unprobed.
+  - **The note posts after Stop,** right after the save's own notification. It always posts (as `notifyError`), and quit mode skips it like the other notices. Nothing posts while a recording runs: area and fullscreen filters exclude only TidyShot's windows, so a banner would be filmed.
+    - The order is the pure `RecordingNoticeOrder.afterStop(save:stop:microphone:quitMode:)`: the save's notification, then `Recording stopped`, then the microphone note. It gives nothing in quit mode, and the note still posts when the end rule kept nothing, as long as `recorder.run` ran. `endRecording` posts the list in that order for both `.keep` and `.nothing`.
+- **Recording.** With a resolved device, the stream sets `captureMicrophone = true` and `microphoneCaptureDeviceID` to its `uniqueID`.
+  - The microphone and system audio, when both are on, are mixed into one track by ScreenCaptureKit.
+  - Access revoked or the input unplugged mid-recording is unprobed (Still to probe). Whatever arrives follows R1's end rule. When a stream or output error comes while the chosen input is missing from the discovery session, the `Recording stopped` body is `The microphone was disconnected.`; when access is no longer authorized, it is `Microphone access is off for TidyShot.`
+- **Mute.** The control bar gains a mute button, shown when the effective configuration has `capturesAudio || captureMicrophone`, so never for GIF, nor for an MP4 whose only sound was a microphone dropped at the start. It shows `speaker.wave.2.fill`, or `speaker.slash.fill` while muted, with the tool tips `Mute the sound` / `Unmute the sound` and the accessibility labels `Mute` / `Unmute`.
+  - **Bar.** With the mute button the bar is 208 × 44 pt (time, Mute, Stop, Cancel). A GIF recording's bar is also 208 × 44, with the `GIF` tag before the time in the mute button's width (tag, time, Stop, Cancel). Otherwise it stays 172 × 44. In all three a time past an hour fits, which matters for GIF too, as R1 has no hard stop: `RecordingPanelLayoutTests` lays out each bar with `9:59:59` and checks that no subview is clipped. `RecordingChrome.show` takes a mute callback, the button's visibility and whether to show the tag, and the fake chrome records mute taps.
+  - **Tool tips.** TidyShot is inactive while it records (the hand-off deactivates it) and the panel is non-activating. AppKit shows an inactive app's tool tips only when `allowsToolTipsWhenApplicationIsInactive` is true, so `RecordingPanel.init` sets it, beside `hidesOnDeactivate = false`. This also makes R1's Cancel tool tip `Discard the recording` show, which it does not today. A tool tip is a TidyShot window, so the `own` exclusion keeps it out of the video.
+  - **What it mutes.** It silences all of the recording's sound, because the microphone and system audio share one track. Mute rewrites the audio, so a muted recording's AAC is re-encoded once; an unmuted recording is untouched.
+  - **State.** The controller owns it: `toggleMute()`, with `isMuted` shown by the chrome, so the button and the interval list cannot disagree.
+    - Intervals are on the controller's clock from `recordingOutputDidStartRecording`, while the stream runs unchanged.
+    - A press before the first frame (the button is live from `chrome.show()`) opens its interval at 0.
+    - An interval still open when the recording ends, however it ended (Stop, sleep, a full disk, a lost window, an error, a quit), closes at `elapsedAtEnd`.
+    - A press once the recording is ending is ignored, and the button is disabled with Stop. The state and the list reset at each run.
+  - **Mute log.** At every toggle the controller hands the intervals so far, with the recording's lag (Lag) and a sequence number, to the recording's `MuteLogWriter`, which writes them to `tmp/Mute/<id>.json`, where `<id>` is the stem of `tmp/Recording/<id>.mp4`. An open interval is stored as its start only.
+    - **One writer, last toggle wins.** `toggleMute()` yields the snapshot synchronously into an `AsyncStream` (`.bufferingNewest(1)`), so snapshots enter in the main actor's toggle order and quick toggles coalesce to the latest. One consumer task per recording, off the main actor, takes them one at a time and writes each atomically. It also skips a snapshot whose sequence number is not above the last one written, so an earlier toggle can never overwrite a later one.
+    - When the recording ends, however it ended, the controller finishes the stream and awaits the consumer before the ladder or a discard touches the log, so no write lands after the log is removed.
+    - A failed write is logged, and the in-memory list still applies. A recording never muted has no log.
+    - A kill between a press and its write landing, a few milliseconds, recovers that press's sound unmuted (Privacy rule).
+    - `tmp/Mute` sits beside `tmp/Recording`, never in it, because R1's launch check removes every file there that does not play and recovers every file that does.
+    - Each place that discards the recording (a discarding Cancel, the end rule's removal) removes its log.
+  - **After the end,** once the finish wait is over, a non-empty interval list is applied before `saveRecording`, for any end that keeps the file, quit mode too. This runs after `recordingSavesInFlight += 1`, so the quit hold covers it.
+    - The pure `RecordingMute.segments(duration:intervals:lead:lag:)` takes closed intervals. It widens each to `[start − lead, end + lag]`, with `lead` 0.1 s (mouse-up and one AAC packet) and `lag` the recording's own (Lag). It then merges overlapping intervals, clamps them to `0...duration`, and never drops one: with a 0.3 s lag, a 0.05 s interval becomes 0.45 s. The lag may silence the first words after Unmute, which is the accepted cost.
+    - **Lag.** The microphone sits later in the file than the callback clock by the input's latency, which ScreenCaptureKit does not compensate and which depends on the device (Probes, Mute offset: about 0.02 s through USB, 0.13 s through the iPhone input). Sound spoken just before Unmute lands up to that latency after the interval's end, so a fixed lag is not enough for every input.
+      - At the start, beside `resolve`, the coordinator reads the chosen device's CoreAudio properties, matched by device UID (`AVCaptureDevice.uniqueID`): `kAudioDevicePropertyLatency`, `kAudioDevicePropertySafetyOffset` and `kAudioDevicePropertyBufferFrameSize` on the input scope, plus the input stream's `kAudioStreamPropertyLatency`, over the nominal sample rate, and `kAudioDevicePropertyTransportType`. The iPhone input reports 6,000 frames, 0.125 s at 48 kHz, against its measured 0.13 s.
+      - The pure `MicrophoneLatency.lag(reported:transport:)` gives `max(0.3, 2 × reported + 0.05)` s, and at least 0.6 s for a Bluetooth transport or when the properties cannot be read. With no microphone the lag is 0.3 s (system audio sits within 0.02 s). Tim accepted these values and the lag they put after Unmute (Decided 2026-10-23, 5). The input-latency probe (Still to probe) checks that the properties can be read from the sandbox and that each input's measured offset sits inside its lag; an input outside it goes back to Tim rather than changing the constants.
+      - The lag is logged at the start, carried with the intervals to the ladder, and written in the mute log, so recovery uses the same value.
+    - `RecordingMute.apply(_:intervals:to:) async throws` is `@concurrent` and rewrites the file to the URL its caller passes in `to`, removing any file already there and creating its folder when it is missing (`tmp/Mute` exists only once a log write has succeeded, and the launch clear removes `tmp/Trim`): the ladder passes `tmp/Mute/<id>.mp4`, and Trim passes `tmp/Trim/<id>-muted.mp4`. Video sample buffers pass through (reader and writer `outputSettings` nil, `sourceFormatHint` from the track's format description, `transform` from its `preferredTransform`). Audio is read as 16-bit interleaved LPCM, the samples whose presentation time falls inside a segment are zeroed on a copy of the buffer, never the reader's, and it is written as AAC at the source's sample rate and channel count (128 kbps). On any throw it removes its partial output.
+    - It never uses `insertEmptyTimeRange` or an audio mix. The output's audio must be one continuous segment, because FFmpeg-based readers, Clop among them, misread a mid-track empty edit (Probes).
+    - `FileManager.replaceItemAt` (same volume) then puts the result over `tmp/Recording/<id>.mp4`, and the log is removed. The rewrite is written only in `tmp/Mute`, never under another name in `tmp/Recording`, so the launch check cannot take it for a second recording. A crash between the replace and the log's removal leaves a muted file with a log, and applying it again only mutes silence.
+    - The ladder below is `RecordingMute.resolve(file:intervals:lag:hasRoom:apply:stripAudio:replace:) async -> Outcome` (`.muted`, `.soundRemoved`, `.notMuted`), with the steps injected, as `RecordingEnvironment`'s `inspect` and `poster` are.
+    - **Partial output.** Every step that writes a copy removes it on any throw or cancel before it returns: `apply`, the audio removal (`RecordingMute.stripAudio(_:to:)`, whose `AVAssetExportSession` leaves a partial file when it fails), `GIFMaker.make`, `RecordingTrim.export` and Trim's mute step. The ladder also removes `tmp/Mute/<id>.mp4` on every exit, so a failure on a full disk leaves nothing behind for the session; the launch sweep is only the backstop after a crash.
+    - **A failed replace** counts as its step failing. After `apply`, the output is removed and the ladder goes on to the audio removal; after the audio removal, the ladder ends at `.notMuted`. Same-volume `replaceItemAt` leaves the original in place when it fails. If the original is nonetheless missing from `tmp/Recording/<id>.mp4` afterwards, the step's output is renamed into place and the step counts as done, since that output never holds muted sound.
+    - **Disk space.** Before `apply`, free space in `tmp/Mute` must be at least the file's size plus 1 GB (`RecordingLimits.hasRoom(for:freeBytes:)`; an unreadable value counts as enough). The audio removal needs nearly as much, so when the check fails neither step runs, the outcome is `.notMuted`, and `Recording: mute skipped, not enough disk space` is logged. The file is then kept and blocked (below), and Trim fixes it once there is space.
+    - **Fault injection.** In DEBUG builds, `-MuteFailure apply` makes the injected `apply` throw, and `-MuteFailure both` makes `stripAudio` throw too (`open TidyShot.app --args -MuteFailure both`, as R1's `-RecordingSpike`). It applies to the end of a recording and to recovery: both build their ladder from the same wrapped live steps. Release builds compile it out.
+  - **Privacy rule.** Sound the user muted is never uploaded and never reaches the save folder or the clipboard, also after a crash, a kill or a forced quit, within two limits Tim accepted (Decided 2026-10-23, 5):
+    - sound from an input whose real latency exceeds its lag (one that under-reports, Lag) can leak in its last moments before Unmute;
+    - a kill in the milliseconds between a Mute press and its log write recovers the sound after that press (Mute log).
+    - If `apply` fails, the audio is removed instead: a passthrough export of the video track alone to `tmp/Mute/<id>.mp4`, put over the original the same way. The notification is `Sound removed` / `Muting failed, so the recording has no sound.` In quit mode nothing posts, and the error is logged as `Recording: mute failed: <description>`.
+    - If that fails too (`.notMuted`), `saveRecording` gets the merged segments as `unmutedIntervals`. The log is removed once the record exists; with no record (`.leftInTmp`) it stays, and the next launch runs the ladder again.
+      - **The folder is skipped before it is chosen.** `saveRecording` picks the destination before `make` runs: `RecordingSavePlan.target(for:)`, then `saveLocation.ensureFolder()` (which can open a folder panel), then `placeRecording(... folder:)`. So `target` becomes `target(for:unmutedIntervals:)` and returns `.pending` whenever the intervals are non-empty, whatever the action. No folder panel opens, `placeRecording` gets no folder and no `noFolderReason`, and the file is renamed straight to `pending/<id>.mp4` (`.pending`, never `.fallback`). The unmuted file never enters the save folder, even for a moment.
+      - `RecordingSavePlan.make` takes the intervals too, and gives no upload, no file reference on the clipboard and no `lastCaptureURL`. The state is `.none` in normal and quit mode alike, never `.uploading` or `.failed`, as for R1's size refusal, so Retry Failed Uploads and a relaunch never pick it up.
+      - **Recovery** builds its `CaptureRecord` itself (`recoverRecordings`), so on `.notMuted` it sets `unmutedIntervals` on that record and removes the log after `history.add`. Recovery never uploads or copies, so nothing else changes.
+      - `CaptureRecord` gains a persisted `unmutedIntervals: [MuteInterval]` (`decodeIfPresent`, default empty); non-empty is the mark. The card and row show `Sound not muted`, so a user who quit sees it after relaunch.
+      - A marked record offers Open, Trim… and Delete only. Retry, Copy File, Save As… and drag-out are left out, as image actions are for videos.
+      - One pure check, `CaptureRecord.uploadBlockedReason`, refuses with the notice's text at the top of `retry(recordID:destination:)` (card and row Retry), in the filter of `retryFailedUploads` (skipped without a notice), in `startUpload` right after its record lookup and before `uploadingIDs` changes, and in the coordinator's file actions. `startUpload`'s check is a backstop: it logs and returns without a notice, because each caller a user drives (`retry`, `Upload Trimmed`) has refused with its own notice first.
+      - Trim fixes it. Its export first runs `apply` with the stored intervals on the whole file, then trims that result, and a successful Save empties `unmutedIntervals`, after which uploading works. Any range, even the whole recording, will do.
+      - The notification, in normal mode only, is `Sound not muted` / `Muting failed. The recording is kept in TidyShot and not uploaded. Trim it to fix the sound, or delete it.`
+  - **Relaunch** (extends R1's launch check). In `recoverRecordings`, after `RecordingRecovery.scan` and before the move to `pending/`, a found `<UUID>.mp4` whose `tmp/Mute/<UUID>.json` exists goes through the same ladder before its record is made.
+    - The log is found by the file name's UUID (`found.id`), not the record's id, which can be a fresh UUID.
+    - An open interval closes at the file's duration, and the segments use the log's lag. A log that cannot be read means the whole file, `[0, duration]`, is treated as muted.
+    - The `Recovered a recording` body adds `The muted parts were silenced.`, `It was saved without sound.` or `Its sound is not muted, so it was not uploaded.`
+    - After the loop, each file in `tmp/Mute` whose id has no `<id>.mp4` in `tmp/Recording` is removed: logs of recovered files and partial exports. A file whose move fails keeps its log for the next launch, and a recording started since launch keeps its own.
+
+## Trim
+
+- **Where.** `Trim…` appears in the card's menu and in the Recent Captures row actions, for MP4 recordings (`mediaKind == .video`). It is disabled while the record uploads or is being deleted, when `RecordingTrim.source` is `.unavailable`, and when the sheet would have no button (no Save target and no destination). The same refusals are checked again when Save and Save and Upload write (Write-time checks).
+- **Source file,** in `EditorInput.source`'s order:
+  1. a pending file, read directly;
+  2. a save-folder file inside the current folder (`SaveLocation.contains`), read under that folder's scope while the window is open;
+  3. otherwise, when `uploadedKey` and `objectLocation` are known, the object is downloaded with `download(key:to:)` to `tmp/Trim/<id>.mp4`, with `Downloading <key>` posted. This covers a record with no local file and one whose file is outside the current folder;
+  4. otherwise `.unavailable`, with the matching `EditorInput` text.
+- **Window.** `TrimWindowController` is one window per record (a second Trim… brings it forward). It holds an `AVPlayerView` (`controlsStyle = .inline`) on an `AVPlayer` of the source file. Once the item is `readyToPlay` and `canBeginTrimming` is true, it calls `beginTrimming(completionHandler:)`. That is the system trim bar QuickTime uses, with yellow handles and the buttons `Trim` and `Cancel`.
+  - On `.okButton` the range is `currentItem.reversePlaybackEndTime` to `forwardPlaybackEndTime`, where an invalid time means the start or end of the file. It goes to `RecordingTrim.range`.
+  - The bar's `Cancel` closes the window and changes nothing.
+- **The sheet.** An `NSAlert` sheet on the Trim window, like the editor's close sheet.
+  - The message is `Save the trimmed recording?`, and the informative text starts `Keeps <m:ss> of <m:ss>. The rest is cut from the file.`
+  - Its buttons come from `EditorSaveTarget.plan(for:saveFolder:)` and whether a destination is set, so Trim and the editor cannot disagree. The first button listed is the default (Return), and `Cancel` is always last (Escape). A record with a link (`linkURL != nil`) adds the sentence in the last column:
+
+    | Plan | Destination | Buttons | Sentence for a record with a link |
+    |---|---|---|---|
+    | Save target (`.saveFolderFile`, `.pendingFile`) | set | `Save and Upload`, `Save`, `Cancel` with a link; `Save`, `Save and Upload`, `Cancel` without | `The link keeps showing the full recording unless you choose Save and Upload.` |
+    | Save target | none | `Save`, `Cancel` | `The link keeps showing the full recording.` |
+    | `.unavailable` (no local file, a file outside the current folder, or no folder) | set | `Save and Upload`, `Cancel` | `The link will show the trimmed recording.` |
+    | `.unavailable` | none | no sheet: `Trim…` is disabled (Where) | none |
+
+  - With `.unavailable`, plain Save has nothing to write over, and Trim does not invent a pending file for it.
+  - The sheet's `Cancel` closes the window. Trim mode is not re-entered, as no probe covers it; a new `Trim…` starts afresh. Every other outcome (saved, uploaded, refused, failed, stopped) also closes the window.
+- **Export.** `RecordingTrim.export(_:range:method:to:progress:) async throws` is an `AVAssetExportSession` with `timeRange`, run with the async `export(to:as:)` and written to `tmp/Trim/<id>-trimmed.mp4`. For a record with `unmutedIntervals` it first runs `RecordingMute.apply` with them on the source, with `to:` set to `tmp/Trim/<id>-muted.mp4`, then trims that result and removes `-muted.mp4` before the put. The cut content is gone from the file, not hidden by an edit list, apart from the passthrough's few hidden audio packets below (Decided 2026-10-23, 3).
+  - **Method.** `RecordingTrim.startsOnSyncSample(_ url: URL, at start: CMTime) async throws -> Bool` loads the video track and makes an `AVSampleCursor` with `makeSampleCursor(presentationTimeStamp: start)`. It is true when the cursor's sample is the one shown at the start (its presentation time at or before it) and `currentSampleSyncInfo.sampleIsFullSync`. A track whose `canProvideSampleCursors` is false gives false, so doubt goes to re-encoding. It reads the source, before any mute step: a muted copy's video samples are the source's, so the answer is the same, and the method is known before the mute step runs, so the `Trimming…` sheet can cover it. The first sample is a sync sample, so a trim that only moves the end is always passthrough. `TrimMethod` is `.passthrough` when it is true and `.reencode` otherwise.
+  - **`.passthrough`**: `AVAssetExportPresetPassthrough`, instant (0.02–0.03 s, Probes). The start's sample is a sync sample, so no earlier video sample is in the file; the edit list hides at most part of that frame's own duration, the same picture. Audio is cut at AAC packet boundaries: the packet holding the start, and one before it for the decoder's priming, may stay in the file, hidden by the edit list. That is at most 2,048 sample frames (43 ms at 48 kHz), the one exception to Decided 3. For a recording marked `Sound not muted` those packets come from the muted copy. The trim probe checks this bound on real recordings (Still to probe); a passthrough that keeps more goes back to Tim before the export is built.
+  - **`.reencode`**: `AVAssetExportPresetHighestQuality`, which writes H.264 (R1 records H.264) and AAC at the source's size. The output starts with a sync sample at the start, and nothing before it is in the file. The probe took 1.26 s for 2.27 s of 4096×2304, about 0.55× real time, so 60 s of 4K takes about half a minute; the trim probe measures real recordings (Still to probe). The video is re-encoded once, so text sharpness is a hand check.
+  - **Progress.** `progress` is a `@Sendable (Double) -> Void`, fed from the session's `states(updateInterval: 0.1)` (the `.exporting` state's `fractionCompleted`). It never decreases and is always called once at 1; a passthrough reports only 1.
+  - **Trimming sheet.** While a `.reencode` pass runs, from its mute step (if any) through the put, the Trim window shows a sheet with the message `Trimming…`, a determinate `NSProgressIndicator` fed by `progress`, and `Stop`. The bar is full during the put. A `.passthrough` pass shows no sheet.
+    - `Stop` cancels the pass's task. The export stops on cancellation and removes its partial output; nothing is written, nothing posts, and the window closes. Once the put has started, `Stop` is disabled, because `FileReplacement` is not cancelled midway.
+    - The close button is disabled while a sheet is up. Pruning the record during the pass closes the window, which cancels the same way before the put; Delete is refused while the id is in `trimmingIDs`.
+  - **Disk space.** The export first creates `tmp/Trim` if it is missing (Cleanup), so the check reads that folder's volume. Before the export, free space in `tmp/Trim` must be at least the source's size (twice that with the mute step) plus 1 GB (`RecordingLimits.hasRoom`); otherwise it posts `Not trimmed` / `Not enough disk space.` and writes nothing. A re-encode is taken to be no larger than its source; the trim probe checks it. On any throw, each step removes its own output (Mute, Partial output).
+  - The pure `RecordingTrim.range(start:end:duration:)` clamps the range and refuses one under 0.5 s with `Not trimmed` / `The trimmed recording would be too short.`
+- **Write-time checks.** The menu rule only decides whether the window opens. Retry, Retry Failed Uploads, Delete and pruning all work on a record whose Trim window is open, so Save and Save and Upload re-read the live record, as `applyLocalEdit` and `editorUpload` do, and then hold it until the write is done.
+  - Before the export, they call `EditorAvailability.refusal(for:record:saveFolder:isDeleting:isTrimming:)` (`.save`, or `.upload` for Save and Upload) with `history.record(id:)` and `deletingIDs`, and read `EditorSaveTarget.plan` again.
+  - **In-progress marker.** A pass adds the id to the coordinator's `trimmingIDs`. It stays set through the export, the put and the bookkeeping after it, and is cleared on every exit (written, refused, failed, stopped, window closed). Save and Upload clears it right before calling `startUpload`, in the same main-actor turn, so `startUpload`'s own check passes and nothing can start in between.
+  - While the id is in `trimmingIDs`:
+    - Retry (card and row), `Upload Trimmed` and `startUpload` refuse with `This capture is being trimmed.`, and Retry Failed Uploads skips the record without a notice;
+    - Delete refuses before its alert with `Not deleted` / `This capture is being trimmed. Delete it when the trim finishes.`;
+    - the card and row disable Retry, `Upload Trimmed` and Delete, as they do while a record uploads.
+    - These sites read `trimmingIDs` through the new `isTrimming` parameter of the same pure `EditorAvailability.refusal`, and the menu models take it as they take `deletingIDs`.
+  - Right before the put, the refusal and the plan are read again, for a save folder changed in Settings during the export.
+  - **After the put,** `history.record(id:)` is read once more. Pruning does not read the marker, so the record can be gone. Then a pending target's file is removed, as pruning removes pending files, and nothing else is updated; a save-folder file stays, as pruning leaves save-folder files alone. Delete cannot have run, as it refuses while the marker is set.
+  - Copy File, Save As… and drag-out staging may read the file during the put. `FileReplacement` swaps the whole file, so they get the old file or the new one, never a mix.
+  - A refusal posts `Not trimmed` with its text (`This capture was deleted.`, `This capture is being deleted.`, `This capture is still uploading.`, or the plan's reason) and writes nothing. An uploading record therefore keeps the file its upload reads, and a deleted record gets no file back (a put onto a missing path creates it).
+  - Deleting or pruning the record closes its Trim window, where `pins.close(recordID:)` runs (`removeRecord`, `removeFiles(ofPruned:)`). A delete cancelled at its alert leaves the window open.
+- **Save.**
+  - The trimmed file is put over the target with `FileReplacement.put(at:_:)`, under the save-folder scope (none for `pending/<id>.mp4`), in a detached task, with the closure `moveItem(at: trimmed, to: $0)`. `replaceItemAt` straight from `tmp/Trim` fails across volumes (Cocoa 512, POSIX 18), and a save folder can be on another volume. `FileReplacement` stages the file in the destination's replacement folder first, as R1's Save As… and downloads do.
+  - For a record with a link (`linkURL != nil`, so a link only in `priorUpload` counts, as in `recordLocalEdit`), `uploadIsStale` is set before the put and cleared again if the put fails.
+  - **After any write,** Save's put here or Save and Upload's `.newPendingFile` write (below), one function, `finishTrimWrite(id:duration:)`, does the bookkeeping, so the two paths cannot drift:
+    - a new `recordLocalTrim(duration:at:)` sets the duration and `editedAt` (`durationSeconds` becomes a `var`; Clop's timeout and the badge read it);
+    - the thumbnail is remade, and `unmutedIntervals` is emptied;
+    - the record's drag copy is dropped, as the editor's local edit does: `removeDragFolder(id)` and `overlay.setDragFile(nil, for: id)`. R1's drag copy assumes a recording is never rewritten. Without this step, drag-out and Save As… would hand out the untrimmed video, and `keepForDragOut` would keep the old copy at `.uploaded` and delete the trimmed pending file. A Copy File reference to the old drag copy stops resolving, as after an edit. `removeDragFolder` must stay reachable from the extension file that holds this step after the coordinator split.
+  - A failed put leaves the record and its file untouched (`FileReplacement` keeps the old file).
+- **Save and Upload** does the Save, then replaces the uploaded object at the same key (`EditorUploadPlan` replace, `Cache-Control: no-cache`). A record never uploaded uploads as new. With `.unavailable`, the trimmed file is written to `pending/<id>.mp4` and the record points at it, as `EditorSaveTarget.uploadWrite` gives `.newPendingFile`. `finishTrimWrite` then runs, after the pending write and before the upload is enqueued, so the drag copy is gone and `keepForDragOut` adopts the trimmed pending file at `.uploaded` instead of keeping the old copy. Otherwise the upload removes the file afterwards, as for an upload-only recording.
+  - Before the upload, `videoClipboardCounts[id]` is set to the current change count, so an unchanged clipboard gets the URL as after a save. The once-per-launch cache note posts on the first same-key replace, whichever clipboard branch runs.
+  - Success follows the editor's Upload: `Uploaded`, the URL copied, and the cache note once per launch.
+  - A failed replace follows `EditorUploadPlan.applyingFailure`: the record returns to `.uploaded` at the old link, with `uploadIsStale` and the trimmed file kept. It posts `Not uploaded` / `Upload failed. The link still shows the earlier recording.` (`failedReplaceMessage` gets a recording variant, chosen by `mediaKind`).
+  - Clop applies to the upload as in R1.
+- **Stale link.** A `.video` record with `uploadIsStale` shows `Link not updated` on the card's status line and in the row detail (`RecentCaptureFormatting.detail`). The card menu and the row actions gain `Upload Trimmed`, shown only then, with a local file and a destination, and disabled while the record uploads or is being deleted. It runs the upload half of Save and Upload and clears the flag on success. It is one action on the existing queue, not an upload lane (accepted, Decided 2026-10-23).
+- **Failure.** A failed download, export or put leaves the record and its file untouched and posts `Not trimmed` / `<error>` (a full disk reads `Disk Full`).
+- **Cleanup.** `tmp/Trim` is removed at launch, beside R1's other sweeps, so each step that writes into it creates it first when it is missing: the download, the export (`exportForSave`, before its disk check) and the mute step (`RecordingMute.apply`). `AVAssetExportSession` and `AVAssetWriter` do not create a missing folder. Closing a Trim window, for any reason, removes `tmp/Trim/<id>*`: the download and any file a failed or stopped step left. While a pass is still running (a put that cannot be stopped), the removal waits for the pass to end.
+
+## Settings summary (R2)
+
+- **Capture → Recording**, in this order:
+  - `Format` (MP4 or GIF);
+  - for GIF only, `GIF frame rate` and `GIF size`, with the `Full size` caption;
+  - R1's `Frame rate` (hidden for GIF) and `Resolution`;
+  - `Record system audio`;
+  - `Microphone`, with the permission note, then the GIF caption when GIF is chosen;
+  - `Show cursor in recordings`;
+  - `Count down before recording`.
+- **New `AppSettings` keys:**
+  - `recordingFormat` (`mp4`);
+  - `gifFrameRate` (15; a stored value other than 10, 15 or 20 reads as 15);
+  - `gifMaxSide` (1280; other than 800, 1280 or 0 reads as 1280);
+  - `recordingMicrophone` (empty);
+  - `recordingMicrophoneName` (empty).
+- **Record changes:** `MediaKind.gif`; `CaptureRecord.unmutedIntervals` (empty); `durationSeconds` becomes a `var`; `isVideo` becomes `isTimeBased`.
+- **New tmp folders:** `tmp/Mute` (mute logs and rewrites; a rewrite is removed when its ladder ends, and `recoverRecordings` sweeps what a crash left) and `tmp/Trim` (cleared at launch). A GIF is made in `tmp/Recording`, where the launch check removes any it finds.
+- **No setting from the 2026-10-23 decisions:** the GIF encoder has no dithering, colour-count or quality option, and there is no Clop switch for GIFs.
+- **New entitlement:** `com.apple.security.device.audio-input`. This is the second entitlement change after Clop's mach-lookup exception; `codesign -d --entitlements` lists it.
+
+## Tests (Swift Testing)
+
+- `VideoFixtures` gains options with defaults, so R1's callers compile unchanged: `pattern` (white frames with a 2 px black vertical line at a given even column), `tone` (the audio track a 1 kHz sine at −6 dBFS; `audio: true` stays silent), given frame times, for gaps and low source rates, and `keyframeInterval` in frames (`AVVideoMaxKeyFrameIntervalKey`, frame reordering off). R1's fixture makes only uniform grey frames (frame `n` at level `64 + 16n mod 128`) and silent audio.
+- The GIF encoder's parts are pure and tested apart (GIF, Encoding). Every test that checks pixels decodes the bytes with `CGImageSource` (`CGImageSourceCreateWithData` over `GIFDataSink`, or the file) and compares each pixel with the expected palette colour. A test helper walks the GIF's blocks, written from the format, to read the fields ImageIO does not report (table flags, disposal, transparent index, sub-block lengths).
+- `GIFPaletteBuilderTests` (synthetic RGBA buffers):
+  - 200 colours from a 6×6×6 grid (levels 0, 51, …, 255) come back exactly, one entry each, and `nearest` maps each to its own entry;
+  - a flat grey at 240 with ±1 level of noise per channel, beside 20 distinct colours, gets exactly one entry within 3 levels of the grey (no entries spent on noise);
+  - 4,096 distinct colours (a 64×64 ramp) give exactly 255 distinct entries;
+  - no pixels gives one black entry;
+  - `transparentIndex` is the colour count, and `tableBits` is 1 for 1 colour, 2 for 3, 3 for 4 and 8 for 255.
+- `GIFFrameDifferTests` (a fixed palette, small frames):
+  - the first call returns the whole frame, with `opaque` the mapped frame;
+  - the same frame again returns nil;
+  - one pixel changed at (5, 7) gives a 1×1 `rect` there; two changed pixels far apart give their bounding box, with `transparentIndex` at the unchanged pixels of `changedOnly` and the shown indices in `opaque`;
+  - hysteresis: with grey entries 100 and 103 and 100 shown, a source of 102 keeps 100 (nil); with `hysteresis` 0 it changes to 103; with entries 100 and 110, a source of 110 changes;
+  - after each call `shown` is the previous `shown` with the change applied.
+- `GIFLZWWriterTests`, each image wrapped by a test helper into a one-frame GIF (header, global table, image descriptor, the writer's block, trailer; not `GIFEncoder`) and decoded:
+  - one colour throughout (long runs), a 512×512 seeded random image (every code width and many clear codes), a 1×1 image, and a 3-colour palette at minimum code size 2;
+  - every sub-block is at most 255 bytes, and the block ends with a zero-length one.
+- `GIFEncoderTests` (`GIFDataSink`):
+  - the type is `com.compuserve.gif`, with the pixel size, loop count 0 and the summary's frame count;
+  - one global table of `2^tableBits` entries, no local table, disposal 1 in every graphic control extension, and the transparent index equal to the colour count;
+  - exactness: a moving 16×16 square on a still background and a scrolling stripe pattern decode, frame by frame, to the palette colours of a `GIFFrameDiffer` fed the same frames, with 0 mismatched pixels, and the summary shows both transparent and opaque frames;
+  - delays: frames at indices 0, 1 and 2 at 15 fps are 7, 6 and 7 cs; a skipped index and a frame identical in palette space each lengthen the previous frame instead of adding one; the decoded delays sum to `GIFTiming.centiseconds(through: frameCount, fps:)`, and the clamped and unclamped delays agree;
+  - at 10 fps, a last frame started at index 0 and `finish(frameCount: 7_000)` (70,000 cs) give a 65,535 cs frame and a 1×1 transparent frame of 4,465 cs, and the decoded picture is unchanged;
+  - a sink that throws on its third write makes `add` throw;
+  - `GIFTiming.centiseconds(through:fps:)` at 10, 15 and 20 fps.
+- `GIFFileSinkTests`: the file's bytes equal `GIFDataSink`'s for the same writes, including a patch still in the buffer and one after a flush; an injected `freeBytes` under 1 GB at a 32 MB boundary throws `.notEnoughSpace`; a write into a folder that refuses writes throws `.couldNotWrite`.
+- `GIFMakerTests` (end to end over `VideoFixtures`):
+  - the delays sum to `GIFTiming.centiseconds(through: F, fps:)` with `F = ⌈duration × fps⌉`, and the loop count is 0;
+  - a fixture of distinct frames at 30 fps writes `F` frames at 15 fps; one with a 2 s gap in its frame times writes the gap as one frame whose delay spans it; one with 6 source frames a second at 15 fps writes at most 6 frames a second, with summed delays;
+  - a two-frame fixture with frames at 0 and 700 s writes the held stretch as frames of at most 65,535 cs;
+  - the long side is capped at `maxSide` and never upscaled, and `Full size` keeps the source size;
+  - progress never decreases, reaches 0.15 when pass 1 ends, and ends at 1;
+  - a corrupt MP4 throws, and a cancel in pass 1 and one in pass 2 throw `CancellationError`; after each, no `<id>.gif` is left;
+  - sharpness: a 640×400 `pattern` fixture with the line at column 100, made with `maxSide` 320 (an exact 2× downscale), gives a first frame with luma ≤ 80 at column 50 and ≥ 180 at columns 49 and 51. A 1 px line reads about 50 % grey after a 2× downscale, so it cannot be tested this way. With no dithering, the white away from the line (columns 0–40) decodes as one colour;
+  - memory is a hand check: `phys_footprint`'s peak is process-wide and lifetime, so a unit test cannot isolate it.
+- `GIFConversionTests`, for the save step with fake `make`, `save` and `removeFile`:
+  - on success the MP4 is removed only after the record exists;
+  - on `.leftInTmp` the GIF is removed, the MP4 stays, and the notice names its path;
+  - on failure and on `Stop Making GIF` the MP4 is saved as `.video` with `GIF not made`;
+  - on quit the MP4 is saved as `.video` in quit mode;
+  - with under 1 GB free (injected) `make` is never called, and the MP4 is saved with `GIF not made` / `Not enough disk space to make the GIF.`; a `make` that throws `.notEnoughSpace` mid-write gives the same;
+  - each path calls `saveRecording` exactly once.
+- `GIFProgressMenuTests`: one conversion gives `Making GIF… <n> %` and `Stop Making GIF`; two give `Making 2 GIFs… <n> %` weighted by frame count (0.5 of 100 frames and 0.25 of 300 give 31 %), and `Stop Making GIFs`; none gives no items.
+- `RecordingMuteTests`:
+  - `segments` widens by `lead` and `lag`, merges, clamps, and keeps a 0.05 s interval as 0.45 s with a 0.3 s lag;
+  - `apply` on a `tone` fixture yields a file of the same duration (within 0.05 s). Its audio track has no empty segment (`AVAssetTrack.segments` all non-empty) and lasts within 0.05 s of the video. Its decoded audio is silent inside each segment (peak under 1 % of full scale, ignoring 50 ms at each edge for AAC smear) and above 50 % of full scale outside. Its video sample count, sizes and timestamps are unchanged;
+  - a tone ending 0.13 s after an interval's end is silent through that edge after `segments` and `apply`;
+  - a file with no audio track is returned unchanged;
+  - `apply` on its own output with the same intervals changes nothing audible;
+  - the log encodes and decodes, an open interval and the lag included;
+  - `resolve` with injected steps gives `.muted`, `.soundRemoved` and `.notMuted`; a replace that fails after `apply` goes on to `stripAudio`; too little free space gives `.notMuted` without calling either step; after every outcome `tmp/Mute/<id>.mp4` is gone;
+  - `apply` and `stripAudio` into a folder that refuses writes, and with a cancel, throw and leave no output; into a folder that does not exist yet, they create it and succeed;
+  - after `apply` and the replace, `tmp/Recording` holds exactly one `<id>.mp4`.
+- `MicrophoneLatencyTests`: `lag` is 0.3 s for no microphone and for 0.02 s reported, 0.30 s for 6,000 frames at 48 kHz, 0.65 s for 0.3 s reported, and at least 0.6 s for a Bluetooth transport and for unreadable properties.
+- `MuteLogWriterTests`: snapshots yielded faster than a slowed write (injected delay) leave the last snapshot on disk; a snapshot with a lower sequence number than the last written is skipped; once `finish` has returned, no write lands, so a removal right after it stands.
+- `RecordingControllerTests`, mute, with `pressMute()` on `FakeRecordingChrome`: mute at 2 s and unmute at 5 s gives [2, 5]; mute at 4 s and Stop at 7 s gives [4, 7]; a press before `.recordingStarted` opens at 0; a press after Stop is ignored; the list is empty in the next run; each toggle yields a snapshot with a higher sequence number to the writer; the end awaits the writer before it returns.
+- `RecordingNoticeOrderTests`: the save's notification, then `Recording stopped`, then the microphone note; the note after `.nothing`'s notice; nothing in quit mode.
+- `RecordingSettingsLayoutTests`: MP4 shows `Frame rate`, hides the GIF rows and the caption, and enables the audio rows; GIF the reverse.
+- `RecordingPanelLayoutTests`: the 172, mute and GIF bars, each laid out with `9:59:59`, clip no subview, and the time's fitting width fits its frame.
+- `RecordingRecoveryTests`:
+  - with `<id>.mp4` and a partial `<id>.gif` side by side, the MP4 is found with its id and the GIF is removed;
+  - a found file with a log comes back with its muted stretch silent and the log removed. With no log nothing changes. With an unreadable log the whole file is treated as muted. An open interval closes at the file's end;
+  - a log with no `<id>.mp4` is removed after the loop;
+  - a found file whose ladder gives `.notMuted` (injected steps) gets a record with `unmutedIntervals` set, and its log is removed after the record exists;
+  - a found `<id>.mp4` whose id has a `.gif` record is removed, not recovered.
+- `RecordingTrimTests`:
+  - `range` clamps, and refuses under 0.5 s;
+  - `export` gives the requested duration within 0.05 s and keeps the audio track, for `.passthrough` and `.reencode`; with `unmutedIntervals` it mutes first and leaves no `-muted.mp4`; a failed export leaves no `-muted.mp4` or `-trimmed.mp4`; too little free space refuses before any write; with `tmp/Trim` missing (a pending or save-folder source, after the launch clear), it creates the folder and succeeds, with and without `unmutedIntervals`;
+  - `startsOnSyncSample`, on a 10 fps `VideoFixtures` movie with `keyframeInterval` 20 (a sync sample every 2 s): true at 0, 2.0 and 2.05 s, false at 1.0 and 3.95 s;
+  - a `.reencode` trim from 1.0 to 3.0 s holds no video sample from before the start: an `AVSampleCursor` stepped through the output's samples in decode order, which ignores the edit list, counts at most 21 (a passthrough from 1.0 s would hold 10 more), and the first decoded frame has source frame 10's level (96 within 6), not frame 0's (64);
+  - a `.reencode` export's progress never decreases and ends at 1; a cancel during it throws `CancellationError` and leaves no `-trimmed.mp4`;
+  - `source`: a pending file, a file in the folder, a file outside it with an upload, no file with an upload, and never uploaded;
+  - the sheet's buttons, default and link sentence for each row of the table, with and without a link;
+  - a record that starts uploading after the window opened is refused at write time, and nothing is written;
+  - with `isTrimming`, `EditorAvailability.refusal` refuses Retry, `Upload Trimmed`, `startUpload` and Delete with the trimming text, and Retry Failed Uploads' filter skips the record;
+  - a record pruned during the put (a fake put that prunes it) has the pending file the put wrote removed, and a save-folder file kept.
+  - The put is `FileReplacement`, which `FileReplacementTests` already cover; the cross-volume case is a hand check.
+- `MicrophoneChoiceTests` (pure, over a fake device list and injected access):
+  - Off; System Default; a present device;
+  - a missing device: the default input, the `Recorded with` note, and the `(not connected)` label from the stored name; the same with an empty stored name;
+  - `default` with no input, and a missing device with no input;
+  - `.authorized` passes the ID, and `.notDetermined` then granted passes it; refused, `.denied` and `.restricted` pass none, keep the setting and give the access note;
+  - a GIF start: a stored device, missing or present, with access `.denied` or `.authorized`, and `default`, are all treated as `Off`, so no device, no note and no prompt; an MP4 start keeps the stored choice;
+  - stored-value parsing.
+- `RecordingConfigurationTests` additions:
+  - GIF recordings never capture audio and record at 30 fps;
+  - the microphone ID is passed only from an authorized choice;
+  - the mute button shows only for `capturesAudio || captureMicrophone`.
+- `RecordingClockTests`: `isPastSoftLimit(_:format:)` is 30 s for GIF and 300 s for MP4, replacing `softLimitIsFiveMinutes`.
+- `RecordingLimitsTests`: `hasRoom(for:freeBytes:)` needs the size plus 1 GB, and nil free space counts as enough.
+- `RecordingSavePlanTests`:
+  - `target(for:unmutedIntervals:)` is `.pending` for every action when the intervals are non-empty, and R1's target when they are empty, so `saveRecording` never asks for or moves into a folder for a marked recording;
+  - with `unmutedIntervals`, `make` for every action, with and without a destination, in normal and quit mode, gives `fileIsTemporary`, `.none`, no upload, no file reference and no `lastCaptureURL`.
+- `CaptureRecordTests`:
+  - `.gif` round-trips, and an unknown kind still reads as `.video`; `MediaKind.gif` is `gif` / `image/gif` / `.gif`;
+  - `isSentToClop` is false for `.gif` and true for `.image` and `.video`;
+  - `isTimeBased` is false for `.image`, and true for `.video`, `.gif` and an unknown kind;
+  - `unmutedIntervals` round-trips, old history decodes it empty, and `uploadBlockedReason` is non-nil only when it is non-empty;
+  - `durationSeconds` still round-trips.
+- `EditorInputTests`: a `.gif` record is `.unavailable`, also when `retainedID` equals its id and with a save-folder file.
+- `EditorNamingTests`: a `.gif` suggestion uses `recordingNamer` and `.gif`.
+- `UploadPayloadTests`: `uploadPayload` for a `.gif` is `.file`.
+- `ThumbnailProviderTests`: with no stored thumbnail, a GIF's file is never read by `thumbnail(for:)` or `preview(for:)`.
+- `DragFileNameTests`: a `.gif` key keeps its name and gets no `.png`.
+- `AppSettingsTests`: the five keys and their fallbacks.
+- `RecentCaptureFormattingTests` and `QuickAccessModelTests`:
+  - a GIF hides the image actions, enables Copy File with a local file, and shows its badge;
+  - Trim shows only for `.video`, and is disabled while uploading or deleting;
+  - a stale video shows `Link not updated` and `Upload Trimmed`;
+  - a record with `unmutedIntervals` shows `Sound not muted` and offers Open, Trim… and Delete only.
+- Retry, Retry Failed Uploads and `startUpload` each refuse a record with `unmutedIntervals`.
+
+Hand checks go in `docs/testing/recording-r2-manual-checklist.md`. They include:
+- **GIF:**
+  - sharpness at each option, zoomed on text: no blur, fringing or speckle; sizes and timing against the spike's (`window` 14.8 MB at 1280 px, 7.4 MB at 800 px, 28.5 MB at full size); a mostly static recording's size and GIF frame count against the moving one's (merging); the 30 s warning, and the `GIF` tag and time in the 208 pt bar;
+  - colour-heavy content (photos, a playing video, a wallpaper gradient), dark mode and a low-contrast UI: posterisation and banding are acceptable to Tim, or the selective ordered dither goes back to him (GIF, Encoding); a colourful popup shown for under a second keeps its hue;
+  - the GIF plays, loops and keeps its timing in Safari, Chrome, Firefox, Quick Look, Slack and a GitHub comment preview;
+  - with Clop on and running, a GIF uploads byte-identical to the saved file, shows no `Optimizing…`, and `Clop: GIFs are not sent to Clop` is logged once per launch; an MP4 still goes through Clop;
+  - two GIF recordings converting at once: `Making 2 GIFs… <n> %`, and `Stop Making GIFs` stops both, each saved as an MP4 with its own `GIF not made`;
+  - conversion time of a 30 s and a 60 s recording at 15 fps and 1280 px, and of 30 s at `Full size`, for scrolling text, a mostly static recording and colour-heavy content. The spike took 3.8 s for 10.3 s of scrolling text at 1280 px (about 11 s for 30 s), but 4.2 s for 4.2 s of colour-heavy content, and 15.7 s for that at full size, so `Full size` can take longer than the recording;
+  - peak memory (`footprint TidyShot` during conversion, against idle) rises by under 100 MB at the defaults and under 300 MB at `Full size` for a 4096 px recording, and does not grow with length (60 s against 10 s);
+  - no card or row appears until the GIF is saved; `Making GIF…` and its percentage in the menu, moving through the palette pass; `Stop Making GIF`; a quit during conversion saves the MP4 as `.video`;
+  - a nearly full disk (a disk image with about 1.1 GB free): the conversion stops with `Not enough disk space to make the GIF.`, the MP4 is saved, and no `<id>.gif` is left;
+  - `kill -9` during conversion, then relaunch: one MP4 recording is recovered and plays;
+  - a GIF's card, row and menus show no Annotate, Pin or Copy Image; a thumbnail click opens the GIF and it plays in that app; Save As… writes a `.gif`; a card press downloads nothing; the hover preview shows the stored thumbnail; a URL from a finished upload does not replace a clipboard the user changed.
+- **Settings:**
+  - switching `Format` to GIF hides `Frame rate`, shows `GIF frame rate` and `GIF size`, and disables `Record system audio` and `Microphone` with the caption under `Microphone`; switching back restores them;
+  - `Privacy Settings…` opens the Microphone pane; turning TidyShot's access off there shows the note when the Settings window becomes key, and turning it on again clears it;
+  - with the Recording tab open, plugging in the RODE AI-1 adds it to `Microphone` and unplugging it removes it; a stored input that is unplugged shows `<name> (not connected)`, and plugging it in restores it.
+- **Microphone:**
+  - each input, permission denied and granted;
+  - after a rebuild (new ad-hoc signature) with a microphone set, for Record Screen and for Record Fullscreen: the prompt appears before the selection overlay or the count-in; Allow records with the microphone; Deny, or `tccutil reset Microphone io.tky.tidyshot` then Deny, records without it, the note posts only after Stop and after the save's own notification, and no prompt or banner is in the video;
+  - with the prompt up: a second Record press does nothing (logged), a screenshot shortcut works, and Quit quits without starting a recording;
+  - the chosen input unplugged before recording (or the RODE AI-1 chosen while unplugged): the `Recorded with` note, and which input recorded;
+  - access turned off, and the input unplugged, during a recording: what ScreenCaptureKit does, and whether the file is saved with `Recording stopped`;
+  - mute on and off during a recording with the microphone and with system audio, pressed in the first second, and Stop while muted. With Clop on, play the uploaded link in Safari and Chrome. With Clop off, open the saved file in QuickTime and in VLC or IINA (ffmpeg). The muted stretches are silent, sound after them is in sync with the picture, and the audio ends with the video;
+  - with the iPhone input, a USB input and AirPods (Bluetooth, the high-latency case): the logged lag, and a word started within 0.2 s of each mute and unmute click is silent;
+  - with `-MuteFailure apply`: `Sound removed`, and the file has no audio track;
+  - with `-MuteFailure both`, for Save with a folder set, Save with none, Upload and Upload only: no folder panel opens, the file is in `pending/` and not in the save folder, nothing uploads, the clipboard is unchanged, `Sound not muted` posts and shows on the card and row, Retry Failed Uploads skips it, and a relaunch keeps the mark; then, without the argument, Trim and Save clears the mark;
+  - `kill -9` during a muted recording, then a relaunch with `-MuteFailure both`: the recovered record shows `Sound not muted` and its notice says it was not uploaded;
+  - the mute button is hidden for GIF and for an MP4 with no sound. With another app frontmost, hovering the mute button and Cancel shows `Mute the sound` / `Unmute the sound` and `Discard the recording`, and neither appears in the video;
+  - `kill -9` (a) during a recording while muted, (b) just after Stop, (c) during the mute rewrite. After each relaunch the recovered recording is silent in the muted stretch, and only one record appears.
+- **Trim:**
+  - Save, Save and Upload (the link plays the trimmed video), an upload-only record that needs the download (the sheet offers Save and Upload only), and both Cancels;
+  - a start between keyframes: `Trimming…` shows with a moving bar, the result plays from the chosen frame, IINA or `ffmpeg -ignore_editlist` shows nothing from before the start, and text is as sharp as in the original; `Stop` writes nothing and closes the window; a 60 s 4K re-encode's time;
+  - a trim that only moves the end: saved at once, with no sheet;
+  - the sheet's text, buttons and default button for each row of the table; Save on an uploaded recording shows `Link not updated`, `Upload Trimmed` clears it, and a failed Save and Upload (network off) leaves it;
+  - Save and Save and Upload with the record's file in a save folder on another volume (`/Volumes/RecOff` from the R1 checklist), in the sandboxed build, after a relaunch (the stored bookmark's scope), and with a recording in `pending/`: the file is replaced and plays trimmed, the duration and thumbnail update, and nothing stray is left in the folder or its `.TemporaryItems`. R1 did not see a replace under the sandbox; if the sandbox refuses the volume's replacement folder, stage a temporary file in the save folder itself under the scope and `replaceItemAt` from there;
+  - Retry a failed upload while its Trim window is open, then Save: `Not trimmed` / `This capture is still uploading.`, and the uploaded object still matches the local file;
+  - Delete the record while its Trim window is open: the window closes, and nothing reappears in the save folder or `pending/`;
+  - during a slow Save to the other volume (a long recording): Retry, `Upload Trimmed` and Delete are disabled or refused with `This capture is being trimmed.`, and once the put finishes the file plays trimmed and Delete works;
+  - close the Trim window of an upload-only record: `tmp/Trim/<id>.mp4` is gone;
+  - an upload-only video whose card was dragged before the trim: after Save and Upload (the `.newPendingFile` path), drag-out and Save As… give the trimmed video, and the drag folder holds the trimmed file, not the old copy;
+  - a `Sound not muted` record: Trim then Save leaves its muted stretches silent and clears the mark.
+
+## Decided 2026-10-23
+
+Tim's answers to the review's open questions and the follow-ups.
+
+1. **GIF encoder: TidyShot's own (option B).** One global palette built from 32 frames sampled across the recording in a first pass; each later frame stores only its changes (cropped to the changed rectangle, unchanged pixels transparent or the rectangle opaque, whichever is smaller, disposal 1); identical consecutive frames merged into one longer delay; LZW written straight to disk, so memory stays a couple of frames deep. No dithering, and no setting or flag for it, so text stays crisp; it must not look blurry. No new package, and no GPL code read or copied (gifsicle, ffmpeg and gifski are off limits as sources). The spike measured it 37–50 % smaller than ImageIO's global palette at 34–45 MB of memory, against up to 1.8 GB (Probes; GIF, Encoding). This replaces per-frame ImageIO palettes and settles the static-size question: the static area is 0.31 MB, smaller than its MP4.
+2. **No Clop for GIFs.** A GIF uploads as made; Clop stays for MP4 (GIF, Clop). The Clop GIF probe, its go or no-go and the GIF Clop path are dropped.
+3. **Trim removes what it cuts.** A start that is not on a sync (key) frame re-encodes, so the trimmed-off content is gone from the file; a start on a sync frame, or a trim that only moves the end, is passthrough. The one exception: a passthrough may keep up to two AAC packets of audio before the start (at most 2,048 sample frames, 43 ms at 48 kHz), hidden by the edit list; the trim probe checks the bound, and more goes back to Tim (Trim, Export). Progress shows while re-encoding (Trim, Export).
+4. **A missing chosen microphone** records from the default input, and the note after Stop says so (Microphone, At the start).
+5. **The mute lag is accepted:** 0.3 s at least, 0.6 s for Bluetooth, with its two small leaks (an input that under-reports its latency, and a kill between a Mute press and its log write) (Microphone, Privacy rule).
+6. **Accepted without objection:** a quit during `Making GIF…` saves the MP4 instead, so a quit never waits for a conversion (GIF, On quit); `Upload Trimmed` is a new card and row action for a trimmed video whose link is stale (Trim, Stale link).
