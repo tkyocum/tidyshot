@@ -16,6 +16,7 @@ final class AppCoordinator {
 
     static let shared = AppCoordinator()
 
+    // MARK: Collaborators
     let engine = CaptureEngine()
     let saveLocation = SaveLocation()
     let settings = AppSettings.shared
@@ -67,6 +68,58 @@ final class AppCoordinator {
             guard let folder else { return try Data(contentsOf: fileURL) }
             return try SaveLocation.readScoped(fileURL, folder: folder)
         })
+
+    // MARK: Capture state (AppCoordinator+Capture.swift; the lock is withCaptureLock, below)
+    private(set) var isCapturing = false
+    /// The last capture written to the save folder (upload-only captures do not count).
+    private(set) var lastCaptureURL: URL?
+
+    // MARK: Recording state (AppCoordinator+Recording.swift)
+    /// From a recording's first frame until its file is handed to `saveRecording` or removed: the
+    /// status item shows `record.circle` and the menu offers Stop Recording.
+    private(set) var isRecording = false
+    /// A recording's count-in flag: true from the selection's return (Record Fullscreen: from the
+    /// free-space check) until `recorder.run` is called or the start gives up. It covers the
+    /// count-in, the settle delay and the fresh content read, with the count-in on or off.
+    /// `selfTimer.isRunning` cannot serve: it stays true until `run`'s capture closure returns.
+    @ObservationIgnored private var recordingCountIn = false
+    /// Recordings between the recorder's `.keep` and `history.add` (in quit mode, until the
+    /// thumbnail is written), so the phase never reads `.idle` in between.
+    @ObservationIgnored private(set) var recordingSavesInFlight = 0
+    /// Set by `finishRecordingForQuit` once the editors let the quit go ahead; never cleared, as the
+    /// app then quits. A recording's hand-off gives up before `recorder.run`, and `saveRecording`
+    /// switches to quit mode.
+    @ObservationIgnored private(set) var isQuitting = false
+    /// Per recording, the clipboard's change count TidyShot left after the save: the count after its
+    /// file reference, or the count it found when it put nothing there. The URL replaces the
+    /// clipboard after the upload only while the count still matches. In memory only, so after a
+    /// relaunch the clipboard counts as changed.
+    @ObservationIgnored private(set) var videoClipboardCounts: [UUID: Int] = [:]
+
+    // MARK: Retained capture and pins (AppCoordinator+Pins.swift)
+    /// The capture just taken and its pixels, kept while its card shows, so Annotate opens the
+    /// editor at once: also while the upload runs, and after an upload-only capture's pending file
+    /// is gone. The card's NSImage wraps the same CGImage, so this costs no memory. Cleared when
+    /// its card closes, by the next capture and by `removeRecord`. Older cards in the stack load
+    /// from the file or the bucket.
+    @ObservationIgnored private var latestCapture: (id: UUID, image: ScaledImage)?
+    /// The area the newest capture was taken from (CoreGraphics global points), so its pin opens
+    /// over the spot. Kept with `latestCapture`: cleared by `save(_:intent:)`, by `forgetLatestCapture`.
+    @ObservationIgnored private var latestCaptureArea: (id: UUID, rect: CGRect)?
+    /// Pin to screen's windows. Records whose image is loading for a pin are in `pinningIDs`.
+    @ObservationIgnored private lazy var pins = PinController()
+    @ObservationIgnored private var pinningIDs: Set<UUID> = []
+
+    // MARK: Overlay state (AppCoordinator+Overlay.swift)
+    /// Recently closed cards for Restore Closed Overlay. In memory only.
+    @ObservationIgnored private var closedOverlays = ClosedOverlays()
+    /// True while `restoreClosedOverlay` shows its card, so the card that push-out closes goes to
+    /// the back of the restore list.
+    @ObservationIgnored private var isRestoring = false
+
+    // MARK: Upload state (AppCoordinator+Upload.swift)
+    // +Delete's teardown clears optimizingVideoIDs, fileUploadIDs and linkNotCopiedIDs; +Overlay reads
+    // the two flag sets; +Editor reads queue?.location.
     /// The queue new uploads go to, built from the destination of the first upload after launch
     /// or after the Upload tab was saved.
     @ObservationIgnored private var queue: UploadLane?
@@ -97,36 +150,23 @@ final class AppCoordinator {
         didSet { updateUploadActivity() }
     }
     @ObservationIgnored private var uploadActivity: (any NSObjectProtocol)?
+    /// Set after the first "Upload not configured" notification so later captures stay quiet.
+    @ObservationIgnored private var warnedUploadNotConfigured = false
+    /// Set when the first same-key replace of this launch posts `EditorUploadPlan.cacheNote`.
+    @ObservationIgnored private var postedCacheNote = false
+    /// Records with an upload in flight; drives the menu bar icon.
+    private(set) var uploadingIDs: Set<UUID> = []
+    /// Recordings whose URL did not replace the clipboard when the upload finished, because the
+    /// clipboard had changed since the save. Their card says `Uploaded`, not `URL copied`.
+    private(set) var linkNotCopiedIDs: Set<UUID> = []
+
+    // MARK: Delete state (AppCoordinator+Delete.swift)
     /// Records whose delete is in progress (alert showing or requests running): a second click
     /// shows no second alert, and a retry does not re-enqueue them.
     @ObservationIgnored private var deletingIDs: Set<UUID> = []
-    /// Set after the first "Upload not configured" notification so later captures stay quiet.
-    @ObservationIgnored private var warnedUploadNotConfigured = false
-    /// The capture just taken and its pixels, kept while its card shows, so Annotate opens the
-    /// editor at once: also while the upload runs, and after an upload-only capture's pending file
-    /// is gone. The card's NSImage wraps the same CGImage, so this costs no memory. Cleared when
-    /// its card closes, by the next capture and by `removeRecord`. Older cards in the stack load
-    /// from the file or the bucket.
-    @ObservationIgnored private var latestCapture: (id: UUID, image: ScaledImage)?
-    /// The area the newest capture was taken from (CoreGraphics global points), so its pin opens
-    /// over the spot. Kept with `latestCapture`: cleared by `save(_:intent:)`, by `forgetLatestCapture`.
-    @ObservationIgnored private var latestCaptureArea: (id: UUID, rect: CGRect)?
-    /// Pin to screen's windows. Records whose image is loading for a pin are in `pinningIDs`.
-    @ObservationIgnored private lazy var pins = PinController()
-    @ObservationIgnored private var pinningIDs: Set<UUID> = []
-    /// Recently closed cards for Restore Closed Overlay. In memory only.
-    @ObservationIgnored private var closedOverlays = ClosedOverlays()
-    /// True while `restoreClosedOverlay` shows its card, so the card that push-out closes goes to
-    /// the back of the restore list.
-    @ObservationIgnored private var isRestoring = false
-    /// Records whose editor image is loading, so a second Annotate does not open a second editor.
-    @ObservationIgnored private var openingEditorIDs: Set<UUID> = []
-    /// Set when the first same-key replace of this launch posts `EditorUploadPlan.cacheNote`.
-    @ObservationIgnored private var postedCacheNote = false
-    /// What TidyShot last put on the clipboard for a capture: set when `save(_:intent:)` copies the
-    /// image, by the editor's Copy, and after an edit replaced the clipboard. An edit of that
-    /// capture replaces the clipboard only while the count still matches.
-    @ObservationIgnored private var clipboardOwner: EditorClipboard.Owner?
+
+    // MARK: Drag-out state (AppCoordinator+DragOut.swift)
+    // +RecordActions' Copy File writes dragCleanups and copyFileCounts; +Delete's prune clears copyFileCounts.
     /// Bumped when a record's drag folder is removed or its pending file adopted. A stage or
     /// download that started before compares it at its end and drops what it made.
     @ObservationIgnored private var dragGenerations: [UUID: Int] = [:]
@@ -147,34 +187,18 @@ final class AppCoordinator {
     /// waits again; it removes the copy once the count has moved on (Gap 7).
     @ObservationIgnored private(set) var copyFileCounts: [UUID: Int] = [:]
 
-    private(set) var isCapturing = false
-    /// From a recording's first frame until its file is handed to `saveRecording` or removed: the
-    /// status item shows `record.circle` and the menu offers Stop Recording.
-    private(set) var isRecording = false
-    /// A recording's count-in flag: true from the selection's return (Record Fullscreen: from the
-    /// free-space check) until `recorder.run` is called or the start gives up. It covers the
-    /// count-in, the settle delay and the fresh content read, with the count-in on or off.
-    /// `selfTimer.isRunning` cannot serve: it stays true until `run`'s capture closure returns.
-    @ObservationIgnored private var recordingCountIn = false
-    /// Recordings between the recorder's `.keep` and `history.add` (in quit mode, until the
-    /// thumbnail is written), so the phase never reads `.idle` in between.
-    @ObservationIgnored private(set) var recordingSavesInFlight = 0
-    /// Set by `finishRecordingForQuit` once the editors let the quit go ahead; never cleared, as the
-    /// app then quits. A recording's hand-off gives up before `recorder.run`, and `saveRecording`
-    /// switches to quit mode.
-    @ObservationIgnored private(set) var isQuitting = false
-    /// The last capture written to the save folder (upload-only captures do not count).
-    private(set) var lastCaptureURL: URL?
-    /// Records with an upload in flight; drives the menu bar icon.
-    private(set) var uploadingIDs: Set<UUID> = []
-    /// Recordings whose URL did not replace the clipboard when the upload finished, because the
-    /// clipboard had changed since the save. Their card says `Uploaded`, not `URL copied`.
-    private(set) var linkNotCopiedIDs: Set<UUID> = []
-    /// Per recording, the clipboard's change count TidyShot left after the save: the count after its
-    /// file reference, or the count it found when it put nothing there. The URL replaces the
-    /// clipboard after the upload only while the count still matches. In memory only, so after a
-    /// relaunch the clipboard counts as changed.
-    @ObservationIgnored private(set) var videoClipboardCounts: [UUID: Int] = [:]
+    // MARK: Editor state (AppCoordinator+Editor.swift)
+    // +Save also sets clipboardOwner when a capture goes on the clipboard; the quit, below, reads editors.
+    /// Records whose editor image is loading, so a second Annotate does not open a second editor.
+    @ObservationIgnored private var openingEditorIDs: Set<UUID> = []
+    /// What TidyShot last put on the clipboard for a capture: set when `save(_:intent:)` copies the
+    /// image, by the editor's Copy, and after an edit replaced the clipboard. An edit of that
+    /// capture replaces the clipboard only while the count still matches.
+    @ObservationIgnored private var clipboardOwner: EditorClipboard.Owner?
+    /// Open annotation editors, one per record.
+    @ObservationIgnored private var editors: [UUID: EditorWindowController] = [:]
+    /// True while a save-folder observation is registered (`observeSaveFolderForEditors`).
+    @ObservationIgnored private var isObservingSaveFolder = false
 
     var permissionGranted: Bool { ScreenCapturePermission.isGranted }
     var isUploading: Bool { !uploadingIDs.isEmpty }
@@ -2712,11 +2736,6 @@ final class AppCoordinator {
     }
 
     // MARK: Editor
-
-    /// Open annotation editors, one per record.
-    @ObservationIgnored private var editors: [UUID: EditorWindowController] = [:]
-    /// True while a save-folder observation is registered (`observeSaveFolderForEditors`).
-    @ObservationIgnored private var isObservingSaveFolder = false
 
     /// True while any open editor has changes that were not saved.
     var hasUnsavedEditors: Bool {
