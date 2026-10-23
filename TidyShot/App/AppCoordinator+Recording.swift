@@ -202,10 +202,29 @@ extension AppCoordinator {
         let id = UUID()
         // Read once: a change in Settings during the recording or its conversion does not reach it.
         let options = settings.recordingOptions
+        // The start resolves no input until the microphone's start path lands (the plan's Gates hold
+        // Task 4's), so until then every recording takes the lag with no microphone.
+        let lag = muteLag(for: nil)
         let request = RecordingRequest(id: id, configuration: RecordingConfiguration.make(source, options: options),
                                        displayID: displayID, outputURL: Recording.fileURL(for: id),
+                                       muteLogURL: MuteLog.url(for: id), lag: lag,
                                        gif: options.format == .gif ? options.gif : nil)
         return (request, RecordingScreenChrome(placement: placement))
+    }
+
+    /// The recording's mute lag (design, Lag): for the resolved input, from the latency CoreAudio
+    /// reports for it; with none, as for every GIF and `Off` start, `noMicrophone`, reading no
+    /// CoreAudio property. Logged at the start.
+    private func muteLag(for device: MicrophoneDevice?) -> TimeInterval {
+        let lag: TimeInterval
+        if let device {
+            let latency = MicrophoneLatency.read(deviceUID: device.uniqueID)
+            lag = MicrophoneLatency.lag(reported: latency.reported, transport: latency.transport)
+        } else {
+            lag = MicrophoneLatency.noMicrophone
+        }
+        RecordingLog.note("Recording: mute lag \(String(format: "%.3f", lag)) s (\(device?.name ?? "no microphone"))")
+        return lag
     }
 
     /// The display with `id` in fresh shareable content. When it is gone, `The display is no

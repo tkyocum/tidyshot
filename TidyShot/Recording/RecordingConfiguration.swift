@@ -60,6 +60,12 @@ nonisolated struct RecordingConfiguration: Equatable, Sendable {
         microphoneDeviceID != nil
     }
 
+    /// The control bar's mute button, only when there is sound to mute (design, Mute): never for a
+    /// GIF, nor for an MP4 whose only sound was a microphone dropped at the start.
+    var showsMuteButton: Bool {
+        capturesAudio || captureMicrophone
+    }
+
     /// The longer output side's cap: Clop returns an empty reply for 5120×2880 H.264, and many
     /// players cannot play H.264 that large.
     static let maximumSide = 4096

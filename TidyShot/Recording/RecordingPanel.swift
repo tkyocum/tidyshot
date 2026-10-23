@@ -15,6 +15,10 @@ final class RecordingPanel: NSPanel {
         isFloatingPanel = true
         level = .floating
         hidesOnDeactivate = false
+        // TidyShot is inactive while it records (the hand-off deactivates it), and AppKit shows an
+        // inactive app's tool tips only when this is set. A tool tip is a TidyShot window, so the
+        // recording leaves it out.
+        allowsToolTipsWhenApplicationIsInactive = true
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         isOpaque = false
         backgroundColor = .clear

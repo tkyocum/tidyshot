@@ -1,6 +1,8 @@
 import AppKit
 import CoreGraphics
 import Foundation
+import Synchronization
+import Testing
 @testable import TidyShot
 
 /// What the driver, the chrome and the environment did, in one ordered list, so a test can check
@@ -118,17 +120,22 @@ final class FakeRecordingChrome: RecordingChrome {
     /// The bar each `show` laid out.
     private(set) var shownBars: [RecordingPanelLayout.Bar] = []
     private(set) var elapsedShown: [TimeInterval] = []
+    /// Each `setMuted`, in order.
+    private(set) var mutedShown: [Bool] = []
     private var onStop: (() -> Void)?
     private var onCancel: (() -> Void)?
+    private var onMute: (() -> Void)?
     private var askGate: CheckedContinuation<Bool, Never>?
 
     init(log: RecordingTestLog) {
         self.log = log
     }
 
-    func show(onStop: @escaping () -> Void, onCancel: @escaping () -> Void, bar: RecordingPanelLayout.Bar) {
+    func show(onStop: @escaping () -> Void, onCancel: @escaping () -> Void, onMute: @escaping () -> Void,
+              bar: RecordingPanelLayout.Bar) {
         self.onStop = onStop
         self.onCancel = onCancel
+        self.onMute = onMute
         shownBars.append(bar)
         calls.append("show")
         log.append("show")
@@ -140,6 +147,10 @@ final class FakeRecordingChrome: RecordingChrome {
 
     func setStopEnabled(_ enabled: Bool) {
         calls.append(enabled ? "stop enabled" : "stop disabled")
+    }
+
+    func setMuted(_ muted: Bool) {
+        mutedShown.append(muted)
     }
 
     func askToDiscard(elapsed: TimeInterval) async -> Bool {
@@ -172,6 +183,12 @@ final class FakeRecordingChrome: RecordingChrome {
     func pressCancel() {
         onCancel?()
     }
+
+    /// The panel's mute button. The real button is disabled with Stop; the controller ignores a
+    /// press once the recording is ending all the same.
+    func pressMute() {
+        onMute?()
+    }
 }
 
 /// The controller's world on two `FakeScrollClock`s, the continuous one and the one that stops
@@ -190,6 +207,12 @@ final class RecordingTestWorld {
     var coverWindows: [CGDirectDisplayID: Set<CGWindowID>] = [:]
     var facts = VideoFacts.playable(seconds: 10)
     let poster = RecordingTestWorld.makePoster()
+    /// What the recording's mute log writer was given to write.
+    let muteLogWrites = MuteLogWrites()
+    /// The mute log URL of each writer made, in order.
+    private(set) var muteLogWritersMade: [URL] = []
+    /// Each file removed, with how many mute log writes had landed by then.
+    private(set) var removals: [Removal] = []
     /// `microphoneLossReason`'s answers, by device ID; nil for any other.
     var microphoneLossReasons: [String: String] = [:]
     /// The device IDs `microphoneLossReason` was asked about, in order.
@@ -227,12 +250,30 @@ final class RecordingTestWorld {
                 log.append("poster")
                 return poster
             },
-            removeFile: { [unowned self] _ in log.append("remove") },
+            removeFile: { [unowned self] url in
+                removals.append(Removal(url: url, writesLanded: muteLogWrites.logs.count))
+                log.append("remove")
+            },
             workspaceCenter: center,
             microphoneLossReason: { [unowned self] id in
                 microphoneLossQueries.append(id)
                 return microphoneLossReasons[id]
+            },
+            makeMuteLogWriter: { [unowned self] url in
+                muteLogWritersMade.append(url)
+                return MuteLogWriter(url: url, write: muteLogWrites.write)
             })
+    }
+
+    /// A removed file, and how many of the mute log writer's writes had landed when it went.
+    struct Removal: Equatable {
+        var url: URL
+        var writesLanded: Int
+    }
+
+    /// The files removed, in order.
+    var removedURLs: [URL] {
+        removals.map(\.url)
     }
 
     /// Lets `duration` pass with the Mac awake: both clocks move.
@@ -251,6 +292,87 @@ final class RecordingTestWorld {
                                 space: CGColorSpace(name: CGColorSpace.sRGB)!,
                                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
         return context.makeImage()!
+    }
+}
+
+/// A `MuteLogWriter`'s write for tests. It records each log it writes, in order, from the writer's
+/// consumer off the main actor, and can hold each write until the test releases it, slow each by
+/// `delay`, fail the next few, and also write to disk.
+nonisolated final class MuteLogWrites: Sendable {
+    private struct State {
+        var logs: [MuteLog] = []
+        var ended = 0
+        var holds = false
+        var failures = 0
+    }
+
+    struct Failed: Error {}
+
+    /// Each write first sleeps this long, as a slow disk would.
+    let delay: TimeInterval
+    /// Whether a write also writes the log to its URL (`MuteLog.write`).
+    let writesToDisk: Bool
+    private let state = Mutex(State())
+    private let gate = DispatchSemaphore(value: 0)
+
+    init(delay: TimeInterval = 0, writesToDisk: Bool = false) {
+        self.delay = delay
+        self.writesToDisk = writesToDisk
+    }
+
+    /// The logs written, in order. A failed write is not among them.
+    var logs: [MuteLog] {
+        state.withLock { $0.logs }
+    }
+
+    /// The writes that have returned or thrown.
+    var ended: Int {
+        state.withLock { $0.ended }
+    }
+
+    /// From now on, each write waits until `releaseWrites()`, for at most 10 s, so a test that
+    /// never releases fails instead of hanging.
+    func holdWrites() {
+        state.withLock { $0.holds = true }
+    }
+
+    func releaseWrites() {
+        state.withLock { $0.holds = false }
+        gate.signal()
+    }
+
+    /// The next `count` writes throw.
+    func failNext(_ count: Int) {
+        state.withLock { $0.failures = count }
+    }
+
+    /// The write a `MuteLogWriter` is given.
+    func write(_ log: MuteLog, to url: URL) throws {
+        if state.withLock({ $0.holds }) {
+            _ = gate.wait(timeout: .now() + 10)
+        }
+        if delay > 0 {
+            Thread.sleep(forTimeInterval: delay)
+        }
+        defer { state.withLock { $0.ended += 1 } }
+        let fails = state.withLock { state in
+            guard state.failures > 0 else { return false }
+            state.failures -= 1
+            return true
+        }
+        if fails { throw Failed() }
+        if writesToDisk {
+            try MuteLog.write(log, to: url)
+        }
+        state.withLock { $0.logs.append(log) }
+    }
+
+    /// Waits in real time, up to 2 s, until `count` writes have returned or thrown.
+    func waitForWrites(_ count: Int) async {
+        for _ in 0..<2_000 where ended < count {
+            try? await Task.sleep(for: .milliseconds(1))
+        }
+        #expect(ended >= count, "waited for \(count) mute log writes")
     }
 }
 

@@ -6,12 +6,28 @@ import SwiftUI
 final class RecordingPanelModel {
     /// Seconds since the first frame.
     var elapsed: TimeInterval = 0
-    /// False once the recording is ending: Stop and Cancel then do nothing.
+    /// False once the recording is ending: Stop, Cancel and the mute button then do nothing.
     var stopEnabled = true
     /// Set at `show`, before the panel is laid out.
     var bar: RecordingPanelLayout.Bar = .plain
+    /// Whether the sound is muted, as the controller says.
+    var isMuted = false
     @ObservationIgnored var onStop: () -> Void = {}
     @ObservationIgnored var onCancel: () -> Void = {}
+    @ObservationIgnored var onMute: () -> Void = {}
+
+    /// The mute button's symbol shows the state; its tool tip and label say what a press does.
+    var muteSymbol: String {
+        isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill"
+    }
+
+    var muteToolTip: String {
+        isMuted ? "Unmute the sound" : "Mute the sound"
+    }
+
+    var muteAccessibilityLabel: String {
+        isMuted ? "Unmute" : "Mute"
+    }
 
     /// The recording's format, for the soft limit: only a GIF recording has the GIF bar.
     var format: RecordingFormat {
@@ -20,8 +36,8 @@ final class RecordingPanelModel {
 }
 
 /// The recording's control bar (design, Control panel): for a GIF recording the `GIF` tag, then
-/// the elapsed time, orange from the format's soft limit, then Stop and Cancel, each at its
-/// `RecordingPanelLayout` frame.
+/// the elapsed time, orange from the format's soft limit, then the mute button on the mute bar,
+/// Stop and Cancel, each at its `RecordingPanelLayout` frame.
 struct RecordingPanelView: View {
     let model: RecordingPanelModel
 
@@ -43,6 +59,18 @@ struct RecordingPanelView: View {
                 .foregroundStyle(RecordingClock.isPastSoftLimit(model.elapsed, format: model.format) ? Color.orange : Color.primary)
                 .lineLimit(1)
                 .placed(in: RecordingPanelLayout.timeFrame(of: bar), alignment: .leading)
+            if let mute = RecordingPanelLayout.muteFrame(of: bar) {
+                Button {
+                    model.onMute()
+                } label: {
+                    Image(systemName: model.muteSymbol)
+                        .frame(width: 28, height: 28)
+                        .contentShape(Rectangle())
+                }
+                .help(model.muteToolTip)
+                .accessibilityLabel(model.muteAccessibilityLabel)
+                .placed(in: mute)
+            }
             Button {
                 model.onStop()
             } label: {

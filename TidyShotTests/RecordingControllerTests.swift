@@ -24,13 +24,17 @@ struct RecordingControllerTests {
         request(.window(id: windowID, frame: CGRect(x: 200, y: 150, width: 1000, height: 700), scale: 2))
     }
 
-    func request(_ source: RecordingSource, gif: GIFSettings? = nil, microphoneID: String? = nil) -> RecordingRequest {
+    func request(_ source: RecordingSource, gif: GIFSettings? = nil, microphoneID: String? = nil,
+                 systemAudio: Bool = false, lag: TimeInterval = RecordingMute.defaultLag) -> RecordingRequest {
         let id = UUID()
         var options = options
+        options.format = gif == nil ? .mp4 : .gif
         options.microphoneID = microphoneID
+        options.systemAudio = systemAudio
         return RecordingRequest(id: id, configuration: .make(source, options: options), displayID: display.id,
                                 outputURL: URL(filePath: "/private/tmp/RecordingControllerTests/Recording/\(id.uuidString).mp4"),
-                                gif: gif)
+                                muteLogURL: URL(filePath: "/private/tmp/RecordingControllerTests/Mute/\(id.uuidString).json"),
+                                lag: lag, gif: gif)
     }
 
     /// Runs `request` on a new controller with `driver` and `chrome`, and lets the start run.
@@ -249,6 +253,294 @@ struct RecordingControllerTests {
             _ = await run.value
             controller.close()
         }
+    }
+
+    // MARK: Mute (design, Microphone, Mute)
+
+    /// An area recording with system audio, so its bar has the mute button.
+    func soundRequest(lag: TimeInterval = RecordingMute.defaultLag) -> RecordingRequest {
+        request(.area(CGRect(x: 100, y: 100, width: 800, height: 500), on: display), systemAudio: true, lag: lag)
+    }
+
+    func closed(_ start: TimeInterval, _ end: TimeInterval) -> MuteInterval {
+        MuteInterval(start: start, end: end)
+    }
+
+    /// The bar follows the effective configuration: never a mute button for a GIF, nor for an MP4
+    /// with no sound.
+    @Test func theChromeShowsTheMuteBarOnlyForAnMP4WithSound() async throws {
+        let area = RecordingSource.area(CGRect(x: 100, y: 100, width: 800, height: 500), on: display)
+        let cases: [(RecordingRequest, RecordingPanelLayout.Bar)] = [
+            (request(area, systemAudio: true), .mute),
+            (request(area, microphoneID: Self.microphoneID), .mute),
+            (request(area), .plain),
+            (request(area, gif: GIFSettings(fps: 15, maxSide: 1280), microphoneID: Self.microphoneID, systemAudio: true), .gif),
+        ]
+        for (request, bar) in cases {
+            let driver = FakeRecordingDriver(log: world.log)
+            let chrome = FakeRecordingChrome(log: world.log)
+            let (controller, run) = await begin(request, driver: driver, chrome: chrome)
+            #expect(chrome.shownBars == [bar])
+            chrome.pressStop()
+            _ = await run.value
+            controller.close()
+        }
+    }
+
+    @Test func muteAtTwoAndUnmuteAtFiveGivesTwoToFive() async throws {
+        let driver = FakeRecordingDriver(log: world.log)
+        let chrome = FakeRecordingChrome(log: world.log)
+        let (controller, run) = await begin(soundRequest(), driver: driver, chrome: chrome)
+        driver.send(.recordingStarted)
+        await world.advance(by: .seconds(2))
+        chrome.pressMute()
+        #expect(controller.isMuted)
+        await world.advance(by: .seconds(3))
+        chrome.pressMute()
+        #expect(!controller.isMuted)
+        await world.advance(by: .seconds(2))
+        chrome.pressStop()
+
+        let recording = try #require(await run.value.kept)
+        #expect(recording.muteIntervals == [closed(2, 5)])
+        #expect(chrome.mutedShown == [true, false])
+        controller.close()
+    }
+
+    /// An interval still open at the end closes at the end's elapsed time.
+    @Test func muteAtFourAndStopAtSevenGivesFourToSeven() async throws {
+        let driver = FakeRecordingDriver(log: world.log)
+        let chrome = FakeRecordingChrome(log: world.log)
+        let (controller, run) = await begin(soundRequest(), driver: driver, chrome: chrome)
+        driver.send(.recordingStarted)
+        await world.advance(by: .seconds(4))
+        chrome.pressMute()
+        await world.advance(by: .seconds(3))
+        chrome.pressStop()
+
+        let recording = try #require(await run.value.kept)
+        #expect(recording.muteIntervals == [closed(4, 7)])
+        #expect(chrome.mutedShown == [true])
+        controller.close()
+    }
+
+    /// The button is live from `show`, while the stream is still starting.
+    @Test func aPressBeforeTheFirstFrameOpensAtZero() async throws {
+        let driver = FakeRecordingDriver(log: world.log)
+        driver.holdsStart = true
+        let chrome = FakeRecordingChrome(log: world.log)
+        let (controller, run) = await begin(soundRequest(), driver: driver, chrome: chrome)
+        await world.advance(by: .seconds(1))
+        #expect(driver.isHoldingStart)
+        chrome.pressMute()
+        #expect(controller.isMuted)
+        driver.releaseStart()
+        await world.advance(by: .seconds(1))
+        driver.send(.recordingStarted)
+        await world.advance(by: .seconds(3))
+        chrome.pressMute()
+        await world.advance(by: .seconds(1))
+        chrome.pressStop()
+
+        let recording = try #require(await run.value.kept)
+        #expect(recording.muteIntervals == [closed(0, 3)])
+        controller.close()
+    }
+
+    @Test func aPressOnceTheRecordingIsEndingIsIgnored() async throws {
+        let driver = FakeRecordingDriver(log: world.log)
+        driver.finishTiming = .never
+        let chrome = FakeRecordingChrome(log: world.log)
+        let (controller, run) = await begin(soundRequest(), driver: driver, chrome: chrome)
+        driver.send(.recordingStarted)
+        await world.advance(by: .seconds(2))
+        chrome.pressMute()
+        await world.muteLogWrites.waitForWrites(1)
+        await world.advance(by: .seconds(1))
+        chrome.pressStop()
+        await world.advance(by: .seconds(1))
+        // In the stop wait.
+        #expect(controller.isRunning)
+        chrome.pressMute()
+        controller.toggleMute()
+        #expect(controller.isMuted)
+        #expect(chrome.mutedShown == [true])
+
+        driver.send(.recordingFinished)
+        let recording = try #require(await run.value.kept)
+        #expect(recording.muteIntervals == [closed(2, 3)])
+        #expect(world.muteLogWrites.logs.map(\.sequence) == [1])
+        // A press after the run is ignored too.
+        controller.toggleMute()
+        #expect(chrome.mutedShown == [true])
+        controller.close()
+    }
+
+    @Test func theStateAndTheListResetAtEachRun() async throws {
+        let drivers = [FakeRecordingDriver(log: world.log), FakeRecordingDriver(log: world.log)]
+        var unused = drivers
+        let controller = RecordingController(environment: world.environment, makeDriver: { unused.removeFirst() })
+        let firstChrome = FakeRecordingChrome(log: world.log)
+        let firstRun = Task { await controller.run(soundRequest(), chrome: firstChrome, onStarted: {}) }
+        await world.advance(by: .zero)
+        drivers[0].send(.recordingStarted)
+        await world.advance(by: .seconds(1))
+        firstChrome.pressMute()
+        await world.advance(by: .seconds(1))
+        firstChrome.pressStop()
+        #expect(try #require(await firstRun.value.kept).muteIntervals == [closed(1, 2)])
+        // Stopped while muted.
+        #expect(controller.isMuted)
+        controller.close()
+
+        let chrome = FakeRecordingChrome(log: world.log)
+        let request = soundRequest()
+        let run = Task { await controller.run(request, chrome: chrome, onStarted: {}) }
+        await world.advance(by: .zero)
+        #expect(!controller.isMuted)
+        drivers[1].send(.recordingStarted)
+        await world.advance(by: .seconds(3))
+        chrome.pressMute()
+        await world.advance(by: .seconds(1))
+        chrome.pressStop()
+
+        let recording = try #require(await run.value.kept)
+        #expect(recording.muteIntervals == [closed(3, 4)])
+        // Its own writer, whose numbers start again.
+        #expect(world.muteLogWritersMade.count == 2)
+        #expect(world.muteLogWritersMade.last == request.muteLogURL)
+        #expect(world.muteLogWrites.logs.last == MuteLog(intervals: [MuteInterval(start: 3, end: nil)], lag: request.lag,
+                                                         sequence: 1))
+        controller.close()
+    }
+
+    /// The writer is made at the first toggle (plan Gap 8) and gets every toggle's snapshot: the
+    /// intervals so far, an open one as its start, the request's lag and a rising number.
+    @Test func eachToggleYieldsTheIntervalsSoFarWithAHigherSequenceNumber() async throws {
+        let driver = FakeRecordingDriver(log: world.log)
+        let chrome = FakeRecordingChrome(log: world.log)
+        let request = soundRequest(lag: 0.65)
+        let (controller, run) = await begin(request, driver: driver, chrome: chrome)
+        driver.send(.recordingStarted)
+        await world.advance(by: .seconds(1))
+        #expect(world.muteLogWritersMade.isEmpty)
+        for toggle in 1...3 {
+            chrome.pressMute()
+            await world.muteLogWrites.waitForWrites(toggle)
+            await world.advance(by: .seconds(1))
+        }
+        #expect(world.muteLogWritersMade == [request.muteLogURL])
+        #expect(world.muteLogWrites.logs == [
+            MuteLog(intervals: [MuteInterval(start: 1, end: nil)], lag: 0.65, sequence: 1),
+            MuteLog(intervals: [closed(1, 2)], lag: 0.65, sequence: 2),
+            MuteLog(intervals: [closed(1, 2), MuteInterval(start: 3, end: nil)], lag: 0.65, sequence: 3),
+        ])
+        chrome.pressStop()
+
+        let recording = try #require(await run.value.kept)
+        #expect(recording.muteIntervals == [closed(1, 2), closed(3, 4)])
+        #expect(recording.lag == 0.65)
+        controller.close()
+    }
+
+    @Test func theEndAwaitsTheWriterBeforeItTouchesTheFileOrReturns() async throws {
+        world.muteLogWrites.holdWrites()
+        let driver = FakeRecordingDriver(log: world.log)
+        let chrome = FakeRecordingChrome(log: world.log)
+        let (controller, run) = await begin(soundRequest(), driver: driver, chrome: chrome)
+        driver.send(.recordingStarted)
+        await world.advance(by: .seconds(2))
+        chrome.pressMute()
+        await world.advance(by: .seconds(1))
+        chrome.pressStop()
+        await world.advance(by: .seconds(5))
+        #expect(controller.isRunning)
+        #expect(world.log.fileAccesses.isEmpty)
+        #expect(world.muteLogWrites.logs.isEmpty)
+
+        world.muteLogWrites.releaseWrites()
+        let recording = try #require(await run.value.kept)
+        #expect(world.muteLogWrites.logs.map(\.sequence) == [1])
+        #expect(recording.muteIntervals == [closed(2, 3)])
+        // The kept log is the save's: the mute ladder removes it.
+        #expect(world.removals.isEmpty)
+        controller.close()
+    }
+
+    nonisolated enum Discard: CaseIterable, Sendable {
+        /// Under 5 s, so without a question.
+        case cancel
+        /// The end rule removes an unplayable file.
+        case endRule
+        /// An end before the first frame removes the file whatever it holds.
+        case beforeTheFirstFrame
+        /// The stream never started.
+        case startFailure
+    }
+
+    /// Each place that discards the recording removes its mute log too, after the file, and only
+    /// once the writer has finished, so no write lands after the removal.
+    @Test(arguments: Discard.allCases)
+    func aDiscardRemovesTheMuteLogOnceTheWriterHasFinished(_ discard: Discard) async throws {
+        world.muteLogWrites.holdWrites()
+        if discard == .endRule { world.facts = .unplayable }
+        let driver = FakeRecordingDriver(log: world.log)
+        driver.holdsStart = discard == .startFailure
+        if discard == .startFailure { driver.startError = RecordingStartError.displayGone }
+        let chrome = FakeRecordingChrome(log: world.log)
+        let request = soundRequest()
+        let (controller, run) = await begin(request, driver: driver, chrome: chrome)
+        if discard != .beforeTheFirstFrame && discard != .startFailure {
+            driver.send(.recordingStarted)
+            await world.advance(by: .seconds(2))
+        }
+        chrome.pressMute()
+        await world.advance(by: .seconds(1))
+        switch discard {
+        case .cancel: chrome.pressCancel()
+        case .endRule, .beforeTheFirstFrame: chrome.pressStop()
+        case .startFailure: driver.releaseStart()
+        }
+        await world.advance(by: .seconds(1))
+        #expect(controller.isRunning)
+        #expect(world.removals.isEmpty)
+
+        world.muteLogWrites.releaseWrites()
+        let outcome = await run.value
+        #expect(outcome.kept == nil)
+        #expect(world.removals == [RecordingTestWorld.Removal(url: request.outputURL, writesLanded: 1),
+                                   RecordingTestWorld.Removal(url: request.muteLogURL, writesLanded: 1)])
+        controller.close()
+    }
+
+    /// A recording never muted has no log: no writer is made and only the file is removed.
+    @Test func aRecordingNeverMutedHasNoLog() async throws {
+        let driver = FakeRecordingDriver(log: world.log)
+        let chrome = FakeRecordingChrome(log: world.log)
+        let request = soundRequest()
+        let (controller, run) = await begin(request, driver: driver, chrome: chrome)
+        driver.send(.recordingStarted)
+        await world.advance(by: .seconds(2))
+        chrome.pressCancel()
+
+        #expect(await run.value.kept == nil)
+        #expect(world.removedURLs == [request.outputURL])
+        #expect(world.muteLogWritersMade.isEmpty)
+        controller.close()
+    }
+
+    @Test func theKeptRecordingCarriesTheRequestsLag() async throws {
+        let driver = FakeRecordingDriver(log: world.log)
+        let chrome = FakeRecordingChrome(log: world.log)
+        let (controller, run) = await begin(soundRequest(lag: 0.6), driver: driver, chrome: chrome)
+        driver.send(.recordingStarted)
+        await world.advance(by: .seconds(3))
+        chrome.pressStop()
+
+        let recording = try #require(await run.value.kept)
+        #expect(recording.lag == 0.6)
+        #expect(recording.muteIntervals.isEmpty)
+        controller.close()
     }
 
     // MARK: The start

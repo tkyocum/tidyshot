@@ -74,6 +74,16 @@ The review's probes and the GIF encoder spike go in the same folder, copied in w
 - **Mute offset.** `mute-offset.swift` (system audio) and `mute-offset-mic.swift` (the microphone) fire a window flash and a 1 kHz tone at main-actor times after `recordingOutputDidStartRecording`, during an `SCRecordingOutput` recording, and `mute-offset-onsets.py` reads their file times.
   - Video and system audio sit within 0 to 20 ms of the callback clock, so the main-queue hop to the controller is small.
   - The microphone sits later by the input's own latency: about 0.02 s through a USB input, and 0.13 s (125 to 135 ms) through `TKY Microphone`, the iPhone input, which reports 6,000 frames of input latency. ScreenCaptureKit does not compensate.
+- **Input latency, as reported** (Task 6, 2026-10-23; the measured offsets are still to run). `mute-offset-mic.swift` now prints the input's CoreAudio latency property by property, then what `MicrophoneLatency.read` gives and the lag `MicrophoneLatency.lag` makes of it; with `latency` as its fourth argument it records nothing. Read unsandboxed for the inputs connected to Tim's Mac today, in frames at 48 kHz (AirPods and the iPhone input were not connected):
+
+  | Input | Transport | Device latency | Safety offset | Buffer | Stream latency | Reported | Lag |
+  |---|---|---|---|---|---|---|---|
+  | Brio 500, RODE AI-1, LG UltraFine Display Audio, CalDigit TS4 Audio - Rear | USB | 74 | 74 | 512 | 0 | 0.0138 s | 0.300 s |
+  | MacBook Pro Microphone | built-in | 26 | 48 | 512 | 1,439 | 0.0422 s | 0.300 s |
+
+  - The USB inputs report 0.014 s against the 0.02 s measured through a USB input (Mute offset), well inside the 0.3 s floor.
+  - **From the sandbox.** `MicrophoneLatencyTests` runs inside the sandboxed Debug app (the test host, with `app-sandbox` and `device.audio-input`) and read the default input, CalDigit TS4 Audio - Rear, with a latency and a transport, so the sandbox lets the app read these properties for that input at least. The app's own start log (`Recording: mute lag …`) shows it per input once the microphone start lands.
+  - **Still to run (Tim):** a recording with `mute-offset-mic.swift` through AirPods, the Brio 500, the iPhone input and a USB input, each input's measured offset (`mute-offset-onsets.py` with `K0=6`) against its reported latency and lag. An input whose offset falls outside its lag goes back to Tim; the constants stay.
 - **Still to probe**, inside the plan, as gates and hand checks in its Tasks 3, 4, 6 and 7 (the plan's Gates say which steps wait when one fails):
   - the spike's GIFs (`final/*.gif`, which `measure.sh` remakes) in Chrome and Firefox: they play, loop, and hold their delays;
   - the spike's encoder on a dark-mode recording, a low-contrast UI, a wide-gamut or HDR source and a wallpaper gradient: size, MAE and a zoomed look, to check the spread floor (2) and hysteresis (4) beyond the three tuning inputs, and how much gradients band. Posterisation or banding Tim finds poor is answered with the selective ordered dither (GIF, Encoding), not by changing the defaults;

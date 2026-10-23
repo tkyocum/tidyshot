@@ -1,7 +1,46 @@
 import AppKit
 import ScreenCaptureKit
 import AVFoundation
+import CoreAudio
 setbuf(stdout, nil)
+
+// The input's CoreAudio latency, read here property by property, then as TidyShot's
+// MicrophoneLatency reads it (compile this with TidyShot/Recording/MicrophoneLatency.swift),
+// with the mute lag the app gives it, to compare with the offset the events measure.
+func printLatency(uid: String) {
+    func prop<T>(_ id: AudioObjectID, _ sel: AudioObjectPropertySelector, _ scope: AudioObjectPropertyScope = kAudioObjectPropertyScopeGlobal, as: T.Type) -> T? {
+        var addr = AudioObjectPropertyAddress(mSelector: sel, mScope: scope, mElement: kAudioObjectPropertyElementMain)
+        var size = UInt32(MemoryLayout<T>.size)
+        let p = UnsafeMutablePointer<T>.allocate(capacity: 1); defer { p.deallocate() }
+        guard AudioObjectGetPropertyData(id, &addr, 0, nil, &size, p) == noErr else { return nil }
+        return p.pointee
+    }
+    func text(_ v: UInt32?) -> String { v.map(String.init) ?? "unreadable" }
+    var addr = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyTranslateUIDToDevice, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+    var cfUID = uid as CFString
+    var device = AudioObjectID(kAudioObjectUnknown)
+    var size = UInt32(MemoryLayout<AudioObjectID>.size)
+    let status = withUnsafePointer(to: &cfUID) { AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &addr, UInt32(MemoryLayout<CFString>.size), $0, &size, &device) }
+    guard status == noErr, device != kAudioObjectUnknown else { print("input \(uid): no such device"); return }
+    let name = prop(device, kAudioObjectPropertyName, as: CFString.self) as String? ?? "?"
+    let input = kAudioObjectPropertyScopeInput
+    let latency = prop(device, kAudioDevicePropertyLatency, input, as: UInt32.self)
+    let safety = prop(device, kAudioDevicePropertySafetyOffset, input, as: UInt32.self)
+    let buffer = prop(device, kAudioDevicePropertyBufferFrameSize, input, as: UInt32.self)
+    var streamsAddr = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyStreams, mScope: input, mElement: kAudioObjectPropertyElementMain)
+    var streamsSize: UInt32 = 0
+    AudioObjectGetPropertyDataSize(device, &streamsAddr, 0, nil, &streamsSize)
+    var streams = [AudioObjectID](repeating: 0, count: Int(streamsSize) / 4)
+    AudioObjectGetPropertyData(device, &streamsAddr, 0, nil, &streamsSize, &streams)
+    let streamLatency = streams.first.flatMap { prop($0, kAudioStreamPropertyLatency, as: UInt32.self) }
+    let rate = prop(device, kAudioDevicePropertyNominalSampleRate, as: Float64.self)
+    let transport = prop(device, kAudioDevicePropertyTransportType, as: UInt32.self)
+    let fourCC = transport.map { String(bytes: withUnsafeBytes(of: $0.bigEndian, Array.init), encoding: .ascii) ?? "?" } ?? "unreadable"
+    print("input \(name) (\(uid)): latency \(text(latency)), safety offset \(text(safety)), buffer \(text(buffer)), stream latency \(text(streamLatency)) frames at \(rate.map { String(format: "%.0f Hz", $0) } ?? "unreadable"); transport '\(fourCC)'")
+    let read = MicrophoneLatency.read(deviceUID: uid)
+    let lag = MicrophoneLatency.lag(reported: read.reported, transport: read.transport)
+    print("MicrophoneLatency: reported \(read.reported.map { String(format: "%.4f s", $0) } ?? "nil"), transport \(read.transport.map { "\($0)" } ?? "nil"), lag \(String(format: "%.3f s", lag))")
+}
 
 // Measures the offset between the main-actor time of the start callback (as RecordingController
 // reads it: after a DispatchQueue.main.async hop) and the file's timeline, using a visual flash
@@ -42,6 +81,9 @@ func toneWav(url: URL) {
     let outPath = CommandLine.arguments[1]
     let micUID = CommandLine.arguments[2]
     let outUID = CommandLine.arguments[3]
+    printLatency(uid: micUID)
+    // `latency` as a fourth argument prints the above and records nothing.
+    if CommandLine.arguments.count > 4, CommandLine.arguments[4] == "latency" { exit(0) }
     let screen = NSScreen.main!
     let sh = screen.frame.height
     let win = NSWindow(contentRect: NSRect(x: 200, y: 200, width: 300, height: 300), styleMask: .borderless, backing: .buffered, defer: false)

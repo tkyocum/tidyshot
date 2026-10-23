@@ -192,6 +192,24 @@ struct RecordingConfigurationTests {
         #expect(!config.capturesAudio)
     }
 
+    /// The control bar's mute button shows only when the recording has sound to mute (design,
+    /// Mute): system audio or the microphone, so never for a GIF.
+    @Test func theMuteButtonShowsOnlyForSystemAudioOrTheMicrophone() {
+        let area = RecordingSource.area(CGRect(x: 0, y: 0, width: 400, height: 300), on: laptop)
+        var microphone = options()
+        microphone.microphoneID = "BuiltInMicrophoneDevice"
+        var both = options(audio: true)
+        both.microphoneID = "BuiltInMicrophoneDevice"
+        var gif = both
+        gif.format = .gif
+
+        #expect(!RecordingConfiguration.make(area, options: options()).showsMuteButton)
+        #expect(RecordingConfiguration.make(area, options: options(audio: true)).showsMuteButton)
+        #expect(RecordingConfiguration.make(area, options: microphone).showsMuteButton)
+        #expect(RecordingConfiguration.make(area, options: both).showsMuteButton)
+        #expect(!RecordingConfiguration.make(area, options: gif).showsMuteButton)
+    }
+
     @Test func areaMinimumIs32PointsEachWay() {
         #expect(RecordingConfiguration.minimumAreaSide == 32)
         #expect(RecordingConfiguration.isLargeEnough(CGRect(x: 10, y: 10, width: 32, height: 32)))

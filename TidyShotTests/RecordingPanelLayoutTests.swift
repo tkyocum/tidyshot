@@ -4,8 +4,7 @@ import Testing
 
 /// The recording bar's layout (design, Mute, Bar): each bar laid out with a time past an hour.
 struct RecordingPanelLayoutTests {
-    /// The mute bar joins with the mute button.
-    nonisolated static let bars: [RecordingPanelLayout.Bar] = [.plain, .gif]
+    nonisolated static let bars: [RecordingPanelLayout.Bar] = [.plain, .mute, .gif]
 
     func frames(of bar: RecordingPanelLayout.Bar) -> [CGRect] {
         [RecordingPanelLayout.tagFrame(of: bar), RecordingPanelLayout.timeFrame(of: bar), RecordingPanelLayout.muteFrame(of: bar),
@@ -64,6 +63,34 @@ struct RecordingPanelLayoutTests {
         #expect(RecordingPanelLayout.tagFrame(of: .mute) == nil)
         let label = ("GIF" as NSString).size(withAttributes: [.font: RecordingPanelLayout.tagFont]).width
         #expect(label + 2 * RecordingPanelLayout.tagPadding <= tag.width)
+    }
+
+    /// The mute button sits between the time and Stop, a button's size.
+    @Test func theMuteButtonSitsBetweenTheTimeAndStop() throws {
+        let mute = try #require(RecordingPanelLayout.muteFrame(of: .mute))
+        #expect(RecordingPanelLayout.timeFrame(of: .mute).maxX <= mute.minX)
+        #expect(mute.maxX == RecordingPanelLayout.stopFrame(of: .mute).minX - 6)
+        #expect(mute.size == CGSize(width: 28, height: 28))
+    }
+
+    /// The symbol shows the state; the tool tip and the accessibility label say what a press does.
+    @Test func theMuteButtonShowsItsStateAndSaysWhatAPressDoes() {
+        let model = RecordingPanelModel()
+        #expect(model.muteSymbol == "speaker.wave.2.fill")
+        #expect(model.muteToolTip == "Mute the sound")
+        #expect(model.muteAccessibilityLabel == "Mute")
+        model.isMuted = true
+        #expect(model.muteSymbol == "speaker.slash.fill")
+        #expect(model.muteToolTip == "Unmute the sound")
+        #expect(model.muteAccessibilityLabel == "Unmute")
+    }
+
+    /// TidyShot is inactive while it records, and AppKit shows an inactive app's tool tips only
+    /// when the window allows it (design, Mute, Tool tips).
+    @Test func thePanelShowsToolTipsWhileTidyShotIsInactive() {
+        let panel = RecordingPanel(model: RecordingPanelModel())
+        #expect(panel.allowsToolTipsWhenApplicationIsInactive)
+        #expect(!panel.hidesOnDeactivate)
     }
 
     /// Stop and Cancel keep R1's places at the bar's right end.
