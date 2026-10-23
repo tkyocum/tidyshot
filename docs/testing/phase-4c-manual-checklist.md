@@ -27,6 +27,9 @@ io.tky.tidyshot $k; done`. Read them with `defaults read io.tky.tidyshot <key>`;
 Take these captures first.
 - A Terminal or TextEdit window with a few lines of dark text on white, saved with "Save and copy image" (the
   main capture; a second like it, for the two-editor items; and three or four more like it, the scratch captures).
+- One more like it taken with After capture set to "Upload and copy URL" (Settings > General; set it back to "Save
+  and copy image" afterwards): the uploaded capture. Upload as New needs a link (⌥⌘U beeps on a capture never
+  uploaded), and this capture has one before anything is drawn on it.
 - A window capture (⌃⇧2) of a window with rounded corners, with Include window shadow off, and another with it on.
 - A capture of busy content (a web page with photos and text) with a bright and a dark half, at 1x if you can.
 - A scrolling capture of `tall.html` below, of the page area only, started at the top of the page and scrolled to
@@ -160,12 +163,14 @@ Each is one Edit > Undo entry named as below; ⌘Z restores the picture, ⇧⌘Z
 - [ ] After undoing a Delete of a counter the number it had returns; after undoing an Add the next number is the one it was.
 
 ## Copy, Save, Save As… and Upload
-With a spotlight (rectangle and ellipse, Dim 70 %) and a few counters, an arrow and a text over the dimmed area, on a scratch capture (Save and Upload write over it). Do each once, in this order (Upload closes the editor), and compare the result with the canvas at 100 %.
+With a spotlight (rectangle and ellipse, Dim 70 %) and a few counters, an arrow and a text over the dimmed area, on a scratch capture (Save and Upload write over it). Do Copy, Save, Save As… and Upload once each, in this order and in the one editor, without closing it between them: Save leaves the marks live in the open editor, and Upload closes it. Compare each result with the canvas at 100 %; Upload's with the Save As… file, since the canvas is gone by then.
 - [ ] Copy (⇧⌘C, or ⌘C with nothing selected): paste into Preview > File > New from Clipboard. The dim, the holes, the counters (fill, ring, number) and the arrow match the canvas; the arrow, text and counters are bright over the dim.
-- [ ] Save (⌘S): the file in the save folder matches. Reopen it in the editor: it opens as a flat image, with no spotlight or counter left to select.
-- [ ] Save As… (⇧⌘S) matches, and leaves the capture and its record unchanged.
-- [ ] Upload (⌘U): the uploaded object, opened from the link, matches. Upload as New (⌥⌘U) the same.
-- [ ] With a Background on, a crop and the spotlight, on a second scratch capture: each of the four gives the dim inside the content only, with the fill and the padding undimmed.
+- [ ] Save (⌘S): the file in the save folder matches. The editor stays open, and a click on a spotlight or a counter still selects it.
+- [ ] Save As… (⇧⌘S) to `~/Desktop/p4c/saveas.png` matches, and leaves the capture and its record unchanged.
+- [ ] Upload (⌘U): the editor closes. The uploaded object, opened from the link, matches `saveas.png`.
+- [ ] Once the upload has finished, reopen the capture with Annotate on its Recent Captures row: it opens as a flat image with the marks in its pixels, and no spotlight or counter left to select.
+- [ ] Upload as New (⌥⌘U), on the uploaded capture (see the setup), not on the one just uploaded, which now reopens flat: open it in the editor and draw the same marks. Save As… to `~/Desktop/p4c/asnew.png` and compare it with the canvas, then press ⌥⌘U: the editor closes, the clipboard gets a new link, and the object it opens matches `asnew.png`.
+- [ ] With a Background on, a crop and the spotlight, on a second scratch capture: Copy, Save, Save As… and Upload, in the same order (Upload last), each give the dim inside the content only, with the fill and the padding undimmed.
 - [ ] Pixels outside the effects, the drawings and the dim equal the capture: close any editor on the main capture without saving and open it again (it was never saved over; `main-original.png` holds it), draw a single small spotlight, Save As… to `~/Desktop/p4c/dim50.png`, and check with `px.swift` that a pixel inside its hole equals the same pixel of `main-original.png`, and one outside is about half of it at 50 %.
 - [ ] In the same editor, pick 30 % and Save As… `dim30.png`, then 70 % and Save As… `dim70.png`: one pixel of white outside the hole reads about 179 and about 77 on a white page (`dim50.png` reads about 128), against 255 in `main-original.png`.
 
