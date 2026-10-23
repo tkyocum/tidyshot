@@ -147,6 +147,83 @@ struct RecentCaptureFormattingTests {
         #expect(!RecentCaptureFormatting.canCopyFile(record(.none)))
     }
 
+    // MARK: GIF, Trim and the sound mark (recording R2)
+
+    func gif(_ state: CaptureRecord.UploadState, file: URL? = URL(fileURLWithPath: "/Users/tim/Desktop/Recording.gif"),
+             location: ObjectLocation? = nil) -> CaptureRecord {
+        CaptureRecord(timestamp: now.addingTimeInterval(-120), fileURL: file, pixelWidth: 1280, pixelHeight: 800,
+                      appName: nil, uploadState: state, objectLocation: location, mediaKind: .gif, durationSeconds: 12)
+    }
+
+    /// A GIF hides the image actions like an MP4, has Copy File with a local file, and shows the
+    /// `GIF` badge where an MP4 shows `play.fill`. An image has no badge.
+    @Test func aGIFHidesTheImageActionsCopiesItsFileAndHasTheGIFBadge() {
+        let desktop = URL(fileURLWithPath: "/Users/tim/Desktop", isDirectory: true)
+        let url = URL(string: "https://snap.tky.io/aB3dE9.gif")!
+        let saved = gif(.none)
+        #expect(!RecentCaptureFormatting.showsImageActions(saved))
+        #expect(!RecentCaptureFormatting.canCopyImage(saved))
+        #expect(!RecentCaptureFormatting.canAnnotate(saved, retainedID: saved.id, saveFolder: desktop))
+        #expect(RecentCaptureFormatting.canCopyFile(saved))
+        #expect(!RecentCaptureFormatting.canCopyFile(gif(.uploaded(url: url, key: "aB3dE9.gif"), file: nil, location: location)))
+
+        #expect(RecentCaptureFormatting.badge(for: saved) == .gif)
+        #expect(RecentCaptureFormatting.badge(for: video(.none)) == .play)
+        #expect(RecentCaptureFormatting.badge(for: record(.none)) == nil)
+    }
+
+    /// An uploaded MP4 whose trim the link does not show yet says `Link not updated`, after the size,
+    /// and keeps it when the size gives way. An upload running over it says `Uploading`, and an
+    /// image or a GIF never says it.
+    @Test func aStaleVideoSaysLinkNotUpdated() {
+        let url = URL(string: "https://snap.tky.io/aB3dE9.mp4")!
+        var stale = video(.uploaded(url: url, key: "aB3dE9.mp4"))
+        stale.uploadIsStale = true
+        #expect(RecentCaptureFormatting.detail(for: stale, now: now, locale: english) == "2 minutes ago · Link not updated")
+        stale.byteCount = 5_000
+        #expect(RecentCaptureFormatting.detail(for: stale, now: now, locale: english)
+                == "2 minutes ago · \(fiveKB) · Link not updated")
+        #expect(RecentCaptureFormatting.detailWithoutSize(for: stale, now: now, locale: english)
+                == "2 minutes ago · Link not updated")
+
+        var uploading = stale
+        uploading.uploadState = .uploading(fraction: 0.5)
+        #expect(RecentCaptureFormatting.detailWithoutSize(for: uploading, now: now, locale: english) == "2 minutes ago · Uploading")
+
+        var current = stale
+        current.uploadIsStale = false
+        #expect(RecentCaptureFormatting.detailWithoutSize(for: current, now: now, locale: english) == "2 minutes ago")
+
+        var editedImage = record(.uploaded(url: URL(string: "https://snap.tky.io/aB3dE9.png")!, key: "aB3dE9.png"))
+        editedImage.uploadIsStale = true
+        #expect(RecentCaptureFormatting.detail(for: editedImage, now: now, locale: english) == "2 minutes ago")
+        var staleGIF = gif(.uploaded(url: URL(string: "https://snap.tky.io/aB3dE9.gif")!, key: "aB3dE9.gif"))
+        staleGIF.uploadIsStale = true
+        #expect(RecentCaptureFormatting.detail(for: staleGIF, now: now, locale: english) == "2 minutes ago")
+    }
+
+    /// A recording whose muting failed says `Sound not muted`, which the size gives way to. It has no
+    /// Copy File, and its row's click opens the file instead.
+    @Test func aMarkedRecordSaysSoundNotMutedAndItsClickOpensTheFile() {
+        let pending = URL(fileURLWithPath: "/tmp/pending/\(UUID().uuidString).mp4")
+        var marked = video(.none, file: pending, temporary: true)
+        marked.unmutedIntervals = [MuteInterval(start: 2, end: 5)]
+        #expect(RecentCaptureFormatting.detail(for: marked, now: now, locale: english) == "2 minutes ago · Sound not muted")
+        marked.byteCount = 1_200_000
+        let size = RecentCaptureFormatting.sizeText(1_200_000) ?? "missing"
+        #expect(RecentCaptureFormatting.detail(for: marked, now: now, locale: english)
+                == "2 minutes ago · \(size) · Sound not muted")
+        #expect(RecentCaptureFormatting.detailWithoutSize(for: marked, now: now, locale: english)
+                == "2 minutes ago · Sound not muted")
+
+        #expect(!RecentCaptureFormatting.canCopyFile(marked))
+        #expect(!RecentCaptureFormatting.showsImageActions(marked))
+        #expect(RecentCaptureFormatting.rowClickOpens(marked))
+        #expect(!RecentCaptureFormatting.rowClickOpens(video(.none)))
+        #expect(!RecentCaptureFormatting.rowClickOpens(gif(.none)))
+        #expect(!RecentCaptureFormatting.rowClickOpens(record(.none)))
+    }
+
     // MARK: Size (spec 2.13)
 
     @Test func detailIsTheTimeAndTheSize() {

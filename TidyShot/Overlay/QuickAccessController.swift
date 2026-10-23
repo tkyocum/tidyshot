@@ -49,6 +49,10 @@ final class QuickAccessController {
         var open: (UUID) -> Void
         /// Copy File for a recording's menu item; see `AppCoordinator.copyFile(recordID:)`.
         var copyFile: (UUID) -> Void
+        /// `Trim…` for an MP4's menu item; see `AppCoordinator.trimCapture(recordID:)`.
+        var trim: (UUID) -> Void
+        /// `Upload Trimmed` for a trimmed MP4 whose link is stale; see `AppCoordinator.uploadTrimmed(recordID:)`.
+        var uploadTrimmed: (UUID) -> Void
         /// Stages the card's drag file; see `AppCoordinator.prepareDragFile(recordID:)`.
         var prepareDrag: (UUID) -> Void
         /// A drag-out ended; true when a receiver took the file.
@@ -172,6 +176,13 @@ final class QuickAccessController {
         model.linkWasCopied = linkWasCopied
     }
 
+    /// Tells the card showing `recordID` its `Trim…` and `Upload Trimmed` items, and whether a Trim
+    /// pass writes its file. Does nothing when no card shows the record.
+    func setTrimState(_ trimState: RecordingTrim.MenuState, for recordID: UUID) {
+        guard let model = cards.first(where: { $0.id == recordID })?.model, model.trimState != trimState else { return }
+        model.trimState = trimState
+    }
+
     /// Hands the card showing `recordID` its staged drag file, or nil while one is being made.
     /// Does nothing when no card shows the record.
     func setDragFile(_ url: URL?, for recordID: UUID) {
@@ -198,6 +209,8 @@ final class QuickAccessController {
         model.onCopyImage = { actions.copyImage(id) }
         model.onOpen = { actions.open(id) }
         model.onCopyFile = { actions.copyFile(id) }
+        model.onTrim = { actions.trim(id) }
+        model.onUploadTrimmed = { actions.uploadTrimmed(id) }
         model.onPrepareDrag = { actions.prepareDrag(id) }
         model.onDragEnded = { accepted in actions.dragEnded(id, accepted) }
         let card = Card(model: model, autoCloseSeconds: autoCloseSeconds)

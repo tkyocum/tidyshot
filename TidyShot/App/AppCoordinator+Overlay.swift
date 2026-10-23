@@ -34,6 +34,10 @@ extension AppCoordinator {
             copyImage: { [weak self] id in self?.afterMenuTracking { Task { await self?.copyImage(recordID: id) } } },
             open: { [weak self] id in self?.openCapture(recordID: id) },
             copyFile: { [weak self] id in self?.afterMenuTracking { Task { await self?.copyFile(recordID: id) } } },
+            // Held with Trim (R2 plan, Gates): `pushCardFlags` leaves the card's `trimState` at its
+            // default, so neither item shows and these are never called.
+            trim: { _ in },
+            uploadTrimmed: { _ in },
             prepareDrag: { [weak self] id in self?.prepareDragFile(recordID: id) },
             dragEnded: { [weak self] id, accepted in self?.dragDidEnd(recordID: id, accepted: accepted) })
     }
@@ -98,6 +102,7 @@ extension AppCoordinator {
     }
 
     /// The card's two flags that are not on the record: `Optimizing…` and whether the URL was copied.
+    /// Its `trimState` waits for the trim gate (R2 plan, Gates) and stays at its default.
     private func pushCardFlags(for id: UUID) {
         overlay.setOptimizing(optimizingVideoIDs.contains(id), for: id)
         overlay.setLinkWasCopied(!linkNotCopiedIDs.contains(id), for: id)

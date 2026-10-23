@@ -3,7 +3,9 @@ import SwiftUI
 /// Thumbnail, upload status with Copy URL, Retry and Save As…, Annotate and Delete, a hover Close
 /// badge, and a context menu with every action. Hosted in `QuickAccessPanel`. A recording's card
 /// shows its poster with a badge, opens it on a click, and has Copy File in place of Annotate,
-/// Pin and Copy Image (recording design, Quick Access card).
+/// Pin and Copy Image (recording design, Quick Access card). An MP4 adds `Trim…`, and `Upload
+/// Trimmed` while its link is stale; one marked `Sound not muted` offers only Open, `Trim…` and
+/// Delete (recording R2 design, Kind, Stale link and Privacy rule).
 struct QuickAccessView: View {
     static let size = CGSize(width: 340, height: 104)
 
@@ -45,6 +47,7 @@ struct QuickAccessView: View {
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
+                .disabled(!model.canDelete)
                 .help(model.record.isUploading ? "Cancel the upload and delete this capture" : "Delete this capture")
             }
         }
@@ -94,10 +97,20 @@ struct QuickAccessView: View {
         if model.canCopyFile {
             Button("Copy File") { model.onCopyFile() }
         }
-        Button("Save As…") { model.onSaveAs() }
+        if model.canSaveAs {
+            Button("Save As…") { model.onSaveAs() }
+        }
         if model.showsImageActions {
             Button("Annotate") { model.onAnnotate() }
             Button("Pin to Screen") { model.onPin() }
+        }
+        if model.trimState.showsTrim {
+            Button("Trim…") { model.onTrim() }
+                .disabled(!model.trimState.canTrim)
+        }
+        if model.trimState.showsUploadTrimmed {
+            Button("Upload Trimmed") { model.onUploadTrimmed() }
+                .disabled(!model.trimState.canUploadTrimmed)
         }
         if model.canReveal {
             Button("Reveal in Finder") { model.onReveal() }
@@ -105,9 +118,11 @@ struct QuickAccessView: View {
         Divider()
         Button("Close") { model.onClose() }
         Button(CaptureDeletion.actionTitle(confirmBeforeDeleting: AppSettings.shared.confirmBeforeDeleting)) { model.onDelete() }
+            .disabled(!model.canDelete)
     }
 
-    /// Copy URL or Retry when they apply, then Save As… in every state.
+    /// Copy URL or Retry when they apply, then Save As… in every state but `Sound not muted`. Retry
+    /// is disabled while a Trim pass writes the file.
     private var buttonRow: some View {
         HStack(spacing: 6) {
             switch model.record.uploadState {
@@ -115,10 +130,13 @@ struct QuickAccessView: View {
                 Button("Copy URL") { model.onCopy() }
             case .failed:
                 Button("Retry") { model.onRetry() }
+                    .disabled(!model.canRetry)
             case .uploading, .none:
                 EmptyView()
             }
-            Button("Save As…") { model.onSaveAs() }
+            if model.canSaveAs {
+                Button("Save As…") { model.onSaveAs() }
+            }
         }
         .controlSize(.small)
     }
@@ -139,8 +157,8 @@ struct QuickAccessView: View {
         .frame(width: 96, height: 72)
         .background(Color.black.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
         .overlay(alignment: .bottomTrailing) {
-            if model.record.isTimeBased, model.thumbnail != nil {
-                VideoBadge(duration: model.record.durationSeconds, fontSize: 10)
+            if let badge = model.badge, model.thumbnail != nil {
+                VideoBadge(badge: badge, duration: model.record.durationSeconds, fontSize: 10)
                     .padding(4)
             }
         }
@@ -157,18 +175,18 @@ struct QuickAccessView: View {
     /// the browser when only the upload is left; this replaces Reveal, which stays in the menu.
     private var thumbnailClick: (action: () -> Void, toolTip: String)? {
         if model.record.isTimeBased {
-            guard model.record.hasLocalFile || model.record.linkURL != nil else { return nil }
-            return ({ model.onOpen() }, "Open")
+            return model.canOpen ? ({ model.onOpen() }, "Open") : nil
         }
         return model.canReveal ? ({ model.onReveal() }, "Reveal in Finder") : nil
     }
 
-    /// The card's tooltip: a failed upload's message, or why a recording is only kept in TidyShot
-    /// (`statusContent` may not have room for all of either).
+    /// The card's tooltip: a failed upload's message, why a recording is only kept in TidyShot, or
+    /// why its sound was not muted (`statusContent` may not have room for the whole text).
     private var cardToolTip: String? {
         switch model.status {
         case .failed(let message): message
         case .kept: Self.keptText
+        case .soundNotMuted: CaptureRecord.soundNotMutedBody
         default: nil
         }
     }
@@ -228,6 +246,13 @@ struct QuickAccessView: View {
                 .font(.caption)
                 .lineLimit(1)
                 .truncationMode(.middle)
+        case .linkNotUpdated(let url):
+            Label(RecentCaptureFormatting.linkNotUpdatedText, systemImage: "exclamationmark.circle.fill")
+                .foregroundStyle(.orange)
+            Text(url.absoluteString)
+                .font(.caption)
+                .lineLimit(1)
+                .truncationMode(.middle)
         case .failed(let message):
             Label("Upload failed", systemImage: "exclamationmark.triangle.fill")
                 .foregroundStyle(.red)
@@ -250,19 +275,30 @@ struct QuickAccessView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
+        case .soundNotMuted:
+            Label(CaptureRecord.soundNotMutedTitle, systemImage: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            Text(CaptureRecord.soundNotMutedBody)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
         }
     }
 }
 
 /// A recording's poster badge, in the corner of the card's and the row's thumbnail: `play.fill`
-/// and the duration (`0:42`).
+/// for an MP4 or `GIF` for a GIF, and the duration (`0:42`).
 struct VideoBadge: View {
+    let badge: RecentCaptureFormatting.RecordingBadge
     let duration: Double?
     let fontSize: CGFloat
 
     var body: some View {
         HStack(spacing: 2) {
-            Image(systemName: "play.fill")
+            switch badge {
+            case .play: Image(systemName: "play.fill")
+            case .gif: Text("GIF")
+            }
             if let duration {
                 Text(RecordingClock.format(duration))
                     .monospacedDigit()

@@ -53,8 +53,11 @@ final class RecentCapturesMenu: NSObject, NSMenuDelegate {
         let retainedID = coordinator.retainedCaptureID
         for record in records {
             let row = NSMenuItem()
+            // Trim waits for the trim gate (R2 plan, Gates), so its items stay hidden: the default
+            // state, not `coordinator.trimMenuState(for:)`.
             row.view = RecentCaptureMenuItemView(record: record, now: now, saveFolder: saveFolder, retainedID: retainedID,
                                                  isOptimizing: coordinator.optimizingVideoIDs.contains(record.id),
+                                                 trimState: RecordingTrim.MenuState(),
                                                  provider: coordinator.thumbnailProvider,
                                                  actions: actions, onThumbnailHover: { [weak self] view, inside in
                                                      self?.thumbnailHover(view, inside: inside)
@@ -112,6 +115,10 @@ final class RecentCapturesMenu: NSObject, NSMenuDelegate {
             copyLink: { [weak self] id in self?.afterMenusClose { $0.copyLink(recordID: id) } },
             copyImage: { [weak self] id in self?.afterMenusClose { coordinator in Task { await coordinator.copyImage(recordID: id) } } },
             copyFile: { [weak self] id in self?.afterMenusClose { coordinator in Task { await coordinator.copyFile(recordID: id) } } },
+            // Held with Trim (R2 plan, Gates): the row never shows these while its state is the default.
+            trim: { _ in },
+            uploadTrimmed: { _ in },
+            open: { [weak self] id in self?.afterMenusClose { $0.openCapture(recordID: id) } },
             delete: { [weak self] id in self?.afterMenusClose { coordinator in Task { await coordinator.deleteCapture(recordID: id) } } })
     }
 
