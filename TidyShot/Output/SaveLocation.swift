@@ -59,6 +59,20 @@ final class SaveLocation {
         }
     }
 
+    /// Moves `source` into `folder` as `baseName.ext` (or `baseName 2.ext`, ...), holding the
+    /// folder's security scope for the uniqueness check and the move. A folder on another volume
+    /// makes the move a full copy; the source goes only once the copy is complete. Throws, with the
+    /// source left where it was, when the move fails. Touches no instance state, so it runs in a
+    /// detached task (a finished recording).
+    nonisolated static func moveInScoped(_ source: URL, baseName: String, ext: String, folder: URL) throws -> URL {
+        let accessing = folder.startAccessingSecurityScopedResource()
+        defer { if accessing { folder.stopAccessingSecurityScopedResource() } }
+        let url = FileNamer.uniqueURL(baseName: baseName, ext: ext, in: folder)
+        // Never replaces: a file that appeared at `url` since the check makes this throw.
+        try FileManager.default.moveItem(at: source, to: url)
+        return url
+    }
+
     /// Reads a file inside the save folder (for upload retries), holding security-scoped access.
     func read(contentsOf fileURL: URL) throws -> Data {
         guard let currentURL else { throw CocoaError(.fileNoSuchFile) }

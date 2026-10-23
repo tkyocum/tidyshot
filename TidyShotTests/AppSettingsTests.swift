@@ -285,6 +285,59 @@ struct AppSettingsTests {
         }
     }
 
+    /// Recording R1: 30 fps, Retina, no system audio, the cursor shown, the count-in on, and the
+    /// recording file name template.
+    @Test func recordingSettingsDefaultAsTheDesignSays() {
+        let settings = AppSettings(defaults: freshDefaults())
+        #expect(settings.recordingFrameRate == 30)
+        #expect(settings.recordingRetina)
+        #expect(!settings.recordingSystemAudio)
+        #expect(settings.recordingShowsCursor)
+        #expect(settings.recordingCountdown)
+        #expect(settings.recordingFileNameTemplate == "Recording {date} at {time}")
+        #expect(AppSettings.recordingFrameRates == [30, 60])
+        #expect(settings.recordingOptions
+                == RecordingOptions(framesPerSecond: 30, retina: true, systemAudio: false, showsCursor: true))
+    }
+
+    @Test func recordingSettingsPersistUnderTheirKeys() {
+        let defaults = freshDefaults()
+        let first = AppSettings(defaults: defaults)
+        first.recordingFrameRate = 60
+        first.recordingRetina = false
+        first.recordingSystemAudio = true
+        first.recordingShowsCursor = false
+        first.recordingCountdown = false
+        first.recordingFileNameTemplate = "Clip {counter}"
+        #expect(defaults.integer(forKey: "recordingFrameRate") == 60)
+        #expect(defaults.object(forKey: "recordingRetina") as? Bool == false)
+        #expect(defaults.object(forKey: "recordingSystemAudio") as? Bool == true)
+        #expect(defaults.object(forKey: "recordingShowsCursor") as? Bool == false)
+        #expect(defaults.object(forKey: "recordingCountdown") as? Bool == false)
+        #expect(defaults.string(forKey: "recordingFileNameTemplate") == "Clip {counter}")
+
+        let second = AppSettings(defaults: defaults)
+        #expect(second.recordingFrameRate == 60)
+        #expect(!second.recordingRetina)
+        #expect(second.recordingSystemAudio)
+        #expect(!second.recordingShowsCursor)
+        #expect(!second.recordingCountdown)
+        #expect(second.recordingFileNameTemplate == "Clip {counter}")
+        #expect(second.recordingOptions
+                == RecordingOptions(framesPerSecond: 60, retina: false, systemAudio: true, showsCursor: false))
+    }
+
+    /// A stored frame rate the picker does not offer reads as 30.
+    @Test func aStoredFrameRateOtherThan30Or60ReadsAs30() {
+        let defaults = freshDefaults()
+        for stored in [45, 0, 24, 120, -30] {
+            defaults.set(stored, forKey: "recordingFrameRate")
+            #expect(AppSettings(defaults: defaults).recordingFrameRate == 30)
+        }
+        defaults.set(60, forKey: "recordingFrameRate")
+        #expect(AppSettings(defaults: defaults).recordingFrameRate == 60)
+    }
+
     @Test func urlCommandsAreOnAndSilentCapturesOffByDefault() {
         let settings = AppSettings(defaults: freshDefaults())
         #expect(settings.urlCommandsEnabled)

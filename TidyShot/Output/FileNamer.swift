@@ -4,17 +4,25 @@ import Foundation
 /// sanitises the result for the file system. The extension is not part of the template.
 struct FileNamer {
     static let defaultTemplate = "Screenshot {date} at {time}"
+    /// General's `Recording file name`, the default for `recordingFileNameTemplate`.
+    static let recordingDefaultTemplate = "Recording {date} at {time}"
+    /// What an empty `Recording file name` gives.
+    static let recordingFallbackName = "Recording"
 
     var template: String
+    /// The name when the template expands to nothing.
+    var fallbackName: String
     var now: () -> Date
     var randomString: @Sendable (Int) -> String
     var hostname: String
 
     init(template: String = FileNamer.defaultTemplate,
+         fallbackName: String = "Screenshot",
          now: @escaping () -> Date = { Date() },
          randomString: @escaping @Sendable (Int) -> String = FileNamer.randomString,
          hostname: String = HostName.local()) {
         self.template = template
+        self.fallbackName = fallbackName
         self.now = now
         self.randomString = randomString
         self.hostname = hostname
@@ -24,7 +32,7 @@ struct FileNamer {
         let context = TemplateContext(date: now(), counter: counter, hostname: hostname)
         let expanded = TemplateExpander(randomString: randomString).expand(template, context: context, style: .fileName)
         let sanitized = Self.sanitize(expanded)
-        return sanitized.isEmpty ? "Screenshot" : sanitized
+        return sanitized.isEmpty ? fallbackName : sanitized
     }
 
     /// Removes characters that are illegal or awkward in file names.
@@ -46,7 +54,9 @@ struct FileNamer {
     }
 
     /// Returns `baseName.ext` in `directory`, or `baseName 2.ext`, `baseName 3.ext`, ... if taken.
-    static func uniqueURL(baseName: String, ext: String, in directory: URL, fileManager: FileManager = .default) -> URL {
+    /// `nonisolated`, so the move of a recording into the save folder names it off the main actor.
+    nonisolated static func uniqueURL(baseName: String, ext: String, in directory: URL,
+                                      fileManager: FileManager = .default) -> URL {
         var candidate = directory.appendingPathComponent(baseName).appendingPathExtension(ext)
         var suffix = 2
         while fileManager.fileExists(atPath: candidate.path) {
