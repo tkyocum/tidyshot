@@ -26,18 +26,20 @@ io.tky.tidyshot $k; done`. Read them with `defaults read io.tky.tidyshot <key>`;
 
 Take these captures first.
 - A Terminal or TextEdit window with a few lines of dark text on white, saved with "Save and copy image" (the
-  main capture; a second like it, for the two-editor items).
+  main capture; a second like it, for the two-editor items; and three or four more like it, the scratch captures).
 - A window capture (⌃⇧2) of a window with rounded corners, with Include window shadow off, and another with it on.
 - A capture of busy content (a web page with photos and text) with a bright and a dark half, at 1x if you can.
-- A scrolling capture of `tall.html` below, scrolled to the end, about 10,000 pt (20,000 px on a 2x display; check
-  with `sips -g pixelHeight`). Its strip seam, where `EditorFlattener` starts the second strip, is at row 16,384
-  of the image: 8,192 pt from the top on a 2x display (between `row 81` and `row 82` if the capture starts at the top
-  of the page).
+- A scrolling capture of `tall.html` below, of the page area only, started at the top of the page and scrolled to
+  the end, about 10,000 pt (20,000 px on a 2x display; check with `sips -g pixelHeight`). Its strip seam, where
+  `EditorFlattener` starts the second strip, is at pixel row 16,384 of the image: 8,192 pt from the top on a 2x
+  display. Each `row N` is exactly 100 pt tall, its 1 pt rule included, so with the capture starting at the top of
+  the page the seam is 8 pt above the top of `row 82` (7 pt above `row 81`'s rule), and a hole from the top of
+  `row 81` to the bottom of `row 82` straddles it by about 90 pt each way.
 
 ```bash
 mkdir -p ~/Desktop/p4c && cd ~/Desktop/p4c
 python3 - <<'PY'
-rows = "".join(f'<div style="height:100px;border-bottom:1px solid #999;font:20px sans-serif">row {i}</div>' for i in range(100))
+rows = "".join(f'<div style="box-sizing:border-box;height:100px;border-bottom:1px solid #999;font:20px sans-serif">row {i}</div>' for i in range(100))
 open("tall.html", "w").write(f'<!doctype html><meta charset="utf-8"><title>tall</title><body style="margin:0">{rows}</body>')
 PY
 cat > px.swift <<'SWIFT'
@@ -71,9 +73,16 @@ SWIFT
 size). Where an item says to compare with the canvas, open the saved file in Preview at View > Actual Size, put it
 beside the editor at ⌘1 (the capture's natural scale) and look at the same place. Draw only on made-up data.
 
+Save (⌘S) and Upload write the edit over the capture's own file, and the capture then reopens flat with the marks
+in it. So the pixel comparisons below use Save As…, which leaves the capture alone, and read the original from a
+copy: before editing them, copy the main, the two window and the tall captures' files from the save folder into
+`~/Desktop/p4c` as `main-original.png`, `window-original.png` (shadow off), `shadow-original.png` (shadow on) and
+`tall-original.png`. Use ⌘S and Upload only where an item says so, and then on a scratch capture or as that item
+says.
+
 ## Toolbar and keys
 - [ ] The toolbar shows fourteen tools, in order: Select, Redact, Pixelate, Blur, Spotlight, Rectangle, Arrow, Ellipse, Line, Pencil, Highlighter, Text, Counter and Crop, then Colour, Options, Background, the zoom pop-up, Copy, Save and Upload. The new tools' tool tips read `Spotlight (S)` and `Counter (N)`; the symbols are `light.max` and `1.circle`. The Options button's tool tip reads `Tool options`.
-- [ ] With the canvas focused, `S` (either case) picks Spotlight and `N` picks Counter, and the toolbar's segment follows. ⌘S still saves (it does not pick Spotlight). `N` with a text being edited types the letter.
+- [ ] With the canvas focused, `S` (either case) picks Spotlight and `N` picks Counter, and the toolbar's segment follows. ⌘S still saves (it does not pick Spotlight; try it on a scratch capture). `N` with a text being edited types the letter.
 - [ ] The 14-tool toolbar shows every item, with no » overflow chevron, on a 1280 pt wide display (System Settings > Displays, a scaled mode that is 1280 pt wide) with a long title (rename a capture to 60 characters first): open the editor, then drag its left or right edge in as far as it will go. The window never gets narrower than its toolbar, and opens no wider than 90 % of the display (1152 pt). A probe in the test host measured the minimum as 1134 pt (the tools control alone 493 pt) with every item showing down to 1096 pt; write down what you see.
 - [ ] Repeat the narrowest-window check full screen and back, and on a second display if one is attached.
 
@@ -94,27 +103,27 @@ beside the editor at ⌘1 (the capture's natural scale) and look at the same pla
 - [ ] While the Crop tool shows its chrome, no spotlight outline is drawn. Return to Spotlight: they are back.
 - [ ] Check the outlines at 50 %, 100 % and 400 % zoom: crisp 1 pt dashes at every zoom, hugging the hole's edge, with no thick or doubled lines and no stale outline left after a zoom or a pan.
 - [ ] A selected spotlight shows its own dashed outline and eight handles (also with the Select tool). The Spotlight tool's outlines and the selection outline do not leave the other tool's marks behind after Escape or a click on empty space.
-- [ ] The outlines are chrome: Save the capture and open it in Preview. They are not in the file, and neither is the selection.
+- [ ] The outlines are chrome: Save As… with a spotlight selected and open the file in Preview. They are not in the file, and neither is the selection.
 
 ## Over the dim
 - [ ] Draw a highlighter stroke across the dim's edge, half over the dimmed area and half in a hole. Save As… and compare at 100 %: the canvas shows the same darkness under the stroke as the file, both in the dimmed part and in the hole, with no lighter fringe along the stroke's edge.
-- [ ] Draw an arrow, a text and a counter over the dimmed area: all three stay bright in the editor and in the saved file (the overlay is painted under the drawings).
+- [ ] Draw an arrow, a text and a counter over the dimmed area: all three stay bright in the editor and in a Save As… file (the overlay is painted under the drawings).
 - [ ] Draw a Redact, a Blur and a Pixelate in the dimmed area and one in a hole: they are dimmed with the picture where outside a hole, and unchanged where inside. Move the effect and the spotlight in turn: no stale pixels.
 - [ ] Select an arrow, a text, a counter and a blur that lie inside a spotlight, one at a time, by clicking on each (made before and after the spotlight): the click picks the drawing, never the spotlight. A text inside a spotlight is edited again by the Text tool's click and by Select's double-click.
-- [ ] A click on bare image inside a spotlight picks the spotlight (so it does not deselect; Escape does). A click just outside its edge picks it too (within the 8 pt hit tolerance); one 12 or more points outside picks nothing. For an ellipse spotlight, a click on its bounding box's corner picks nothing.
+- [ ] A click on bare image inside a spotlight picks the spotlight (so it does not deselect; Escape does). A click just outside its edge picks it too (within the 8 pt hit tolerance); one 12 or more points outside picks nothing. At ⌘1, for an ellipse spotlight at least 200 pt wide and high, a click in its bounding box's dim corner region, more than 8 pt from the corner and more than 8 pt outside the ellipse (about halfway between them), picks nothing. A click within 8 pt of the corner lands on the corner handle, which every spotlight has, so it selects the spotlight (and a drag from there resizes it).
 - [ ] ⌘A with an arrow made before a spotlight selects the arrow; with only a spotlight in the document it selects the spotlight.
 
 ## Crop and Background
 - [ ] With a crop applied, the dim covers the picture before the crop, and the crop is applied last: Save As… gives a file the size of the crop, with the dim still in it.
-- [ ] Turn on a Background (7c) with a crop and a spotlight: the dim stops at the rounded content rect, in the editor and in the saved file. The padding, the fill and the rounded-off corners are never dimmed and match the export. A spotlight hole does not change that.
-- [ ] A window capture with transparent rounded corners and a spotlight, with and without a Background: no dark corners on the canvas; the saved file's corners stay transparent (`swift px.swift file.png 0 0` reads `0 0 0 0` on an exported corner, with no background).
-- [ ] Spotlight a window capture taken with Include window shadow on and again with it off: the export's corners and the shadow margin stay transparent (a margin pixel in the export keeps the alpha it had in the original capture, `px.swift` on both, not an opaque black), and the canvas shows no dark corners or dark margin. A partly transparent shadow pixel may look a little darker on the canvas than in the file; write down whether it shows.
+- [ ] Turn on a Background (7c) with a crop and a spotlight: the dim stops at the rounded content rect, in the editor and in a Save As… file. The padding, the fill and the rounded-off corners are never dimmed and match the export. A spotlight hole does not change that.
+- [ ] A window capture with transparent rounded corners and a spotlight, with and without a Background: no dark corners on the canvas; a Save As… file's corners stay transparent (`swift px.swift file.png 0 0` reads `0 0 0 0` on an exported corner, with no background).
+- [ ] Spotlight a window capture taken with Include window shadow on and again with it off: the export's (Save As…) corners and the shadow margin stay transparent (a margin pixel in the export keeps the alpha it had in the original capture, `px.swift` on the export and on `window-original.png` or `shadow-original.png`, not an opaque black), and the canvas shows no dark corners or dark margin. A partly transparent shadow pixel may look a little darker on the canvas than in the file; write down whether it shows.
 - [ ] A redaction that is still rendering over a transparent corner may show its placeholder undimmed for a moment. Write down if you see it, and that it is dimmed once the tile arrives.
 
 ## Options and Colour
 - [ ] Open Options with the Select tool and nothing selected: `Shape`, `Dim` and `Size` are all dimmed. `Line width` is enabled and the blur radius and pixel block follow their old rules.
 - [ ] With Spotlight as the tool and no spotlight in the document: `Shape` is enabled (Rectangle, Ellipse); `Dim` is dimmed and reads 50 %. Draw the first spotlight: `Dim` is enabled (30 %, 50 %, 70 %). With Select, press Escape to deselect it, then pick Arrow: both are dimmed again. With Select, click the spotlight: both enable.
-- [ ] `Dim`: pick 70 %, then 30 %, then 50 % in a row: the whole image's dim follows each; Edit shows one `Undo Spotlight Dim` for the run, and ⌘Z returns to the dim before the first click. Picking the value already in effect adds no undo step (draw the first spotlight, save with ⌘S, then pick 50 %: the editor stays clean).
+- [ ] `Dim`: pick 70 %, then 30 %, then 50 % in a row: the whole image's dim follows each; Edit shows one `Undo Spotlight Dim` for the run, and ⌘Z returns to the dim before the first click. Picking the value already in effect adds no undo step (on the main capture, draw the first spotlight, Save As… (⇧⌘S) to `~/Desktop/p4c/clean.png`, then pick 50 %: the editor stays clean, with no edited mark in the title).
 - [ ] `Dim` with no spotlight in the document (delete them all, then open Options with the Spotlight tool): it stays dimmed and adds no step, however you click.
 - [ ] `Shape`: with a spotlight selected, picking Ellipse turns it into an ellipse, `Undo Spotlight Shape`, and also makes new spotlights ellipses. With nothing selected it changes only the default and adds no undo step. Note that right after drawing a spotlight it is selected, so picking Shape then changes that spotlight too; write down whether that surprises you.
 - [ ] `Size`: enabled for Counter as the tool or with a counter selected, and dimmed otherwise. `Small`, `Medium`, `Large`.
@@ -151,26 +160,26 @@ Each is one Edit > Undo entry named as below; ⌘Z restores the picture, ⇧⌘Z
 - [ ] After undoing a Delete of a counter the number it had returns; after undoing an Add the next number is the one it was.
 
 ## Copy, Save, Save As… and Upload
-With a spotlight (rectangle and ellipse, Dim 70 %) and a few counters, an arrow and a text over the dimmed area, on the main capture. Do each once, and compare the result with the canvas at 100 %.
+With a spotlight (rectangle and ellipse, Dim 70 %) and a few counters, an arrow and a text over the dimmed area, on a scratch capture (Save and Upload write over it). Do each once, in this order (Upload closes the editor), and compare the result with the canvas at 100 %.
 - [ ] Copy (⇧⌘C, or ⌘C with nothing selected): paste into Preview > File > New from Clipboard. The dim, the holes, the counters (fill, ring, number) and the arrow match the canvas; the arrow, text and counters are bright over the dim.
 - [ ] Save (⌘S): the file in the save folder matches. Reopen it in the editor: it opens as a flat image, with no spotlight or counter left to select.
 - [ ] Save As… (⇧⌘S) matches, and leaves the capture and its record unchanged.
 - [ ] Upload (⌘U): the uploaded object, opened from the link, matches. Upload as New (⌥⌘U) the same.
-- [ ] With a Background on, a crop and the spotlight: each of the four gives the dim inside the content only, with the fill and the padding undimmed.
-- [ ] Pixels outside the effects, the drawings and the dim equal the capture: draw a single small spotlight, save, and check with `px.swift` that a pixel inside its hole equals the same pixel of the original capture, and one outside is about half of it at 50 %.
-- [ ] With the dim at 30 % and at 70 %, one pixel of white outside the hole reads about 179 and about 77 on a white page (a 50 % dim reads about 128).
+- [ ] With a Background on, a crop and the spotlight, on a second scratch capture: each of the four gives the dim inside the content only, with the fill and the padding undimmed.
+- [ ] Pixels outside the effects, the drawings and the dim equal the capture: close any editor on the main capture without saving and open it again (it was never saved over; `main-original.png` holds it), draw a single small spotlight, Save As… to `~/Desktop/p4c/dim50.png`, and check with `px.swift` that a pixel inside its hole equals the same pixel of `main-original.png`, and one outside is about half of it at 50 %.
+- [ ] In the same editor, pick 30 % and Save As… `dim30.png`, then 70 % and Save As… `dim70.png`: one pixel of white outside the hole reads about 179 and about 77 on a white page (`dim50.png` reads about 128), against 255 in `main-original.png`.
 
 ## A tall capture across a strip seam
-- [ ] Open the scrolling capture of `tall.html` (over 16,384 px) in the editor, at ⌘1. Scroll to 16,384 / scale points from the top (8,192 pt on a 2x display), and draw a rectangle spotlight whose hole straddles that line, with its edges well inside the page. Draw a counter across the seam too.
-- [ ] Save As… and check the file with `px.swift`: pick a white pixel outside the hole just above the seam and one just below it, at the same x on the blank right of the page (not on a `row N` label or a rule), say y = 16,383 and 16,384. They read the same, about half of 255 at a 50 % dim, and there is no visible line at the seam in Preview at 100 % or 400 %. A pixel just inside the hole on each side of the seam is undimmed: it equals the same pixel of the capture.
-- [ ] Copy, Upload and Save do the same (check the saved file, and the pasted image in Preview). The save does not run out of memory or take noticeably longer than a capture of the same height without a spotlight; write down the time.
+- [ ] Open the scrolling capture of `tall.html` (over 16,384 px) in the editor, at ⌘1. Scroll to 16,384 / scale points from the top (8,192 pt on a 2x display: 8 pt above the top of `row 82`, see the setup), and draw a rectangle spotlight over the left half of the page from the top of `row 81` to the bottom of `row 82`, so its hole straddles that line by about 90 pt each way and the right half stays dimmed. Draw a counter across the seam too.
+- [ ] Save As… and check the file with `px.swift`: pick a white pixel outside the hole just above the seam and one just below it, at the same x in the right half of the page, y = 16,383 and 16,384 (the page is blank white there: `row 81`'s label is at its top and its rule 7 pt below the seam). They read the same, about half of 255 at a 50 % dim, and there is no visible line at the seam in Preview at 100 % or 400 %. A pixel just inside the hole on each side of the seam (the same two rows, an x in the hole) is undimmed: it equals the same pixel of `tall-original.png`.
+- [ ] Copy, Save and then Upload do the same (Upload last, since it closes the editor; check the saved file, and the pasted image in Preview). The save does not run out of memory or take noticeably longer than a capture of the same height without a spotlight; write down the time.
 - [ ] Zoom the editor's canvas to the seam and pan across it: the canvas shows the dim continuous across it too.
 
 ## Defaults and the document
 - [ ] Shape and Size survive a relaunch. Choose Ellipse and Large, then check `defaults read io.tky.tidyshot editorSpotlightEllipse` (`1`) and `editorCounterDiameterPoints` (`44`). Quit and relaunch TidyShot, open any capture in the editor: Spotlight draws ellipses, the Shape row shows Ellipse when the Spotlight tool is active, a new counter is 44 pt (88 px at 2x), and the Size row shows Large with the Counter tool.
 - [ ] Hand-write a bad size: `defaults write io.tky.tidyshot editorCounterDiameterPoints -float 40`, relaunch: the Size row reads Medium and new counters are 32 pt. Then `defaults delete` the two keys again.
 - [ ] Dim does not carry into a new capture. Set 70 % on one capture's spotlight, then open another capture (or close the editor and open the same capture again): its first spotlight dims to 50 %, and `Dim` reads 50 % until a spotlight is there. Two editors open at once keep their own Dim.
-- [ ] Close an editor that has unsaved spotlights and counters: the usual unsaved-changes sheet appears, as for other annotations. After Save, reopening the capture gives a flat image: there is no layer to edit (the editable project format is not built).
+- [ ] On a scratch capture, close an editor that has unsaved spotlights and counters: the usual unsaved-changes sheet appears, as for other annotations. After Save, reopening the capture gives a flat image: there is no layer to edit (the editable project format is not built).
 
 ## VoiceOver
 - [ ] With VoiceOver on (⌘F5), move into the canvas. The elements read in painting order: effects, spotlights, then drawings, each in creation order, so an arrow made before a spotlight is read after it. Spotlights read `Spotlight 1`, `Spotlight 2`, numbered per kind in that order.
@@ -179,7 +188,7 @@ With a spotlight (rectangle and ellipse, Dim 70 %) and a few counters, an arrow 
 
 ## Regression
 - [ ] The 4b checklist's toolbar, Ellipse, Line, Pencil, Highlighter, Text, Crop and accessibility sections still pass, with the extra two tools in the toolbar.
-- [ ] A capture with no spotlight and no counter saves, copies and uploads exactly as before: same file, no dim, no change in size.
+- [ ] A scratch capture with no spotlight and no counter saves, copies and uploads exactly as before: same file, no dim, no change in size.
 - [ ] An older capture, made before 4c, opens in the editor, edits and exports as before.
 - [ ] Redact, Blur and Pixelate still work, and a Highlighter over a Blur still follows the blur live (4b).
 - [ ] 7c: a Background on a capture still composes, and the editor's Background popover still opens from the toolbar.
