@@ -246,7 +246,7 @@ extension AppCoordinator {
     /// got there first wins, and the new file is removed. When no thumbnail could be made the
     /// record names none, so `ThumbnailProvider` makes one from the edited file instead of showing
     /// the original.
-    private func replaceThumbnail(for id: UUID, from image: CGImage, editedAt: Date) {
+    func replaceThumbnail(for id: UUID, from image: CGImage, editedAt: Date) {
         let store = thumbnails
         let name = store.fileName(for: id, editedAt: editedAt)
         Task { [weak self] in

@@ -173,6 +173,9 @@ final class AppCoordinator {
 
     // MARK: Trim state (AppCoordinator+Trim.swift)
     // +Upload and +Delete read trimmingIDs.
+    /// Each record's Trim pass, from the export through the put and its bookkeeping. `Stop` and
+    /// closing the Trim window cancel it before the put, and the window's clean-up waits for it.
+    @ObservationIgnored var trimPasses: [UUID: Task<Void, Never>] = [:]
     /// Records whose Trim pass runs (design, Write-time checks): from Save or Save and Upload through
     /// the put and its bookkeeping. While a record is here, Retry, `Upload Trimmed`, `startUpload` and
     /// Delete refuse it, and Retry Failed Uploads skips it.

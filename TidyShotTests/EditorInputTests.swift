@@ -93,6 +93,35 @@ struct EditorInputTests {
                 == .unavailable(EditorInput.outsideSaveFolderText))
     }
 
+    /// Steps 2 to 5 are `fileSource`, which Trim's source shares: for a capture that is neither
+    /// time-based nor retained, `source` is `fileSource`, so a change to one reaches the other.
+    @Test func sourceAfterTheVideoAndRetainedChecksIsFileSource() {
+        let records = [
+            record(.uploading(fraction: 0.4), file: pending, temporary: true),
+            record(file: saved),
+            record(.uploaded(url: link, key: "aB3dE9.png"), file: saved, location: location),
+            record(.uploaded(url: link, key: "aB3dE9.png"), file: elsewhere, location: location),
+            record(.uploaded(url: link, key: "aB3dE9.png"), file: nil, location: location),
+            record(.uploaded(url: link, key: "aB3dE9.png"), file: nil),
+            record(file: elsewhere),
+            record(file: nil),
+        ]
+        for record in records {
+            for saveFolder in [folder, nil] as [URL?] {
+                #expect(EditorInput.source(for: record, retainedID: nil, saveFolder: saveFolder)
+                        == EditorInput.fileSource(for: record, saveFolder: saveFolder))
+            }
+        }
+    }
+
+    /// `fileSource` has no video check: Trim reads a recording's file through it.
+    @Test func fileSourceReadsAVideosFile() {
+        let recording = URL(fileURLWithPath: "/Users/tim/Pictures/TidyShot/Recording.mp4")
+        let video = CaptureRecord(fileURL: recording, pixelWidth: 10, pixelHeight: 10, appName: nil, mediaKind: .video)
+        #expect(EditorInput.fileSource(for: video, saveFolder: folder) == .saveFolderFile(recording))
+        #expect(EditorInput.fileSource(for: video, saveFolder: nil) == .unavailable(EditorInput.outsideSaveFolderText))
+    }
+
     /// A video is checked first: whatever the editor could otherwise load from, it cannot annotate one.
     @Test func aVideoIsUnavailable() {
         #expect(EditorInput.videoText == "Videos cannot be annotated.")

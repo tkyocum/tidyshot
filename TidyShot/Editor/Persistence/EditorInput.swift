@@ -36,9 +36,19 @@ nonisolated enum EditorInput {
     ///    a `.download` opens from that copy while it exists (an upload-only capture whose card
     ///    still shows, or a restored card's download).
     /// 5. Otherwise `.unavailable`, with the reason.
+    ///
+    /// Steps 2 to 5 are `fileSource(for:saveFolder:)`.
     static func source(for record: CaptureRecord, retainedID: UUID?, saveFolder: URL?) -> Source {
         if record.isTimeBased { return .unavailable(videoText) }
         if record.id == retainedID { return .retained }
+        return fileSource(for: record, saveFolder: saveFolder)
+    }
+
+    /// Steps 2 to 5 of `source(for:retainedID:saveFolder:)`, with no video check: a pending file, a
+    /// file in `saveFolder`, the uploaded object, otherwise `.unavailable`. Never `.retained`, and
+    /// `.saveFolderFile` only with a `saveFolder`. Trim's source (`RecordingTrim.source`) is this,
+    /// so the two keep one order and one set of texts.
+    static func fileSource(for record: CaptureRecord, saveFolder: URL?) -> Source {
         if let fileURL = record.fileURL {
             if record.fileIsTemporary { return .pendingFile(fileURL) }
             if let saveFolder, SaveLocation.contains(fileURL, inFolder: saveFolder) { return .saveFolderFile(fileURL) }

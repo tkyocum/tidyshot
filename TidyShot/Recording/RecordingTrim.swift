@@ -75,21 +75,19 @@ nonisolated enum RecordingTrim {
         case unavailable(String)
     }
 
-    /// In `EditorInput.source`'s order, with its texts: a pending file; a file in the current save
-    /// folder; the uploaded object when its location is known (also for a file outside the folder,
-    /// or with no folder); otherwise unavailable.
+    /// `EditorInput.fileSource`, so Trim keeps the editor's order and texts: a pending file; a file
+    /// in the current save folder, with that folder; the uploaded object when its location is known
+    /// (also for a file outside the folder, or with no folder); otherwise unavailable.
     static func source(for record: CaptureRecord, saveFolder: URL?) -> Source {
-        if let fileURL = record.fileURL {
-            if record.fileIsTemporary { return .pendingFile(fileURL) }
-            if let saveFolder, SaveLocation.contains(fileURL, inFolder: saveFolder) {
-                return .saveFolderFile(fileURL, folder: saveFolder)
-            }
+        switch (EditorInput.fileSource(for: record, saveFolder: saveFolder), saveFolder) {
+        case (.pendingFile(let fileURL), _): .pendingFile(fileURL)
+        case (.saveFolderFile(let fileURL), let folder?): .saveFolderFile(fileURL, folder: folder)
+        case (.download(let key, let location), _): .download(key: key, location: location)
+        case (.unavailable(let reason), _): .unavailable(reason)
+        // `fileSource` gives neither: a save-folder file comes only with a folder, and the
+        // retained image is the editor's own. Nothing to read, as for a file outside the folder.
+        case (.saveFolderFile, nil), (.retained, _): .unavailable(EditorInput.outsideSaveFolderText)
         }
-        if let key = record.uploadedKey, let location = record.objectLocation {
-            return .download(key: key, location: location)
-        }
-        if record.fileURL != nil { return .unavailable(EditorInput.outsideSaveFolderText) }
-        return .unavailable(record.uploadedKey == nil ? EditorInput.neverUploadedText : EditorInput.unknownLocationText)
     }
 
     // MARK: The sheet
