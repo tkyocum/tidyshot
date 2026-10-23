@@ -131,7 +131,7 @@ struct QuickAccessView: View {
                     .resizable()
                     .aspectRatio(contentMode: .fit)
             } else {
-                Image(systemName: model.record.isVideo ? "film" : "photo")
+                Image(systemName: model.record.isTimeBased ? "film" : "photo")
                     .font(.largeTitle)
                     .foregroundStyle(.secondary)
             }
@@ -139,7 +139,7 @@ struct QuickAccessView: View {
         .frame(width: 96, height: 72)
         .background(Color.black.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
         .overlay(alignment: .bottomTrailing) {
-            if model.record.isVideo, model.thumbnail != nil {
+            if model.record.isTimeBased, model.thumbnail != nil {
                 VideoBadge(duration: model.record.durationSeconds, fontSize: 10)
                     .padding(4)
             }
@@ -156,7 +156,7 @@ struct QuickAccessView: View {
     /// What a click on the thumbnail does. A recording opens in its default app, or its link in
     /// the browser when only the upload is left; this replaces Reveal, which stays in the menu.
     private var thumbnailClick: (action: () -> Void, toolTip: String)? {
-        if model.record.isVideo {
+        if model.record.isTimeBased {
             guard model.record.hasLocalFile || model.record.linkURL != nil else { return nil }
             return ({ model.onOpen() }, "Open")
         }

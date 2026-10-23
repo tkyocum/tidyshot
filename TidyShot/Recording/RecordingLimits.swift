@@ -30,6 +30,13 @@ nonisolated enum RecordingLimits {
         return freeBytes < runningFreeBytes
     }
 
+    /// Room for a step that writes `byteCount` bytes (a GIF, a muted copy, a trimmed one): at least
+    /// that plus 1 GB free. An unreadable value (nil) counts as enough.
+    static func hasRoom(for byteCount: Int64, freeBytes: Int64?) -> Bool {
+        guard let freeBytes else { return true }
+        return freeBytes >= byteCount + runningFreeBytes
+    }
+
     static func asksBeforeDiscarding(elapsed: TimeInterval) -> Bool {
         elapsed >= cancelConfirmationSeconds
     }

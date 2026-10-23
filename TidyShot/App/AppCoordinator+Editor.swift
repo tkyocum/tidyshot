@@ -47,7 +47,7 @@ extension AppCoordinator {
     /// editor and Pin to screen use it.
     func loadImage(for record: CaptureRecord, downloadTitle: String = "Opening the capture…",
                    failureTitle: String = "Could not open the capture") async -> ScaledImage? {
-        guard !record.isVideo else {
+        guard !record.isTimeBased else {
             notifier.notifyError(EditorInput.videoText, title: failureTitle)
             return nil
         }

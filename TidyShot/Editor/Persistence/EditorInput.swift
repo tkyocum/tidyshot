@@ -37,7 +37,7 @@ nonisolated enum EditorInput {
     ///    still shows, or a restored card's download).
     /// 5. Otherwise `.unavailable`, with the reason.
     static func source(for record: CaptureRecord, retainedID: UUID?, saveFolder: URL?) -> Source {
-        if record.isVideo { return .unavailable(videoText) }
+        if record.isTimeBased { return .unavailable(videoText) }
         if record.id == retainedID { return .retained }
         if let fileURL = record.fileURL {
             if record.fileIsTemporary { return .pendingFile(fileURL) }

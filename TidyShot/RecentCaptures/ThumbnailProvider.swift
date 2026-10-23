@@ -66,7 +66,7 @@ final class ThumbnailProvider {
         }
         // No stored thumbnail (a record from before Phase 3, or one whose capture-time thumbnail
         // is still being written): make one from the local file, once. Not from a video.
-        guard !record.isVideo, !unavailable.contains(id) else { return nil }
+        guard !record.isTimeBased, !unavailable.contains(id) else { return nil }
         guard let source = readSource(for: record) else {
             unavailable.insert(id)
             return nil
@@ -106,7 +106,7 @@ final class ThumbnailProvider {
         if let cached = previews[id] { return cached }
         guard !Task.isCancelled else { return nil }
         let generation = generations[id, default: 0]
-        guard !record.isVideo, let source = readSource(for: record) else { return await thumbnail(for: record) }
+        guard !record.isTimeBased, let source = readSource(for: record) else { return await thumbnail(for: record) }
         let readFile = readFile
         let load = Task.detached(priority: .userInitiated) { () -> CGImage? in
             guard !Task.isCancelled, let data = try? readFile(source.file, source.folder),

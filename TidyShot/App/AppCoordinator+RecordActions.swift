@@ -9,7 +9,7 @@ extension AppCoordinator {
         guard let record = history.record(id: recordID) else { return }
         if let url = record.linkURL {
             Pasteboard.copy(url: url)
-        } else if record.isVideo {
+        } else if record.isTimeBased {
             Task { await copyFile(recordID: recordID) }
         } else if let fileURL = record.fileURL {
             Pasteboard.copy(fileURL: fileURL)
@@ -23,7 +23,7 @@ extension AppCoordinator {
     /// that copy while the clipboard holds it. A clean-up already due is cancelled first, as a
     /// press does, and with no card showing (a Recent Captures row) one is scheduled afterwards.
     func copyFile(recordID: UUID) async {
-        guard let record = history.record(id: recordID), record.isVideo, let fileURL = record.fileURL else { return }
+        guard let record = history.record(id: recordID), record.isTimeBased, let fileURL = record.fileURL else { return }
         guard record.fileIsTemporary else {
             Pasteboard.copy(fileURL: fileURL)
             return
@@ -80,7 +80,7 @@ extension AppCoordinator {
     /// capture can be tens of megabytes; only the finished PNG and TIFF data are written to the
     /// clipboard here, on the main actor.
     func copyImage(recordID: UUID) async {
-        guard let record = history.record(id: recordID), !record.isVideo else { return }
+        guard let record = history.record(id: recordID), !record.isTimeBased else { return }
         do {
             let png = try await imageData(of: record)
             let converted = await Task.detached(priority: .userInitiated) { () -> (decoded: Bool, tiff: Data?) in
@@ -104,7 +104,7 @@ extension AppCoordinator {
     func saveAs(recordID: UUID) {
         afterMenuTracking { [weak self] in
             guard let self else { return }
-            if self.history.record(id: recordID)?.isVideo == true {
+            if self.history.record(id: recordID)?.isTimeBased == true {
                 Task { await self.saveVideoCopy(recordID: recordID) }
             } else {
                 Task { await self.saveCopy(recordID: recordID) }
@@ -202,7 +202,7 @@ extension AppCoordinator {
     /// directly, a saved one through the folder's security scope.
     func imageData(of record: CaptureRecord, downloadTitle: String = "Copying image…") async throws -> Data {
         // A recording is never read into memory.
-        guard !record.isVideo else { throw CopyImageError.notAnImage }
+        guard !record.isTimeBased else { throw CopyImageError.notAnImage }
         let fileURL = record.fileURL
         let temporary = record.fileIsTemporary
         let folder = temporary ? nil : saveLocation.currentURL

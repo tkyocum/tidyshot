@@ -110,14 +110,14 @@ struct RecentCaptureRow: View {
                     .resizable()
                     .aspectRatio(contentMode: .fit)
             } else {
-                Image(systemName: record.isVideo ? "film" : "photo")
+                Image(systemName: record.isTimeBased ? "film" : "photo")
                     .foregroundStyle(.secondary)
             }
         }
         .frame(width: Self.thumbnailSize.width, height: Self.thumbnailSize.height)
         .background(Color.black.opacity(0.08), in: RoundedRectangle(cornerRadius: 4))
         .overlay(alignment: .bottomTrailing) {
-            if record.isVideo, thumbnail != nil {
+            if record.isTimeBased, thumbnail != nil {
                 VideoBadge(duration: record.durationSeconds, fontSize: 8)
                     .padding(2)
             }

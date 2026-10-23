@@ -64,12 +64,12 @@ nonisolated enum RecentCaptureFormatting {
     /// Annotate, Pin and Copy Image are left out for a recording, not disabled; Copy File takes
     /// Copy Image's place (design, Videos in the rest of the app).
     static func showsImageActions(_ record: CaptureRecord) -> Bool {
-        !record.isVideo
+        !record.isTimeBased
     }
 
     /// Copy File needs a recording with a local file, in the save folder or `pending/`.
     static func canCopyFile(_ record: CaptureRecord) -> Bool {
-        record.isVideo && record.hasLocalFile
+        record.isTimeBased && record.hasLocalFile
     }
 
     /// Copy Image needs an image with a local file, or an uploaded object whose bucket is known

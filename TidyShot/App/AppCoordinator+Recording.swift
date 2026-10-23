@@ -328,8 +328,8 @@ extension AppCoordinator {
         // The size is the file's after its move, read from its attributes under the save folder's
         // scope when it went there.
         let (result, fileURL, byteCount) = await Task.detached(priority: .userInitiated) {
-            let (result, url) = Self.placeRecording(source, id: id, folder: target, noFolderReason: noFolderReason,
-                                                    pending: pending)
+            let (result, url) = Self.placeRecording(source, kind: .video, id: id, folder: target,
+                                                    noFolderReason: noFolderReason, pending: pending)
             let scope = if case .saveFolder = result { target?.url } else { URL?.none }
             return (result, url, FileSizes.byteCount(of: url, scope: scope))
         }.value
@@ -387,14 +387,15 @@ extension AppCoordinator {
     }
 
     /// Moves a finished recording out of `tmp/Recording` (design, Where the file lands), in a
-    /// detached task. With `folder` it goes into the save folder. When that move fails, or there is
-    /// no folder (`noFolderReason`), it is renamed to `pending/<id>.mp4` as a fallback; with
-    /// neither, it goes there as `.uploadOnly`'s target. Only when that rename fails does it stay
-    /// where it is (`.leftInTmp`, with the rename's error). Never reads the file.
-    nonisolated private static func placeRecording(_ source: URL, id: UUID, folder: (url: URL, baseName: String)?,
-                                                   noFolderReason: String?, pending: PendingFileStore)
-        -> (result: RecordingFileResult, url: URL) {
-        let ext = MediaKind.video.fileExtension
+    /// detached task, with `kind`'s extension. With `folder` it goes into the save folder. When
+    /// that move fails, or there is no folder (`noFolderReason`), it is renamed to
+    /// `pending/<id>.<ext>` as a fallback; with neither, it goes there as `.uploadOnly`'s target.
+    /// Only when that rename fails does it stay where it is (`.leftInTmp`, with the rename's error).
+    /// Never reads the file.
+    nonisolated private static func placeRecording(_ source: URL, kind: MediaKind, id: UUID,
+                                                   folder: (url: URL, baseName: String)?, noFolderReason: String?,
+                                                   pending: PendingFileStore) -> (result: RecordingFileResult, url: URL) {
+        let ext = kind.fileExtension
         var reason = noFolderReason
         if let folder {
             do {

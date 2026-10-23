@@ -85,4 +85,32 @@ struct DragFileNameTests {
                                                        recordingNamer: recordingNamer, currentCounter: 3)
         #expect(DragFileName.name(for: pending, suggestion: suggestion) == "Recording 2026-10-22 at 10.00.00.mp4")
     }
+
+    func gif(file: URL? = nil, temporary: Bool = false, state: CaptureRecord.UploadState = .none) -> CaptureRecord {
+        CaptureRecord(fileURL: file, fileIsTemporary: temporary, pixelWidth: 1280, pixelHeight: 832, appName: nil,
+                      uploadState: state, mediaKind: .gif, durationSeconds: 10)
+    }
+
+    /// A GIF's key keeps its name: `.png` is added only to images.
+    @Test func aGIFKeyKeepsItsName() {
+        #expect(DragFileName.name(for: gif(state: uploaded("shots/aSIS7.gif")), suggestion: suggestion) == "aSIS7.gif")
+        #expect(DragFileName.name(for: gif(state: uploaded("p/aSIS7")), suggestion: suggestion) == "aSIS7")
+        #expect(DragFileName.name(for: gif(state: uploaded("p/a:b.GIF")), suggestion: suggestion) == "a-b.GIF")
+    }
+
+    /// Without a key, the Save As… suggestion names the GIF: the recording template plus `.gif`.
+    @Test func aGIFWithoutAKeyUsesTheSuggestion() {
+        let folder = URL(filePath: "/Users/tim/Pictures/TidyShot", directoryHint: .isDirectory)
+        let started = DateComponents(calendar: .current, year: 2026, month: 10, day: 22, hour: 10, minute: 0, second: 0).date!
+        let namer = FileNamer(template: FileNamer.defaultTemplate, now: { started }, hostname: "miffle")
+        let recordingNamer = FileNamer(template: FileNamer.recordingDefaultTemplate, fallbackName: FileNamer.recordingFallbackName,
+                                       now: { started }, hostname: "miffle")
+        let pending = gif(file: URL(fileURLWithPath: "/tmp/pending/\(UUID().uuidString).gif"), temporary: true,
+                          state: .uploading(fraction: 0.5))
+        let suggestion = EditorNaming.saveAsSuggestion(for: pending, saveFolder: folder, namer: namer,
+                                                       recordingNamer: recordingNamer, currentCounter: 3)
+        let name = DragFileName.name(for: pending, suggestion: suggestion)
+        #expect(name == suggestion.fileName)
+        #expect(name == "Recording 2026-10-22 at 10.00.00.gif")
+    }
 }

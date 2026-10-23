@@ -4,6 +4,11 @@ struct CaptureSettingsView: View {
     @Bindable private var settings = AppSettings.shared
     @State private var editingBackground = false
 
+    /// Which Recording rows show and which are enabled, for the chosen format.
+    private var recordingLayout: RecordingSettingsLayout {
+        RecordingSettingsLayout(format: settings.recordingFormat)
+    }
+
     var body: some View {
         Form {
             Section {
@@ -35,9 +40,30 @@ struct CaptureSettingsView: View {
                 }
             }
             Section("Recording") {
-                Picker("Frame rate", selection: $settings.recordingFrameRate) {
-                    ForEach(AppSettings.recordingFrameRates, id: \.self) { rate in
-                        Text("\(rate) fps").tag(rate)
+                Picker("Format", selection: $settings.recordingFormat) {
+                    Text("MP4").tag(RecordingFormat.mp4)
+                    Text("GIF").tag(RecordingFormat.gif)
+                }
+                if recordingLayout.showsGIFRows {
+                    Picker("GIF frame rate", selection: $settings.gifFrameRate) {
+                        ForEach(AppSettings.gifFrameRates, id: \.self) { rate in
+                            Text("\(rate) fps").tag(rate)
+                        }
+                    }
+                    Picker("GIF size", selection: $settings.gifMaxSide) {
+                        ForEach(AppSettings.gifMaxSides, id: \.self) { side in
+                            Text(side == 0 ? "Full size" : "\(side) px").tag(side)
+                        }
+                    }
+                    Text(RecordingSettingsLayout.fullSizeCaption)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if recordingLayout.showsFrameRate {
+                    Picker("Frame rate", selection: $settings.recordingFrameRate) {
+                        ForEach(AppSettings.recordingFrameRates, id: \.self) { rate in
+                            Text("\(rate) fps").tag(rate)
+                        }
                     }
                 }
                 Picker("Resolution", selection: $settings.recordingRetina) {
@@ -48,6 +74,12 @@ struct CaptureSettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Toggle("Record system audio", isOn: $settings.recordingSystemAudio)
+                    .disabled(!recordingLayout.audioRowsEnabled)
+                if recordingLayout.showsGIFCaption {
+                    Text(RecordingSettingsLayout.gifCaption)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 Toggle("Show cursor in recordings", isOn: $settings.recordingShowsCursor)
                 Toggle("Count down before recording", isOn: $settings.recordingCountdown)
             }

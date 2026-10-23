@@ -13,7 +13,7 @@ extension AppCoordinator {
     func prepareDragFile(recordID: UUID) {
         guard let record = history.record(id: recordID), overlay.isShowing(recordID: recordID) else { return }
         dragCleanups.removeValue(forKey: recordID)?.cancel()
-        if record.isVideo {
+        if record.isTimeBased {
             Task { await stageVideoDragFile(recordID: recordID) }
             return
         }
@@ -65,7 +65,7 @@ extension AppCoordinator {
     /// its drag folder. A failure is only logged; the card then cannot be dragged. Never for a
     /// recording: a silent download of hundreds of MB on a click would surprise (R2).
     private func prefetchDragFile(recordID: UUID, name: String) async {
-        guard !prefetchingDragIDs.contains(recordID), let record = history.record(id: recordID), !record.isVideo,
+        guard !prefetchingDragIDs.contains(recordID), let record = history.record(id: recordID), !record.isTimeBased,
               record.uploadedKey != nil, record.objectLocation != nil else { return }
         prefetchingDragIDs.insert(recordID)
         defer { prefetchingDragIDs.remove(recordID) }
@@ -93,7 +93,7 @@ extension AppCoordinator {
     /// point at and an adopt would delete, so its pending file is removed instead (Gap 7).
     func keepForDragOut(_ fileURL: URL, record: CaptureRecord, url: URL, key: String) -> Bool {
         guard overlay.isShowing(recordID: record.id) else { return false }
-        if record.isVideo, dragFiles.stagedFile(id: record.id) != nil { return false }
+        if record.isTimeBased, dragFiles.stagedFile(id: record.id) != nil { return false }
         var uploaded = record
         uploaded.uploadState = .uploaded(url: url, key: key)
         let name = DragFileName.name(for: uploaded, suggestion: saveAsSuggestion(recordID: record.id))

@@ -17,7 +17,7 @@ extension AppCoordinator {
     /// from, any other centred on the pointer's screen. A second Pin on a pinned capture brings
     /// its pin forward. A capture deleted during the load is not pinned.
     func pin(recordID: UUID) async {
-        guard let record = history.record(id: recordID), !record.isVideo, !deletingIDs.contains(recordID) else { return }
+        guard let record = history.record(id: recordID), !record.isTimeBased, !deletingIDs.contains(recordID) else { return }
         guard !pins.bringToFront(recordID: recordID), pinningIDs.insert(recordID).inserted else { return }
         defer { pinningIDs.remove(recordID) }
         let image: ScaledImage

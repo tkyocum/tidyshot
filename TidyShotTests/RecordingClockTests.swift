@@ -17,10 +17,16 @@ struct RecordingClockTests {
         #expect(RecordingClock.format(seconds) == text)
     }
 
-    @Test func softLimitIsFiveMinutes() {
+    /// The time turns orange at 0:30 for a GIF and at 5:00 for an MP4.
+    @Test func softLimitDependsOnTheFormat() {
         #expect(RecordingClock.softLimit == 300)
-        #expect(!RecordingClock.isPastSoftLimit(299.9))
-        #expect(RecordingClock.isPastSoftLimit(300))
-        #expect(RecordingClock.isPastSoftLimit(4_000))
+        #expect(RecordingClock.gifSoftLimit == 30)
+        #expect(!RecordingClock.isPastSoftLimit(29.9, format: .gif))
+        #expect(RecordingClock.isPastSoftLimit(30, format: .gif))
+        #expect(RecordingClock.isPastSoftLimit(299.9, format: .gif))
+        #expect(!RecordingClock.isPastSoftLimit(30, format: .mp4))
+        #expect(!RecordingClock.isPastSoftLimit(299.9, format: .mp4))
+        #expect(RecordingClock.isPastSoftLimit(300, format: .mp4))
+        #expect(RecordingClock.isPastSoftLimit(4_000, format: .mp4))
     }
 }

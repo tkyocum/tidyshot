@@ -131,6 +131,42 @@ struct EditorNamingTests {
                 == "Recording.mp4")
     }
 
+    func gif(fileURL: URL?, temporary: Bool = false, state: CaptureRecord.UploadState = .none) -> CaptureRecord {
+        CaptureRecord(fileURL: fileURL, fileIsTemporary: temporary, pixelWidth: 1280, pixelHeight: 832, appName: nil,
+                      uploadState: state, mediaKind: .gif, durationSeconds: 10)
+    }
+
+    /// A GIF is named as a recording: `Recording file name` plus `.gif`, or its own name in the
+    /// save folder.
+    @Test func aGIFSuggestionUsesTheRecordingTemplateAndGIF() {
+        let pending = gif(fileURL: URL(fileURLWithPath: "/tmp/pending/\(UUID().uuidString).gif"), temporary: true,
+                          state: .uploading(fraction: 0.3))
+        let uploadedOnly = gif(fileURL: nil, state: .uploaded(url: URL(string: "https://snap.example.com/a.gif")!, key: "a.gif"))
+        for record in [pending, uploadedOnly] {
+            #expect(EditorNaming.saveAsSuggestion(for: record, saveFolder: folder, namer: namer(),
+                                                  recordingNamer: recordingNamer(), currentCounter: 7)
+                    == EditorNaming.SaveAsSuggestion(fileName: "Recording 2026-10-20 at 09.15.02.gif", directory: folder,
+                                                     mediaKind: .gif))
+        }
+        #expect(EditorNaming.saveAsSuggestion(for: pending, saveFolder: nil, namer: namer(),
+                                              recordingNamer: recordingNamer("clip-{counter}"), currentCounter: 41).fileName
+                == "clip-41.gif")
+
+        let file = folder.appending(path: "Recording 2026-10-20 at 09.15.02.gif")
+        #expect(EditorNaming.saveAsSuggestion(for: gif(fileURL: file), saveFolder: folder, namer: namer(),
+                                              recordingNamer: recordingNamer(), currentCounter: 7)
+                == EditorNaming.SaveAsSuggestion(fileName: "Recording 2026-10-20 at 09.15.02.gif", directory: folder,
+                                                 mediaKind: .gif))
+    }
+
+    /// A GIF's Save As… panel offers `com.compuserve.gif` only.
+    @Test func aGIFPanelAllowsGIFOnly() {
+        let panel = EditorNaming.savePanel(for: EditorNaming.SaveAsSuggestion(fileName: "Recording.gif", directory: folder,
+                                                                             mediaKind: .gif))
+        #expect(panel.allowedContentTypes == [.gif])
+        #expect(UTType.gif.identifier == "com.compuserve.gif")
+    }
+
     /// A screenshot, or no record, is an image.
     @Test func anImageSuggestionIsAnImage() {
         #expect(EditorNaming.saveAsSuggestion(for: nil, saveFolder: folder, namer: namer(), recordingNamer: recordingNamer(),

@@ -24,7 +24,7 @@ struct RecordingPanelView: View {
         HStack(spacing: 6) {
             Text(RecordingClock.format(model.elapsed))
                 .font(.system(size: 15, weight: .medium).monospacedDigit())
-                .foregroundStyle(RecordingClock.isPastSoftLimit(model.elapsed) ? Color.orange : Color.primary)
+                .foregroundStyle(RecordingClock.isPastSoftLimit(model.elapsed, format: .mp4) ? Color.orange : Color.primary)
                 .frame(maxWidth: .infinity, alignment: .leading)
             Button {
                 model.onStop()

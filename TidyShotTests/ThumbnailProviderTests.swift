@@ -150,6 +150,26 @@ struct ThumbnailProviderTests {
         #expect(reads.withLock { $0 } == 0)
     }
 
+    /// A GIF with no stored thumbnail is never read either, for the thumbnail or the hover preview.
+    @Test func aGIFWithoutAThumbnailIsNeverRead() async throws {
+        let saved = CaptureRecord(fileURL: dir.appending(path: "Recording.gif"), pixelWidth: 1280, pixelHeight: 832,
+                                  appName: nil, mediaKind: .gif, durationSeconds: 10)
+        let pending = CaptureRecord(fileURL: URL(fileURLWithPath: "/tmp/pending/\(UUID().uuidString).gif"),
+                                    fileIsTemporary: true, pixelWidth: 1280, pixelHeight: 832, appName: nil,
+                                    mediaKind: .gif, durationSeconds: 10)
+        history.add(saved)
+        history.add(pending)
+        let data = try png(width: 640, height: 400)
+        let reads = Mutex(0)
+        let provider = makeProvider { _, _ in reads.withLock { $0 += 1 }; return data }
+        for item in [saved, pending] {
+            #expect(await provider.thumbnail(for: item) == nil)
+            #expect(await provider.preview(for: item) == nil)
+            #expect(history.record(id: item.id)?.thumbnailFileName == nil)
+        }
+        #expect(reads.withLock { $0 } == 0)
+    }
+
     /// `forget` runs while the load's read is in progress in its detached task: the reader
     /// blocks until the test has called it.
     @Test func forgetDuringALoadDiscardsIt() async throws {

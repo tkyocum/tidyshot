@@ -150,6 +150,8 @@ final class AppCoordinator {
     @ObservationIgnored var warnedUploadNotConfigured = false
     /// Set when the first same-key replace of this launch posts `EditorUploadPlan.cacheNote`.
     @ObservationIgnored var postedCacheNote = false
+    /// Set when the first GIF upload of this launch, with Clop on, logs that GIFs are not sent to Clop.
+    @ObservationIgnored var loggedGIFNotSentToClop = false
     /// Records with an upload in flight; drives the menu bar icon.
     var uploadingIDs: Set<UUID> = []
     /// Recordings whose URL did not replace the clipboard when the upload finished, because the

@@ -72,6 +72,11 @@ final class AppSettings {
         static let recordingShowsCursor = "recordingShowsCursor"
         static let recordingCountdown = "recordingCountdown"
         static let recordingFileNameTemplate = "recordingFileNameTemplate"
+        static let recordingFormat = "recordingFormat"
+        static let gifFrameRate = "gifFrameRate"
+        static let gifMaxSide = "gifMaxSide"
+        static let recordingMicrophone = "recordingMicrophone"
+        static let recordingMicrophoneName = "recordingMicrophoneName"
     }
 
     @ObservationIgnored private let defaults: UserDefaults
@@ -165,6 +170,26 @@ final class AppSettings {
     var recordingFileNameTemplate: String {
         didSet { defaults.set(recordingFileNameTemplate, forKey: Keys.recordingFileNameTemplate) }
     }
+    /// The Recording section's `Format`: MP4 or GIF.
+    var recordingFormat: RecordingFormat { didSet { defaults.set(recordingFormat.rawValue, forKey: Keys.recordingFormat) } }
+    /// `GIF frame rate`, one of `gifFrameRates`.
+    var gifFrameRate: Int { didSet { defaults.set(gifFrameRate, forKey: Keys.gifFrameRate) } }
+    static let gifFrameRates = [10, 15, 20]
+    /// `GIF size`: the GIF's longer side, one of `gifMaxSides`, where 0 is `Full size`.
+    var gifMaxSide: Int { didSet { defaults.set(gifMaxSide, forKey: Keys.gifMaxSide) } }
+    static let gifMaxSides = [800, 1280, 0]
+    /// `Microphone`: empty for Off, `default` for System Default, otherwise the device's `uniqueID`.
+    var recordingMicrophone: String { didSet { defaults.set(recordingMicrophone, forKey: Keys.recordingMicrophone) } }
+    /// The chosen device's `localizedName`, empty for Off or System Default, so a disconnected
+    /// device can still be named.
+    var recordingMicrophoneName: String {
+        didSet { defaults.set(recordingMicrophoneName, forKey: Keys.recordingMicrophoneName) }
+    }
+
+    /// `GIF frame rate` and `GIF size` as one value.
+    var gifSettings: GIFSettings {
+        GIFSettings(fps: gifFrameRate, maxSide: gifMaxSide)
+    }
 
     /// The four Recording settings a recording's stream is made from.
     var recordingOptions: RecordingOptions {
@@ -233,6 +258,11 @@ final class AppSettings {
             Keys.recordingShowsCursor: true,
             Keys.recordingCountdown: true,
             Keys.recordingFileNameTemplate: FileNamer.recordingDefaultTemplate,
+            Keys.recordingFormat: RecordingFormat.mp4.rawValue,
+            Keys.gifFrameRate: 15,
+            Keys.gifMaxSide: 1280,
+            Keys.recordingMicrophone: "",
+            Keys.recordingMicrophoneName: "",
         ])
         showsCursor = defaults.bool(forKey: Keys.showsCursor)
         copyImageToClipboard = defaults.bool(forKey: Keys.copyImageToClipboard)
@@ -285,6 +315,17 @@ final class AppSettings {
         recordingShowsCursor = defaults.bool(forKey: Keys.recordingShowsCursor)
         recordingCountdown = defaults.bool(forKey: Keys.recordingCountdown)
         recordingFileNameTemplate = defaults.string(forKey: Keys.recordingFileNameTemplate) ?? FileNamer.recordingDefaultTemplate
+        recordingFormat = RecordingFormat(rawValue: defaults.string(forKey: Keys.recordingFormat) ?? "") ?? .mp4
+        let storedGIFFrameRate = defaults.integer(forKey: Keys.gifFrameRate)
+        gifFrameRate = Self.gifFrameRates.contains(storedGIFFrameRate) ? storedGIFFrameRate : 15
+        // 0 is `Full size`, so a value that is not a number must not read as 0, as `integer` would.
+        if let stored = defaults.object(forKey: Keys.gifMaxSide) as? Int, Self.gifMaxSides.contains(stored) {
+            gifMaxSide = stored
+        } else {
+            gifMaxSide = 1280
+        }
+        recordingMicrophone = defaults.string(forKey: Keys.recordingMicrophone) ?? ""
+        recordingMicrophoneName = defaults.string(forKey: Keys.recordingMicrophoneName) ?? ""
         // Not registered: a missing value, or one that does not decode (a fill or aspect from a
         // newer build), means the default style.
         backgroundStyle = defaults.data(forKey: Keys.backgroundStyle)

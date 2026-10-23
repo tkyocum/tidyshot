@@ -110,4 +110,24 @@ struct EditorInputTests {
                     == .unavailable(EditorInput.videoText))
         }
     }
+
+    /// A GIF is time-based too, so an editor Save can never write PNG bytes over it: also when it
+    /// is the retained capture and when its file is in the save folder.
+    @Test func aGIFIsUnavailable() {
+        let saved = URL(fileURLWithPath: "/Users/tim/Pictures/TidyShot/Recording.gif")
+        let pendingGIF = URL(fileURLWithPath: "/Users/tim/Library/Containers/TidyShot/Data/pending/A.gif")
+        let gifs = [
+            CaptureRecord(fileURL: saved, pixelWidth: 10, pixelHeight: 10, appName: nil, mediaKind: .gif),
+            CaptureRecord(fileURL: pendingGIF, fileIsTemporary: true, pixelWidth: 10, pixelHeight: 10, appName: nil,
+                          mediaKind: .gif),
+            CaptureRecord(fileURL: nil, pixelWidth: 10, pixelHeight: 10, appName: nil,
+                          uploadState: .uploaded(url: link, key: "aB3dE9.gif"), objectLocation: location, mediaKind: .gif),
+        ]
+        for gif in gifs {
+            #expect(EditorInput.source(for: gif, retainedID: gif.id, saveFolder: folder)
+                    == .unavailable(EditorInput.videoText))
+            #expect(EditorInput.source(for: gif, retainedID: nil, saveFolder: folder)
+                    == .unavailable(EditorInput.videoText))
+        }
+    }
 }

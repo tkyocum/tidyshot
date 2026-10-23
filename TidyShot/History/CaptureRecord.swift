@@ -1,15 +1,17 @@
 import Foundation
 import UniformTypeIdentifiers
 
-/// What a capture's file holds: a PNG screenshot or an MP4 recording.
+/// What a capture's file holds: a PNG screenshot, an MP4 recording or a GIF recording.
 nonisolated enum MediaKind: String, Codable, Sendable {
     case image
     case video
+    case gif
 
     var fileExtension: String {
         switch self {
         case .image: "png"
         case .video: "mp4"
+        case .gif: "gif"
         }
     }
 
@@ -17,6 +19,7 @@ nonisolated enum MediaKind: String, Codable, Sendable {
         switch self {
         case .image: "image/png"
         case .video: "video/mp4"
+        case .gif: "image/gif"
         }
     }
 
@@ -24,8 +27,13 @@ nonisolated enum MediaKind: String, Codable, Sendable {
         switch self {
         case .image: .png
         case .video: .mpeg4Movie
+        case .gif: .gif
         }
     }
+
+    /// A GIF uploads as made, with Clop on or off; screenshots and MP4s go through Clop when it
+    /// is on and running.
+    var isSentToClop: Bool { self != .gif }
 
     /// An unknown raw value, from a newer TidyShot, reads as `.video`, so `HistoryStore.load`
     /// never sets the whole history aside for it.
@@ -83,23 +91,29 @@ nonisolated struct CaptureRecord: Codable, Identifiable, Equatable, Sendable {
     /// survives a quit or crash mid-upload (`HistoryStore.load` turns `.uploading` into
     /// `.failed`), so the link stays copyable and Delete still finds its object.
     var priorUpload: PriorUpload?
-    /// `.video` for a screen recording, whose file is an MP4 and whose pixel size is the video's.
+    /// `.video` for a screen recording, whose file is an MP4 and whose pixel size is the video's,
+    /// and `.gif` for one saved as a GIF.
     let mediaKind: MediaKind
-    /// A recording's length, read from the finished file. Nil for screenshots.
-    let durationSeconds: Double?
+    /// A recording's length, read from the finished file (a GIF's from its frames). Nil for
+    /// screenshots.
+    var durationSeconds: Double?
     /// The size in bytes of what the record's link or file points at, for Recent Captures (spec
     /// 2.13): the bytes written at save, the new file after an editor Save, and the bytes sent once
     /// an upload succeeds (Clop's result when it was accepted). A failed upload, or the removal of
     /// the local file alone, leaves it. Nil for a record from before 2.13 until the launch backfill
     /// (`FileSizes`) finds its file, and for good when it has none.
     var byteCount: Int?
+    /// The muted stretches of a recording whose muting failed, so its file still holds their sound.
+    /// Non-empty is the `Sound not muted` mark (`uploadBlockedReason`). Empty for every other record.
+    var unmutedIntervals: [MuteInterval]
 
     init(id: UUID = UUID(), timestamp: Date = Date(), fileURL: URL?, fileIsTemporary: Bool = false,
          thumbnailFileName: String? = nil, pixelWidth: Int, pixelHeight: Int, appName: String?,
          uploadState: UploadState = .none, objectLocation: ObjectLocation? = nil, pendingObjectKey: String? = nil,
          editedAt: Date? = nil, uploadIsStale: Bool = false,
          supersededObjects: [ObjectRef] = [], priorUpload: PriorUpload? = nil,
-         mediaKind: MediaKind = .image, durationSeconds: Double? = nil, byteCount: Int? = nil) {
+         mediaKind: MediaKind = .image, durationSeconds: Double? = nil, byteCount: Int? = nil,
+         unmutedIntervals: [MuteInterval] = []) {
         self.id = id
         self.timestamp = timestamp
         self.fileURL = fileURL
@@ -118,6 +132,7 @@ nonisolated struct CaptureRecord: Codable, Identifiable, Equatable, Sendable {
         self.mediaKind = mediaKind
         self.durationSeconds = durationSeconds
         self.byteCount = byteCount
+        self.unmutedIntervals = unmutedIntervals
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -126,6 +141,7 @@ nonisolated struct CaptureRecord: Codable, Identifiable, Equatable, Sendable {
         case supersededObjects, priorUpload
         case mediaKind, durationSeconds
         case byteCount
+        case unmutedIntervals
     }
 
     /// Phase 2 history files have no `fileIsTemporary`, `thumbnailFileName`, `objectLocation` or
@@ -133,7 +149,8 @@ nonisolated struct CaptureRecord: Codable, Identifiable, Equatable, Sendable {
     /// `uploadIsStale`. They decode with the defaults. Files from before Phase 4 have no
     /// supersededObjects or priorUpload either; they decode as [] and nil. Files from before
     /// recording R1 have no `mediaKind` or `durationSeconds`; they decode as `.image` and nil. Files
-    /// from before 2.13 have no `byteCount`; it decodes as nil. Encoding is synthesised.
+    /// from before 2.13 have no `byteCount`; it decodes as nil. Files from before recording R2 have
+    /// no `unmutedIntervals`; it decodes as []. Encoding is synthesised.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(UUID.self, forKey: .id)
@@ -154,6 +171,7 @@ nonisolated struct CaptureRecord: Codable, Identifiable, Equatable, Sendable {
         mediaKind = try container.decodeIfPresent(MediaKind.self, forKey: .mediaKind) ?? .image
         durationSeconds = try container.decodeIfPresent(Double.self, forKey: .durationSeconds)
         byteCount = try container.decodeIfPresent(Int.self, forKey: .byteCount)
+        unmutedIntervals = try container.decodeIfPresent([MuteInterval].self, forKey: .unmutedIntervals) ?? []
     }
 
     var uploadedURL: URL? {
@@ -187,7 +205,18 @@ nonisolated struct CaptureRecord: Codable, Identifiable, Equatable, Sendable {
 
     var hasLocalFile: Bool { fileURL != nil }
 
-    var isVideo: Bool { mediaKind == .video }
+    /// A recording, MP4 or GIF: no image actions, no editor, and its file is never read for a
+    /// thumbnail. A kind from a newer TidyShot reads as `.video`, so it counts too.
+    var isTimeBased: Bool { mediaKind != .image }
+
+    static let soundNotMutedTitle = "Sound not muted"
+    static let soundNotMutedBody = "Muting failed. The recording is kept in TidyShot and not uploaded. Trim it to fix the sound, or delete it."
+
+    /// Why the record must not be uploaded: `soundNotMutedBody` while it is marked `Sound not
+    /// muted`, otherwise nil.
+    var uploadBlockedReason: String? {
+        unmutedIntervals.isEmpty ? nil : Self.soundNotMutedBody
+    }
 
     /// An upload-only capture that has not been uploaded: its PNG in `pending` is the only copy,
     /// so retention never prunes it.

@@ -89,9 +89,9 @@ extension AppCoordinator {
     /// after the Upload tab was saved); callers read it once. With `fixedKey` the job PUTs that
     /// exact key with `Cache-Control: no-cache` and draws no counter (an editor replace, or a retry
     /// of one); otherwise the key is named from the template. With Clop on and running, Clop
-    /// optimises a copy first: a PNG on its image queue, a recording on its video queue. A
-    /// recording's file is then checked against the single-PUT limit, and one over it is never
-    /// enqueued (`refuseOversizedUpload`).
+    /// optimises a copy first: a PNG on its image queue, an MP4 on its video queue; a GIF is never
+    /// sent. A recording's file is then checked against the single-PUT limit, and one over it is
+    /// never enqueued (`refuseOversizedUpload`).
     func startUpload(recordID: UUID, payload: UploadPayload, destination: S3Destination, fixedKey: String? = nil) {
         // Look the record up before marking it uploading, so a missing record never leaves an
         // id in `uploadingIDs` (and the menu bar icon spinning) with no job to clear it.
@@ -129,7 +129,12 @@ extension AppCoordinator {
             // The activity starts here, at the Clop request or at the enqueue when Clop is off.
             fileUploadIDs.insert(recordID)
         }
-        let optimises = settings.optimiseWithClop && clopIsRunning()
+        // A GIF uploads as made, so it never asks whether Clop runs (design, GIF, Clop).
+        if !kind.isSentToClop, settings.optimiseWithClop, !loggedGIFNotSentToClop {
+            loggedGIFNotSentToClop = true
+            NSLog("%@", "Clop: GIFs are not sent to Clop")
+        }
+        let optimises = kind.isSentToClop && settings.optimiseWithClop && clopIsRunning()
         guard optimises || isFile else {
             if case .data(let data) = payload {
                 sentByteCounts[recordID] = data.count
@@ -231,10 +236,10 @@ extension AppCoordinator {
             guard history.record(id: recordID) != nil, !deletingIDs.contains(recordID) else { return }
             if let folder {
                 let baseName = recordingBaseName(startedAt: record.timestamp)
+                let ext = record.mediaKind.fileExtension
                 do {
                     movedURL = try await Task.detached(priority: .utility) {
-                        try SaveLocation.moveInScoped(source, baseName: baseName, ext: MediaKind.video.fileExtension,
-                                                      folder: folder)
+                        try SaveLocation.moveInScoped(source, baseName: baseName, ext: ext, folder: folder)
                     }.value
                     move = .saveFolder
                 } catch {
@@ -356,15 +361,15 @@ extension AppCoordinator {
 
     /// What an upload of the record sends. An image's PNG is read into memory: straight from the
     /// container for a temporary file, through the save folder's security scope otherwise. A video
-    /// is never read here: it streams from its file, once the file is found (holding the folder's
-    /// scope to look) and a save-folder file is inside the current folder. Throws when the record
-    /// has no file it can reach.
+    /// or a GIF is never read here: it streams from its file, once the file is found (holding the
+    /// folder's scope to look) and a save-folder file is inside the current folder. Throws when the
+    /// record has no file it can reach.
     func uploadPayload(for record: CaptureRecord) throws -> UploadPayload {
         switch record.mediaKind {
         case .image:
             guard let fileURL = record.fileURL else { throw UploadError.fileUnreadable("no local file") }
             return .data(record.fileIsTemporary ? try Data(contentsOf: fileURL) : try saveLocation.read(contentsOf: fileURL))
-        case .video:
+        case .video, .gif:
             return try UploadPayload.video(for: record, saveFolder: saveLocation.currentURL) { url, folder in
                 let accessing = folder?.startAccessingSecurityScopedResource() ?? false
                 defer { if accessing { folder?.stopAccessingSecurityScopedResource() } }
@@ -475,7 +480,7 @@ extension AppCoordinator {
             // A screenshot's URL always replaces the clipboard. A recording's does only while the
             // clipboard still holds what the save left there: an upload can take minutes, and the
             // user may have copied something since.
-            let replacesClipboard = !before.isVideo
+            let replacesClipboard = !before.isTimeBased
                 || RecordingSavePlan.replacesClipboard(savedChangeCount: videoClipboardCounts.removeValue(forKey: id),
                                                        currentChangeCount: NSPasteboard.general.changeCount)
             if !replacesClipboard {
