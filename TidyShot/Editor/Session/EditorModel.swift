@@ -81,6 +81,8 @@ final class EditorModel: CanvasEditing {
         static let textSize = "Text Size"
         static let crop = "Crop"
         static let background = "Background"
+        static let spotlightShape = "Spotlight Shape"
+        static let spotlightDim = "Spotlight Dim"
     }
 
     let recordID: UUID
@@ -270,8 +272,11 @@ final class EditorModel: CanvasEditing {
             return nil  // Strokes come from `makeStroke`.
         case .text:
             return nil  // Text is placed by `beginTextEditing`, not by a drag.
-        case .spotlight, .counter:
-            return nil  // Tasks 2 and 3 build them.
+        case .spotlight:
+            guard !rect.isEmpty else { return nil }
+            return .spotlight(SpotlightShape(id: id, rect: rect, isEllipse: spotlightEllipse))
+        case .counter:
+            return nil  // Task 3 builds it.
         }
     }
 
@@ -344,9 +349,9 @@ final class EditorModel: CanvasEditing {
         }
     }
 
-    /// ⌘A with one selection: the frontmost annotation, drawings before effects as in HitTester.
-    /// Nothing while cropping, which shows no selection. With a crop applied, only annotations that
-    /// reach into the crop count: the rest are hidden.
+    /// ⌘A with one selection: the frontmost annotation in HitTester's order, the frontmost drawing,
+    /// else effect, else spotlight. Nothing while cropping, which shows no selection. With a crop
+    /// applied, only annotations that reach into the crop count: the rest are hidden.
     func selectAll() {
         guard tool != .crop else { return }
         let visible: (Annotation) -> Bool = { [document, scale] annotation in
@@ -354,7 +359,8 @@ final class EditorModel: CanvasEditing {
             let bounds = annotation.effectRect ?? AnnotationGeometry.bounds(of: annotation, scale: scale)
             return bounds.intersects(crop)
         }
-        selection = (document.drawings.last(where: visible) ?? document.effects.last(where: visible))?.id
+        selection = (document.drawings.last(where: visible) ?? document.effects.last(where: visible)
+            ?? document.spotlights.last(where: visible))?.id
     }
 
     // MARK: Crop
@@ -514,6 +520,16 @@ final class EditorModel: CanvasEditing {
         textEditing?.box.color ?? Self.color(of: selectedAnnotation) ?? (editsRedactColor ? redactColor : editsHighlighter ? highlightColor : strokeColor)
     }
 
+    /// Whether the toolbar's Colour item is enabled (spec 2.12, Selection chrome and colour): not
+    /// while a spotlight is selected, nor with the Spotlight tool while the selection has no
+    /// colour, so the palette never quietly changes `strokeColor` with nothing to show for it.
+    /// Nothing disables it for Crop.
+    var colorApplies: Bool {
+        if selectedAnnotation?.isSpotlight == true { return false }
+        if tool == .spotlight, Self.color(of: selectedAnnotation) == nil { return false }
+        return true
+    }
+
     /// Redact, or Select with a redaction selected, edits the fill; everything else the stroke.
     private var editsRedactColor: Bool {
         if tool == .redact { return true }
@@ -584,6 +600,40 @@ final class EditorModel: CanvasEditing {
         }
         commit(document.replacing(changed), actionName: actionName,
                coalescingKey: "\(actionName)-\(selected.id.uuidString)")
+    }
+
+    /// The options popover's Shape row is enabled while Spotlight is the tool or a spotlight is
+    /// selected.
+    var spotlightShapeApplies: Bool {
+        tool == .spotlight || selectedAnnotation?.isSpotlight == true
+    }
+
+    /// The Dim row is enabled under the Shape rule, and only while the document has a spotlight.
+    var spotlightDimApplies: Bool {
+        !document.spotlights.isEmpty && spotlightShapeApplies
+    }
+
+    /// The shape the Shape row shows: the selected spotlight's, else the default for new ones.
+    var activeSpotlightEllipse: Bool {
+        selectedAnnotation?.spotlightShape?.isEllipse ?? spotlightEllipse
+    }
+
+    /// Always sets the default for new spotlights. With a spotlight selected, also changes it as
+    /// one coalesced step, `Spotlight Shape`.
+    func applySpotlightShape(isEllipse: Bool) {
+        spotlightEllipse = isEllipse
+        guard let selected = selectedAnnotation, selected.isSpotlight else { return }
+        commit(document.replacing(selected.withSpotlightShape(isEllipse: isEllipse)), actionName: ActionName.spotlightShape,
+               coalescingKey: "\(ActionName.spotlightShape)-\(selected.id.uuidString)")
+    }
+
+    /// The overlay's dim, one value for the whole document, so it is not an editor default.
+    /// Nothing happens while the document has no spotlight, so a dim nothing shows adds no step and
+    /// no unsaved change. A run of changes is one step, `Spotlight Dim`, under one key, and the
+    /// dim in effect commits nothing.
+    func applySpotlightDim(_ dim: Double) {
+        guard !document.spotlights.isEmpty else { return }
+        commit(document.withSpotlightDim(dim), actionName: ActionName.spotlightDim, coalescingKey: ActionName.spotlightDim)
     }
 
     private static func color(of annotation: Annotation?) -> RGBA? {

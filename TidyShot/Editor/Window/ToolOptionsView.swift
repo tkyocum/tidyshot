@@ -1,12 +1,20 @@
 import SwiftUI
 
-/// The options popover (spec 2.6, Palette and options): line width, blur radius and pixel block.
-/// Each control applies live through `EditorModel`, which commits a selected annotation under a
-/// coalescing key, so one slider drag is one undo step. Only the slider for the effect in play is
-/// enabled: the selected blur or pixelate, else the active Blur or Pixelate tool. A selected
-/// annotation of another kind does not decide it, so with a rectangle selected the active effect
-/// tool's slider still works and sets only the default. While the Highlighter is in play the width
-/// control edits the highlighter's width.
+/// The options popover, `Tool options` (spec 2.6, Palette and options; spec 2.12, Options): line
+/// width, blur radius, pixel block, and the spotlights' Shape and Dim. It stays one form: a row
+/// that does not apply is disabled, never swapped out per tool. Each control applies live through
+/// `EditorModel`, which commits a selected annotation under a coalescing key, so one slider drag
+/// is one undo step. Only the slider for the effect in play is enabled: the selected blur or
+/// pixelate, else the active Blur or Pixelate tool. A selected annotation of another kind does not
+/// decide it, so with a rectangle selected the active effect tool's slider still works and sets
+/// only the default. While the Highlighter is in play the width control edits the highlighter's
+/// width; with a spotlight selected it sets only the default.
+///
+/// `Shape` (`Rectangle`, `Ellipse`) is enabled while Spotlight is the tool or a spotlight is
+/// selected (`spotlightShapeApplies`); it sets the default for new spotlights and changes a
+/// selected one. `Dim` (`30 %`, `50 %`, `70 %`) follows the same rule and also needs a spotlight in
+/// the document (`spotlightDimApplies`); it shows the document's dim, 50 % before the first
+/// spotlight.
 struct ToolOptionsView: View {
     let model: EditorModel
 
@@ -33,6 +41,19 @@ struct ToolOptionsView: View {
                 }
             }
             .disabled(effectTool != .pixelate)
+            Picker("Shape", selection: spotlightShape) {
+                Text("Rectangle").tag(false)
+                Text("Ellipse").tag(true)
+            }
+            .pickerStyle(.segmented)
+            .disabled(!model.spotlightShapeApplies)
+            Picker("Dim", selection: spotlightDim) {
+                ForEach(EditorPalette.spotlightDims, id: \.self) { dim in
+                    Text("\(Int((dim * 100).rounded())) %").tag(dim)
+                }
+            }
+            .pickerStyle(.segmented)
+            .disabled(!model.spotlightDimApplies)
         }
         .formStyle(.columns)
         .padding(12)
@@ -67,5 +88,13 @@ struct ToolOptionsView: View {
 
     private var block: Binding<CGFloat> {
         Binding(get: { model.blockPoints }, set: { model.applyEffectParameter(.block, points: $0) })
+    }
+
+    private var spotlightShape: Binding<Bool> {
+        Binding(get: { model.activeSpotlightEllipse }, set: { model.applySpotlightShape(isEllipse: $0) })
+    }
+
+    private var spotlightDim: Binding<Double> {
+        Binding(get: { model.document.effectiveSpotlightDim }, set: { model.applySpotlightDim($0) })
     }
 }

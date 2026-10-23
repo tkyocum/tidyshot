@@ -700,4 +700,187 @@ struct EditorModelTests {
         #expect(model.selection == second.id)
         #expect(undoAll(model).count == 3)
     }
+
+    // MARK: Spotlight (spec 2.12)
+
+    func spotlight(isEllipse: Bool = false) -> Annotation {
+        .spotlight(SpotlightShape(id: UUID(), rect: CGRect(x: 2, y: 2, width: 8, height: 8), isEllipse: isEllipse))
+    }
+
+    func arrow() -> Annotation {
+        .arrow(Segment(id: UUID(), from: CGPoint(x: 1, y: 1), to: CGPoint(x: 12, y: 12), color: red, lineWidth: 4))
+    }
+
+    /// ⌘A follows the hit order: the frontmost drawing, else effect, else spotlight.
+    @Test func selectAllFallsBackToASpotlight() {
+        let model = makeModel()
+        let line = add(arrow(), to: model)
+        add(spotlight(), to: model)
+        model.selectAll()
+        #expect(model.selection == line.id)
+
+        let alone = makeModel()
+        let hole = add(spotlight(), to: alone)
+        alone.selectAll()
+        #expect(alone.selection == hole.id)
+    }
+
+    @Test func aNewSpotlightTakesTheShapeDefault() throws {
+        let model = makeModel()
+        let from = CGPoint(x: 12, y: 10)
+        let to = CGPoint(x: 2, y: 4)
+        let rect = try #require(model.makeAnnotation(.spotlight, from: from, to: to)?.spotlightShape)
+        #expect(rect.rect == CGRect(x: 2, y: 4, width: 10, height: 6))
+        #expect(!rect.isEllipse)
+        model.spotlightEllipse = true
+        #expect(model.makeAnnotation(.spotlight, from: from, to: to)?.spotlightShape?.isEllipse == true)
+        #expect(model.makeAnnotation(.spotlight, from: from, to: from) == nil)
+    }
+
+    /// Shape and Dim on a selected spotlight are each one named step that undo and redo restore.
+    @Test func shapeAndDimOnASelectedSpotlightAreOneStepEach() throws {
+        let model = makeModel()
+        model.tool = .select
+        let hole = add(spotlight(), to: model)
+        let added = model.document
+        model.selection = hole.id
+
+        model.applySpotlightShape(isEllipse: true)
+        #expect(model.document.annotation(id: hole.id) == hole.withSpotlightShape(isEllipse: true))
+        #expect(model.spotlightEllipse)
+        #expect(model.activeSpotlightEllipse)
+        #expect(model.undoManager.undoActionName == EditorModel.ActionName.spotlightShape)
+        #expect(EditorModel.ActionName.spotlightShape == "Spotlight Shape")
+        let reshaped = model.document
+
+        model.applySpotlightDim(0.7)
+        #expect(model.document.effectiveSpotlightDim == 0.7)
+        #expect(model.undoManager.undoActionName == EditorModel.ActionName.spotlightDim)
+        #expect(EditorModel.ActionName.spotlightDim == "Spotlight Dim")
+        let dimmed = model.document
+
+        model.undoManager.undo()
+        #expect(model.document == reshaped)
+        model.undoManager.undo()
+        #expect(model.document == added)
+        // The selected spotlight's own shape shows again; the default stays as last picked.
+        #expect(!model.activeSpotlightEllipse)
+        #expect(model.spotlightEllipse)
+        model.undoManager.redo()
+        #expect(model.document == reshaped)
+        model.undoManager.redo()
+        #expect(model.document == dimmed)
+        #expect(undoAll(model).count == 3)
+    }
+
+    /// A run of Dim clicks is one step, whatever the selection.
+    @Test func aRunOfDimClicksIsOneStep() {
+        let model = makeModel()
+        model.tool = .spotlight
+        add(spotlight(), to: model)
+        let added = model.document
+        model.selection = nil
+        for dim in [0.3, 0.7, 0.3] {
+            model.applySpotlightDim(dim)
+        }
+        #expect(model.document.effectiveSpotlightDim == 0.3)
+        model.undoManager.undo()
+        #expect(model.document == added)
+        #expect(undoAll(model).count == 1)
+    }
+
+    /// With nothing selected, Shape sets only the default for the next spotlight.
+    @Test func shapeWithNothingSelectedChangesOnlyTheDefault() {
+        let model = makeModel()
+        model.tool = .spotlight
+        add(spotlight(), to: model)
+        let added = model.document
+        model.selection = nil
+        model.applySpotlightShape(isEllipse: true)
+        #expect(model.spotlightEllipse)
+        #expect(model.activeSpotlightEllipse)
+        #expect(model.document == added)
+        #expect(undoAll(model).count == 1)
+    }
+
+    /// A dim nothing shows adds no step and no unsaved change, and neither does the dim in effect.
+    @Test func dimWithoutASpotlightOrUnchangedAddsNoStep() {
+        let model = makeModel()
+        model.tool = .spotlight
+        model.applySpotlightDim(0.7)
+        #expect(model.document.spotlightDim == nil)
+        #expect(!model.undoManager.canUndo)
+        #expect(!model.hasUnsavedChanges)
+
+        add(spotlight(), to: model)
+        model.applySpotlightDim(0.5)
+        #expect(model.document.spotlightDim == nil)
+        #expect(model.undoManager.undoActionName == "Add")
+        model.applySpotlightDim(0.3)
+        model.applySpotlightDim(0.3)
+        #expect(undoAll(model).count == 2)
+    }
+
+    /// Shape applies to the Spotlight tool or a selected spotlight; Dim needs a spotlight in the
+    /// document as well.
+    @Test func shapeAndDimEnableRules() {
+        let model = makeModel()
+        model.tool = .rectangle
+        #expect(!model.spotlightShapeApplies)
+        #expect(!model.spotlightDimApplies)
+        model.tool = .spotlight
+        #expect(model.spotlightShapeApplies)
+        #expect(!model.spotlightDimApplies)
+
+        let hole = add(spotlight(), to: model)
+        #expect(model.spotlightDimApplies)
+        model.tool = .select
+        #expect(!model.spotlightShapeApplies)
+        #expect(!model.spotlightDimApplies)
+        model.selection = hole.id
+        #expect(model.spotlightShapeApplies)
+        #expect(model.spotlightDimApplies)
+
+        // Another kind selected under Select: neither.
+        let line = add(arrow(), to: model)
+        model.selection = line.id
+        #expect(!model.spotlightShapeApplies)
+        #expect(!model.spotlightDimApplies)
+    }
+
+    /// The Colour item is off while a spotlight is selected, and for the Spotlight tool unless the
+    /// selection has a colour; on otherwise, Crop included.
+    @Test func colorAppliesRule() {
+        let model = makeModel()
+        #expect(model.colorApplies)
+        model.tool = .spotlight
+        #expect(!model.colorApplies)
+        let hole = add(spotlight(), to: model)
+        model.selection = hole.id
+        #expect(!model.colorApplies)
+        let line = add(arrow(), to: model)
+        model.selection = line.id
+        #expect(model.colorApplies)
+
+        model.tool = .select
+        model.selection = hole.id
+        #expect(!model.colorApplies)
+        model.selection = nil
+        #expect(model.colorApplies)
+        for tool in [EditorTool.rectangle, .redact, .highlighter, .crop] {
+            model.tool = tool
+            #expect(model.colorApplies, "\(tool)")
+        }
+    }
+
+    /// A spotlight has no colour, so selecting one leaves the swatch on the default.
+    @Test func aSelectedSpotlightLeavesTheActiveColour() {
+        let model = makeModel()
+        model.tool = .select
+        let hole = add(spotlight(), to: model)
+        let before = model.activeColor
+        model.selection = hole.id
+        #expect(model.activeColor == before)
+        #expect(model.activeColor == model.strokeColor)
+    }
 }

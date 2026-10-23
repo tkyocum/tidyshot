@@ -312,4 +312,69 @@ struct HitTesterTests {
         #expect(HitTester.resized(mark, handle: 0, to: CGPoint(x: 0, y: 0), square: false) == mark)
         #expect(HitTester.resized(mark, handle: 4, to: CGPoint(x: 300, y: 300), square: true) == mark)
     }
+
+    // MARK: Spotlights in the hit order (spec 2.12, Editing)
+
+    /// A spotlight ranks last: an arrow inside its hole is picked whichever was made first.
+    @Test func anArrowInsideASpotlightIsHitFirst() throws {
+        let hole = spotlight(box)
+        let shaft = arrow(CGPoint(x: 150, y: 100), CGPoint(x: 250, y: 100))
+        for annotations in [[shaft, hole], [hole, shaft]] {
+            let found = try #require(HitTester.topmost(in: AnnotationDocument(annotations: annotations),
+                                                       at: CGPoint(x: 200, y: 100), tolerance: 8))
+            #expect(found.id == shaft.id)
+            #expect(found.hit == .body)
+        }
+    }
+
+    /// Bare image inside a rectangle spotlight, or within the tolerance outside its edge, picks it.
+    @Test func bareImageInsideASpotlightHitsItsBody() throws {
+        let hole = spotlight(box)
+        let elsewhere = arrow(CGPoint(x: 400, y: 400), CGPoint(x: 500, y: 400))
+        let document = AnnotationDocument(annotations: [hole, elsewhere])
+        for point in [CGPoint(x: 120, y: 70), CGPoint(x: 94, y: 75), CGPoint(x: 250, y: 156)] {
+            let found = try #require(HitTester.topmost(in: document, at: point, tolerance: 8), "at \(point)")
+            #expect(found.id == hole.id)
+            #expect(found.hit == .body)
+        }
+        #expect(HitTester.topmost(in: document, at: CGPoint(x: 90, y: 75), tolerance: 8) == nil)
+    }
+
+    /// Inside an ellipse spotlight a click picks it; in its bounding box's corner, clear of the
+    /// corner handle, nothing is hit.
+    @Test func anEllipseSpotlightIsHitInsideItsEllipseOnly() throws {
+        let oval = spotlight(box, isEllipse: true)
+        let document = AnnotationDocument(annotations: [oval])
+        let found = try #require(HitTester.topmost(in: document, at: CGPoint(x: 200, y: 100), tolerance: 8))
+        #expect(found.id == oval.id)
+        #expect(found.hit == .body)
+        // 14 px from the handle at (300, 150), and outside the ellipse grown by 8.
+        #expect(HitTester.topmost(in: document, at: CGPoint(x: 290, y: 140), tolerance: 8) == nil)
+    }
+
+    /// A redaction inside a spotlight is picked by a click on it, whichever was made first.
+    @Test func aRedactionInsideASpotlightIsHit() throws {
+        let hole = spotlight(box)
+        let secret = Annotation.redact(Region(id: UUID(), rect: CGRect(x: 150, y: 75, width: 50, height: 50)), fill: red)
+        for annotations in [[secret, hole], [hole, secret]] {
+            let found = try #require(HitTester.topmost(in: AnnotationDocument(annotations: annotations),
+                                                       at: CGPoint(x: 175, y: 100), tolerance: 8))
+            #expect(found.id == secret.id)
+            #expect(found.hit == .body)
+        }
+    }
+
+    /// Every handle is tested before any body, so a spotlight's corner stays grabbable over a blur
+    /// made after it.
+    @Test func aSpotlightHandleBeatsAnEffectBodyUnderIt() throws {
+        let hole = spotlight(box)
+        let effect = blur(CGRect(x: 0, y: 0, width: 400, height: 300))
+        let found = try #require(HitTester.topmost(in: AnnotationDocument(annotations: [hole, effect]),
+                                                   at: CGPoint(x: 103, y: 52), tolerance: 8))
+        #expect(found.id == hole.id)
+        #expect(found.hit == .handle(0))
+        // Away from the handles the blur's body is in front of the spotlight's.
+        #expect(HitTester.topmost(in: AnnotationDocument(annotations: [hole, effect]),
+                                  at: CGPoint(x: 200, y: 100), tolerance: 8)?.id == effect.id)
+    }
 }

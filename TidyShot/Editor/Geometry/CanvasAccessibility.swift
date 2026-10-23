@@ -1,7 +1,8 @@
 import Foundation
 
 /// What VoiceOver reads on the canvas: one item per annotation, in painting order (effects, then
-/// drawings, each in creation order). CanvasView turns each into an `AnnotationAccessibilityElement`.
+/// spotlights, then drawings, each in creation order; spec 2.12 overrides 2.6's "every effect, then
+/// every drawing"). CanvasView turns each into an `AnnotationAccessibilityElement`.
 nonisolated enum CanvasAccessibility {
     static let canvasLabel = "Annotation canvas"
 
@@ -16,7 +17,7 @@ nonisolated enum CanvasAccessibility {
     /// are listed (the rule `EditorModel.selectAll` uses). Numbering counts the listed ones.
     static func items(in document: AnnotationDocument, scale: CGFloat) -> [Item] {
         var counts: [String: Int] = [:]
-        let listed = (document.effects + document.drawings).filter { annotation in
+        let listed = (document.effects + document.spotlights + document.drawings).filter { annotation in
             guard let crop = document.crop else { return true }
             let bounds = annotation.effectRect ?? AnnotationGeometry.bounds(of: annotation, scale: scale)
             return bounds.intersects(crop)

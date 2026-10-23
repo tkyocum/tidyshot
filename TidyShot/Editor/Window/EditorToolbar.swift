@@ -86,7 +86,7 @@ extension EditorWindowController: NSToolbarDelegate, NSToolbarItemValidation {
             return makeButtonItem(.color, label: "Colour", toolTip: "Colour",
                                   image: swatchImage(model.activeColor), action: #selector(showColorPalette(_:)))
         case .toolOptions:
-            return makeButtonItem(.toolOptions, label: "Options", toolTip: "Line width, blur radius and pixel block",
+            return makeButtonItem(.toolOptions, label: "Options", toolTip: "Tool options",
                                   image: symbol("slider.horizontal.3", "Options"), action: #selector(showToolOptions(_:)))
         case .background:
             return makeButtonItem(.background, label: "Background", toolTip: "Background",
@@ -112,11 +112,13 @@ extension EditorWindowController: NSToolbarDelegate, NSToolbarItemValidation {
 
     // MARK: Validation
 
-    /// Copy, Save and Upload follow the same answer as their shortcuts (Task 13's gate); the rest
-    /// are always enabled.
+    /// Copy, Save and Upload follow the same answer as their shortcuts (Task 13's gate). Colour
+    /// follows `EditorModel.colorApplies`: off for the Spotlight tool with no coloured selection and
+    /// with a spotlight selected. The rest are always enabled.
     func validateToolbarItem(_ item: NSToolbarItem) -> Bool {
         switch item.itemIdentifier {
         case .copyImage, .save, .upload: validateUserInterfaceItem(item)
+        case .color: model.colorApplies
         default: true
         }
     }

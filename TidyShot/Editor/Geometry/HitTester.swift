@@ -50,11 +50,14 @@ nonisolated enum HitTester {
         return bodyContains(annotation, point, tolerance: tolerance) ? .body : nil
     }
 
-    /// Two passes, every handle first and then every body, each over the drawings front to back
-    /// and then the effects front to back. Effects render beneath every drawing, so a drawing
-    /// wins over an effect created after it, and a handle wins over a body in front of it.
+    /// Two passes, every handle first and then every body, each over the drawings front to back,
+    /// then the effects front to back, then the spotlights front to back (spec 2.12 amends 2.6's
+    /// Select row). Effects render beneath every drawing, so a drawing wins over an effect created
+    /// after it, and a handle wins over a body in front of it. A spotlight ranks last: its hole
+    /// hides nothing, so whatever shows through it is picked first, whichever was made first, and
+    /// a click on bare image inside it picks the spotlight.
     static func topmost(in document: AnnotationDocument, at point: CGPoint, tolerance: CGFloat) -> (id: UUID, hit: Hit)? {
-        let frontToBack = Array((document.effects + document.drawings).reversed())
+        let frontToBack = Array((document.spotlights + document.effects + document.drawings).reversed())
         for annotation in frontToBack {
             if let index = handleIndex(of: annotation, at: point, tolerance: tolerance) {
                 return (annotation.id, .handle(index))

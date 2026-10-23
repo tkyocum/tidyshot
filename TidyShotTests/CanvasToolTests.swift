@@ -51,6 +51,9 @@ final class FakeCanvasEditing: CanvasEditing {
             return .ellipse(ShapeBox(id: UUID(), rect: rect, color: EditorPalette.defaultStroke, lineWidth: 8))
         case .line:
             return .line(Segment(id: UUID(), from: from, to: to, color: EditorPalette.defaultStroke, lineWidth: 8))
+        case .spotlight:
+            guard !rect.isEmpty else { return nil }
+            return .spotlight(SpotlightShape(id: UUID(), rect: rect, isEllipse: false))
         default: return nil
         }
     }
@@ -626,5 +629,65 @@ struct CanvasToolTests {
         #expect(canvas.document.annotations == [moved])
         #expect(canvas.selection == original.id)
         #expect(canvas.transient == nil)
+    }
+
+    // MARK: Spotlight
+
+    /// Spotlight drags out a rect as Rectangle does: one `Add Spotlight` on mouseUp, Shift for a
+    /// square, and nothing for a drag below the minimum size.
+    @Test func spotlightDragCommitsAddSpotlight() throws {
+        let canvas = FakeCanvasEditing()
+        let tool = makeTool(for: .spotlight)
+        #expect(tool is RectDragTool)
+        tool.mouseDown(at(10, 10), on: canvas)
+        tool.mouseDragged(at(50, 40), on: canvas)
+        #expect(canvas.transient?.spotlightShape?.rect == CGRect(x: 10, y: 10, width: 40, height: 30))
+        #expect(canvas.commits.isEmpty)
+        tool.mouseUp(at(50, 40), on: canvas)
+        #expect(canvas.commits.count == 1)
+        let added = try #require(canvas.document.annotations.first)
+        #expect(canvas.commits.first?.actionName == "Add Spotlight")
+        #expect(added.spotlightShape?.rect == CGRect(x: 10, y: 10, width: 40, height: 30))
+        #expect(canvas.selection == added.id)
+        #expect(canvas.transient == nil)
+
+        // Shift squares it.
+        tool.mouseDown(at(100, 100), on: canvas)
+        tool.mouseDragged(at(140, 120, shift: true), on: canvas)
+        tool.mouseUp(at(140, 120, shift: true), on: canvas)
+        #expect(canvas.commits.count == 2)
+        #expect(canvas.document.annotations.last?.spotlightShape?.rect == CGRect(x: 100, y: 100, width: 40, height: 40))
+
+        // At 100 % the rule is 2 px, so a 1 px wide drag adds nothing.
+        tool.mouseDown(at(200, 200), on: canvas)
+        tool.mouseDragged(at(201, 240), on: canvas)
+        #expect(canvas.transient == nil)
+        tool.mouseUp(at(201, 240), on: canvas)
+        #expect(canvas.commits.count == 2)
+    }
+
+    /// A spotlight ranks last in the hit order, so a text inside one, made after it, is still
+    /// re-edited by the Text tool's click and by Select's double-click.
+    @Test func textInsideASpotlightIsReEdited() throws {
+        let hole = Annotation.spotlight(SpotlightShape(id: UUID(), rect: CGRect(x: 0, y: 0, width: 400, height: 300),
+                                                       isEllipse: false))
+        let box = TextBox(id: UUID(), string: "Here", origin: CGPoint(x: 100, y: 100), fontSize: 40, color: red)
+        let canvas = FakeCanvasEditing([hole, .text(box)])
+        let inside = CGPoint(x: TextLayout.frame(for: box).midX, y: TextLayout.frame(for: box).midY)
+
+        let text = makeTool(for: .text)
+        text.mouseDown(at(inside.x, inside.y), on: canvas)
+        text.mouseUp(at(inside.x, inside.y), on: canvas)
+        #expect(canvas.textBegun.last?.existing == box.id)
+
+        let select = makeTool(for: .select)
+        select.mouseDown(ToolInput(point: inside, clickCount: 1), on: canvas)
+        select.mouseUp(ToolInput(point: inside, clickCount: 1), on: canvas)
+        #expect(canvas.selection == box.id)
+        select.mouseDown(ToolInput(point: inside, clickCount: 2), on: canvas)
+        select.mouseUp(ToolInput(point: inside, clickCount: 2), on: canvas)
+        #expect(canvas.textBegun.count == 2)
+        #expect(canvas.textBegun.last?.existing == box.id)
+        #expect(canvas.commits.isEmpty)
     }
 }

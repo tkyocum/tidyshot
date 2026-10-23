@@ -362,4 +362,12 @@ nonisolated enum Annotation: Identifiable, Codable, Equatable, Sendable {
         box.fontSize = size
         return .text(box)
     }
+
+    /// A spotlight whose hole is the ellipse in its rect when `isEllipse`, else the rect itself.
+    /// Everything else comes back unchanged.
+    func withSpotlightShape(isEllipse: Bool) -> Annotation {
+        guard case .spotlight(var shape) = self else { return self }
+        shape.isEllipse = isEllipse
+        return .spotlight(shape)
+    }
 }

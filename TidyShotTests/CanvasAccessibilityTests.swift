@@ -32,6 +32,23 @@ struct CanvasAccessibilityTests {
         #expect(CanvasAccessibility.canvasLabel == "Annotation canvas")
     }
 
+    /// Spotlights paint between the effects and the drawings (spec 2.12), so VoiceOver reads them
+    /// there, numbered on their own in creation order.
+    @Test func spotlightsReadBetweenEffectsAndDrawings() {
+        func spotlight(_ x: CGFloat) -> Annotation {
+            .spotlight(SpotlightShape(id: UUID(), rect: CGRect(x: x, y: 0, width: 20, height: 20), isEllipse: x > 50))
+        }
+        let firstArrow = arrow(10)
+        let firstSpotlight = spotlight(0)
+        let redact = redaction(0)
+        let secondSpotlight = spotlight(60)
+        let document = AnnotationDocument(annotations: [firstArrow, firstSpotlight, redact, secondSpotlight])
+        let items = CanvasAccessibility.items(in: document, scale: 1)
+        #expect(items.map(\.id) == [redact.id, firstSpotlight.id, secondSpotlight.id, firstArrow.id])
+        #expect(items.map(\.label) == ["Redact 1", "Spotlight 1", "Spotlight 2", "Arrow 1"])
+        #expect(items.allSatisfy { $0.value == nil })
+    }
+
     @Test func textItemReadsItsString() {
         let text = Annotation.text(TextBox(id: UUID(), string: "Click here", origin: CGPoint(x: 4, y: 4),
                                            fontSize: 40, color: red))

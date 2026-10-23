@@ -2,10 +2,10 @@ import CoreGraphics
 import CoreText
 
 /// The one CoreGraphics routine for annotations. The canvas and the export both draw through it,
-/// so the export equals the preview. `draw` and `drawPlaceholder` work in image pixels with a
-/// top-left origin: the canvas concatenates `transform.affine` on its flipped view, and the
-/// flattener flips its bitmap. `drawSelection` works in view space. Nothing here uses
-/// NSGraphicsContext, so the export can run off the main actor.
+/// so the export equals the preview. `draw`, `drawPlaceholder` and `drawSpotlightOverlay` work in
+/// image pixels with a top-left origin: the canvas concatenates `transform.affine` on its flipped
+/// view, and the flattener flips its bitmap. `drawSelection` and `drawSpotlightOutline` work in
+/// view space. Nothing here uses NSGraphicsContext, so the export can run off the main actor.
 nonisolated enum AnnotationDrawing {
     /// Selection handles are squares this many points wide at every zoom.
     static let handleSide: CGFloat = 8
@@ -66,24 +66,88 @@ nonisolated enum AnnotationDrawing {
     /// each point of `HitTester.handles(for:)`. `scale` is the view's backing scale factor: edges
     /// snap to device pixels so the 1 pt lines stay sharp.
     static func drawSelection(for annotation: Annotation, transform: CanvasTransform, scale: CGFloat, in context: CGContext) {
-        let device = max(scale, 1)
-        func snap(_ value: CGFloat) -> CGFloat { (value * device).rounded() / device }
+        if let rect = AnnotationGeometry.selectionOutline(of: annotation) {
+            // Null when the rect is under a point wide or tall: then there is no outline to draw.
+            let outline = snapped(transform.viewRect(rect), scale: scale).insetBy(dx: 0.5, dy: 0.5)
+            if !outline.isNull { strokeTwoTone(CGPath(rect: outline, transform: nil), in: context) }
+        }
+        drawHandles(HitTester.handles(for: annotation), transform: transform, scale: scale, in: context)
+    }
+
+    /// The Spotlight tool's outline of one spotlight, in view space: the shape's own edge (the
+    /// rect, or the ellipse in it), 1 pt, white under black dashes as the selection outline is
+    /// drawn. Chrome only; the shape's edge is never drawn into the image. `scale` is the view's
+    /// backing scale factor: the rect snaps to device pixels, as the selection outline's does.
+    static func drawSpotlightOutline(_ shape: SpotlightShape, transform: CanvasTransform, scale: CGFloat,
+                                     in context: CGContext) {
+        let outline = snapped(transform.viewRect(shape.rect.standardized), scale: scale).insetBy(dx: 0.5, dy: 0.5)
+        guard !outline.isNull else { return }
+        strokeTwoTone(shape.isEllipse ? CGPath(ellipseIn: outline, transform: nil) : CGPath(rect: outline, transform: nil),
+                      in: context)
+    }
+
+    /// `path` stroked 1 pt white, then in black `outlineDash` dashes over it, so it shows on any
+    /// background.
+    private static func strokeTwoTone(_ path: CGPath, in context: CGContext) {
         context.saveGState()
         defer { context.restoreGState() }
         context.setLineWidth(1)
-        if let rect = AnnotationGeometry.selectionOutline(of: annotation) {
-            let view = transform.viewRect(rect)
-            let outline = CGRect(x: snap(view.minX), y: snap(view.minY),
-                                 width: snap(view.maxX) - snap(view.minX),
-                                 height: snap(view.maxY) - snap(view.minY)).insetBy(dx: 0.5, dy: 0.5)
-            context.setStrokeColor(CGColor(gray: 1, alpha: 1))
-            context.stroke(outline)
-            context.setStrokeColor(CGColor(gray: 0, alpha: 1))
-            context.setLineDash(phase: 0, lengths: outlineDash)
-            context.stroke(outline)
-            context.setLineDash(phase: 0, lengths: [])
+        context.addPath(path)
+        context.setStrokeColor(CGColor(gray: 1, alpha: 1))
+        context.strokePath()
+        context.addPath(path)
+        context.setStrokeColor(CGColor(gray: 0, alpha: 1))
+        context.setLineDash(phase: 0, lengths: outlineDash)
+        context.strokePath()
+    }
+
+    /// The spotlight overlay (spec 2.12, Rendering), in image pixels with a top-left origin under
+    /// whatever CTM the caller set up for them: black at `dim` over `imageRect`, with each shape (its
+    /// rect, or the ellipse in it) cleared, so overlapping holes form one union. It is one
+    /// transparency layer, which is as big as the clip, so it sets no clip of its own and every
+    /// caller sets one. The state is saved and restored.
+    ///
+    /// The overlay darkens the picture, never its transparency:
+    /// - `coverage` nil (the export): the layer composites with `.sourceAtop`, which keeps the
+    ///   destination's alpha exactly and on an opaque pixel equals `.normal`. Probed at a 0.5 dim,
+    ///   alpha 0 stays `[0,0,0,0]`, and alpha 128 stays 128 with its colour halved.
+    /// - `coverage` set (the canvas): the canvas holds none of the capture's pixels, so `.sourceAtop`
+    ///   would draw nothing and the layer composites with `.normal`. When the list is not empty
+    ///   (the base tiles, then the shown effect tiles), it is drawn through `HighlighterBackdrop.draw`
+    ///   into a nested layer composited `.destinationIn`, which multiplies the overlay's alpha by
+    ///   the capture's: none over a transparent corner, the dim over opaque pixels, and full over a
+    ///   redaction on a corner, as in the export. An empty list, for a base with no alpha channel,
+    ///   skips that layer. Partly transparent pixels come out a little darker than in the export:
+    ///   probed, alpha 128 shows as 160 on the canvas at a 0.5 dim.
+    ///
+    /// A blend mode set before a layer begins is the one it composites with; beginning a layer
+    /// resets it to `.normal`, so each fill inside sets the mode it needs.
+    static func drawSpotlightOverlay(_ shapes: [SpotlightShape], dim: Double, in context: CGContext, imageRect: CGRect,
+                                     coverage: [(rect: CGRect, image: CGImage)]?) {
+        context.saveGState()
+        defer { context.restoreGState() }
+        context.setBlendMode(coverage == nil ? .sourceAtop : .normal)
+        context.beginTransparencyLayer(auxiliaryInfo: nil)
+        context.setBlendMode(.normal)
+        context.setFillColor(CGColor(gray: 0, alpha: dim))
+        context.fill(imageRect)
+        context.setBlendMode(.clear)
+        for shape in shapes {
+            let rect = shape.rect.standardized
+            if shape.isEllipse {
+                context.fillEllipse(in: rect)
+            } else {
+                context.fill(rect)
+            }
         }
-        drawHandles(HitTester.handles(for: annotation), transform: transform, scale: scale, in: context)
+        if let coverage, !coverage.isEmpty {
+            context.setBlendMode(.destinationIn)
+            context.beginTransparencyLayer(auxiliaryInfo: nil)
+            context.setBlendMode(.normal)
+            HighlighterBackdrop.draw(coverage, in: context)
+            context.endTransparencyLayer()
+        }
+        context.endTransparencyLayer()
     }
 
     /// An 8 pt white square with a dark border at each of `points` (image pixels), in view space.
