@@ -1980,10 +1980,9 @@ final class AppCoordinator {
     }
 
     /// Copies a recording to `destination`: the local file, holding its scope, when it exists,
-    /// else the record's drag copy. False when there is neither, for the caller to download. An
-    /// existing destination is replaced with `replaceItemAt`, from a copy made first in the
-    /// replacement folder on its volume (it fails across volumes), so a failed copy leaves it as
-    /// it was. Runs in a detached task.
+    /// else the record's drag copy. False when there is neither, for the caller to download. The
+    /// copy goes through `FileReplacement`, as a download does, so an existing destination is
+    /// replaced with `replaceItemAt` and a failed copy leaves it as it was. Runs in a detached task.
     nonisolated private static func copyVideo(from local: (file: URL, scope: URL?)?, orDragCopyOf id: UUID,
                                               in dragFiles: DragFileStore, to destination: URL) throws -> Bool {
         let fileManager = FileManager.default
@@ -1996,16 +1995,7 @@ final class AppCoordinator {
             source = dragFiles.stagedFile(id: id)
         }
         guard let source else { return false }
-        guard fileManager.fileExists(atPath: destination.path(percentEncoded: false)) else {
-            try fileManager.copyItem(at: source, to: destination)
-            return true
-        }
-        let staging = try fileManager.url(for: .itemReplacementDirectory, in: .userDomainMask,
-                                          appropriateFor: destination, create: true)
-        defer { try? fileManager.removeItem(at: staging) }
-        let staged = staging.appending(path: destination.lastPathComponent)
-        try fileManager.copyItem(at: source, to: staged)
-        _ = try fileManager.replaceItemAt(destination, withItemAt: staged)
+        try FileReplacement.put(at: destination) { try fileManager.copyItem(at: source, to: $0) }
         return true
     }
 
@@ -2646,11 +2636,14 @@ final class AppCoordinator {
 
     /// A recording's drag copy (design, Drag-out with a local file), for a press on its card and
     /// for Copy File. The local file is staged with `reusingMatch`: a copy already there with the
-    /// same name, size and modification date is kept, so a large file is copied across volumes
-    /// once. With no local file (an uploaded upload-only recording) the copy the folder holds is
-    /// used as it is, under the name it has, so a Copy File reference to it stays good; nothing
-    /// is downloaded (R2). One stage per record runs at a time, and a second caller waits for it.
-    /// The card showing the record has no drag file while the copy runs, and gets the result.
+    /// same size and modification date is kept, whatever its name, so a large file is copied
+    /// across volumes once, and a Copy File reference to the copy stays good when the drag name
+    /// worked out here changes (`{counter}` or `{random}` in the template, or the key's name once
+    /// the upload ends). With no local file (an uploaded upload-only recording) the copy the
+    /// folder holds is used as it is, under the name it has, so a Copy File reference to it stays
+    /// good; nothing is downloaded (R2). One stage per record runs at a time, and a second caller
+    /// waits for it. The card showing the record has no drag file while the copy runs, and gets
+    /// the result.
     @discardableResult
     private func stageVideoDragFile(recordID: UUID) async -> URL? {
         if let running = stagingVideoIDs[recordID] { return await running.value }

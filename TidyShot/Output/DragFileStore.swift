@@ -47,11 +47,13 @@ nonisolated struct DragFileStore: Sendable {
     /// always does; a save folder on the startup disk does), and copies the bytes otherwise. It
     /// keeps the source's modification date. `scope` (the save folder) is held for the copy; nil
     /// for a file in the container. Staging the staged file as itself returns it. With
-    /// `reusingMatch` (a recording, which is never rewritten), a copy already there under `name`
-    /// with the source's size and modification date is returned as it is, so a large file is
-    /// copied across volumes once; an image is copied again on every stage, because an edit
-    /// rewrites it. Throws, leaving the folder as it was, when `source` does not exist or cannot
-    /// be read.
+    /// `reusingMatch` (a recording, which is never rewritten), a copy already in the folder with
+    /// the source's size and modification date is returned as it is, under `name` or, failing
+    /// that, under the name it has, so a large file is copied across volumes once. A recording's
+    /// drag name can change between stages (`{counter}` or `{random}` in Recording file name, the
+    /// key's name once the upload ends), and the copy stays where a Copy File reference points
+    /// (Gap 7). An image is copied again on every stage, because an edit rewrites it. Throws,
+    /// leaving the folder as it was, when `source` does not exist or cannot be read.
     @discardableResult
     func stage(id: UUID, name: String, from source: URL, scope: URL?, reusingMatch: Bool = false) throws -> URL {
         let fileManager = FileManager.default
@@ -64,8 +66,11 @@ nonisolated struct DragFileStore: Sendable {
         if source.standardizedFileURL.path(percentEncoded: false) == destination.standardizedFileURL.path(percentEncoded: false) {
             return destination
         }
-        if reusingMatch, Self.sameSizeAndDate(source, destination) {
-            return destination
+        if reusingMatch {
+            let copies = Self.entries(in: folder(for: id)).sorted { $0.lastPathComponent < $1.lastPathComponent }
+            if let copy = ([destination] + copies).first(where: { Self.sameSizeAndDate(source, $0) }) {
+                return copy
+            }
         }
         return try place(destination) { try fileManager.copyItem(at: source, to: $0) }
     }

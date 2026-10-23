@@ -204,8 +204,23 @@ struct DragFileStoreTests {
         #expect(try Data(contentsOf: second) == Data([1, 2, 3, 4]))
     }
 
-    /// A source whose size or modification date changed since the stage is copied again, and so is
-    /// one staged under another name.
+    /// A video's matching copy under another name is reused under its own name. The drag name can
+    /// change between presses (`{counter}` or `{random}` in Recording file name, or the key's name
+    /// once the upload ends), and a Copy File reference may point at the copy (Gap 7).
+    @Test func aVideoStageReusesAMatchingCopyUnderAnotherName() throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let id = UUID()
+        let movie = try source("Recording.mp4", [1, 2, 3, 4])
+        let first = try store.stage(id: id, name: "Recording 5.mp4", from: movie, scope: nil, reusingMatch: true)
+        try mark(first, like: movie)
+        let second = try store.stage(id: id, name: "aSIS7.mp4", from: movie, scope: nil, reusingMatch: true)
+        #expect(second.lastPathComponent == "Recording 5.mp4")
+        #expect(try Data(contentsOf: second) == Data(repeating: 0xEE, count: 4))
+        #expect(names(id) == ["Recording 5.mp4"])
+    }
+
+    /// A source whose size or modification date changed since the stage is copied again, under the
+    /// name asked for, replacing a copy under another name.
     @Test func aChangedSourceIsCopiedAgain() throws {
         defer { try? FileManager.default.removeItem(at: root) }
         let id = UUID()
@@ -224,6 +239,7 @@ struct DragFileStoreTests {
         #expect(try Data(contentsOf: staged) == Data([5, 6, 7, 8, 9]))
 
         try mark(staged, like: movie)
+        try setModified(movie, try modified(movie).addingTimeInterval(60))
         let renamed = try store.stage(id: id, name: "aSIS7.mp4", from: movie, scope: nil, reusingMatch: true)
         #expect(try Data(contentsOf: renamed) == Data([5, 6, 7, 8, 9]))
         #expect(names(id) == ["aSIS7.mp4"])

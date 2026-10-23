@@ -116,10 +116,11 @@ nonisolated struct S3Destination: Destination {
     }
 
     /// GET Object streamed to a temporary file, for a recording, which is never loaded into
-    /// memory. On 2xx the file moves to `destination`, replacing any file there (the save panel
-    /// already asked). Otherwise the error body, which is small, is read from the temporary file
-    /// for the usual error, and the temporary file is removed. Redirects are refused. The file
-    /// work runs where the caller runs, so callers on the main actor call it from a detached task.
+    /// memory. On 2xx the file moves to `destination` through `FileReplacement`, replacing any
+    /// file there (the save panel already asked). Otherwise the error body, which is small, is
+    /// read from the temporary file for the usual error, and the temporary file is removed.
+    /// Redirects are refused. The file work runs where the caller runs, so callers on the main
+    /// actor call it from a detached task.
     func download(key: String, to destination: URL) async throws {
         let request = try signedRequest(method: "GET", key: key, payloadHash: S3Signer.emptyPayloadHash, extraHeaders: [])
         let (temporary, response) = try await session.download(for: request, delegate: UploadProgressDelegate())
@@ -129,19 +130,7 @@ nonisolated struct S3Destination: Destination {
         guard (200..<300).contains(http.statusCode) else {
             throw Self.failure(http, bodyText: Self.excerpt(Self.errorBody(at: temporary)))
         }
-        let fileManager = FileManager.default
-        guard fileManager.fileExists(atPath: destination.path(percentEncoded: false)) else {
-            try fileManager.moveItem(at: temporary, to: destination)
-            return
-        }
-        // `replaceItemAt` fails across volumes (EXDEV), and a Save As… target can be on any
-        // volume, so the download first moves next to it, into the replacement folder for it.
-        let staging = try fileManager.url(for: .itemReplacementDirectory, in: .userDomainMask,
-                                          appropriateFor: destination, create: true)
-        defer { try? fileManager.removeItem(at: staging) }
-        let staged = staging.appending(path: destination.lastPathComponent)
-        try fileManager.moveItem(at: temporary, to: staged)
-        _ = try fileManager.replaceItemAt(destination, withItemAt: staged)
+        try FileReplacement.put(at: destination) { try FileManager.default.moveItem(at: temporary, to: $0) }
     }
 
     /// The first 64 KiB of an error response saved to a file. An S3 error body is far smaller, and
