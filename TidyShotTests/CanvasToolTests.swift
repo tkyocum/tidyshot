@@ -54,6 +54,11 @@ final class FakeCanvasEditing: CanvasEditing {
         case .spotlight:
             guard !rect.isEmpty else { return nil }
             return .spotlight(SpotlightShape(id: UUID(), rect: rect, isEllipse: false))
+        case .counter:
+            let bounds = document.crop ?? CGRect(origin: .zero, size: imageSize)
+            return .counter(CounterMark(id: UUID(), center: CounterLayout.center(forPress: from, diameter: 64, within: bounds),
+                                        number: document.nextCounterNumber, diameter: 64,
+                                        color: EditorPalette.defaultStroke))
         default: return nil
         }
     }
@@ -689,5 +694,113 @@ struct CanvasToolTests {
         #expect(canvas.textBegun.count == 2)
         #expect(canvas.textBegun.last?.existing == box.id)
         #expect(canvas.commits.isEmpty)
+    }
+
+    // MARK: Counter
+
+    func counter(_ number: Int, at center: CGPoint) -> Annotation {
+        .counter(CounterMark(id: UUID(), center: center, number: number, diameter: 64, color: red))
+    }
+
+    /// A click and a drag both place one counter at the press, however far the pointer moved, as
+    /// one `Add Counter`, and select it. The counter shows in `transient` from the press.
+    @Test func counterClickAndDragPlaceAtThePress() throws {
+        let canvas = FakeCanvasEditing()
+        canvas.imageSize = CGSize(width: 400, height: 300)
+        let tool = makeTool(for: .counter)
+        #expect(tool is CounterTool)
+        #expect(tool.cursor == .crosshair)
+
+        tool.mouseDown(at(100, 100), on: canvas)
+        #expect(canvas.made.last?.tool == .counter)
+        #expect(canvas.made.last?.from == CGPoint(x: 100, y: 100))
+        #expect(canvas.made.last?.to == CGPoint(x: 100, y: 100))
+        let shown = try #require(canvas.transient?.counterMark)
+        #expect(shown.center == CGPoint(x: 100, y: 100))
+        #expect(shown.number == 1)
+        #expect(canvas.commits.isEmpty)
+        tool.mouseUp(at(100, 100), on: canvas)
+        #expect(canvas.commits.count == 1)
+        let first = try #require(canvas.commits.first)
+        #expect(first.actionName == "Add Counter")
+        #expect(first.coalescingKey == nil)
+        #expect(first.document.annotations.map(\.id) == [shown.id])
+        #expect(canvas.selection == shown.id)
+        #expect(canvas.transient == nil)
+
+        tool.mouseDown(at(200, 150), on: canvas)
+        let pressed = try #require(canvas.transient)
+        tool.mouseDragged(at(260, 190), on: canvas)
+        tool.flagsChanged(at(260, 190, shift: true, option: true), on: canvas)
+        #expect(canvas.transient == pressed)
+        #expect(canvas.made.count == 2)
+        tool.mouseUp(at(260, 190), on: canvas)
+        #expect(canvas.commits.count == 2)
+        #expect(canvas.commits.last?.actionName == "Add Counter")
+        let placed = try #require(canvas.document.annotations.last?.counterMark)
+        #expect(placed.center == CGPoint(x: 200, y: 150))
+        #expect(placed.number == 2)
+        #expect(canvas.selection == pressed.id)
+    }
+
+    /// Escape during the press clears `transient`, and nothing is placed.
+    @Test func escapeDuringACounterPressPlacesNothing() {
+        let canvas = FakeCanvasEditing()
+        canvas.imageSize = CGSize(width: 400, height: 300)
+        let tool = makeTool(for: .counter)
+        tool.mouseDown(at(100, 100), on: canvas)
+        #expect(canvas.transient != nil)
+        canvas.transient = nil
+        tool.mouseDragged(at(120, 110), on: canvas)
+        #expect(canvas.transient == nil)
+        tool.mouseUp(at(120, 110), on: canvas)
+        #expect(canvas.commits.isEmpty)
+        #expect(canvas.document.annotations.isEmpty)
+        #expect(canvas.selection == nil)
+    }
+
+    /// With counters 1 and 2, an ⌥-drag of counter 1 shows a copy already numbered 3, commits it as
+    /// `Duplicate Counter` with that number, and leaves counter 1 as it was.
+    @Test func optionDragOfACounterCopiesWithTheNextNumber() throws {
+        let one = counter(1, at: CGPoint(x: 100, y: 100))
+        let two = counter(2, at: CGPoint(x: 250, y: 100))
+        let canvas = FakeCanvasEditing([one, two])
+        let tool = makeTool(for: .select)
+
+        tool.mouseDown(at(100, 100, option: true), on: canvas)
+        tool.mouseDragged(at(130, 120, option: true), on: canvas)
+        let shown = try #require(canvas.transient)
+        #expect(shown.id != one.id)
+        #expect(shown.counterMark?.number == 3)
+        #expect(shown.counterMark?.center == CGPoint(x: 130, y: 120))
+        #expect(canvas.document.annotations == [one, two])
+
+        tool.mouseUp(at(130, 120, option: true), on: canvas)
+        #expect(canvas.commits.count == 1)
+        let commit = try #require(canvas.commits.first)
+        #expect(commit.actionName == "Duplicate Counter")
+        #expect(commit.document.annotations == [one, two, shown])
+        #expect(canvas.selection == shown.id)
+        #expect(canvas.transient == nil)
+    }
+
+    /// Option released mid-drag: the moved original shows with its own number, 1.
+    @Test func optionReleasedMidDragShowsTheCounterWithItsOwnNumber() throws {
+        let one = counter(1, at: CGPoint(x: 100, y: 100))
+        let two = counter(2, at: CGPoint(x: 250, y: 100))
+        let canvas = FakeCanvasEditing([one, two])
+        let tool = makeTool(for: .select)
+        let moved = one.moved(by: CGVector(dx: 30, dy: 20))
+
+        tool.mouseDown(at(100, 100, option: true), on: canvas)
+        tool.mouseDragged(at(130, 120, option: true), on: canvas)
+        #expect(canvas.transient?.counterMark?.number == 3)
+        tool.flagsChanged(at(130, 120), on: canvas)
+        #expect(canvas.transient == moved)
+        #expect(canvas.transient?.counterMark?.number == 1)
+
+        tool.mouseUp(at(130, 120), on: canvas)
+        #expect(canvas.commits.first?.actionName == "Move Counter")
+        #expect(canvas.document.annotations == [moved, two])
     }
 }

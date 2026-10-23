@@ -78,4 +78,37 @@ struct AnnotationClipTests {
                                  scale: 1, step: CGVector(dx: 10, dy: 10), id: id)
         #expect(placed == .counter(CounterMark(id: id, center: CGPoint(x: 50, y: 40), number: 3, diameter: 32, color: red)))
     }
+
+    /// The cascade compares counters without their numbers (spec 2.12): one with another number at
+    /// the same place counts as identical, so the paste steps aside; one with another diameter or
+    /// colour there does not.
+    @Test func cascadeIgnoresACountersNumber() {
+        let size = CGSize(width: 400, height: 300)
+        let step = CGVector(dx: 20, dy: 20)
+        let id = UUID()
+        let blue = RGBA(red: 0, green: 0, blue: 1, alpha: 1)
+        func counter(number: Int, diameter: CGFloat = 64, color: RGBA? = nil) -> Annotation {
+            .counter(CounterMark(id: UUID(), center: CGPoint(x: 100, y: 80), number: number, diameter: diameter,
+                                 color: color ?? red))
+        }
+        let clip = AnnotationClip(annotation: counter(number: 5), scale: 2)
+        let landed = clip.annotation.withID(id)
+
+        let sameButNumber = AnnotationDocument(annotations: [counter(number: 1)])
+        #expect(clip.placed(in: sameButNumber, imageSize: size, scale: 2, step: step, id: id) == landed.moved(by: step))
+        // Two steps when the first is taken too, by a counter with yet another number.
+        let twoTaken = sameButNumber.appending(counter(number: 2).moved(by: step))
+        #expect(clip.placed(in: twoTaken, imageSize: size, scale: 2, step: step, id: id)
+                == landed.moved(by: CGVector(dx: 40, dy: 40)))
+
+        let otherDiameter = AnnotationDocument(annotations: [counter(number: 5, diameter: 88)])
+        #expect(clip.placed(in: otherDiameter, imageSize: size, scale: 2, step: step, id: id) == landed)
+        let otherColour = AnnotationDocument(annotations: [counter(number: 5, color: blue)])
+        #expect(clip.placed(in: otherColour, imageSize: size, scale: 2, step: step, id: id) == landed)
+        // Other kinds compare as before: identical apart from the id.
+        let shape = box(x: 10, y: 10)
+        let shapeClip = AnnotationClip(annotation: shape, scale: 2)
+        #expect(shapeClip.placed(in: AnnotationDocument(annotations: [shape]), imageSize: size, scale: 2, step: step, id: id)
+                == shape.withID(id).moved(by: step))
+    }
 }

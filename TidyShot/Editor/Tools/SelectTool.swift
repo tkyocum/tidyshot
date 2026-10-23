@@ -9,7 +9,8 @@ import AppKit
 /// in `canvas.transient`, with the annotation's own id, until mouseUp commits it once. A
 /// double-click on a text edits it again. With Option held (at the press or later; flagsChanged
 /// re-reads it), a move drags a copy with its own id and leaves the original; mouseUp commits it
-/// once as Duplicate <title> and selects it.
+/// once as Duplicate <title> and selects it. A counter's copy takes the document's next number; the
+/// original is never renumbered.
 final class SelectTool: CanvasTool {
     private enum Gesture {
         /// `copyID` is the id a copy gets when Option is held; one per gesture.
@@ -109,7 +110,8 @@ final class SelectTool: CanvasTool {
         switch gesture {
         case .move(let original, let copyID):
             let moved = original.moved(by: input.shift ? DragGeometry.axisLocked(delta) : delta)
-            shown = input.option ? moved.withID(copyID) : moved
+            // The copy already shows the number it will commit with; the original keeps its own.
+            shown = input.option ? moved.withID(copyID).renumbered(in: canvas.document) : moved
         case .resize(let original, let handle, let from):
             let to = CGPoint(x: from.x + delta.dx, y: from.y + delta.dy)
             shown = HitTester.resized(original, handle: handle, to: to, square: input.shift)

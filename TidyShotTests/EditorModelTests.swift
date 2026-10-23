@@ -883,4 +883,116 @@ struct EditorModelTests {
         #expect(model.activeColor == before)
         #expect(model.activeColor == model.strokeColor)
     }
+
+    // MARK: Counter (spec 2.12)
+
+    func counter(number: Int = 1, at center: CGPoint = CGPoint(x: 50, y: 50), diameter: CGFloat = 64) -> Annotation {
+        .counter(CounterMark(id: UUID(), center: center, number: number, diameter: diameter, color: red))
+    }
+
+    /// A new counter is `counterDiameterPoints × scale` across, in `strokeColor`, centred on the
+    /// press and numbered next; it is clamped inside the applied crop.
+    @Test func aNewCounterTakesTheSizeAndColourDefaults() throws {
+        let model = makeModel(side: 200)
+        let press = CGPoint(x: 100, y: 80)
+        let first = try #require(model.makeAnnotation(.counter, from: press, to: CGPoint(x: 150, y: 150))?.counterMark)
+        #expect(first.diameter == EditorPalette.defaultCounterDiameterPoints * 2)
+        #expect(first.diameter == 64)
+        #expect(first.color == model.strokeColor)
+        #expect(first.center == press)
+        #expect(first.number == 1)
+
+        add(.counter(first), to: model)
+        model.counterDiameterPoints = 44
+        model.strokeColor = blue
+        let second = try #require(model.makeAnnotation(.counter, from: press, to: press)?.counterMark)
+        #expect(second.diameter == 88)
+        #expect(second.color == blue)
+        #expect(second.number == 2)
+
+        // Within the crop: the whole circle inside it.
+        model.commit(model.document.withCrop(CGRect(x: 60, y: 40, width: 100, height: 100)), actionName: "Crop")
+        let clamped = try #require(model.makeAnnotation(.counter, from: CGPoint(x: 62, y: 139), to: press)?.counterMark)
+        #expect(clamped.center == CGPoint(x: 104, y: 96))
+    }
+
+    /// Size on a selected counter is one `Counter Size` step that keeps its centre, a run of picks
+    /// is one step, and undo and redo restore it. It also sets the default.
+    @Test func sizeOnASelectedCounterIsOneStepAboutItsCentre() throws {
+        let model = makeModel(side: 200)
+        model.tool = .select
+        let mark = add(counter(at: CGPoint(x: 70, y: 60), diameter: 64), to: model)
+        let added = model.document
+        model.selection = mark.id
+        #expect(model.activeCounterDiameterPoints == 32)
+
+        model.applyCounterSize(points: 24)
+        model.applyCounterSize(points: 44)
+        #expect(model.document.annotation(id: mark.id) == mark.withCounterDiameter(88))
+        #expect(model.document.annotation(id: mark.id)?.counterMark?.center == CGPoint(x: 70, y: 60))
+        #expect(model.counterDiameterPoints == 44)
+        #expect(model.activeCounterDiameterPoints == 44)
+        #expect(model.undoManager.undoActionName == EditorModel.ActionName.counterSize)
+        #expect(EditorModel.ActionName.counterSize == "Counter Size")
+        let resized = model.document
+
+        model.undoManager.undo()
+        #expect(model.document == added)
+        // The selected counter's own size shows again; the default stays as last picked.
+        #expect(model.activeCounterDiameterPoints == 32)
+        #expect(model.counterDiameterPoints == 44)
+        model.undoManager.redo()
+        #expect(model.document == resized)
+        #expect(undoAll(model).count == 2)
+    }
+
+    /// With nothing selected, Size sets only the default for the next counter.
+    @Test func sizeWithNothingSelectedChangesOnlyTheDefault() {
+        let model = makeModel(side: 200)
+        model.tool = .counter
+        add(counter(), to: model)
+        let added = model.document
+        model.selection = nil
+        model.applyCounterSize(points: 24)
+        #expect(model.counterDiameterPoints == 24)
+        #expect(model.activeCounterDiameterPoints == 24)
+        #expect(model.document == added)
+        #expect(undoAll(model).count == 1)
+    }
+
+    /// Size applies while Counter is the tool or a counter is selected.
+    @Test func sizeEnableRule() {
+        let model = makeModel(side: 200)
+        model.tool = .rectangle
+        #expect(!model.counterSizeApplies)
+        model.tool = .counter
+        #expect(model.counterSizeApplies)
+        let mark = add(counter(), to: model)
+        model.tool = .select
+        #expect(!model.counterSizeApplies)
+        model.selection = mark.id
+        #expect(model.counterSizeApplies)
+        let line = add(arrow(), to: model)
+        model.selection = line.id
+        #expect(!model.counterSizeApplies)
+        model.tool = .counter
+        #expect(model.counterSizeApplies)
+    }
+
+    /// A counter has a colour: selected, the swatch shows it and a pick recolours it as `Color`.
+    @Test func aSelectedCounterShowsAndTakesTheColour() {
+        let model = makeModel(side: 200)
+        model.tool = .select
+        let mark = add(counter(), to: model)
+        model.selection = mark.id
+        #expect(model.activeColor == red)
+        #expect(model.colorApplies)
+        model.applyColor(blue)
+        #expect(model.document.annotation(id: mark.id) == mark.withColor(blue))
+        #expect(model.activeColor == blue)
+        #expect(model.undoManager.undoActionName == EditorModel.ActionName.color)
+        model.undoManager.undo()
+        #expect(model.document.annotation(id: mark.id) == mark)
+        #expect(model.activeColor == red)
+    }
 }

@@ -83,6 +83,7 @@ final class EditorModel: CanvasEditing {
         static let background = "Background"
         static let spotlightShape = "Spotlight Shape"
         static let spotlightDim = "Spotlight Dim"
+        static let counterSize = "Counter Size"
     }
 
     let recordID: UUID
@@ -276,7 +277,11 @@ final class EditorModel: CanvasEditing {
             guard !rect.isEmpty else { return nil }
             return .spotlight(SpotlightShape(id: id, rect: rect, isEllipse: spotlightEllipse))
         case .counter:
-            return nil  // Task 3 builds it.
+            // Placed at the press; the drag's other end is ignored.
+            let diameter = counterDiameterPoints * scale
+            let bounds = document.crop ?? CGRect(origin: .zero, size: imageSize)
+            return .counter(CounterMark(id: id, center: CounterLayout.center(forPress: start, diameter: diameter, within: bounds),
+                                        number: document.nextCounterNumber, diameter: diameter, color: strokeColor))
         }
     }
 
@@ -627,6 +632,26 @@ final class EditorModel: CanvasEditing {
                coalescingKey: "\(ActionName.spotlightShape)-\(selected.id.uuidString)")
     }
 
+    /// The options popover's Size row is enabled while Counter is the tool or a counter is selected.
+    var counterSizeApplies: Bool {
+        tool == .counter || selectedAnnotation?.counterMark != nil
+    }
+
+    /// The size the Size row shows, in points: the selected counter's, else the default for new
+    /// ones.
+    var activeCounterDiameterPoints: CGFloat {
+        selectedAnnotation?.counterMark.map { $0.diameter / scale } ?? counterDiameterPoints
+    }
+
+    /// Always sets the default for new counters. With a counter selected, also resizes it about its
+    /// centre as one coalesced step, `Counter Size`.
+    func applyCounterSize(points: CGFloat) {
+        counterDiameterPoints = points
+        guard let selected = selectedAnnotation, selected.counterMark != nil else { return }
+        commit(document.replacing(selected.withCounterDiameter(points * scale)), actionName: ActionName.counterSize,
+               coalescingKey: "\(ActionName.counterSize)-\(selected.id.uuidString)")
+    }
+
     /// The overlay's dim, one value for the whole document, so it is not an editor default.
     /// Nothing happens while the document has no spotlight, so a dim nothing shows adds no step and
     /// no unsaved change. A run of changes is one step, `Spotlight Dim`, under one key, and the
@@ -636,6 +661,7 @@ final class EditorModel: CanvasEditing {
         commit(document.withSpotlightDim(dim), actionName: ActionName.spotlightDim, coalescingKey: ActionName.spotlightDim)
     }
 
+    /// Exhaustive, so a new kind decides here whether the swatch shows its colour.
     private static func color(of annotation: Annotation?) -> RGBA? {
         switch annotation {
         case .rectangle(let box)?, .ellipse(let box)?: return box.color
@@ -643,7 +669,8 @@ final class EditorModel: CanvasEditing {
         case .pencil(let stroke)?, .highlighter(let stroke)?: return stroke.color
         case .text(let box)?: return box.color
         case .redact(_, let fill)?: return fill
-        default: return nil
+        case .counter(let mark)?: return mark.color
+        case .blur?, .pixelate?, .spotlight?, nil: return nil
         }
     }
 

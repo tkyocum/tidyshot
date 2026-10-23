@@ -39,8 +39,9 @@ nonisolated struct AnnotationClip: Codable, Equatable, Sendable {
     /// 1. scaled by `scale / self.scale` and given `id`;
     /// 2. centred in the visible image (the applied crop, else the whole image) when its bounds lie
     ///    wholly outside it;
-    /// 3. moved by `step` while an annotation identical apart from its id is already there, at
-    ///    most `maximumCascade` times, so repeated pastes step aside instead of stacking.
+    /// 3. moved by `step` while an annotation identical apart from its id (and, for a counter, its
+    ///    number; spec 2.12) is already there, at most `maximumCascade` times, so repeated pastes
+    ///    step aside instead of stacking. The model numbers a pasted counter when it commits.
     func placed(in document: AnnotationDocument, imageSize: CGSize, scale: CGFloat, step: CGVector, id: UUID) -> Annotation {
         var pasted = annotation.scaled(by: scale / self.scale).withID(id)
         let image = document.crop ?? CGRect(origin: .zero, size: imageSize)
@@ -49,10 +50,20 @@ nonisolated struct AnnotationClip: Codable, Equatable, Sendable {
             pasted = pasted.moved(by: CGVector(dx: image.midX - bounds.midX, dy: image.midY - bounds.midY))
         }
         var steps = 0
-        while steps < Self.maximumCascade, document.annotations.contains(where: { $0.withID(id) == pasted }) {
+        while steps < Self.maximumCascade, document.annotations.contains(where: { Self.isIdentical($0, to: pasted) }) {
             pasted = pasted.moved(by: step)
             steps += 1
         }
         return pasted
+    }
+
+    /// Whether `existing` already sits where `pasted` would land: two counters with the same centre,
+    /// diameter and colour, whatever their numbers, since every pasted counter is renumbered;
+    /// anything else identical apart from its id.
+    private static func isIdentical(_ existing: Annotation, to pasted: Annotation) -> Bool {
+        if case .counter(let mark) = existing, case .counter(let other) = pasted {
+            return mark.center == other.center && mark.diameter == other.diameter && mark.color == other.color
+        }
+        return existing.withID(pasted.id) == pasted
     }
 }

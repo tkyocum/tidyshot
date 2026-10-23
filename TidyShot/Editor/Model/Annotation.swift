@@ -370,4 +370,21 @@ nonisolated enum Annotation: Identifiable, Codable, Equatable, Sendable {
         shape.isEllipse = isEllipse
         return .spotlight(shape)
     }
+
+    /// A counter `diameter` image pixels across, about the same centre. Everything else comes back
+    /// unchanged.
+    func withCounterDiameter(_ diameter: CGFloat) -> Annotation {
+        guard case .counter(var mark) = self else { return self }
+        mark.diameter = diameter
+        return .counter(mark)
+    }
+
+    /// A new annotation as it joins `document`: a counter takes the document's next number, whatever
+    /// number it arrived with, so Add, duplicate and paste never repeat one (spec 2.12). Everything
+    /// else, and the id, comes back unchanged.
+    func renumbered(in document: AnnotationDocument) -> Annotation {
+        guard case .counter(var mark) = self else { return self }
+        mark.number = document.nextCounterNumber
+        return .counter(mark)
+    }
 }

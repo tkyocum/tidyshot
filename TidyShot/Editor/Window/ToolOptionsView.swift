@@ -1,21 +1,26 @@
 import SwiftUI
 
 /// The options popover, `Tool options` (spec 2.6, Palette and options; spec 2.12, Options): line
-/// width, blur radius, pixel block, and the spotlights' Shape and Dim. It stays one form: a row
-/// that does not apply is disabled, never swapped out per tool. Each control applies live through
-/// `EditorModel`, which commits a selected annotation under a coalescing key, so one slider drag
-/// is one undo step. Only the slider for the effect in play is enabled: the selected blur or
-/// pixelate, else the active Blur or Pixelate tool. A selected annotation of another kind does not
-/// decide it, so with a rectangle selected the active effect tool's slider still works and sets
-/// only the default. While the Highlighter is in play the width control edits the highlighter's
-/// width; with a spotlight selected it sets only the default.
+/// width, blur radius, pixel block, the spotlights' Shape and Dim, and the counters' Size. It stays
+/// one form: a row that does not apply is disabled, never swapped out per tool. Each control
+/// applies live through `EditorModel`, which commits a selected annotation under a coalescing key,
+/// so one slider drag is one undo step. Only the slider for the effect in play is enabled: the
+/// selected blur or pixelate, else the active Blur or Pixelate tool. A selected annotation of
+/// another kind does not decide it, so with a rectangle selected the active effect tool's slider
+/// still works and sets only the default. While the Highlighter is in play the width control edits
+/// the highlighter's width; with a spotlight or a counter selected it sets only the default.
 ///
 /// `Shape` (`Rectangle`, `Ellipse`) is enabled while Spotlight is the tool or a spotlight is
 /// selected (`spotlightShapeApplies`); it sets the default for new spotlights and changes a
 /// selected one. `Dim` (`30 %`, `50 %`, `70 %`) follows the same rule and also needs a spotlight in
 /// the document (`spotlightDimApplies`); it shows the document's dim, 50 % before the first
-/// spotlight.
+/// spotlight. `Size` (`Small`, `Medium`, `Large`: 24, 32 and 44 pt) is enabled while Counter is the
+/// tool or a counter is selected (`counterSizeApplies`); it sets the default for new counters and
+/// resizes a selected one about its centre.
 struct ToolOptionsView: View {
+    /// The Size row's labels, one per stop of `EditorPalette.counterDiametersPoints`.
+    private static let counterSizeLabels = ["Small", "Medium", "Large"]
+
     let model: EditorModel
 
     var body: some View {
@@ -54,6 +59,13 @@ struct ToolOptionsView: View {
             }
             .pickerStyle(.segmented)
             .disabled(!model.spotlightDimApplies)
+            Picker("Size", selection: counterSize) {
+                ForEach(Array(zip(Self.counterSizeLabels, EditorPalette.counterDiametersPoints)), id: \.1) { label, points in
+                    Text(label).tag(points)
+                }
+            }
+            .pickerStyle(.segmented)
+            .disabled(!model.counterSizeApplies)
         }
         .formStyle(.columns)
         .padding(12)
@@ -96,5 +108,9 @@ struct ToolOptionsView: View {
 
     private var spotlightDim: Binding<Double> {
         Binding(get: { model.document.effectiveSpotlightDim }, set: { model.applySpotlightDim($0) })
+    }
+
+    private var counterSize: Binding<CGFloat> {
+        Binding(get: { model.activeCounterDiameterPoints }, set: { model.applyCounterSize(points: $0) })
     }
 }

@@ -8,7 +8,9 @@ nonisolated enum CanvasAccessibility {
 
     struct Item: Equatable, Sendable {
         let id: UUID
-        /// The kind and a number counted per kind in painting order: "Redact 1", "Arrow 2".
+        /// The kind and a number counted per kind in painting order: "Redact 1", "Arrow 2". A
+        /// counter reads its own number instead ("Counter 3"), so after a deletion VoiceOver
+        /// matches the picture.
         let label: String
         let value: String?
     }
@@ -23,6 +25,9 @@ nonisolated enum CanvasAccessibility {
             return bounds.intersects(crop)
         }
         return listed.map { annotation in
+            if let mark = annotation.counterMark {
+                return Item(id: annotation.id, label: "\(annotation.title) \(mark.number)", value: value(of: annotation))
+            }
             let number = (counts[annotation.title] ?? 0) + 1
             counts[annotation.title] = number
             return Item(id: annotation.id, label: "\(annotation.title) \(number)", value: value(of: annotation))

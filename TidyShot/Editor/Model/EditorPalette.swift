@@ -43,6 +43,13 @@ nonisolated enum EditorPalette {
         color.withAlpha(highlighterAlpha)
     }
 
+    /// A counter's number on `fill`: white when the fill's luma is under 0.5, else black. Luma is
+    /// 0.2126 R + 0.7152 G + 0.0722 B on the sRGB components as stored, not linearised, the measure
+    /// `Luminance` uses. WCAG's relative luminance would give white digits on Orange, Green and Teal.
+    static func contrastingTextColor(for fill: RGBA) -> RGBA {
+        0.2126 * fill.red + 0.7152 * fill.green + 0.0722 * fill.blue < 0.5 ? white : black
+    }
+
     private static func rgb(_ red: Int, _ green: Int, _ blue: Int) -> RGBA {
         RGBA(red: Double(red) / 255, green: Double(green) / 255, blue: Double(blue) / 255)
     }

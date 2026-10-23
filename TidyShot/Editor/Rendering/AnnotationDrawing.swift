@@ -11,11 +11,13 @@ nonisolated enum AnnotationDrawing {
     static let handleSide: CGFloat = 8
     /// The dash pattern of a selected effect's outline, in points.
     static let outlineDash: [CGFloat] = [4, 4]
+    /// The width of a counter's white ring, in points.
+    static let counterRingPoints: CGFloat = 1.5
 
     /// Draws a drawing in image pixels. Effects draw nothing here, because they are tiles on the
     /// base layer, and neither does a spotlight, which the overlay draws. `scale` is the capture
-    /// scale, which sizes the arrow head only; the other drawings are sized by their stored line
-    /// widths.
+    /// scale, which sizes the arrow head and a counter's ring only; the other drawings are sized by
+    /// their stored line widths.
     static func draw(_ annotation: Annotation, in context: CGContext, scale: CGFloat) {
         switch annotation {
         case .rectangle(let box):
@@ -32,10 +34,10 @@ nonisolated enum AnnotationDrawing {
             drawStroke(stroke, blend: .multiply, in: context)
         case .text(let box):
             drawText(box, in: context)
+        case .counter(let mark):
+            drawCounter(mark, in: context, scale: scale)
         case .redact, .blur, .pixelate, .spotlight:
             break
-        case .counter:
-            break  // Task 3 draws the numbered circle.
         }
     }
 
@@ -271,6 +273,40 @@ nonisolated enum AnnotationDrawing {
             context.textPosition = origin
             CTLineDraw(TextLayout.line(text, font: font, color: colour), context)
         }
+    }
+
+    /// A circle filled in the counter's colour, with a white ring `counterRingPoints × scale` wide
+    /// stroked inset by half its width, so nothing paints outside the diameter. The number goes on
+    /// top in `EditorPalette.contrastingTextColor(for:)`, at `CounterLayout.fontSize`, drawn as
+    /// `drawText` draws: CoreText on the bare context, the text matrix flipping the glyphs upright
+    /// and put back by hand. It is centred by the line's typographic width across and by the
+    /// font's cap height down, so the digits sit on the centre.
+    private static func drawCounter(_ mark: CounterMark, in context: CGContext, scale: CGFloat) {
+        guard mark.diameter > 0 else { return }
+        let radius = mark.diameter / 2
+        let circle = CGRect(x: mark.center.x - radius, y: mark.center.y - radius, width: mark.diameter, height: mark.diameter)
+        let ring = counterRingPoints * scale
+        let savedTextMatrix = context.textMatrix
+        context.saveGState()
+        defer {
+            context.restoreGState()
+            context.textMatrix = savedTextMatrix
+        }
+        context.setFillColor(mark.color.cgColor)
+        context.fillEllipse(in: circle)
+        context.setStrokeColor(CGColor(gray: 1, alpha: 1))
+        context.setLineWidth(ring)
+        context.strokeEllipse(in: circle.insetBy(dx: ring / 2, dy: ring / 2))
+
+        let fontSize = CounterLayout.fontSize(number: mark.number, diameter: mark.diameter)
+        guard fontSize > 0 else { return }
+        let font = TextLayout.font(size: fontSize)
+        let line = TextLayout.line(String(mark.number), font: font,
+                                   color: EditorPalette.contrastingTextColor(for: mark.color).cgColor)
+        let width = CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
+        context.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
+        context.textPosition = CGPoint(x: mark.center.x - width / 2, y: mark.center.y + CTFontGetCapHeight(font) / 2)
+        CTLineDraw(line, context)
     }
 
     /// The smoothed path stroked once with round caps and joins. A single stroke operation paints

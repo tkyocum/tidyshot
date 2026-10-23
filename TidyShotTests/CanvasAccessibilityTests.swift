@@ -49,6 +49,28 @@ struct CanvasAccessibilityTests {
         #expect(items.allSatisfy { $0.value == nil })
     }
 
+    /// A counter reads its own number, not a count, and has no value, so after a middle counter is
+    /// deleted VoiceOver still reads what the picture shows.
+    @Test func countersReadTheirOwnNumbers() {
+        func counter(_ number: Int) -> Annotation {
+            .counter(CounterMark(id: UUID(), center: CGPoint(x: 20 * CGFloat(number), y: 20), number: number,
+                                 diameter: 16, color: red))
+        }
+        let first = arrow(10)
+        let one = counter(1)
+        let two = counter(2)
+        let three = counter(3)
+        let document = AnnotationDocument(annotations: [one, first, two, three])
+        let items = CanvasAccessibility.items(in: document, scale: 1)
+        #expect(items.map(\.id) == [one.id, first.id, two.id, three.id])
+        #expect(items.map(\.label) == ["Counter 1", "Arrow 1", "Counter 2", "Counter 3"])
+        #expect(items.allSatisfy { $0.value == nil })
+
+        let afterDelete = CanvasAccessibility.items(in: document.removing(id: two.id), scale: 1)
+        #expect(afterDelete.map(\.label) == ["Counter 1", "Arrow 1", "Counter 3"])
+        #expect(afterDelete.allSatisfy { $0.value == nil })
+    }
+
     @Test func textItemReadsItsString() {
         let text = Annotation.text(TextBox(id: UUID(), string: "Click here", origin: CGPoint(x: 4, y: 4),
                                            fontSize: 40, color: red))

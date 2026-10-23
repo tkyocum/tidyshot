@@ -32,6 +32,12 @@ nonisolated struct AnnotationDocument: Codable, Equatable, Sendable {
     /// Every other annotation, in creation order, drawn above all effects and the spotlight overlay.
     var drawings: [Annotation] { annotations.filter { !$0.isEffect && !$0.isSpotlight } }
 
+    /// The number a new counter gets (spec 2.12, Number): one more than the largest counter number,
+    /// or 1 with none. Deleting a counter renumbers nothing.
+    var nextCounterNumber: Int {
+        (annotations.compactMap { $0.counterMark?.number }.max() ?? 0) + 1
+    }
+
     func annotation(id: UUID) -> Annotation? {
         annotations.first { $0.id == id }
     }
