@@ -28,7 +28,14 @@ struct GIFProgressMenuTests {
         #expect(GIFProgressMenu.items([GIFProgress(fraction: 0.999, frameCount: 150)])?.progress == "Making GIF… 99 %")
         #expect(GIFProgressMenu.items([GIFProgress(fraction: 0, frameCount: 150)])?.progress == "Making GIF… 0 %")
         #expect(GIFProgressMenu.items([GIFProgress(fraction: 0.57, frameCount: 1)])?.progress == "Making GIF… 57 %")
-        #expect(GIFProgressMenu.items([GIFProgress(fraction: 1, frameCount: 150)])?.progress == "Making GIF… 100 %")
+    }
+
+    /// The maker reports 1 when the GIF is written, but the entry stays through the save, so a
+    /// finished fraction still reads 99 %.
+    @Test func aFinishedConversionShows99UntilItHasSaved() throws {
+        #expect(GIFProgressMenu.items([GIFProgress(fraction: 1, frameCount: 150)])?.progress == "Making GIF… 99 %")
+        #expect(GIFProgressMenu.items([GIFProgress(fraction: 1, frameCount: 100),
+                                       GIFProgress(fraction: 1, frameCount: 300)])?.progress == "Making 2 GIFs… 99 %")
     }
 
     @Test func noConversionGivesNoItems() {
