@@ -92,7 +92,7 @@ final class ScreenRecordingDriver: RecordingStreamDriver {
         // Held for the stream's life: the stream and the output keep their delegate weakly.
         self.delegate = delegate
         self.output = output
-        RecordingLog.note("Recording: starting \(configuration.pixelWidth)×\(configuration.pixelHeight) at \(configuration.framesPerSecond) fps, \(configuration.filter)")
+        RecordingLog.note("Recording: starting \(configuration.pixelWidth)×\(configuration.pixelHeight) at \(configuration.framesPerSecond) fps, \(configuration.filter), microphone \(configuration.microphoneDeviceID ?? "off")")
         try await stream.startCapture()
         self.stream = stream
     }
@@ -122,6 +122,8 @@ final class ScreenRecordingDriver: RecordingStreamDriver {
         stream.ignoreShadowsSingleWindow = configuration.ignoresShadowsSingleWindow
         stream.scalesToFit = configuration.scalesToFit
         stream.preservesAspectRatio = configuration.preservesAspectRatio
+        stream.captureMicrophone = configuration.captureMicrophone
+        stream.microphoneCaptureDeviceID = configuration.microphoneDeviceID
         if case .area(_, let sourceRect) = configuration.filter {
             stream.sourceRect = sourceRect
         }

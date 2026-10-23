@@ -32,10 +32,13 @@ nonisolated struct RecordingOptions: Equatable, Sendable {
     var format: RecordingFormat = .mp4
     /// Read for a GIF recording only.
     var gif = GIFSettings(fps: 15, maxSide: 1280)
+    /// The resolved input's `uniqueID`, set at the start only from an authorized choice; never
+    /// read for a GIF.
+    var microphoneID: String? = nil
 }
 
 /// Everything the stream needs, decided without a screen: the filter plan, the output size with
-/// the 4096 px cap and even sides, the frame rate, the cursor and audio.
+/// the 4096 px cap and even sides, the frame rate, the cursor, audio and the microphone.
 nonisolated struct RecordingConfiguration: Equatable, Sendable {
     var filter: RecordingFilterPlan
     var pixelWidth: Int
@@ -50,6 +53,12 @@ nonisolated struct RecordingConfiguration: Equatable, Sendable {
     /// A window resized during the recording is scaled to fit the starting size, letterboxed.
     var scalesToFit: Bool
     var preservesAspectRatio: Bool
+    /// The input to record from, mixed with system audio into one track. Never set for a GIF.
+    var microphoneDeviceID: String? = nil
+
+    var captureMicrophone: Bool {
+        microphoneDeviceID != nil
+    }
 
     /// The longer output side's cap: Clop returns an empty reply for 5120×2880 H.264, and many
     /// players cannot play H.264 that large.
@@ -86,14 +95,15 @@ nonisolated struct RecordingConfiguration: Equatable, Sendable {
             filter = .window(windowID: id)
             isWindow = true
         }
-        // A GIF has no sound, so its MP4 records none.
+        // A GIF has no sound, so its MP4 records none, neither system audio nor the microphone.
         let isGIF = options.format == .gif
         return RecordingConfiguration(filter: filter, pixelWidth: size.width, pixelHeight: size.height,
                                       framesPerSecond: isGIF ? gifFramesPerSecond : options.framesPerSecond,
                                       showsCursor: options.showsCursor,
                                       capturesAudio: !isGIF && options.systemAudio, excludesCurrentProcessAudio: true,
                                       ignoresShadowsSingleWindow: isWindow, scalesToFit: isWindow,
-                                      preservesAspectRatio: true)
+                                      preservesAspectRatio: true,
+                                      microphoneDeviceID: isGIF ? nil : options.microphoneID)
     }
 
     /// Points times scale, rounded to whole pixels. If either side is then over 4096, both are

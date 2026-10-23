@@ -162,6 +162,34 @@ struct RecordingConfigurationTests {
         let plain = options()
         #expect(plain.format == .mp4)
         #expect(plain.gif == GIFSettings(fps: 15, maxSide: 1280))
+        #expect(plain.microphoneID == nil)
+    }
+
+    /// The start resolves the microphone (only from an authorized choice) and passes its ID in
+    /// the options; `make` never reads AVFoundation.
+    @Test func aMicrophoneIDCapturesTheMicrophoneFromThatDevice() {
+        var withMicrophone = options(audio: true)
+        withMicrophone.microphoneID = "AppleUSBAudioEngine:RODE:AI-1:1"
+        let config = RecordingConfiguration.make(.display(laptop), options: withMicrophone)
+        #expect(config.captureMicrophone)
+        #expect(config.microphoneDeviceID == "AppleUSBAudioEngine:RODE:AI-1:1")
+        #expect(config.capturesAudio)
+    }
+
+    @Test func noMicrophoneIDCapturesNoMicrophone() {
+        let config = RecordingConfiguration.make(.display(laptop), options: options(audio: true))
+        #expect(!config.captureMicrophone)
+        #expect(config.microphoneDeviceID == nil)
+    }
+
+    @Test func aGIFRecordingNeverCapturesTheMicrophone() {
+        var gif = options(audio: true)
+        gif.format = .gif
+        gif.microphoneID = "BuiltInMicrophoneDevice"
+        let config = RecordingConfiguration.make(.display(laptop), options: gif)
+        #expect(!config.captureMicrophone)
+        #expect(config.microphoneDeviceID == nil)
+        #expect(!config.capturesAudio)
     }
 
     @Test func areaMinimumIs32PointsEachWay() {

@@ -24,8 +24,10 @@ struct RecordingControllerTests {
         request(.window(id: windowID, frame: CGRect(x: 200, y: 150, width: 1000, height: 700), scale: 2))
     }
 
-    func request(_ source: RecordingSource, gif: GIFSettings? = nil) -> RecordingRequest {
+    func request(_ source: RecordingSource, gif: GIFSettings? = nil, microphoneID: String? = nil) -> RecordingRequest {
         let id = UUID()
+        var options = options
+        options.microphoneID = microphoneID
         return RecordingRequest(id: id, configuration: .make(source, options: options), displayID: display.id,
                                 outputURL: URL(filePath: "/private/tmp/RecordingControllerTests/Recording/\(id.uuidString).mp4"),
                                 gif: gif)
@@ -176,11 +178,31 @@ struct RecordingControllerTests {
     }
 
     @Test func theAppTimesTheStopWaitOnTheClockThatStopsWhileTheMacSleeps() async throws {
-        let environment = RecordingEnvironment.live(cardWindowNumbers: { [] }, coverWindowNumbers: { _ in [] })
+        let environment = RecordingEnvironment.live(cardWindowNumbers: { [] }, coverWindowNumbers: { _ in [] },
+                                                    microphones: FakeMicrophoneDevices())
         let clock = try #require(environment.awakeClock as? SuspendingScrollClock)
         let before = clock.now
         try await clock.sleep(for: .milliseconds(10))
         #expect(clock.now - before >= .milliseconds(10))
+    }
+
+    /// The app's loss reason: an input missing from the list was disconnected; a listed one whose
+    /// access is no longer authorized lost its access; otherwise the error says what happened.
+    @Test func theAppSaysWhichWayTheMicrophoneWasLost() {
+        let rode = MicrophoneDevice(uniqueID: Self.microphoneID, name: "RODE AI-1")
+        let microphones = FakeMicrophoneDevices(devices: [rode], access: .authorized)
+        let environment = RecordingEnvironment.live(cardWindowNumbers: { [] }, coverWindowNumbers: { _ in [] },
+                                                    microphones: microphones)
+        #expect(environment.microphoneLossReason(Self.microphoneID) == nil)
+
+        for access in [MicrophoneAccess.denied, .restricted, .notDetermined] {
+            microphones.currentAccess = access
+            #expect(environment.microphoneLossReason(Self.microphoneID) == "Microphone access is off for TidyShot.")
+        }
+        microphones.devices = []
+        #expect(environment.microphoneLossReason(Self.microphoneID) == "The microphone was disconnected.")
+        microphones.currentAccess = .authorized
+        #expect(environment.microphoneLossReason(Self.microphoneID) == "The microphone was disconnected.")
     }
 
     // MARK: GIF
@@ -731,6 +753,69 @@ struct RecordingControllerTests {
         controller.close()
     }
 
+    // MARK: The microphone lost mid-recording (plan Gap 7)
+
+    /// The ID the area recordings below record from.
+    static let microphoneID = "AppleUSBAudioEngine:RODE:AI-1:1"
+
+    nonisolated static let microphoneErrors: [RecordingStreamEvent] = [
+        .outputFailed("The operation couldn’t be completed."),
+        .streamStopped("The operation couldn’t be completed."),
+    ]
+
+    @Test(arguments: microphoneErrors)
+    func anErrorWhileTheMicrophoneIsLostSaysSo(_ error: RecordingStreamEvent) async throws {
+        world.microphoneLossReasons = [Self.microphoneID: "The microphone was disconnected."]
+        let driver = FakeRecordingDriver(log: world.log)
+        let chrome = FakeRecordingChrome(log: world.log)
+        let request = request(.area(CGRect(x: 100, y: 100, width: 800, height: 500), on: display),
+                              microphoneID: Self.microphoneID)
+        let (controller, run) = await begin(request, driver: driver, chrome: chrome)
+        driver.send(.recordingStarted)
+        await world.advance(by: .seconds(2))
+        driver.send(error)
+
+        let outcome = await run.value
+        #expect(outcome.kept != nil)
+        #expect(outcome.notice == RecordingNotice(title: "Recording stopped", body: "The microphone was disconnected."))
+        #expect(world.microphoneLossQueries == [Self.microphoneID])
+        controller.close()
+    }
+
+    @Test(arguments: microphoneErrors)
+    func anErrorWithTheMicrophoneStillThereKeepsItsDescription(_ error: RecordingStreamEvent) async throws {
+        let driver = FakeRecordingDriver(log: world.log)
+        let chrome = FakeRecordingChrome(log: world.log)
+        let request = request(.area(CGRect(x: 100, y: 100, width: 800, height: 500), on: display),
+                              microphoneID: Self.microphoneID)
+        let (controller, run) = await begin(request, driver: driver, chrome: chrome)
+        driver.send(.recordingStarted)
+        await world.advance(by: .seconds(2))
+        driver.send(error)
+
+        let outcome = await run.value
+        #expect(outcome.kept != nil)
+        #expect(outcome.notice == RecordingNotice(title: "Recording stopped", body: "The operation couldn’t be completed."))
+        #expect(world.microphoneLossQueries == [Self.microphoneID])
+        controller.close()
+    }
+
+    @Test(arguments: microphoneErrors)
+    func anErrorWithNoMicrophoneAsksNothing(_ error: RecordingStreamEvent) async throws {
+        world.microphoneLossReasons = [Self.microphoneID: "The microphone was disconnected."]
+        let driver = FakeRecordingDriver(log: world.log)
+        let chrome = FakeRecordingChrome(log: world.log)
+        let (controller, run) = await begin(areaRequest, driver: driver, chrome: chrome)
+        driver.send(.recordingStarted)
+        await world.advance(by: .seconds(2))
+        driver.send(error)
+
+        let outcome = await run.value
+        #expect(outcome.notice == RecordingNotice(title: "Recording stopped", body: "The operation couldn’t be completed."))
+        #expect(world.microphoneLossQueries.isEmpty)
+        controller.close()
+    }
+
     @Test func aFinishNobodyAskedForKeepsTheFileAsStopped() async throws {
         let driver = FakeRecordingDriver(log: world.log)
         let chrome = FakeRecordingChrome(log: world.log)
@@ -917,6 +1002,17 @@ struct RecordingControllerTests {
         #expect(stream.excludesCurrentProcessAudio)
         #expect(!stream.scalesToFit)
         #expect(stream.preservesAspectRatio)
+    }
+
+    @Test func aStreamWithAMicrophoneCapturesItFromThatDevice() {
+        let withMicrophone = request(.display(display), microphoneID: Self.microphoneID)
+        let stream = ScreenRecordingDriver.streamConfiguration(withMicrophone.configuration)
+        #expect(stream.captureMicrophone)
+        #expect(stream.microphoneCaptureDeviceID == Self.microphoneID)
+
+        let without = ScreenRecordingDriver.streamConfiguration(request(.display(display)).configuration)
+        #expect(!without.captureMicrophone)
+        #expect(without.microphoneCaptureDeviceID == nil)
     }
 
     @Test func aWindowStreamIgnoresTheShadowAndScalesToFit() {

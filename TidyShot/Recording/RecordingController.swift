@@ -44,9 +44,13 @@ struct RecordingEnvironment {
     var removeFile: (URL) -> Void
     /// Where sleep and the user switch are posted.
     var workspaceCenter: NotificationCenter
+    /// For the recorded input's `uniqueID`, after a stream or output error: the `Recording stopped`
+    /// body when the input is gone or access is off, or nil (plan Gap 7).
+    var microphoneLossReason: (String) -> String?
 
     static func live(cardWindowNumbers: @escaping () -> Set<CGWindowID>,
-                     coverWindowNumbers: @escaping (CGDirectDisplayID) -> Set<CGWindowID>) -> RecordingEnvironment {
+                     coverWindowNumbers: @escaping (CGDirectDisplayID) -> Set<CGWindowID>,
+                     microphones: any MicrophoneDevices) -> RecordingEnvironment {
         RecordingEnvironment(
             clock: SystemScrollClock(),
             awakeClock: SuspendingScrollClock(),
@@ -66,7 +70,13 @@ struct RecordingEnvironment {
             inspect: { await VideoValidation.inspect($0) },
             poster: { await PosterFrame.image(of: $0) },
             removeFile: { Recording.removeFile(at: $0) },
-            workspaceCenter: NSWorkspace.shared.notificationCenter)
+            workspaceCenter: NSWorkspace.shared.notificationCenter,
+            microphoneLossReason: { id in
+                if !microphones.list().contains(where: { $0.uniqueID == id }) {
+                    return MicrophoneChoice.disconnectedText
+                }
+                return microphones.access() == .authorized ? nil : MicrophoneChoice.accessOffText
+            })
     }
 }
 
@@ -246,16 +256,25 @@ final class RecordingController {
         case .outputFailed(let description):
             outputEnded = true
             stopWaitEnded()
-            end(.end(.failed(description)))
+            end(.end(.failed(failureReason(description))))
         case .streamStopped(let description):
             // It never ends the stop wait: the output may still be finishing the file, which
             // cannot be opened until the finish (290 ms after the stop, in the 5K probe). The
             // wait takes the output's finish or fail, or the timeout.
-            end(.end(.failed(description)))
+            end(.end(.failed(failureReason(description))))
         case .streamInactive, .streamActive:
             // The driver's log lines are their only trace: window loss is polled.
             break
         }
+    }
+
+    /// A stream or output error's reason: the error's description, unless the recorded input
+    /// went or its access was turned off, which the error does not say.
+    private func failureReason(_ description: String) -> String {
+        guard cause == nil, let id = request?.configuration.microphoneDeviceID,
+              let reason = environment.microphoneLossReason(id) else { return description }
+        RecordingLog.note("Recording: the microphone \(id) is lost: \(reason)")
+        return reason
     }
 
     /// The elapsed time, the window poll and, every 5 s, the disk check, on whole seconds from

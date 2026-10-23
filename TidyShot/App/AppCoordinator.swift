@@ -39,8 +39,12 @@ final class AppCoordinator {
         environment: .live(cardWindowNumbers: { [weak self] in self?.overlay.windowNumbers ?? [] },
                            coverWindowNumbers: { [weak self] displayID in
                                self?.covers.windowNumbers[displayID].map { [$0] } ?? []
-                           }),
+                           },
+                           microphones: microphones),
         makeDriver: { [engine] in ScreenRecordingDriver(engine: engine) })
+    /// The audio inputs and the microphone access, for Capture → Recording → `Microphone` and a
+    /// recording's start and loss reason.
+    @ObservationIgnored lazy var microphones: any MicrophoneDevices = LiveMicrophoneDevices()
     /// Hide desktop icons (spec 2.10): the wallpaper over the desktop's icons and widgets, while a
     /// capture runs or until turned off. A display it cannot cover is reported once per session;
     /// without Screen Recording, which is why nothing could be read, the permission window shows instead.

@@ -176,8 +176,8 @@ final class FakeRecordingChrome: RecordingChrome {
 
 /// The controller's world on two `FakeScrollClock`s, the continuous one and the one that stops
 /// while the Mac sleeps: a date the test sets, free space, the listed windows, the card and cover
-/// windows, and the file's facts. It logs every file access and each activity's begin and end,
-/// and has its own `NotificationCenter` for the workspace.
+/// windows, the file's facts, and which microphones are lost. It logs every file access and each
+/// activity's begin and end, and has its own `NotificationCenter` for the workspace.
 final class RecordingTestWorld {
     let clock = FakeScrollClock()
     let awakeClock = FakeScrollClock()
@@ -190,6 +190,10 @@ final class RecordingTestWorld {
     var coverWindows: [CGDirectDisplayID: Set<CGWindowID>] = [:]
     var facts = VideoFacts.playable(seconds: 10)
     let poster = RecordingTestWorld.makePoster()
+    /// `microphoneLossReason`'s answers, by device ID; nil for any other.
+    var microphoneLossReasons: [String: String] = [:]
+    /// The device IDs `microphoneLossReason` was asked about, in order.
+    private(set) var microphoneLossQueries: [String] = []
     private(set) var freeSpaceURLs: [URL] = []
     private(set) var activitiesBegun = 0
     private(set) var activitiesEnded = 0
@@ -224,7 +228,11 @@ final class RecordingTestWorld {
                 return poster
             },
             removeFile: { [unowned self] _ in log.append("remove") },
-            workspaceCenter: center)
+            workspaceCenter: center,
+            microphoneLossReason: { [unowned self] id in
+                microphoneLossQueries.append(id)
+                return microphoneLossReasons[id]
+            })
     }
 
     /// Lets `duration` pass with the Mac awake: both clocks move.
@@ -243,6 +251,34 @@ final class RecordingTestWorld {
                                 space: CGColorSpace(name: CGColorSpace.sRGB)!,
                                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
         return context.makeImage()!
+    }
+}
+
+/// Audio inputs and an access the tests set. `requestAccess` answers with `grants`, and the
+/// access is then what the prompt answered.
+final class FakeMicrophoneDevices: MicrophoneDevices {
+    var devices: [MicrophoneDevice]
+    var defaultInput: MicrophoneDevice?
+    var currentAccess: MicrophoneAccess
+    var grants: Bool
+    private(set) var requestCount = 0
+
+    init(devices: [MicrophoneDevice] = [], defaultInput: MicrophoneDevice? = nil,
+         access: MicrophoneAccess = .authorized, grants: Bool = true) {
+        self.devices = devices
+        self.defaultInput = defaultInput
+        self.currentAccess = access
+        self.grants = grants
+    }
+
+    func list() -> [MicrophoneDevice] { devices }
+    func defaultDevice() -> MicrophoneDevice? { defaultInput }
+    func access() -> MicrophoneAccess { currentAccess }
+
+    func requestAccess() async -> Bool {
+        requestCount += 1
+        currentAccess = grants ? .authorized : .denied
+        return grants
     }
 }
 
