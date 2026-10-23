@@ -3,8 +3,9 @@ import CoreMedia
 import CoreVideo
 import Foundation
 
-/// Movies made on the spot for the video tests: H.264 at 10 fps from `AVAssetWriter`, with a
-/// silent mono AAC track when asked. Nothing needs Screen Recording or a real recording.
+/// Movies made on the spot for the video tests: H.264 at 10 fps from `AVAssetWriter`, or at given
+/// frame times, with a silent mono AAC track when asked. Nothing needs Screen Recording or a real
+/// recording.
 nonisolated enum VideoFixtures {
     enum FixtureError: Error {
         case cannotAddInput
@@ -17,8 +18,12 @@ nonisolated enum VideoFixtures {
     private static let sampleRate = 44_100
 
     /// Writes an `.mp4` of `seconds` at `width` × `height` to `url`, replacing any file there.
+    /// Frame `n` is a grey of level `64 + 16n mod 128`, or with `pattern` white with a 2 px black
+    /// vertical line from that even column. It is at `n / 10` s, or at `frameTimes[n]` when given,
+    /// for gaps and low source rates; the movie still ends at `seconds`.
     @concurrent
-    static func makeMP4(at url: URL, width: Int, height: Int, seconds: Double, audio: Bool) async throws {
+    static func makeMP4(at url: URL, width: Int, height: Int, seconds: Double, audio: Bool,
+                        pattern: Int? = nil, frameTimes: [Double]? = nil) async throws {
         try? FileManager.default.removeItem(at: url)
         let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
 
@@ -56,7 +61,7 @@ nonisolated enum VideoFixtures {
         writer.startSession(atSourceTime: .zero)
 
         // The small margin keeps 0.3 s at three frames despite 0.3 × 10 not being exact.
-        let frameCount = max(1, Int((seconds * Double(framesPerSecond) - 1e-9).rounded(.up)))
+        let frameCount = frameTimes?.count ?? max(1, Int((seconds * Double(framesPerSecond) - 1e-9).rounded(.up)))
         let format = sound == nil ? nil : try silentFormat()
         let sampleCount = sound == nil ? 0 : Int((seconds * Double(sampleRate)).rounded())
         var frame = 0
@@ -68,8 +73,9 @@ nonisolated enum VideoFixtures {
         while frame < frameCount || sample < sampleCount {
             var appended = false
             if frame < frameCount, video.isReadyForMoreMediaData {
-                let time = CMTime(value: CMTimeValue(frame), timescale: CMTimeScale(framesPerSecond))
-                let buffer = try pixelBuffer(from: adaptor, shade: frame)
+                let time = frameTimes.map { CMTime(seconds: $0[frame], preferredTimescale: 600) }
+                    ?? CMTime(value: CMTimeValue(frame), timescale: CMTimeScale(framesPerSecond))
+                let buffer = try pixelBuffer(from: adaptor, shade: frame, pattern: pattern)
                 guard adaptor.append(buffer, withPresentationTime: time) else {
                     throw FixtureError.appendFailed(writer.error?.localizedDescription ?? "video frame \(frame)")
                 }
@@ -109,16 +115,31 @@ nonisolated enum VideoFixtures {
         try Data(String(repeating: "not a movie ", count: 4_096).utf8).write(to: url)
     }
 
-    /// A frame of one grey that changes with `shade`, so the encoder has something to encode.
-    private static func pixelBuffer(from adaptor: AVAssetWriterInputPixelBufferAdaptor, shade: Int) throws -> CVPixelBuffer {
+    /// A frame of one grey that changes with `shade`, so the encoder has something to encode; with
+    /// `pattern`, white with black BGR at columns `pattern` and `pattern + 1` of every row.
+    private static func pixelBuffer(from adaptor: AVAssetWriterInputPixelBufferAdaptor, shade: Int,
+                                    pattern: Int?) throws -> CVPixelBuffer {
         guard let pool = adaptor.pixelBufferPool else { throw FixtureError.noPixelBuffer }
         var made: CVPixelBuffer?
         CVPixelBufferPoolCreatePixelBuffer(nil, pool, &made)
         guard let buffer = made else { throw FixtureError.noPixelBuffer }
         CVPixelBufferLockBaseAddress(buffer, [])
         defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
-        if let base = CVPixelBufferGetBaseAddress(buffer) {
+        guard let base = CVPixelBufferGetBaseAddress(buffer) else { return buffer }
+        guard let pattern else {
             memset(base, Int32(64 + (shade * 16) % 128), CVPixelBufferGetDataSize(buffer))
+            return buffer
+        }
+        memset(base, 255, CVPixelBufferGetDataSize(buffer))
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(buffer)
+        let columns = [pattern, pattern + 1].filter { $0 >= 0 && $0 < CVPixelBufferGetWidth(buffer) }
+        for row in 0..<CVPixelBufferGetHeight(buffer) {
+            let pixels = base.advanced(by: row * bytesPerRow).assumingMemoryBound(to: UInt8.self)
+            for column in columns {
+                pixels[column * 4] = 0
+                pixels[column * 4 + 1] = 0
+                pixels[column * 4 + 2] = 0
+            }
         }
         return buffer
     }

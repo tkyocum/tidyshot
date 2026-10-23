@@ -135,6 +135,35 @@ struct RecordingConfigurationTests {
         #expect(changed.excludesCurrentProcessAudio)
     }
 
+    /// A GIF records an MP4 at 30 fps with no sound, whatever the options say; its size follows
+    /// `Resolution` as an MP4's does.
+    @Test func aGIFRecordingNeverCapturesAudioAndRecordsAt30FPS() {
+        let area = RecordingSource.area(CGRect(x: 100, y: 50, width: 800, height: 500), on: laptop)
+        var gif = options(fps: 60, audio: true)
+        gif.format = .gif
+        let config = RecordingConfiguration.make(area, options: gif)
+        #expect(RecordingConfiguration.gifFramesPerSecond == 30)
+        #expect(config.framesPerSecond == 30)
+        #expect(config.minimumFrameInterval == CMTime(value: 1, timescale: 30))
+        #expect(!config.capturesAudio)
+        #expect(config.pixelWidth == 1600)
+        #expect(config.pixelHeight == 1000)
+
+        var standard = gif
+        standard.retina = false
+        #expect(RecordingConfiguration.make(area, options: standard).pixelWidth == 800)
+
+        let mp4 = RecordingConfiguration.make(area, options: options(fps: 60, audio: true))
+        #expect(mp4.framesPerSecond == 60)
+        #expect(mp4.capturesAudio)
+    }
+
+    @Test func optionsDefaultToMP4AndTheGIFDefaults() {
+        let plain = options()
+        #expect(plain.format == .mp4)
+        #expect(plain.gif == GIFSettings(fps: 15, maxSide: 1280))
+    }
+
     @Test func areaMinimumIs32PointsEachWay() {
         #expect(RecordingConfiguration.minimumAreaSide == 32)
         #expect(RecordingConfiguration.isLargeEnough(CGRect(x: 10, y: 10, width: 32, height: 32)))

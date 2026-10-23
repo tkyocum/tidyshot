@@ -115,6 +115,8 @@ final class FakeRecordingChrome: RecordingChrome {
     /// AppKit holds a quit and the run loop never enters its default mode.
     var holdsAsk = false
     private(set) var calls: [String] = []
+    /// The bar each `show` laid out.
+    private(set) var shownBars: [RecordingPanelLayout.Bar] = []
     private(set) var elapsedShown: [TimeInterval] = []
     private var onStop: (() -> Void)?
     private var onCancel: (() -> Void)?
@@ -124,9 +126,10 @@ final class FakeRecordingChrome: RecordingChrome {
         self.log = log
     }
 
-    func show(onStop: @escaping () -> Void, onCancel: @escaping () -> Void) {
+    func show(onStop: @escaping () -> Void, onCancel: @escaping () -> Void, bar: RecordingPanelLayout.Bar) {
         self.onStop = onStop
         self.onCancel = onCancel
+        shownBars.append(bar)
         calls.append("show")
         log.append("show")
     }

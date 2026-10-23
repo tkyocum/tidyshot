@@ -75,10 +75,20 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     private func rebuild() {
         menu.removeAllItems()
         // During a recording its Stop comes first, and the two Record items are not shown; every
-        // other capture item is disabled, as while any capture runs.
+        // other capture item is disabled, as while any capture runs. GIF conversions follow it
+        // (plan Gap 5), their progress read now, as the menu opens.
         let recording = coordinator.isRecording
         if recording {
             menu.addItem(item(title("Stop Recording", shortcut: .recordScreen), #selector(stopRecording)))
+        }
+        let gifItems = coordinator.gifProgressItems
+        if let gifItems {
+            let progress = NSMenuItem(title: gifItems.progress, action: nil, keyEquivalent: "")
+            progress.isEnabled = false
+            menu.addItem(progress)
+            menu.addItem(item(gifItems.stop, #selector(stopMakingGIFs)))
+        }
+        if recording || gifItems != nil {
             menu.addItem(.separator())
         }
         if !coordinator.permissionGranted {
@@ -159,6 +169,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     @objc private func recordScreen() { Task { await coordinator.recordScreen() } }
     @objc private func recordFullscreen() { Task { await coordinator.recordFullscreen() } }
     @objc private func stopRecording() { coordinator.stopRecording() }
+    @objc private func stopMakingGIFs() { coordinator.stopMakingGIFs() }
     @objc private func retryFailedUploads() { coordinator.retryFailedUploads() }
     @objc private func restoreClosedOverlay() { Task { await coordinator.restoreClosedOverlay() } }
     @objc private func revealLastCapture() { coordinator.revealLastCapture() }

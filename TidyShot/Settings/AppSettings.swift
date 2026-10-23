@@ -191,10 +191,11 @@ final class AppSettings {
         GIFSettings(fps: gifFrameRate, maxSide: gifMaxSide)
     }
 
-    /// The four Recording settings a recording's stream is made from.
+    /// The Recording settings a recording is made from, read once at its start.
     var recordingOptions: RecordingOptions {
         RecordingOptions(framesPerSecond: recordingFrameRate, retina: recordingRetina,
-                         systemAudio: recordingSystemAudio, showsCursor: recordingShowsCursor)
+                         systemAudio: recordingSystemAudio, showsCursor: recordingShowsCursor,
+                         format: recordingFormat, gif: gifSettings)
     }
 
     /// The seven editor values as one value. Setting it writes all seven keys.

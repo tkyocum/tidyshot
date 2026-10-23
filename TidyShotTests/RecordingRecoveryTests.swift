@@ -63,6 +63,43 @@ struct RecordingRecoveryTests {
         #expect(FileManager.default.fileExists(atPath: playable.path(percentEncoded: false)))
     }
 
+    /// A crash during a GIF's conversion leaves the MP4 and a partial GIF: the MP4 is recovered
+    /// and the GIF, which does not play, removed.
+    @Test func anMP4BesideAPartialGIFIsFoundAndTheGIFRemoved() async throws {
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let id = UUID()
+        let mp4 = dir.appending(path: "\(id.uuidString).mp4")
+        let gif = dir.appending(path: "\(id.uuidString).gif")
+        try await VideoFixtures.makeMP4(at: mp4, width: 320, height: 200, seconds: 1, audio: false)
+        // A header, a logical screen and part of a global table, as a conversion cut short leaves it.
+        try Data(Array("GIF89a".utf8) + [0x40, 0x01, 0xC8, 0x00, 0xF7, 0, 0] + Array(repeating: 0x80, count: 300)).write(to: gif)
+
+        let found = await RecordingRecovery.scan(dir)
+        #expect(found.map(\.url.lastPathComponent) == [mp4.lastPathComponent])
+        #expect(found.first?.id == id)
+        #expect(!FileManager.default.fileExists(atPath: gif.path(percentEncoded: false)))
+        #expect(FileManager.default.fileExists(atPath: mp4.path(percentEncoded: false)))
+    }
+
+    /// The GIF's record exists, so its MP4 was saved already: only a `.gif` record with the found
+    /// file's id counts.
+    @Test func isSavedAsGIFHoldsOnlyForAnIDWithAGIFRecord() {
+        let id = UUID()
+        let found = RecordingRecovery.Found(url: URL(filePath: "/tmp/Recording/\(id.uuidString).mp4"), id: id,
+                                            facts: .playable(seconds: 3), created: .now)
+        func record(_ recordID: UUID, _ kind: MediaKind) -> CaptureRecord {
+            CaptureRecord(id: recordID, fileURL: nil, pixelWidth: 1, pixelHeight: 1, appName: nil, mediaKind: kind)
+        }
+        #expect(RecordingRecovery.isSavedAsGIF(found, records: [record(UUID(), .image), record(id, .gif)]))
+        #expect(!RecordingRecovery.isSavedAsGIF(found, records: [record(id, .video)]))
+        #expect(!RecordingRecovery.isSavedAsGIF(found, records: [record(id, .image)]))
+        #expect(!RecordingRecovery.isSavedAsGIF(found, records: [record(UUID(), .gif)]))
+        #expect(!RecordingRecovery.isSavedAsGIF(found, records: []))
+        let unnamed = RecordingRecovery.Found(url: URL(filePath: "/tmp/Recording/clip.mp4"), id: nil,
+                                              facts: .playable(seconds: 3), created: .now)
+        #expect(!RecordingRecovery.isSavedAsGIF(unnamed, records: [record(id, .gif)]))
+    }
+
     @Test func aMissingFolderFindsNothing() async {
         defer { try? FileManager.default.removeItem(at: dir) }
         let found = await RecordingRecovery.scan(dir.appending(path: "missing", directoryHint: .isDirectory))

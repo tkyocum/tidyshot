@@ -1,7 +1,7 @@
 import AppKit
 import ScreenCaptureKit
 
-// Record Screen and Record Fullscreen (recording design): start, hand-off, recovery, end and the recording save funnel. Its state is declared in AppCoordinator.swift.
+// Record Screen and Record Fullscreen (recording design): start, hand-off, recovery, end, GIF conversion and the recording save funnel. Its state is declared in AppCoordinator.swift.
 extension AppCoordinator {
     /// Where Record Screen and Record Fullscreen stand: the count-in (the whole hand-off), the
     /// recording (from `recorder.run`'s call to its return, the stop wait included), the save up to
@@ -200,8 +200,11 @@ extension AppCoordinator {
                                 visibleFrame: Self.visibleFrame(forDisplayID: displayID, cgFrame: current.frame))
         }
         let id = UUID()
-        let request = RecordingRequest(id: id, configuration: RecordingConfiguration.make(source, options: settings.recordingOptions),
-                                       displayID: displayID, outputURL: Recording.fileURL(for: id))
+        // Read once: a change in Settings during the recording or its conversion does not reach it.
+        let options = settings.recordingOptions
+        let request = RecordingRequest(id: id, configuration: RecordingConfiguration.make(source, options: options),
+                                       displayID: displayID, outputURL: Recording.fileURL(for: id),
+                                       gif: options.format == .gif ? options.gif : nil)
         return (request, RecordingScreenChrome(placement: placement))
     }
 
@@ -233,11 +236,20 @@ extension AppCoordinator {
     /// (`fileIsTemporary`, `.none`), timestamped with the file's creation date, sized from the moved
     /// file's attributes, with its poster as the thumbnail; `Recovered a recording` posts and no
     /// card shows. The id is the name's UUID unless a record has it. A file whose move fails stays
-    /// for the next launch.
+    /// for the next launch. An MP4 whose GIF was saved already (`isSavedAsGIF`) is removed instead.
     func recoverRecordings() async {
         let ext = MediaKind.video.fileExtension
         for found in await RecordingRecovery.scan(Recording.directory) {
             let (source, pending) = (found.url, pendingFiles)
+            if RecordingRecovery.isSavedAsGIF(found, records: history.records) {
+                let removed = await Task.detached(priority: .utility) { try FileManager.default.removeItem(at: source) }.result
+                if case .failure(let error) = removed {
+                    RecordingLog.note("Recording: \(source.lastPathComponent) was saved as a GIF and could not be removed: \(error.localizedDescription)")
+                } else {
+                    RecordingLog.note("Recording: \(source.lastPathComponent) was saved as a GIF, removed")
+                }
+                continue
+            }
             // Read before the move, so only the rename comes between the move and the record.
             let poster = await PosterFrame.image(of: source)
             let id = found.id.flatMap { history.record(id: $0) == nil ? $0 : nil } ?? UUID()
@@ -267,19 +279,70 @@ extension AppCoordinator {
     }
 
     /// After the capture lock: a kept file is handed to `saveRecording`, with `Recording stopped`
-    /// when something other than the user's Stop ended it; otherwise the recorder's notice, if any,
-    /// posts. `record.circle` goes as the file is handed on, or once it was removed.
+    /// when something other than the user's Stop ended it, through a GIF conversion for a GIF
+    /// recording; otherwise the recorder's notice, if any, posts, in `RecordingNoticeOrder`'s order.
+    /// `record.circle` goes as the file is handed on, or once it was removed.
     private func endRecording(_ outcome: RecordingOutcome?, intent: CaptureIntent) async {
         guard let outcome else { return }
         isRecording = false
         switch outcome {
         case .keep(let recording, let notice):
-            await saveRecording(recording, intent: intent, stopNotice: notice)
+            if let gif = recording.gif {
+                await makeGIF(from: recording, settings: gif, intent: intent, stopNotice: notice)
+            } else {
+                await saveRecording(recording, intent: intent, stopNotice: notice)
+            }
         case .nothing(let notice):
-            if let notice {
-                notifier.notifyError(notice.body, title: notice.title)
+            postAfterStop(save: nil, stop: notice, quitMode: isQuitting, revealing: nil)
+        }
+    }
+
+    // MARK: GIF conversion
+
+    /// The status menu's GIF items, read as the menu opens; nil while nothing converts.
+    var gifProgressItems: (progress: String, stop: String)? {
+        GIFProgressMenu.items(gifConversions.values.map(\.progress))
+    }
+
+    /// `Stop Making GIF(s)` and a quit: every conversion stops, and each saves its MP4 as on
+    /// failure, or in quit mode.
+    func stopMakingGIFs() {
+        for conversion in gifConversions.values {
+            conversion.task.cancel()
+        }
+    }
+
+    /// Converts a kept GIF recording's MP4 and saves the result (design, Conversion). The recording
+    /// already counts in `recordingSavesInFlight`, so the phase stays `.saving` and a new recording
+    /// may start; the conversion's task is kept in `gifConversions` until it has saved.
+    private func makeGIF(from recording: Recording, settings gif: GIFSettings, intent: CaptureIntent,
+                         stopNotice: RecordingNotice?) async {
+        let conversion = GIFConversion(
+            freeBytes: { RecordingLimits.freeBytes(at: Recording.directory) },
+            make: { mp4, gifURL, settings, progress in
+                try await GIFMaker.make(from: mp4, to: gifURL, fps: settings.fps, maxSide: settings.effectiveMaxSide,
+                                        freeBytes: { RecordingLimits.freeBytes(at: Recording.directory) },
+                                        progress: progress)
+            },
+            save: { recording, saveNotice, mode in
+                // A task of its own, so `Stop Making GIF`'s cancel never reaches the save.
+                await Task {
+                    await self.saveRecording(recording, intent: intent, stopNotice: stopNotice, mode: mode,
+                                             saveNotice: saveNotice)
+                }.value
+            },
+            removeFile: { Recording.removeFile(at: $0) },
+            isQuitting: { self.isQuitting })
+        let id = recording.id
+        let task = Task {
+            await conversion.run(recording, settings: gif) { progress in
+                self.gifConversions[id]?.progress = progress
             }
         }
+        gifConversions[id] = (task, GIFProgress(fraction: 0, frameCount: GIFMaker.outputFrameCount(duration: recording.duration,
+                                                                                                    fps: gif.fps)))
+        await task.value
+        gifConversions[id] = nil
     }
 
     /// The recording funnel beside `save(_:intent:)` (design, After stopping). The finished file
@@ -288,16 +351,19 @@ extension AppCoordinator {
     /// the save folder falls back to `pending/`; only a failed rename there leaves the file in
     /// `tmp/Recording`, with no record, for the launch check. `RecordingSavePlan` then decides the
     /// upload, the clipboard and the notification, and the tail `persist` shares does the rest,
-    /// with the poster as the thumbnail and the card's image. `stopNotice` (`Recording stopped`)
-    /// posts last, revealing the file, in place of `Recording saved`. Quit mode (`mode`, or
-    /// `isQuitting` once set) never asks for a folder and has no Clop, upload, card or
-    /// notification; it returns once the thumbnail is written. `intent.then` and
-    /// `intent.copyOnly` are ignored. Returns the record, or nil when the file stayed in
-    /// `tmp/Recording`.
+    /// with the poster as the thumbnail and the card's image. The record's kind and the file's
+    /// extension are `recording.mediaKind`'s. `saveNotice` (`GIF not made`) and `stopNotice`
+    /// (`Recording stopped`) post last, in `RecordingNoticeOrder`'s order, `Recording stopped`
+    /// revealing the file, in place of `Recording saved`. Quit mode (`mode`, or `isQuitting` once
+    /// set) never asks for a folder and has no Clop, upload, card or notification; it returns once
+    /// the thumbnail is written. `intent.then` and `intent.copyOnly` are ignored. Returns the
+    /// record, or nil when the file stayed in `tmp/Recording`, where the notice names
+    /// `recording.recoveryURL`, the file the launch check recovers.
     @discardableResult
     func saveRecording(_ recording: Recording, intent: CaptureIntent = .standard, stopNotice: RecordingNotice? = nil,
-                       mode: RecordingSaveMode = .normal) async -> CaptureRecord? {
-        // Its only callers, the record functions, counted the recording in when the recorder kept it.
+                       mode: RecordingSaveMode = .normal, saveNotice: RecordingNotice? = nil) async -> CaptureRecord? {
+        // Its only callers, the record functions and their GIF conversions, counted the recording in
+        // when the recorder kept it.
         // It leaves the count once, on whichever return: right after `history.add` (nothing below it
         // suspends, outside quit mode), in quit mode once the thumbnail is written, or with the file
         // left in `tmp/Recording` before any record.
@@ -325,11 +391,13 @@ extension AppCoordinator {
             }
         }
         let (source, id, pending, target) = (recording.fileURL, recording.id, pendingFiles, folder)
+        let (kind, recoveryURL) = (recording.mediaKind, recording.recoveryURL)
         // The size is the file's after its move, read from its attributes under the save folder's
-        // scope when it went there.
+        // scope when it went there: a GIF's own, or the MP4's after a failed conversion.
         let (result, fileURL, byteCount) = await Task.detached(priority: .userInitiated) {
-            let (result, url) = Self.placeRecording(source, kind: .video, id: id, folder: target,
-                                                    noFolderReason: noFolderReason, pending: pending)
+            let (result, url) = Self.placeRecording(source, kind: kind, id: id, folder: target,
+                                                    noFolderReason: noFolderReason, pending: pending,
+                                                    recoveryURL: recoveryURL)
             let scope = if case .saveFolder = result { target?.url } else { URL?.none }
             return (result, url, FileSizes.byteCount(of: url, scope: scope))
         }.value
@@ -342,9 +410,7 @@ extension AppCoordinator {
             if case .notice(let notice) = plan.notification {
                 notifier.notifyError(notice.body, title: notice.title)
             }
-            if !quitMode, let stopNotice {
-                notifier.notifyError(stopNotice.body, title: stopNotice.title, revealing: fileURL)
-            }
+            postAfterStop(save: saveNotice, stop: stopNotice, quitMode: quitMode, revealing: recoveryURL)
             return nil
         }
         if plan.setsLastCaptureURL {
@@ -358,12 +424,12 @@ extension AppCoordinator {
                                    fileIsTemporary: plan.fileIsTemporary,
                                    pixelWidth: recording.pixelWidth, pixelHeight: recording.pixelHeight,
                                    appName: nil, uploadState: plan.uploadState,
-                                   mediaKind: .video, durationSeconds: recording.duration, byteCount: byteCount)
+                                   mediaKind: kind, durationSeconds: recording.duration, byteCount: byteCount)
         let notification: SaveNotification
         switch plan.notification {
         case .none: notification = .none
-        // `Recording stopped`, below, replaces it.
-        case .saved: notification = stopNotice == nil ? .saved(title: "Recording saved") : .none
+        // `GIF not made` or `Recording stopped`, below, replaces it.
+        case .saved: notification = saveNotice == nil && stopNotice == nil ? .saved(title: "Recording saved") : .none
         case .notice(let notice): notification = .notice(notice)
         }
         // The poster is fitted into the card's well and the drag image, so its point size does not matter.
@@ -371,10 +437,16 @@ extension AppCoordinator {
                          notConfiguredWarning: plan.notConfiguredWarning, showsCard: plan.showsCard,
                          upload: plan.uploads ? destination : nil, payload: { try uploadPayload(for: record) },
                          notification: notification, awaitsThumbnail: quitMode)
-        if !quitMode, let stopNotice {
-            notifier.notifyError(stopNotice.body, title: stopNotice.title, revealing: fileURL)
-        }
+        postAfterStop(save: saveNotice, stop: stopNotice, quitMode: quitMode, revealing: fileURL)
         return record
+    }
+
+    /// The notices after Stop (plan Gap 2) in `RecordingNoticeOrder`'s order, none in quit mode.
+    /// `stop` reveals `file`, the recording's final file.
+    private func postAfterStop(save: RecordingNotice?, stop: RecordingNotice?, quitMode: Bool, revealing file: URL?) {
+        for notice in RecordingNoticeOrder.afterStop(save: save, stop: stop, microphone: nil, quitMode: quitMode) {
+            notifier.notifyError(notice.body, title: notice.title, revealing: notice == stop ? file : nil)
+        }
     }
 
     /// A recording's file name in the save folder: `Recording file name` at the time the recording
@@ -390,11 +462,12 @@ extension AppCoordinator {
     /// detached task, with `kind`'s extension. With `folder` it goes into the save folder. When
     /// that move fails, or there is no folder (`noFolderReason`), it is renamed to
     /// `pending/<id>.<ext>` as a fallback; with neither, it goes there as `.uploadOnly`'s target.
-    /// Only when that rename fails does it stay where it is (`.leftInTmp`, with the rename's error).
-    /// Never reads the file.
+    /// Only when that rename fails does it stay where it is (`.leftInTmp`, with the rename's error
+    /// and the path of `recoveryURL`, the file the launch check recovers). Never reads the file.
     nonisolated private static func placeRecording(_ source: URL, kind: MediaKind, id: UUID,
                                                    folder: (url: URL, baseName: String)?, noFolderReason: String?,
-                                                   pending: PendingFileStore) -> (result: RecordingFileResult, url: URL) {
+                                                   pending: PendingFileStore,
+                                                   recoveryURL: URL) -> (result: RecordingFileResult, url: URL) {
         let ext = kind.fileExtension
         var reason = noFolderReason
         if let folder {
@@ -411,7 +484,7 @@ extension AppCoordinator {
             return (reason.map { .fallback(reason: $0) } ?? .pending, url)
         } catch {
             RecordingLog.note("Recording: \(source.lastPathComponent) could not be moved to pending: \(error.localizedDescription)")
-            return (.leftInTmp(reason: error.localizedDescription, path: source.path(percentEncoded: false)), source)
+            return (.leftInTmp(reason: error.localizedDescription, path: recoveryURL.path(percentEncoded: false)), source)
         }
     }
 }

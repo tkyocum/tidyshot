@@ -7,7 +7,8 @@ import SwiftUI
 /// in the video.
 final class RecordingPanel: NSPanel {
     init(model: RecordingPanelModel) {
-        super.init(contentRect: CGRect(origin: .zero, size: RecordingPanelView.size),
+        // `RecordingScreenChrome.show` sets the frame, at its bar's size.
+        super.init(contentRect: .zero,
                    styleMask: [.nonactivatingPanel, .borderless, .fullSizeContentView],
                    backing: .buffered, defer: false)
         // isFloatingPanel resets the level to .floating, so it comes first.

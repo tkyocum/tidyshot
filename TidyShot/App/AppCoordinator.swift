@@ -67,8 +67,8 @@ final class AppCoordinator {
     var lastCaptureURL: URL?
 
     // MARK: Recording state (AppCoordinator+Recording.swift)
-    /// From a recording's first frame until its file is handed to `saveRecording` or removed: the
-    /// status item shows `record.circle` and the menu offers Stop Recording.
+    /// From a recording's first frame until its file is handed on to its save (a GIF's conversion
+    /// first) or removed: the status item shows `record.circle` and the menu offers Stop Recording.
     var isRecording = false
     /// A recording's count-in flag: true from the selection's return (Record Fullscreen: from the
     /// free-space check) until `recorder.run` is called or the start gives up. It covers the
@@ -76,7 +76,8 @@ final class AppCoordinator {
     /// `selfTimer.isRunning` cannot serve: it stays true until `run`'s capture closure returns.
     @ObservationIgnored var recordingCountIn = false
     /// Recordings between the recorder's `.keep` and `history.add` (in quit mode, until the
-    /// thumbnail is written), so the phase never reads `.idle` in between.
+    /// thumbnail is written), a GIF's conversion included, so the phase never reads `.idle` in
+    /// between.
     @ObservationIgnored var recordingSavesInFlight = 0
     /// Set by `finishRecordingForQuit` once the editors let the quit go ahead; never cleared, as the
     /// app then quits. A recording's hand-off gives up before `recorder.run`, and `saveRecording`
@@ -87,6 +88,9 @@ final class AppCoordinator {
     /// clipboard after the upload only while the count still matches. In memory only, so after a
     /// relaunch the clipboard counts as changed.
     @ObservationIgnored var videoClipboardCounts: [UUID: Int] = [:]
+    /// GIF conversions under way, by recording id: each one's task and its latest progress, for
+    /// the status menu and `stopMakingGIFs()`. An entry goes when its conversion has saved.
+    @ObservationIgnored var gifConversions: [UUID: (task: Task<Void, Never>, progress: GIFProgress)] = [:]
 
     // MARK: Retained capture and pins (AppCoordinator+Pins.swift)
     /// The capture just taken and its pixels, kept while its card shows, so Annotate opens the
@@ -381,11 +385,14 @@ final class AppCoordinator {
     /// A quit, a log out or a restart, after `reviewEditorsBeforeQuit` let it go ahead (design,
     /// Quit, log out and restart): a count-in is cancelled and records nothing, a recording stops
     /// as Stop does, with the stop wait and the end rule, and its save runs in quit mode, with an
-    /// open folder panel closed so the file goes to `pending/`. A Cancel's question is answered
-    /// Save (`recorder.quit()`), as it cannot show while the quit is held. Returns once nothing is
-    /// left (`recordingPhase` is `.idle`), the thumbnail of a save written.
+    /// open folder panel closed so the file goes to `pending/`. A GIF conversion under way stops
+    /// and one not yet begun is skipped, each saving its MP4 in quit mode, so a quit never waits
+    /// for a conversion. A Cancel's question is answered Save (`recorder.quit()`), as it cannot
+    /// show while the quit is held. Returns once nothing is left (`recordingPhase` is `.idle`), the
+    /// thumbnail of a save written.
     func finishRecordingForQuit() async {
         isQuitting = true
+        stopMakingGIFs()
         selfTimer.cancel()
         recorder.quit()
         saveLocation.cancelFolderChoice()

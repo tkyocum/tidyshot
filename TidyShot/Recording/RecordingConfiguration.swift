@@ -29,6 +29,9 @@ nonisolated struct RecordingOptions: Equatable, Sendable {
     var retina: Bool
     var systemAudio: Bool
     var showsCursor: Bool
+    var format: RecordingFormat = .mp4
+    /// Read for a GIF recording only.
+    var gif = GIFSettings(fps: 15, maxSide: 1280)
 }
 
 /// Everything the stream needs, decided without a screen: the filter plan, the output size with
@@ -51,6 +54,8 @@ nonisolated struct RecordingConfiguration: Equatable, Sendable {
     /// The longer output side's cap: Clop returns an empty reply for 5120×2880 H.264, and many
     /// players cannot play H.264 that large.
     static let maximumSide = 4096
+    /// A GIF recording's MP4 rate, whatever `Frame rate` says: the GIF's own rate is at most 20.
+    static let gifFramesPerSecond = 30
     /// An area under 32×32 pt is refused.
     static let minimumAreaSide: CGFloat = 32
 
@@ -81,9 +86,12 @@ nonisolated struct RecordingConfiguration: Equatable, Sendable {
             filter = .window(windowID: id)
             isWindow = true
         }
+        // A GIF has no sound, so its MP4 records none.
+        let isGIF = options.format == .gif
         return RecordingConfiguration(filter: filter, pixelWidth: size.width, pixelHeight: size.height,
-                                      framesPerSecond: options.framesPerSecond, showsCursor: options.showsCursor,
-                                      capturesAudio: options.systemAudio, excludesCurrentProcessAudio: true,
+                                      framesPerSecond: isGIF ? gifFramesPerSecond : options.framesPerSecond,
+                                      showsCursor: options.showsCursor,
+                                      capturesAudio: !isGIF && options.systemAudio, excludesCurrentProcessAudio: true,
                                       ignoresShadowsSingleWindow: isWindow, scalesToFit: isWindow,
                                       preservesAspectRatio: true)
     }

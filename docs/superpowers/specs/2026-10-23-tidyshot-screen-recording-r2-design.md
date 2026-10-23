@@ -51,6 +51,11 @@ The review's probes and the GIF encoder spike go in the same folder, copied in w
   - `SCRecordingOutput`'s keyframes are about 2 s apart for moving content (`trim-pass.mp4`: 0 and 1.97 s), and it writes a frame only when the screen changes;
   - one sequential `AVAssetReader` pass converted 60 s of moving content at 1280 px in about 25 s.
 - **GIF timing.** GIF delays are whole centiseconds. `1 / 15` s is stored as 7 cs, so a 15 fps GIF with one delay for every frame plays about 5 % slow (10 s plays in 10.5 s). 10 and 20 fps are exact.
+- **`GIFMaker` as built** (Task 3, 2026-10-23). These are `GIFMaker.make` compiled with `-O` into a harness outside the app, at 15 fps. They are not the Debug-build hand checks, which are still to run.
+  - The spike's three inputs at 1280 px give GIFs byte-identical to the spike's `final/*-ours.gif`: 14.816 / 0.314 / 1.391 MB, in 3.18 / 0.58 / 3.51 s, with a peak footprint of 42.3 / 31.9 / 40.3 MB.
+  - `window` at 800 px is 7.41 MB (36.5 MB peak), and at full size 28.48 MB in 4.9 s (85 MB). `p-4096` at full size is 11.45 MB in 11.1 s (157 MB).
+  - 20 s and 60 s of 2560×1664 at 30 fps, to 1280 px, peaked at 47.6 and 38.2 MB, so memory is flat in duration. They took 7.1 and 22.2 s.
+  - A synthetic 1280×800 diagonal two-hue gradient with a moving square has an MAE of 0.91 but visible bands: one 1280 px row holds 30 colours, in flat runs of up to 95 px with steps of up to 5 levels. A real wallpaper gradient is still to check by hand (Still to probe).
 - **Trim.** `AVAssetExportSession` with `AVAssetExportPresetPassthrough` and a `timeRange` is instant: 0.02–0.03 s for 5.44 s and 2.27 s ranges. The duration matches the request to the millisecond, and the audio track is kept. A re-encode (`HighestQuality`) took 1.26 s for 2.27 s of 4096×2304.
   - Passthrough cuts on keyframes. `trim-pass.mp4` holds 85 video samples with keyframes at 0 and 1.97 s, and its video edit starts at media time 1.21 s. ffmpeg decodes 66 frames by default and 85 with `-ignore_editlist`.
 - **Microphone.**

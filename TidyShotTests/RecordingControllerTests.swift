@@ -24,10 +24,11 @@ struct RecordingControllerTests {
         request(.window(id: windowID, frame: CGRect(x: 200, y: 150, width: 1000, height: 700), scale: 2))
     }
 
-    func request(_ source: RecordingSource) -> RecordingRequest {
+    func request(_ source: RecordingSource, gif: GIFSettings? = nil) -> RecordingRequest {
         let id = UUID()
         return RecordingRequest(id: id, configuration: .make(source, options: options), displayID: display.id,
-                                outputURL: URL(filePath: "/private/tmp/RecordingControllerTests/Recording/\(id.uuidString).mp4"))
+                                outputURL: URL(filePath: "/private/tmp/RecordingControllerTests/Recording/\(id.uuidString).mp4"),
+                                gif: gif)
     }
 
     /// Runs `request` on a new controller with `driver` and `chrome`, and lets the start run.
@@ -180,6 +181,52 @@ struct RecordingControllerTests {
         let before = clock.now
         try await clock.sleep(for: .milliseconds(10))
         #expect(clock.now - before >= .milliseconds(10))
+    }
+
+    // MARK: GIF
+
+    @Test func aKeptGIFRecordingCarriesTheRequestsGIFSettings() async throws {
+        let driver = FakeRecordingDriver(log: world.log)
+        let chrome = FakeRecordingChrome(log: world.log)
+        let settings = GIFSettings(fps: 20, maxSide: 0)
+        let (controller, run) = await begin(request(.display(display), gif: settings), driver: driver, chrome: chrome)
+        driver.send(.recordingStarted)
+        await world.advance(by: .seconds(3))
+        chrome.pressStop()
+
+        let recording = try #require(await run.value.kept)
+        #expect(recording.gif == settings)
+        // The recorder's file is the MP4, saved or converted after it.
+        #expect(recording.mediaKind == .video)
+        #expect(recording.recoveryURL == recording.fileURL)
+        controller.close()
+    }
+
+    @Test func aKeptMP4RecordingHasNoGIFSettings() async throws {
+        let driver = FakeRecordingDriver(log: world.log)
+        let chrome = FakeRecordingChrome(log: world.log)
+        let (controller, run) = await begin(areaRequest, driver: driver, chrome: chrome)
+        driver.send(.recordingStarted)
+        await world.advance(by: .seconds(3))
+        chrome.pressStop()
+
+        let recording = try #require(await run.value.kept)
+        #expect(recording.gif == nil)
+        #expect(recording.mediaKind == .video)
+        controller.close()
+    }
+
+    @Test func theChromeShowsTheGIFBarForAGIFRequestAndThePlainBarOtherwise() async throws {
+        for (gif, bar) in [(GIFSettings?.some(GIFSettings(fps: 15, maxSide: 1280)), RecordingPanelLayout.Bar.gif),
+                           (nil, .plain)] {
+            let driver = FakeRecordingDriver(log: world.log)
+            let chrome = FakeRecordingChrome(log: world.log)
+            let (controller, run) = await begin(request(.display(display), gif: gif), driver: driver, chrome: chrome)
+            #expect(chrome.shownBars == [bar])
+            chrome.pressStop()
+            _ = await run.value
+            controller.close()
+        }
     }
 
     // MARK: The start
@@ -851,7 +898,7 @@ struct RecordingControllerTests {
     }
 
     @Test func thePanelIsA172By44Bar() {
-        #expect(RecordingPanelView.size == CGSize(width: 172, height: 44))
+        #expect(RecordingPanelLayout.size(of: .plain) == CGSize(width: 172, height: 44))
     }
 
     // MARK: The real driver's configuration

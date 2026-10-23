@@ -3,12 +3,15 @@ import CoreGraphics
 import Foundation
 
 /// One recording to run: the id that names the file, the stream's configuration, the display it
-/// is on, and `tmp/Recording/<id>.mp4`, whose folder already exists.
+/// is on, `tmp/Recording/<id>.mp4`, whose folder already exists, and for a GIF recording the GIF
+/// settings read at the start (plan Gap 1).
 struct RecordingRequest {
     let id: UUID
     let configuration: RecordingConfiguration
     let displayID: CGDirectDisplayID
     let outputURL: URL
+    /// Nil for an MP4 recording. A kept file carries it to the save, which makes the GIF.
+    var gif: GIFSettings? = nil
 }
 
 /// How a recording ended: a file to save, or nothing (the file is gone), each with the notice to
@@ -62,17 +65,7 @@ struct RecordingEnvironment {
             endActivity: { ProcessInfo.processInfo.endActivity($0) },
             inspect: { await VideoValidation.inspect($0) },
             poster: { await PosterFrame.image(of: $0) },
-            removeFile: { url in
-                Task.detached {
-                    do {
-                        try FileManager.default.removeItem(at: url)
-                    } catch CocoaError.fileNoSuchFile {
-                        // A start that failed early wrote nothing.
-                    } catch {
-                        RecordingLog.note("Recording: \(url.lastPathComponent) could not be removed: \(error.localizedDescription)")
-                    }
-                }
-            },
+            removeFile: { Recording.removeFile(at: $0) },
             workspaceCenter: NSWorkspace.shared.notificationCenter)
     }
 }
@@ -145,7 +138,8 @@ final class RecordingController {
         observeWorkspace()
         // The chrome is on screen before the driver reads the shareable content, so the
         // fallback exclusion can find it.
-        chrome.show(onStop: { [weak self] in self?.stop() }, onCancel: { [weak self] in self?.cancel() })
+        chrome.show(onStop: { [weak self] in self?.stop() }, onCancel: { [weak self] in self?.cancel() },
+                    bar: RecordingPanelLayout.bar(showsMute: false, isGIF: request.gif != nil))
         let exclusions = RecordingExclusions(chromeWindows: chrome.windowNumbers,
                                              cardWindows: environment.cardWindowNumbers(),
                                              coverWindows: environment.coverWindowNumbers(request.displayID))
@@ -357,7 +351,8 @@ final class RecordingController {
             let recording = Recording(id: request.id, fileURL: url, startedAt: startedAt,
                                       pixelWidth: facts.naturalSize.map { Int($0.width.rounded()) } ?? request.configuration.pixelWidth,
                                       pixelHeight: facts.naturalSize.map { Int($0.height.rounded()) } ?? request.configuration.pixelHeight,
-                                      duration: facts.duration, poster: poster, displayID: request.displayID)
+                                      duration: facts.duration, poster: poster, displayID: request.displayID,
+                                      gif: request.gif)
             return .keep(recording, notice: notice)
         case .remove(let notice):
             environment.removeFile(url)

@@ -361,6 +361,18 @@ struct AppSettingsTests {
                 == RecordingOptions(framesPerSecond: 60, retina: false, systemAudio: true, showsCursor: false))
     }
 
+    /// A recording reads the format and the GIF settings with the rest, at its start.
+    @Test func recordingOptionsCarryTheFormatAndTheGIFSettings() {
+        let settings = AppSettings(defaults: freshDefaults())
+        #expect(settings.recordingOptions.format == .mp4)
+        #expect(settings.recordingOptions.gif == GIFSettings(fps: 15, maxSide: 1280))
+        settings.recordingFormat = .gif
+        settings.gifFrameRate = 20
+        settings.gifMaxSide = 0
+        #expect(settings.recordingOptions.format == .gif)
+        #expect(settings.recordingOptions.gif == GIFSettings(fps: 20, maxSide: 0))
+    }
+
     /// A stored frame rate the picker does not offer reads as 30.
     @Test func aStoredFrameRateOtherThan30Or60ReadsAs30() {
         let defaults = freshDefaults()

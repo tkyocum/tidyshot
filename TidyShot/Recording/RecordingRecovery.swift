@@ -42,6 +42,14 @@ nonisolated enum RecordingRecovery {
         return found.sorted { $0.created < $1.created }
     }
 
+    /// True when a `.gif` record has the found file's id: a kill after the GIF's save and before
+    /// its MP4's removal left the MP4, which is removed rather than recovered. The record is the
+    /// whole test; its file is not checked (design, After a crash).
+    static func isSavedAsGIF(_ found: Found, records: [CaptureRecord]) -> Bool {
+        guard let id = found.id else { return false }
+        return records.contains { $0.id == id && $0.mediaKind == .gif }
+    }
+
     /// The UUID in a `<UUID>.mp4` name, as `Recording.fileURL(for:)` names a recording.
     private static func id(of url: URL) -> UUID? {
         guard url.pathExtension == MediaKind.video.fileExtension else { return nil }

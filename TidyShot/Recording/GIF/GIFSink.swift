@@ -6,11 +6,15 @@ nonisolated enum GIFMakerError: LocalizedError, Equatable, Sendable {
     case notEnoughSpace
     /// Opening, writing or patching the file failed.
     case couldNotWrite
+    /// `GIFMaker` could not read the recording's frames: no video track, a failed read, or no
+    /// first frame.
+    case couldNotRead
 
     var errorDescription: String? {
         switch self {
         case .notEnoughSpace: "Not enough disk space to make the GIF."
         case .couldNotWrite: "The GIF could not be written. The disk may be full."
+        case .couldNotRead: "The recording could not be read."
         }
     }
 }
