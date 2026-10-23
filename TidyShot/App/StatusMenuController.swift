@@ -35,17 +35,26 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         updateIcon()
     }
 
-    /// `camera.viewfinder`, or `arrow.up.circle` while an upload runs. Observation calls `onChange`
-    /// once per registration (before the value changes), so the update is scheduled and registers
-    /// again; the main queue also runs while a menu is tracking, so the icon changes with the menu open.
+    /// `camera.viewfinder`, `arrow.up.circle` while an upload runs, or `record.circle` while a
+    /// recording runs, which wins over the upload. Observation calls `onChange` once per
+    /// registration (before the value changes), so the update is scheduled and registers again; the
+    /// main queue also runs while a menu is tracking, so the icon changes with the menu open.
     private func updateIcon() {
-        let uploading = withObservationTracking {
-            coordinator.isUploading
+        let (recording, uploading) = withObservationTracking {
+            (coordinator.isRecording, coordinator.isUploading)
         } onChange: { [weak self] in
             Task { @MainActor in self?.updateIcon() }
         }
-        let image = NSImage(systemSymbolName: uploading ? "arrow.up.circle" : "camera.viewfinder",
-                            accessibilityDescription: uploading ? "TidyShot, uploading" : "TidyShot")
+        let symbol: String
+        let description: String
+        if recording {
+            (symbol, description) = ("record.circle", "TidyShot, recording")
+        } else if uploading {
+            (symbol, description) = ("arrow.up.circle", "TidyShot, uploading")
+        } else {
+            (symbol, description) = ("camera.viewfinder", "TidyShot")
+        }
+        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: description)
         image?.isTemplate = true
         statusItem.button?.image = image
     }
@@ -65,6 +74,13 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
     private func rebuild() {
         menu.removeAllItems()
+        // During a recording its Stop comes first, and the two Record items are not shown; every
+        // other capture item is disabled, as while any capture runs.
+        let recording = coordinator.isRecording
+        if recording {
+            menu.addItem(item(title("Stop Recording", shortcut: .recordScreen), #selector(stopRecording)))
+            menu.addItem(.separator())
+        }
         if !coordinator.permissionGranted {
             menu.addItem(item("Screen Recording permission needed…", #selector(showPermission)))
             menu.addItem(.separator())
@@ -77,6 +93,10 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         menu.addItem(captureItem("Capture Previous Area", .capturePreviousArea, #selector(capturePreviousArea)))
         menu.addItem(captureItem("Self-Timer", .selfTimer, #selector(captureSelfTimer)))
         menu.addItem(captureItem("Capture Text", .captureText, #selector(captureText)))
+        if !recording {
+            menu.addItem(captureItem("Record Screen", .recordScreen, #selector(recordScreen)))
+            menu.addItem(captureItem("Record Fullscreen", .recordFullscreen, #selector(recordFullscreen)))
+        }
         menu.addItem(.separator())
         recentCaptures.rebuild()
         menu.addItem(recentCaptures.item)
@@ -136,6 +156,9 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     @objc private func capturePreviousArea() { Task { await coordinator.capturePreviousArea() } }
     @objc private func captureSelfTimer() { Task { await coordinator.captureSelfTimer() } }
     @objc private func captureText() { Task { await coordinator.captureText() } }
+    @objc private func recordScreen() { Task { await coordinator.recordScreen() } }
+    @objc private func recordFullscreen() { Task { await coordinator.recordFullscreen() } }
+    @objc private func stopRecording() { coordinator.stopRecording() }
     @objc private func retryFailedUploads() { coordinator.retryFailedUploads() }
     @objc private func restoreClosedOverlay() { Task { await coordinator.restoreClosedOverlay() } }
     @objc private func revealLastCapture() { coordinator.revealLastCapture() }

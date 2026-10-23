@@ -59,4 +59,15 @@ struct SelectionOutcomeTests {
         #expect(SelectionOutcome.resolve(mode: .selfTimer, dragRect: nil, hasHighlight: false) == .cancel)
         #expect(SelectionOutcome.resolve(mode: .selfTimer, dragRect: jitter, hasHighlight: false) == .cancel)
     }
+
+    /// Record Screen selects as Self-Timer does: a drag records an area, a click the highlighted window.
+    @Test func recordingModeDragsAnAreaOrClicksAWindow() {
+        #expect(SelectionOutcome.resolve(mode: .recording, dragRect: drag, hasHighlight: false) == .area(drag))
+        #expect(SelectionOutcome.resolve(mode: .recording, dragRect: drag, hasHighlight: true) == .area(drag))
+        #expect(SelectionOutcome.resolve(mode: .recording, dragRect: nil, hasHighlight: true) == .window)
+        let jitter = CGRect(x: 10, y: 10, width: 1, height: 1)
+        #expect(SelectionOutcome.resolve(mode: .recording, dragRect: jitter, hasHighlight: true) == .window)
+        #expect(SelectionOutcome.resolve(mode: .recording, dragRect: nil, hasHighlight: false) == .cancel)
+        #expect(SelectionOutcome.resolve(mode: .recording, dragRect: jitter, hasHighlight: false) == .cancel)
+    }
 }

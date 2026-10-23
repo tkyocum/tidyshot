@@ -60,6 +60,30 @@ struct ShortcutsTests {
         #expect(KeyboardShortcuts.Name.selfTimer.initialShortcut == nil)
     }
 
+    /// ⌃⇧8 sits after ⌃⇧7 (recording design, Starting); Record Fullscreen has no default. No two
+    /// names share a key or a default shortcut (Self-Timer, Restore Closed Overlay and Record
+    /// Fullscreen have none).
+    @Test func recordScreenIsControlShiftEight() {
+        #expect(KeyboardShortcuts.Name.recordScreen.rawValue == "recordScreen")
+        #expect(KeyboardShortcuts.Name.recordScreen.initialShortcut == .init(.eight, modifiers: [.control, .shift]))
+        #expect(KeyboardShortcuts.Name.recordFullscreen.rawValue == "recordFullscreen")
+        #expect(KeyboardShortcuts.Name.recordFullscreen.initialShortcut == nil)
+        let names: [KeyboardShortcuts.Name] = [.allInOne, .captureArea, .captureWindow, .captureFullscreen,
+                                               .captureScrolling, .capturePreviousArea, .selfTimer, .captureText,
+                                               .recordScreen, .recordFullscreen, .restoreOverlay, .cancelCapture]
+        #expect(Set(names.map(\.rawValue)).count == names.count)
+        #expect(Set(names.compactMap(\.initialShortcut)).count == names.count - 3)
+    }
+
+    /// Either record shortcut cancels a count-in and stops a recording, whichever started it. Idle,
+    /// or while a recording is saved, it starts a new one.
+    @Test func recordShortcutsStartCancelOrStopByPhase() {
+        #expect(AppCoordinator.recordingShortcutAction(for: .idle) == .start)
+        #expect(AppCoordinator.recordingShortcutAction(for: .countIn) == .cancelCountIn)
+        #expect(AppCoordinator.recordingShortcutAction(for: .recording) == .stop)
+        #expect(AppCoordinator.recordingShortcutAction(for: .saving) == .start)
+    }
+
     /// The Escape name serves scrolling and the self-timer now; the stored name is the old one,
     /// so nothing in UserDefaults moves.
     @Test func cancelCaptureKeepsTheStoredNameOfTheScrollingEscape() {

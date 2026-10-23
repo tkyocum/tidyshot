@@ -93,4 +93,47 @@ struct RecentCaptureFormattingTests {
         // ...unless it is the capture just taken, whose image is still in memory.
         #expect(RecentCaptureFormatting.canAnnotate(moved, retainedID: moved.id, saveFolder: pictures))
     }
+
+    func video(_ state: CaptureRecord.UploadState, file: URL? = URL(fileURLWithPath: "/Users/tim/Desktop/Recording.mp4"),
+               temporary: Bool = false, location: ObjectLocation? = nil) -> CaptureRecord {
+        CaptureRecord(timestamp: now.addingTimeInterval(-120), fileURL: file, fileIsTemporary: temporary,
+                      pixelWidth: 1600, pixelHeight: 1000, appName: nil, uploadState: state, objectLocation: location,
+                      mediaKind: .video, durationSeconds: 42)
+    }
+
+    /// While a recording waits for Clop, its row says so in place of `Uploading`.
+    @Test func detailSaysOptimizingWhileClopRuns() {
+        #expect(RecentCaptureFormatting.detail(for: video(.uploading(fraction: 0)), now: now, locale: english,
+                                               isOptimizing: true) == "2 minutes ago · Optimizing…")
+        #expect(RecentCaptureFormatting.detail(for: video(.uploading(fraction: 0)), now: now, locale: english,
+                                               isOptimizing: false) == "2 minutes ago · Uploading")
+        #expect(RecentCaptureFormatting.detail(for: video(.uploading(fraction: 0.3)), now: now, locale: english)
+                == "2 minutes ago · Uploading")
+    }
+
+    /// No Annotate, Pin or Copy Image for a video, wherever its file is and whatever was retained.
+    @Test func aVideoHasNoImageActions() {
+        let desktop = URL(fileURLWithPath: "/Users/tim/Desktop", isDirectory: true)
+        let url = URL(string: "https://snap.tky.io/aB3dE9.mp4")!
+        let saved = video(.none)
+        let uploadedOnly = video(.uploaded(url: url, key: "aB3dE9.mp4"), file: nil, location: location)
+        for record in [saved, uploadedOnly] {
+            #expect(!RecentCaptureFormatting.showsImageActions(record))
+            #expect(!RecentCaptureFormatting.canCopyImage(record))
+            #expect(!RecentCaptureFormatting.canAnnotate(record, retainedID: record.id, saveFolder: desktop))
+        }
+        #expect(RecentCaptureFormatting.canCopyLink(uploadedOnly))
+        #expect(RecentCaptureFormatting.showsImageActions(record(.none)))
+    }
+
+    /// Copy File needs a video with a local file, in the save folder or `pending/`.
+    @Test func copyFileNeedsAVideoWithALocalFile() {
+        let url = URL(string: "https://snap.tky.io/aB3dE9.mp4")!
+        let pending = URL(fileURLWithPath: "/tmp/pending/\(UUID().uuidString).mp4")
+        #expect(RecentCaptureFormatting.canCopyFile(video(.none)))
+        #expect(RecentCaptureFormatting.canCopyFile(video(.uploading(fraction: 0.5), file: pending, temporary: true)))
+        #expect(!RecentCaptureFormatting.canCopyFile(video(.uploaded(url: url, key: "aB3dE9.mp4"), file: nil,
+                                                           location: location)))
+        #expect(!RecentCaptureFormatting.canCopyFile(record(.none)))
+    }
 }

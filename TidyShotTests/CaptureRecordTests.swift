@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import UniformTypeIdentifiers
 @testable import TidyShot
 
 struct CaptureRecordTests {
@@ -292,5 +293,72 @@ struct CaptureRecordTests {
         never.recordLocalEdit(pixelWidth: 40, pixelHeight: 30, at: edited)
         #expect(!never.uploadIsStale)
         #expect(never.editedAt == edited)
+    }
+
+    // MARK: Media kind (recording R1)
+
+    @Test func historyWithoutMediaKindDecodesAsImages() throws {
+        try Data(phase3JSON.utf8).write(to: dir.appending(path: "history.json"))
+        let history = store()
+        history.load()
+
+        let record = try #require(history.record(id: UUID(uuidString: "5D1C2B3A-4E5F-4A6B-8C7D-9E0F1A2B3C4D")!))
+        #expect(record.mediaKind == .image)
+        #expect(record.durationSeconds == nil)
+        #expect(!record.isVideo)
+    }
+
+    /// A kind from a newer TidyShot reads as a video, so the history is never set aside for it.
+    @Test func unknownMediaKindDecodesAsVideo() throws {
+        let json = """
+        [
+          {
+            "durationSeconds" : 12.5,
+            "fileIsTemporary" : true,
+            "fileURL" : "file:///Users/tim/Library/Containers/io.tky.tidyshot/Data/Library/Application%20Support/TidyShot/pending/7A1C2B3A-4E5F-4A6B-8C7D-9E0F1A2B3C4D.gif",
+            "id" : "7A1C2B3A-4E5F-4A6B-8C7D-9E0F1A2B3C4D",
+            "mediaKind" : "animation",
+            "pixelHeight" : 100,
+            "pixelWidth" : 200,
+            "timestamp" : "2026-10-22T16:56:03.000Z",
+            "uploadState" : {
+              "none" : {
+              }
+            }
+          }
+        ]
+        """
+        try Data(json.utf8).write(to: dir.appending(path: "history.json"))
+        let history = store()
+        history.load()
+
+        let record = try #require(history.record(id: UUID(uuidString: "7A1C2B3A-4E5F-4A6B-8C7D-9E0F1A2B3C4D")!))
+        #expect(record.mediaKind == .video)
+        #expect(record.isVideo)
+        #expect(record.durationSeconds == 12.5)
+    }
+
+    @Test func videoRecordRoundTrips() throws {
+        let video = CaptureRecord(timestamp: Date(timeIntervalSince1970: 1_792_411_200), fileURL: dir.appending(path: "pending/v.mp4"),
+                                  fileIsTemporary: true, pixelWidth: 1600, pixelHeight: 1000, appName: nil,
+                                  mediaKind: .video, durationSeconds: 42.25)
+        store().add(video)
+
+        let reloaded = store()
+        reloaded.load()
+        let record = try #require(reloaded.record(id: video.id))
+        #expect(record == video)
+        #expect(record.mediaKind == .video)
+        #expect(record.durationSeconds == 42.25)
+        #expect(record.isVideo)
+    }
+
+    @Test func mediaKindTypes() {
+        #expect(MediaKind.image.fileExtension == "png")
+        #expect(MediaKind.video.fileExtension == "mp4")
+        #expect(MediaKind.image.contentType == "image/png")
+        #expect(MediaKind.video.contentType == "video/mp4")
+        #expect(MediaKind.image.utType == .png)
+        #expect(MediaKind.video.utType == .mpeg4Movie)
     }
 }

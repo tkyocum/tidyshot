@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 /// Uploads jobs one at a time, in order, with retry and backoff. A template job's key is reserved
 /// with HEAD before its PUT; a fixed-key job PUTs its key as is. Reports progress and results
@@ -7,6 +8,31 @@ import Foundation
 actor UploadQueue {
     typealias EventHandler = @MainActor @Sendable (UploadEvent) -> Void
     typealias Sleeper = @Sendable (Duration) async throws -> Void
+
+    /// Starts and stops a folder's security-scoped access; a fake in tests.
+    nonisolated struct SecurityScope: Sendable {
+        /// True when access was started and must be stopped.
+        var start: @Sendable (URL) -> Bool
+        var stop: @Sendable (URL) -> Void
+
+        static let live = SecurityScope(start: { $0.startAccessingSecurityScopedResource() },
+                                        stop: { $0.stopAccessingSecurityScopedResource() })
+    }
+
+    /// Keeps progress events to at most one per `interval`: the first fraction passes, then one
+    /// per interval, and a fraction of 1 always does.
+    nonisolated struct ProgressThrottle: Sendable {
+        static let interval: Duration = .milliseconds(100)
+
+        private var lastAdmitted: ContinuousClock.Instant?
+
+        mutating func admits(_ fraction: Double, at instant: ContinuousClock.Instant) -> Bool {
+            if fraction >= 1 { return true }
+            if let lastAdmitted, instant - lastAdmitted < Self.interval { return false }
+            lastAdmitted = instant
+            return true
+        }
+    }
 
     /// What `cancel(recordID:)` found.
     nonisolated enum CancelResult: Sendable, Equatable {
@@ -32,7 +58,11 @@ actor UploadQueue {
 
     private let destination: any Destination
     private let keyNamer: ObjectKeyNamer
+    /// For `.data` jobs.
     private let policy: RetryPolicy
+    /// For `.file` jobs.
+    private let filePolicy: RetryPolicy
+    private let scope: SecurityScope
     private let sleep: Sleeper
     private let events: EventHandler
     private var pending: [UploadJob] = []
@@ -47,11 +77,15 @@ actor UploadQueue {
     init(destination: any Destination,
          keyNamer: ObjectKeyNamer,
          policy: RetryPolicy = .default,
+         filePolicy: RetryPolicy = .file,
+         scope: SecurityScope = .live,
          sleep: @escaping Sleeper = { try await Task.sleep(for: $0) },
          events: @escaping EventHandler) {
         self.destination = destination
         self.keyNamer = keyNamer
         self.policy = policy
+        self.filePolicy = filePolicy
+        self.scope = scope
         self.sleep = sleep
         self.events = events
     }
@@ -101,17 +135,24 @@ actor UploadQueue {
 
     /// Runs `job` to its end, delivers the terminal event, and returns how it ended.
     private func process(_ job: UploadJob) async -> JobOutcome {
+        let policy: RetryPolicy
+        switch job.payload {
+        case .data: policy = self.policy
+        case .file: policy = filePolicy
+        }
         var attempt = 1
         while true {
             await events(.started(id: job.id, attempt: attempt))
             do {
                 let key = try await objectKey(for: job)
                 reservedKeys[job.id] = key
-                let id = job.id
-                let events = events
-                try await destination.upload(job.data, key: key, contentType: job.contentType,
-                                             cacheControl: job.cacheControl) { fraction in
-                    Task { await events(.progress(id: id, fraction: fraction)) }
+                let progress = throttledProgress(for: job.id)
+                switch job.payload {
+                case .data(let data):
+                    try await destination.upload(data, key: key, contentType: job.contentType,
+                                                 cacheControl: job.cacheControl, progress: progress)
+                case .file(let url, let folder):
+                    try await uploadFile(at: url, holding: folder, key: key, job: job, progress: progress)
                 }
                 let url = try destination.publicURL(for: key)
                 reservedKeys[job.id] = nil
@@ -140,6 +181,33 @@ actor UploadQueue {
                 await events(.failed(id: job.id, message: error.localizedDescription))
                 return .failed
             }
+        }
+    }
+
+    /// One attempt at a file upload, holding `folder`'s scope from before the readability check
+    /// until `upload(fileAt:)` returns or throws: one hold covers the hash and the streamed PUT,
+    /// and a job waiting in the queue or in backoff holds nothing.
+    private func uploadFile(at url: URL, holding folder: URL?, key: String, job: UploadJob,
+                            progress: @escaping @Sendable (Double) -> Void) async throws {
+        let accessing = folder.map(scope.start) ?? false
+        defer {
+            if accessing, let folder { scope.stop(folder) }
+        }
+        guard FileManager.default.isReadableFile(atPath: url.path(percentEncoded: false)) else {
+            throw UploadError.fileUnreadable(url.lastPathComponent)
+        }
+        try await destination.upload(fileAt: url, key: key, contentType: job.contentType,
+                                     cacheControl: job.cacheControl, progress: progress)
+    }
+
+    /// The progress callback for one attempt. It runs on the transport's thread, so its throttle
+    /// is locked; only admitted fractions become events.
+    private func throttledProgress(for id: UUID) -> @Sendable (Double) -> Void {
+        let throttle = ProgressGate()
+        let events = events
+        return { fraction in
+            guard throttle.admits(fraction) else { return }
+            Task { await events(.progress(id: id, fraction: fraction)) }
         }
     }
 
@@ -172,5 +240,14 @@ actor UploadQueue {
             }
         }
         throw UploadError.keyCollisionsExhausted
+    }
+}
+
+/// A `ProgressThrottle` behind a lock, shared by one attempt's progress callbacks.
+private nonisolated final class ProgressGate: Sendable {
+    private let throttle = Mutex(UploadQueue.ProgressThrottle())
+
+    func admits(_ fraction: Double) -> Bool {
+        throttle.withLock { $0.admits(fraction, at: .now) }
     }
 }

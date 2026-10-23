@@ -12,6 +12,8 @@ struct ShortcutsSettingsView: View {
             KeyboardShortcuts.Recorder("Capture previous area:", name: .capturePreviousArea)
             KeyboardShortcuts.Recorder("Self-timer:", name: .selfTimer)
             KeyboardShortcuts.Recorder("Capture text:", name: .captureText)
+            KeyboardShortcuts.Recorder("Record screen:", name: .recordScreen)
+            KeyboardShortcuts.Recorder("Record fullscreen:", name: .recordFullscreen)
             KeyboardShortcuts.Recorder("Restore closed overlay:", name: .restoreOverlay)
             Text("macOS reserves ⌘⇧3, ⌘⇧4 and ⌘⇧5. To use them here, disable them in System Settings > Keyboard > Keyboard Shortcuts > Screenshots.")
                 .font(.caption)

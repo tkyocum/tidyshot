@@ -59,7 +59,7 @@ struct UploadSettingsView: View {
             Section("Object keys") {
                 TextField("Key template", text: $draft.keyTemplate, prompt: Text(ObjectKeyNamer.defaultTemplate))
                     .font(.body.monospaced())
-                Text("Tokens: \(TemplateExpander.tokenList). Letters, digits, . _ - and / between tokens; / makes folders. The .png extension is added.")
+                Text("Tokens: \(TemplateExpander.tokenList). Letters, digits, . _ - and / between tokens; / makes folders. The file's extension (.png or .mp4) is added.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 if let problem = ObjectKeyNamer.validate(draft.keyTemplate) {

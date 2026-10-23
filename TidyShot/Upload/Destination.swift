@@ -11,6 +11,13 @@ nonisolated protocol Destination: Sendable {
     /// `progress` receives fractions in 0...1 from the transport thread.
     func upload(_ data: Data, key: String, contentType: String, cacheControl: String?,
                 progress: @escaping @Sendable (Double) -> Void) async throws
+    /// Uploads the file at `url` to `key`, streamed from disk and never loaded into memory. The
+    /// caller holds any security scope the file needs for the whole call. Otherwise as `upload`.
+    func upload(fileAt url: URL, key: String, contentType: String, cacheControl: String?,
+                progress: @escaping @Sendable (Double) -> Void) async throws
+    /// Downloads the object at `key` into a file at `destination`, replacing any file there. A
+    /// failure leaves `destination` as it was. Never loads the object into memory.
+    func download(key: String, to destination: URL) async throws
     /// Removes the object at `key`. Used by Delete (the capture's object, and any key its
     /// cancelled upload had reserved), by the cleanup of an object uploaded for a record that no
     /// longer exists, and by the connection test to remove its probe object.
@@ -41,7 +48,8 @@ nonisolated struct UploadJob: Sendable, Identifiable {
 
     /// Matches the `CaptureRecord.id` this upload belongs to.
     let id: UUID
-    let data: Data
+    /// The bytes, or the file they stream from. It also picks the retry policy.
+    let payload: UploadPayload
     let contentType: String
     /// Without a dot, for example `png`. Only template keys use it.
     let fileExtension: String
@@ -50,9 +58,10 @@ nonisolated struct UploadJob: Sendable, Identifiable {
     let cacheControl: String?
 
     /// A job whose key is named from the template. It sends no `Cache-Control`.
-    init(id: UUID, data: Data, contentType: String, fileExtension: String, naming: TemplateContext = TemplateContext()) {
+    init(id: UUID, payload: UploadPayload, contentType: String, fileExtension: String,
+         naming: TemplateContext = TemplateContext()) {
         self.id = id
-        self.data = data
+        self.payload = payload
         self.contentType = contentType
         self.fileExtension = fileExtension
         self.key = .template(naming)
@@ -62,14 +71,26 @@ nonisolated struct UploadJob: Sendable, Identifiable {
     /// A job that PUTs `fixedKey` as is. By default it sends `Cache-Control: no-cache`, so a cache
     /// that honours it revalidates the replaced object from now on. A copy a cache already holds
     /// stays until its own TTL expires.
-    init(id: UUID, data: Data, contentType: String, fileExtension: String, fixedKey: String,
+    init(id: UUID, payload: UploadPayload, contentType: String, fileExtension: String, fixedKey: String,
          cacheControl: String? = "no-cache") {
         self.id = id
-        self.data = data
+        self.payload = payload
         self.contentType = contentType
         self.fileExtension = fileExtension
         self.key = .fixed(fixedKey)
         self.cacheControl = cacheControl
+    }
+
+    /// A template job for bytes in memory.
+    init(id: UUID, data: Data, contentType: String, fileExtension: String, naming: TemplateContext = TemplateContext()) {
+        self.init(id: id, payload: .data(data), contentType: contentType, fileExtension: fileExtension, naming: naming)
+    }
+
+    /// A fixed-key job for bytes in memory.
+    init(id: UUID, data: Data, contentType: String, fileExtension: String, fixedKey: String,
+         cacheControl: String? = "no-cache") {
+        self.init(id: id, payload: .data(data), contentType: contentType, fileExtension: fileExtension,
+                  fixedKey: fixedKey, cacheControl: cacheControl)
     }
 }
 
@@ -95,7 +116,7 @@ nonisolated enum UploadError: LocalizedError, Equatable, Sendable {
     case fileUnreadable(String)
 
     /// Server-side and transport failures are retried; client errors (bad credentials,
-    /// missing bucket, forbidden) are not.
+    /// missing bucket, forbidden) and a file that cannot be read are not.
     var isRetryable: Bool {
         switch self {
         case .httpStatus(let status, _): status >= 500 || status == 429
@@ -115,12 +136,17 @@ nonisolated enum UploadError: LocalizedError, Equatable, Sendable {
         }
     }
 
+    /// The `URLError` codes for a file body URLSession cannot read. Retrying cannot help.
+    private static let fileURLErrorCodes: Set<URLError.Code> = [.fileDoesNotExist, .noPermissionsToReadFile,
+                                                                .cannotOpenFile, .fileIsDirectory]
+
     /// Whether an arbitrary error thrown during an upload attempt is worth retrying.
-    /// Cancellation (`CancellationError` or `URLError(.cancelled)`) is never retried; other
-    /// `URLError`s are transport failures and are.
+    /// Cancellation (`CancellationError` or `URLError(.cancelled)`) and an unreadable file
+    /// (`fileURLErrorCodes`) are never retried; other `URLError`s are transport failures and are.
     static func isRetryable(_ error: Error) -> Bool {
         if let uploadError = error as? UploadError { return uploadError.isRetryable }
-        if error is CancellationError || (error as? URLError)?.code == .cancelled { return false }
-        return error is URLError
+        if error is CancellationError { return false }
+        guard let urlError = error as? URLError else { return false }
+        return urlError.code != .cancelled && !fileURLErrorCodes.contains(urlError.code)
     }
 }

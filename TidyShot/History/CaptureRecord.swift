@@ -1,4 +1,39 @@
 import Foundation
+import UniformTypeIdentifiers
+
+/// What a capture's file holds: a PNG screenshot or an MP4 recording.
+nonisolated enum MediaKind: String, Codable, Sendable {
+    case image
+    case video
+
+    var fileExtension: String {
+        switch self {
+        case .image: "png"
+        case .video: "mp4"
+        }
+    }
+
+    var contentType: String {
+        switch self {
+        case .image: "image/png"
+        case .video: "video/mp4"
+        }
+    }
+
+    var utType: UTType {
+        switch self {
+        case .image: .png
+        case .video: .mpeg4Movie
+        }
+    }
+
+    /// An unknown raw value, from a newer TidyShot, reads as `.video`, so `HistoryStore.load`
+    /// never sets the whole history aside for it.
+    init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = MediaKind(rawValue: raw) ?? .video
+    }
+}
 
 /// One capture: where its PNG is (if it still exists), its thumbnail, how big it is, and how
 /// its upload went.
@@ -48,12 +83,17 @@ nonisolated struct CaptureRecord: Codable, Identifiable, Equatable, Sendable {
     /// survives a quit or crash mid-upload (`HistoryStore.load` turns `.uploading` into
     /// `.failed`), so the link stays copyable and Delete still finds its object.
     var priorUpload: PriorUpload?
+    /// `.video` for a screen recording, whose file is an MP4 and whose pixel size is the video's.
+    let mediaKind: MediaKind
+    /// A recording's length, read from the finished file. Nil for screenshots.
+    let durationSeconds: Double?
 
     init(id: UUID = UUID(), timestamp: Date = Date(), fileURL: URL?, fileIsTemporary: Bool = false,
          thumbnailFileName: String? = nil, pixelWidth: Int, pixelHeight: Int, appName: String?,
          uploadState: UploadState = .none, objectLocation: ObjectLocation? = nil, pendingObjectKey: String? = nil,
          editedAt: Date? = nil, uploadIsStale: Bool = false,
-         supersededObjects: [ObjectRef] = [], priorUpload: PriorUpload? = nil) {
+         supersededObjects: [ObjectRef] = [], priorUpload: PriorUpload? = nil,
+         mediaKind: MediaKind = .image, durationSeconds: Double? = nil) {
         self.id = id
         self.timestamp = timestamp
         self.fileURL = fileURL
@@ -69,18 +109,23 @@ nonisolated struct CaptureRecord: Codable, Identifiable, Equatable, Sendable {
         self.uploadIsStale = uploadIsStale
         self.supersededObjects = supersededObjects
         self.priorUpload = priorUpload
+        self.mediaKind = mediaKind
+        self.durationSeconds = durationSeconds
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, timestamp, fileURL, fileIsTemporary, thumbnailFileName, pixelWidth, pixelHeight, appName, uploadState
         case objectLocation, pendingObjectKey, editedAt, uploadIsStale
         case supersededObjects, priorUpload
+        case mediaKind, durationSeconds
     }
 
     /// Phase 2 history files have no `fileIsTemporary`, `thumbnailFileName`, `objectLocation` or
     /// `pendingObjectKey`, and always have a `fileURL`; Phase 3 files have no `editedAt` or
     /// `uploadIsStale`. They decode with the defaults. Files from before Phase 4 have no
-    /// supersededObjects or priorUpload either; they decode as [] and nil. Encoding is synthesised.
+    /// supersededObjects or priorUpload either; they decode as [] and nil. Files from before
+    /// recording R1 have no `mediaKind` or `durationSeconds`; they decode as `.image` and nil.
+    /// Encoding is synthesised.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(UUID.self, forKey: .id)
@@ -98,6 +143,8 @@ nonisolated struct CaptureRecord: Codable, Identifiable, Equatable, Sendable {
         uploadIsStale = try container.decodeIfPresent(Bool.self, forKey: .uploadIsStale) ?? false
         supersededObjects = try container.decodeIfPresent([ObjectRef].self, forKey: .supersededObjects) ?? []
         priorUpload = try container.decodeIfPresent(PriorUpload.self, forKey: .priorUpload)
+        mediaKind = try container.decodeIfPresent(MediaKind.self, forKey: .mediaKind) ?? .image
+        durationSeconds = try container.decodeIfPresent(Double.self, forKey: .durationSeconds)
     }
 
     var uploadedURL: URL? {
@@ -130,6 +177,8 @@ nonisolated struct CaptureRecord: Codable, Identifiable, Equatable, Sendable {
     }
 
     var hasLocalFile: Bool { fileURL != nil }
+
+    var isVideo: Bool { mediaKind == .video }
 
     /// An upload-only capture that has not been uploaded: its PNG in `pending` is the only copy,
     /// so retention never prunes it.

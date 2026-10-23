@@ -2,7 +2,8 @@ import AppKit
 import SwiftUI
 
 /// Wraps `QuickAccessCardDragView` for SwiftUI. The card puts one in its background (a press
-/// does nothing but drag) and one over its thumbnail (a click reveals a local file).
+/// does nothing but drag) and one over its thumbnail (a click reveals a local file, or opens a
+/// recording).
 struct QuickAccessCardDragSource: NSViewRepresentable {
     let model: QuickAccessModel
     /// A press and release without a drag. Nil: nothing.
@@ -66,7 +67,8 @@ final class QuickAccessCardDragView: NSView, NSDraggingSource {
         dragStarted = true
         model.isDraggingOut = true
         let item = NSDraggingItem(pasteboardWriter: fileURL as NSURL)
-        let image = model.thumbnail ?? NSImage(systemSymbolName: "photo", accessibilityDescription: nil) ?? NSImage()
+        let placeholder = model.record.isVideo ? "film" : "photo"
+        let image = model.thumbnail ?? NSImage(systemSymbolName: placeholder, accessibilityDescription: nil) ?? NSImage()
         item.setDraggingFrame(Self.dragFrame(imageSize: image.size, centredOn: convert(down.locationInWindow, from: nil)),
                               contents: image)
         let session = beginDraggingSession(with: [item], event: event, source: self)

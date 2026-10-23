@@ -38,4 +38,24 @@ struct RetryPolicyTests {
         #expect(!UploadError.isRetryable(CancellationError()))
         #expect(!UploadError.isRetryable(NSError(domain: "x", code: 1)))
     }
+
+    /// A file upload waits about a minute in all, long enough for Wi-Fi to come back after wake.
+    @Test func filePolicyWaitsAboutAMinute() {
+        let policy = RetryPolicy.file
+        #expect(policy.maxAttempts == 6)
+        let waits = (2...6).map { policy.delay(beforeAttempt: $0) }
+        #expect(waits == [.seconds(2), .seconds(4), .seconds(8), .seconds(16), .seconds(30)])
+    }
+
+    /// URLSession reports a file it cannot read with these codes; retrying cannot help.
+    @Test(arguments: [URLError.Code.fileDoesNotExist, .noPermissionsToReadFile, .cannotOpenFile, .fileIsDirectory])
+    func fileURLErrorsAreNotRetried(_ code: URLError.Code) {
+        #expect(!UploadError.isRetryable(URLError(code)))
+    }
+
+    @Test func transportURLErrorsAreStillRetried() {
+        #expect(UploadError.isRetryable(URLError(.networkConnectionLost)))
+        #expect(UploadError.isRetryable(URLError(.notConnectedToInternet)))
+        #expect(UploadError.isRetryable(URLError(.cannotFindHost)))
+    }
 }

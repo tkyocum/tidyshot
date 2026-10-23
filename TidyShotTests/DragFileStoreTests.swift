@@ -157,6 +157,94 @@ struct DragFileStoreTests {
         store.remove(id: removed)
     }
 
+    /// The file's modification date.
+    func modified(_ url: URL) throws -> Date {
+        try #require(try FileManager.default.attributesOfItem(atPath: url.path(percentEncoded: false))[.modificationDate] as? Date)
+    }
+
+    func setModified(_ url: URL, _ date: Date) throws {
+        try FileManager.default.setAttributes([.modificationDate: date], ofItemAtPath: url.path(percentEncoded: false))
+    }
+
+    /// Rewrites the staged copy with other bytes of the same length, then gives it and the source
+    /// one modification date, so only a stage that copies again restores the source's bytes. The
+    /// date is a whole second: `setAttributes` does not keep a file system's nanoseconds.
+    func mark(_ staged: URL, like source: URL) throws {
+        let length = try Data(contentsOf: staged).count
+        try Data(repeating: 0xEE, count: length).write(to: staged)
+        let date = Date(timeIntervalSinceReferenceDate: 800_000_000)
+        try setModified(source, date)
+        try setModified(staged, date)
+    }
+
+    /// A video's stage with `reusingMatch` keeps a copy of the same name, size and modification
+    /// date, so a large file is copied once.
+    @Test func aVideoStageReusesAMatchingCopy() throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let id = UUID()
+        let movie = try source("Recording.mp4", [1, 2, 3, 4])
+        let first = try store.stage(id: id, name: "Recording.mp4", from: movie, scope: nil, reusingMatch: true)
+        #expect(try Data(contentsOf: first) == Data([1, 2, 3, 4]))
+        #expect(try modified(first) == (try modified(movie)))
+        try mark(first, like: movie)
+        let second = try store.stage(id: id, name: "Recording.mp4", from: movie, scope: nil, reusingMatch: true)
+        #expect(second == first)
+        #expect(try Data(contentsOf: second) == Data(repeating: 0xEE, count: 4))
+        #expect(names(id) == ["Recording.mp4"])
+    }
+
+    /// An image's stage still replaces its copy on every press: an edit rewrites the file.
+    @Test func anImageStageStillReplacesAMatchingCopy() throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let id = UUID()
+        let shot = try source("Shot.png", [1, 2, 3, 4])
+        let first = try store.stage(id: id, name: "Shot.png", from: shot, scope: nil)
+        try mark(first, like: shot)
+        let second = try store.stage(id: id, name: "Shot.png", from: shot, scope: nil)
+        #expect(try Data(contentsOf: second) == Data([1, 2, 3, 4]))
+    }
+
+    /// A video's matching copy under another name is reused under its own name. The drag name can
+    /// change between presses (`{counter}` or `{random}` in Recording file name, or the key's name
+    /// once the upload ends), and a Copy File reference may point at the copy (Gap 7).
+    @Test func aVideoStageReusesAMatchingCopyUnderAnotherName() throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let id = UUID()
+        let movie = try source("Recording.mp4", [1, 2, 3, 4])
+        let first = try store.stage(id: id, name: "Recording 5.mp4", from: movie, scope: nil, reusingMatch: true)
+        try mark(first, like: movie)
+        let second = try store.stage(id: id, name: "aSIS7.mp4", from: movie, scope: nil, reusingMatch: true)
+        #expect(second.lastPathComponent == "Recording 5.mp4")
+        #expect(try Data(contentsOf: second) == Data(repeating: 0xEE, count: 4))
+        #expect(names(id) == ["Recording 5.mp4"])
+    }
+
+    /// A source whose size or modification date changed since the stage is copied again, under the
+    /// name asked for, replacing a copy under another name.
+    @Test func aChangedSourceIsCopiedAgain() throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let id = UUID()
+        let movie = try source("Recording.mp4", [1, 2, 3, 4])
+        let staged = try store.stage(id: id, name: "Recording.mp4", from: movie, scope: nil, reusingMatch: true)
+
+        try mark(staged, like: movie)
+        try setModified(movie, try modified(movie).addingTimeInterval(-60))
+        try store.stage(id: id, name: "Recording.mp4", from: movie, scope: nil, reusingMatch: true)
+        #expect(try Data(contentsOf: staged) == Data([1, 2, 3, 4]))
+
+        let date = try modified(movie)
+        try Data([5, 6, 7, 8, 9]).write(to: movie)
+        try setModified(movie, date)
+        try store.stage(id: id, name: "Recording.mp4", from: movie, scope: nil, reusingMatch: true)
+        #expect(try Data(contentsOf: staged) == Data([5, 6, 7, 8, 9]))
+
+        try mark(staged, like: movie)
+        try setModified(movie, try modified(movie).addingTimeInterval(60))
+        let renamed = try store.stage(id: id, name: "aSIS7.mp4", from: movie, scope: nil, reusingMatch: true)
+        #expect(try Data(contentsOf: renamed) == Data([5, 6, 7, 8, 9]))
+        #expect(names(id) == ["aSIS7.mp4"])
+    }
+
     /// The launch sweep removes `Drag` and everything in it; a second sweep is no error.
     @Test func sweepRemovesTheWholeDragFolder() throws {
         defer { try? FileManager.default.removeItem(at: root) }

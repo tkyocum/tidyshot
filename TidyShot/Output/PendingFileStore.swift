@@ -25,6 +25,15 @@ nonisolated struct PendingFileStore: Sendable {
         return url
     }
 
+    /// Moves `source` in as `<id>.<ext>` (creating the folder) and returns the file URL. A recording
+    /// is renamed in from the container's `tmp`, never read or copied.
+    func moveIn(_ source: URL, id: UUID, ext: String) throws -> URL {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let url = directory.appending(path: "\(id.uuidString).\(ext)")
+        try FileManager.default.moveItem(at: source, to: url)
+        return url
+    }
+
     /// Removes the file. A file that is already gone is not an error; any other failure throws,
     /// because this file may be the capture's only copy and Delete must not drop its record
     /// while the file stays behind.

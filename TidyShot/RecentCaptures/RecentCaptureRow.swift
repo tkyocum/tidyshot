@@ -2,12 +2,15 @@ import SwiftUI
 
 /// What a Recent Captures row's buttons do. `RecentCapturesMenu` makes each one close the menu first.
 struct RecentCaptureActions {
-    /// Clicking the row: the URL, or the file when the capture was never uploaded.
+    /// Clicking the row: the URL, or the file when the capture was never uploaded (a recording's
+    /// through Copy File).
     var copyLinkOrFile: (UUID) -> Void
     /// Opens the annotation editor (`AppCoordinator.openEditor(recordID:)`), once menu tracking has ended.
     var annotate: (UUID) -> Void
     var copyLink: (UUID) -> Void
     var copyImage: (UUID) -> Void
+    /// A recording's file reference on the clipboard (`AppCoordinator.copyFile(recordID:)`).
+    var copyFile: (UUID) -> Void
     /// The overlay's delete: one confirmation, then storage, file, thumbnail and record.
     var delete: (UUID) -> Void
 }
@@ -19,8 +22,9 @@ final class RecentCaptureRowState {
 }
 
 /// One row of the Recent Captures submenu: thumbnail, name, relative time, and Annotate, Copy URL,
-/// Copy Image and Delete buttons. Every string and flag is worked out before the row is built, and the
-/// thumbnail loads in `.task`, so `body` does no work.
+/// Copy Image and Delete buttons. A recording's row has its poster with a badge, no Annotate, and
+/// Copy File in Copy Image's place. Every string and flag is worked out before the row is built,
+/// and the thumbnail loads in `.task`, so `body` does no work.
 struct RecentCaptureRow: View {
     static let size = CGSize(width: 360, height: 52)
     static let thumbnailSize = CGSize(width: 56, height: 42)
@@ -37,6 +41,10 @@ struct RecentCaptureRow: View {
     let canCopyImage: Bool
     /// From `RecentCaptureFormatting.canAnnotate`; false when `EditorInput.source` is `.unavailable`.
     let canAnnotate: Bool
+    /// From `RecentCaptureFormatting.showsImageActions`: false for a recording, whose row leaves
+    /// Annotate and Copy Image out and has Copy File.
+    let showsImageActions: Bool
+    let canCopyFile: Bool
     let state: RecentCaptureRowState
     let provider: ThumbnailProvider
     let actions: RecentCaptureActions
@@ -63,9 +71,15 @@ struct RecentCaptureRow: View {
             .buttonStyle(.plain)
             .accessibilityLabel("\(name), \(detail)")
             .accessibilityHint(canCopyLink ? "Copies the link" : "Copies the file")
-            iconButton("pencil.tip.crop.circle", label: "Annotate", enabled: canAnnotate) { actions.annotate(record.id) }
+            if showsImageActions {
+                iconButton("pencil.tip.crop.circle", label: "Annotate", enabled: canAnnotate) { actions.annotate(record.id) }
+            }
             iconButton("link", label: "Copy URL", enabled: canCopyLink) { actions.copyLink(record.id) }
-            iconButton("photo.on.rectangle", label: "Copy Image", enabled: canCopyImage) { actions.copyImage(record.id) }
+            if showsImageActions {
+                iconButton("photo.on.rectangle", label: "Copy Image", enabled: canCopyImage) { actions.copyImage(record.id) }
+            } else {
+                iconButton("doc.on.doc", label: "Copy File", enabled: canCopyFile) { actions.copyFile(record.id) }
+            }
             iconButton("trash", label: "Delete…", enabled: true) { actions.delete(record.id) }
         }
         .padding(.horizontal, Self.horizontalPadding)
@@ -89,12 +103,18 @@ struct RecentCaptureRow: View {
                     .resizable()
                     .aspectRatio(contentMode: .fit)
             } else {
-                Image(systemName: "photo")
+                Image(systemName: record.isVideo ? "film" : "photo")
                     .foregroundStyle(.secondary)
             }
         }
         .frame(width: Self.thumbnailSize.width, height: Self.thumbnailSize.height)
         .background(Color.black.opacity(0.08), in: RoundedRectangle(cornerRadius: 4))
+        .overlay(alignment: .bottomTrailing) {
+            if record.isVideo, thumbnail != nil {
+                VideoBadge(duration: record.durationSeconds, fontSize: 8)
+                    .padding(2)
+            }
+        }
         .clipShape(RoundedRectangle(cornerRadius: 4))
     }
 

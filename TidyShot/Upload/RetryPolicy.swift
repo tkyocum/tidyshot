@@ -8,6 +8,8 @@ nonisolated struct RetryPolicy: Sendable, Equatable {
     var maxDelay: Duration
 
     static let `default` = RetryPolicy(maxAttempts: 3, baseDelay: .seconds(1), maxDelay: .seconds(30))
+    /// For a file (a recording): about 60 s of waits in all, enough for Wi-Fi to return after wake.
+    static let file = RetryPolicy(maxAttempts: 6, baseDelay: .seconds(2), maxDelay: .seconds(30))
     /// For tests: same attempt count, no waiting.
     static let immediate = RetryPolicy(maxAttempts: 3, baseDelay: .zero, maxDelay: .zero)
 

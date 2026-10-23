@@ -21,9 +21,11 @@ nonisolated enum EditorInput {
     static let neverUploadedText = "This capture has no local file and was never uploaded."
     static let unknownLocationText = "This capture has no local file, and TidyShot does not know where its upload went."
     static let outsideSaveFolderText = "The file is not in the current save folder, so TidyShot cannot read it."
+    static let videoText = "Videos cannot be annotated."
 
-    /// The order matches what `imageData(of:)` would do, so the editor opens from the same copy
-    /// Copy Image uses:
+    /// A video first: it is `.unavailable` whatever there is to read, a safety net behind the
+    /// cards and rows that leave Annotate out for it. Then the order matches what `imageData(of:)`
+    /// would do, so the editor opens from the same copy Copy Image uses:
     /// 1. The retained image, when `retainedID` is this record's.
     /// 2. A pending file. It holds the newest pixels, also after a failed replace whose object still
     ///    shows the original.
@@ -35,6 +37,7 @@ nonisolated enum EditorInput {
     ///    still shows, or a restored card's download).
     /// 5. Otherwise `.unavailable`, with the reason.
     static func source(for record: CaptureRecord, retainedID: UUID?, saveFolder: URL?) -> Source {
+        if record.isVideo { return .unavailable(videoText) }
         if record.id == retainedID { return .retained }
         if let fileURL = record.fileURL {
             if record.fileIsTemporary { return .pendingFile(fileURL) }

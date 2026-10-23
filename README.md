@@ -61,6 +61,8 @@ rebuilds lose this grant like they lose Screen Recording.
 | Capture previous area | ⌃⇧6 |
 | Self-timer | none; set one in Settings > Shortcuts |
 | Capture text | ⌃⇧7 |
+| Record screen | ⌃⇧8 |
+| Record fullscreen | none; set one in Settings > Shortcuts |
 | Restore closed overlay | none; set one in Settings > Shortcuts |
 
 Change them in Settings > Shortcuts.
@@ -116,7 +118,7 @@ area captures only with freeze on; TidyShot never captures its own crosshair. *I
 shadow* keeps the system shadow around a window capture; the corners are transparent either way.
 *Hide desktop icons while capturing* is described under Hide desktop icons below. *Add background to
 window captures* is described under Backgrounds below. *Self-timer* sets the countdown to 3, 5 or 10
-seconds.
+seconds. The Recording section below them is described under Screen recording.
 
 Capture Previous Area (⌃⇧6) captures the rectangle of your last area capture (or scrolling capture)
 again, with no selection. It says so when there is no previous area or its display is gone.
@@ -187,7 +189,9 @@ its text model; later ones take a fraction of a second, and other captures are n
 TidyShot can cover the desktop's icons and widgets with the desktop picture, without changing
 Finder's settings. *Hide desktop icons while capturing* (Settings > Capture) covers them during
 area, window, fullscreen, previous-area, All-in-One and self-timer captures, the countdown included,
-and uncovers them when the capture ends; scrolling captures and Capture Text leave the desktop alone.
+and area and fullscreen recordings, for as long as they run, and uncovers them when the capture
+ends. A window recording uncovers them as soon as you click the window, because it shows only that
+window. Scrolling captures and Capture Text leave the desktop alone.
 *Hide Desktop Icons* in the menu bar menu covers them until you choose it again, also across
 launches, and has a checkmark while on.
 
@@ -198,6 +202,78 @@ clicking the picture does not reveal the desktop. Captures show the desktop pict
 were. A scrolling capture over the desktop still shows the icons, even with Hide Desktop Icons on,
 because it leaves all of TidyShot's windows, the covers included, out of the picture. When TidyShot cannot read a display's desktop picture, that display stays uncovered and *Desktop
 icons still showing* is posted, once per launch.
+
+## Screen recording
+
+Record Screen (⌃⇧8, or the menu bar item) records an area or a window to an H.264 `.mp4`. Select as
+for Self-Timer: drag an area at least 32 by 32 points, or click a window. Record Fullscreen (the menu
+bar item; no default shortcut, set one in Settings > Shortcuts) records the display under the
+pointer. With *Count down before recording* on, which it is by default, a 3, 2, 1 badge counts first;
+Escape, or either record shortcut, cancels the countdown. Recording needs the same Screen Recording
+permission as screenshots and nothing else.
+
+A small panel shows the elapsed time (orange from 5:00, with no limit), Stop and Cancel. It never
+takes focus, you can drag it, and it is not in the video. An area recording also has the dashed frame
+of a scrolling capture. Stop with the panel, with ⌃⇧8 or the fullscreen shortcut, or with *Stop
+Recording* at the top of the menu; the menu bar icon is a `record.circle` meanwhile. Escape is left
+to your own apps while recording. Cancel discards the recording: at once under 5 seconds, and from 5
+seconds after asking *Discard this recording?*, where Save keeps it as Stop would.
+
+**What is in the picture.** An area or fullscreen recording shows the display as it is, without any
+window of TidyShot: the menu, Recent Captures, Settings, cards, pins and editors stay out of it, even
+when opened during the recording. The desktop covers of *Hide desktop icons while capturing* are in
+it, which is their purpose. A window recording shows only that window, at the size it had when the
+recording started; a window resized later is scaled to fit and never stretched. Minimising or hiding
+it, or moving it to another Space, keeps the recording going; closing it ends the recording and keeps
+what was recorded.
+
+**Settings.** Settings > Capture > Recording has *Frame rate* (30 or 60 fps), *Resolution* (Retina, the
+display's own pixels, or Standard, one pixel to the point; Retina stops at 4,096 pixels on the longer
+side, so a 5K display records at 4096 by 2304), *Record system audio* (off; other apps' sound, never
+TidyShot's own), *Show cursor in recordings* (on) and *Count down before recording* (on). Settings >
+General > *Recording file name* is `Recording {date} at {time}` with the screenshot tokens; the file
+and the object get `.mp4`.
+
+**After you stop.** The recording follows Settings > General > After capture, as a screenshot does:
+- *Save and copy image* moves the file into the save folder and, with *Copy image to clipboard* on,
+  puts a file reference on the clipboard.
+- *Upload and copy URL* moves it into the save folder and uploads it from there. The URL replaces the
+  clipboard when the upload finishes, but only if you have copied nothing since the save; otherwise
+  the clipboard is left alone, *Uploaded* posts, and a click on it copies the link.
+- *Upload only* keeps the file inside TidyShot until the upload succeeds.
+
+A recording is moved, never read into memory, and the upload streams it from disk in one PUT of up to
+5 GiB; a larger file is kept and *Not uploaded* says why (multipart is planned). A failed upload tries
+six times over about a minute, and a Retry starts again from the first byte. The Mac is kept from
+idle sleep while a recording uploads, but not from a lid close. When the save folder cannot be used
+(none chosen, gone, read-only or full) the file is kept inside TidyShot and *Not saved to a folder*
+says so; the card reads *Kept in TidyShot*, and Save As… copies it where you want. With no upload
+destination set up, *Upload and copy URL* saves the recording and puts the file on the clipboard, and
+*Upload only* keeps it inside TidyShot for a Retry once a destination exists.
+
+**Cards and Recent Captures.** A recording's card and row show its first frame with a play badge and
+the length. A click opens the file in your default player (or the link, when only the upload is
+left). There is no Annotate, Pin or Copy Image for a video. *Copy File* puts the file on the
+clipboard (for a file that is still waiting to upload, a copy that stays valid after the upload
+removes the original). Save As… copies the file, or downloads the uploaded object when no copy is
+left. Drag a card to drop the file into Finder, Slack or Mail. A recording that was uploaded and has
+no local file cannot be dragged. Delete removes the file and the uploaded object, as for a
+screenshot.
+
+**Sleep, quitting and crashes.** The Mac stays awake, display included, while a recording runs. A
+system sleep, a lid close and a fast user switch stop the recording and save it; a screen lock (⌃⌘Q)
+does not stop it. Quitting, restarting or logging out stops and keeps the recording without a prompt:
+it goes to the save folder, or inside TidyShot when there is none, and an upload that was under way is
+marked interrupted for a Retry. If TidyShot crashes or is killed, the partly written file plays, and
+the next launch keeps it with *Recovered a recording*. TidyShot refuses to start a recording with less
+than 2 GB free, and stops and saves one that has under 1 GB left. Stop waits up to 15 seconds for
+macOS to finish writing the file.
+
+TidyShot logs one `Recording:` line for each stream and output callback, with the time recorded so
+far: `/usr/bin/log show --last 10m --style compact --predicate 'process == "TidyShot"' | grep "Recording:"`
+(the full path, because zsh has a `log` builtin). The microphone, GIF export, trimming, Pause,
+uploads over 5 GiB, a separate upload lane for videos, dragging an uploaded video that has no local
+copy, and URL commands for recording are planned for a later release (R2 in the recording design).
 
 ## URL scheme
 
@@ -282,18 +358,32 @@ file; a failed upload keeps it until a retry succeeds or the capture is deleted.
 ### Optimise with Clop
 
 If [Clop](https://lowtechguys.com/clop) (direct or Setapp build) is installed, Settings > General >
-Images has "Optimize images with Clop". With it on and Clop running, every upload (a capture,
-upload-only, the editor's Upload, replace and Upload as New, and every Retry) is first rewritten by
-Clop as a smaller PNG, which is lossy (256 colours); 144 DPI is kept. The setting takes effect without
-Save. Clop works on a throwaway copy: the saved file, the pending file and the editor's file stay as
-captured, and a retry optimises the original again. TidyShot never launches Clop. If Clop is not
-running, fails, converts the format or cannot shrink the image, the original uploads, with one
-`Clop: <reason>, uploading the original` line in the log and no error. Delete during optimisation
-cancels the upload ("Upload cancelled."). Clop keeps its own copy of each image in its cache.
+Optimization has "Optimize images and videos with Clop". With it on and Clop running, every upload
+(a capture, upload-only, the editor's Upload, replace and Upload as New, and every Retry) is first
+rewritten by Clop as a smaller PNG, which is lossy (256 colours); 144 DPI is kept. The setting takes
+effect without Save. Clop works on a throwaway copy: the saved file, the pending file and the
+editor's file stay as captured, and a retry optimises the original again. TidyShot never launches
+Clop. If Clop is not running, fails, converts the format or cannot shrink the image, the original
+uploads, with one `Clop: <reason>, uploading the original` line in the log and no error. Delete
+during optimisation cancels the upload ("Upload cancelled."). Clop keeps its own copy of each image
+and video in its cache.
 Talking to Clop needs one sandbox exception (`com.apple.security.temporary-exception.mach-lookup.global-name`
 for Clop's two port names), added to the four entitlements TidyShot already had. That exception would
 need App Review approval for a Mac App Store build; Developer ID builds are unaffected. The client is
 adapted from ClopSDK (MIT); see `ThirdPartyNotices.md`.
+
+**Videos.** A recording goes through Clop the same way, as a smaller `.mp4` with the same codec,
+size and frame rate (a 20 MB recording of a scrolling page came back as 4 MB in about 2 seconds).
+TidyShot copies the file to `tmp/Clop` in its container, asks Clop to keep the audio, and shows
+*Optimizing…* on the card and the row meanwhile. It sends Clop's result only when that is the same
+path, not converted, plays, has one video track of the same size and at least as many audio tracks,
+is within half a second of the original's length and has fewer bytes; otherwise the original
+uploads, with one `Clop: <reason>, uploading the original` line (for instance `the result lost its
+audio`). Videos wait for Clop on their own queue, so a screenshot's upload is not held behind a
+recording's. Clop gets 60 seconds plus 3 for each second recorded to answer. It returned nothing
+for a 5120 by 2880 recording and left it as it was, which is why Retina stops at 4,096 pixels, and
+TidyShot skips Clop when the disk has less than the file's size plus 1 GB free. The copy is removed
+when the upload ends.
 
 ## Recent Captures
 
@@ -457,6 +547,7 @@ afterwards, so opening it again in the editor starts from the composed picture.
 ## Documents
 
 - Design: `docs/superpowers/specs/2026-10-19-tidyshot-screenshot-design.md`
+- Screen recording design: `docs/superpowers/specs/2026-10-21-tidyshot-screen-recording-design.md`
 - Plans: `docs/superpowers/plans/`
 - Phase 1 manual test checklist: `docs/testing/phase-1-manual-checklist.md`
 - Phase 2 manual test checklist: `docs/testing/phase-2-manual-checklist.md`
@@ -470,3 +561,4 @@ afterwards, so opening it again in the editor starts from the composed picture.
 - Phase 7 (Clop) manual test checklist: `docs/testing/phase-7-clop-manual-checklist.md`
 - Phase 7b (Capture Text, Hide desktop icons) manual test checklist: `docs/testing/phase-7b-manual-checklist.md`
 - Phase 7c (Backgrounds) manual test checklist: `docs/testing/phase-7c-manual-checklist.md`
+- Recording R1 (screen recording) manual test checklist: `docs/testing/recording-r1-manual-checklist.md`

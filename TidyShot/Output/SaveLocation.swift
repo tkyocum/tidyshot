@@ -7,6 +7,8 @@ final class SaveLocation {
     private static let bookmarkKey = "saveFolderBookmark"
 
     @ObservationIgnored private let defaults: UserDefaults
+    /// `chooseFolder`'s open panels, for `cancelFolderChoice`.
+    @ObservationIgnored private var folderPanels: [NSOpenPanel] = []
     private(set) var currentURL: URL?
 
     init(defaults: UserDefaults = .standard) {
@@ -20,19 +22,21 @@ final class SaveLocation {
         currentURL = url
     }
 
-    /// Asks the user to pick a folder. Returns nil if cancelled.
+    /// Asks the user to pick a folder. Returns nil if cancelled, also by `cancelFolderChoice`.
     func chooseFolder() async -> URL? {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.canCreateDirectories = true
         panel.allowsMultipleSelection = false
-        panel.message = "Choose where TidyShot saves screenshots."
+        panel.message = "Choose where TidyShot saves screenshots and recordings."
         panel.prompt = "Use This Folder"
         // Reached from a global hotkey while another app is active; a plain activate() can be
         // refused and the panel would open behind that app. Marked for future deprecation; no warning today.
         NSApplication.shared.activate(ignoringOtherApps: true)
+        folderPanels.append(panel)
         let response = await panel.begin()
+        folderPanels.removeAll { $0 === panel }
         guard response == .OK, let url = panel.url else { return nil }
         do {
             try store(url)
@@ -41,6 +45,14 @@ final class SaveLocation {
             return nil
         }
         return url
+    }
+
+    /// Closes every open `chooseFolder` panel as its Cancel button would, so each returns nil.
+    /// A quit calls it, so a recording's save goes to `pending/` instead of waiting for an answer.
+    func cancelFolderChoice() {
+        for panel in folderPanels {
+            panel.cancel(nil)
+        }
     }
 
     /// The stored folder, or a freshly chosen one.
@@ -57,6 +69,20 @@ final class SaveLocation {
             try data.write(to: url, options: .atomic)
             return url
         }
+    }
+
+    /// Moves `source` into `folder` as `baseName.ext` (or `baseName 2.ext`, ...), holding the
+    /// folder's security scope for the uniqueness check and the move. A folder on another volume
+    /// makes the move a full copy; the source goes only once the copy is complete. Throws, with the
+    /// source left where it was, when the move fails. Touches no instance state, so it runs in a
+    /// detached task (a finished recording).
+    nonisolated static func moveInScoped(_ source: URL, baseName: String, ext: String, folder: URL) throws -> URL {
+        let accessing = folder.startAccessingSecurityScopedResource()
+        defer { if accessing { folder.stopAccessingSecurityScopedResource() } }
+        let url = FileNamer.uniqueURL(baseName: baseName, ext: ext, in: folder)
+        // Never replaces: a file that appeared at `url` since the check makes this throw.
+        try FileManager.default.moveItem(at: source, to: url)
+        return url
     }
 
     /// Reads a file inside the save folder (for upload retries), holding security-scoped access.

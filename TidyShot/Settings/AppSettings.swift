@@ -63,6 +63,12 @@ final class AppSettings {
         static let desktopIconsHidden = "desktopIconsHidden"
         static let windowBackground = "windowBackground"
         static let backgroundStyle = "backgroundStyle"
+        static let recordingFrameRate = "recordingFrameRate"
+        static let recordingRetina = "recordingRetina"
+        static let recordingSystemAudio = "recordingSystemAudio"
+        static let recordingShowsCursor = "recordingShowsCursor"
+        static let recordingCountdown = "recordingCountdown"
+        static let recordingFileNameTemplate = "recordingFileNameTemplate"
     }
 
     @ObservationIgnored private let defaults: UserDefaults
@@ -115,7 +121,7 @@ final class AppSettings {
     static let selfTimerChoices = [3, 5, 10]
     /// All-in-One's aspect-ratio lock, as the toolbar last left it (spec 2.9).
     var allInOneAspectLock: Bool { didSet { defaults.set(allInOneAspectLock, forKey: Keys.allInOneAspectLock) } }
-    /// The General tab's Optimize images with Clop (spec 2.7). Takes effect without Save; used only
+    /// The General tab's Optimize images and videos with Clop (spec 2.7). Takes effect without Save; used only
     /// while Clop is running.
     var optimiseWithClop: Bool { didSet { defaults.set(optimiseWithClop, forKey: Keys.optimiseWithClop) } }
     /// The Capture tab's Hide desktop icons while capturing (spec 2.10): the desktop is covered with
@@ -132,6 +138,27 @@ final class AppSettings {
     /// The Capture tab's background style, which the editor's Background tool also starts from.
     /// Stored as JSON.
     var backgroundStyle: BackgroundStyle { didSet { storeBackgroundStyle() } }
+    /// The Capture tab's Recording section: frames per second, one of `recordingFrameRates`.
+    var recordingFrameRate: Int { didSet { defaults.set(recordingFrameRate, forKey: Keys.recordingFrameRate) } }
+    static let recordingFrameRates = [30, 60]
+    /// `Retina` records at the display's backing scale, `Standard` (false) at 1x.
+    var recordingRetina: Bool { didSet { defaults.set(recordingRetina, forKey: Keys.recordingRetina) } }
+    /// `Record system audio`.
+    var recordingSystemAudio: Bool { didSet { defaults.set(recordingSystemAudio, forKey: Keys.recordingSystemAudio) } }
+    /// `Show cursor in recordings`.
+    var recordingShowsCursor: Bool { didSet { defaults.set(recordingShowsCursor, forKey: Keys.recordingShowsCursor) } }
+    /// `Count down before recording`: the self-timer badge counts 3, 2, 1 before a recording starts.
+    var recordingCountdown: Bool { didSet { defaults.set(recordingCountdown, forKey: Keys.recordingCountdown) } }
+    /// General's `Recording file name`. An empty one names the file `Recording`.
+    var recordingFileNameTemplate: String {
+        didSet { defaults.set(recordingFileNameTemplate, forKey: Keys.recordingFileNameTemplate) }
+    }
+
+    /// The four Recording settings a recording's stream is made from.
+    var recordingOptions: RecordingOptions {
+        RecordingOptions(framesPerSecond: recordingFrameRate, retina: recordingRetina,
+                         systemAudio: recordingSystemAudio, showsCursor: recordingShowsCursor)
+    }
 
     /// The five editor values as one value. Setting it writes all five keys.
     var editorDefaults: EditorDefaults {
@@ -181,6 +208,12 @@ final class AppSettings {
             Keys.hideDesktopIconsWhileCapturing: false,
             Keys.desktopIconsHidden: false,
             Keys.windowBackground: false,
+            Keys.recordingFrameRate: 30,
+            Keys.recordingRetina: true,
+            Keys.recordingSystemAudio: false,
+            Keys.recordingShowsCursor: true,
+            Keys.recordingCountdown: true,
+            Keys.recordingFileNameTemplate: FileNamer.recordingDefaultTemplate,
         ])
         showsCursor = defaults.bool(forKey: Keys.showsCursor)
         copyImageToClipboard = defaults.bool(forKey: Keys.copyImageToClipboard)
@@ -221,6 +254,13 @@ final class AppSettings {
         hideDesktopIconsWhileCapturing = defaults.bool(forKey: Keys.hideDesktopIconsWhileCapturing)
         desktopIconsHidden = defaults.bool(forKey: Keys.desktopIconsHidden)
         windowBackground = defaults.bool(forKey: Keys.windowBackground)
+        let storedFrameRate = defaults.integer(forKey: Keys.recordingFrameRate)
+        recordingFrameRate = Self.recordingFrameRates.contains(storedFrameRate) ? storedFrameRate : 30
+        recordingRetina = defaults.bool(forKey: Keys.recordingRetina)
+        recordingSystemAudio = defaults.bool(forKey: Keys.recordingSystemAudio)
+        recordingShowsCursor = defaults.bool(forKey: Keys.recordingShowsCursor)
+        recordingCountdown = defaults.bool(forKey: Keys.recordingCountdown)
+        recordingFileNameTemplate = defaults.string(forKey: Keys.recordingFileNameTemplate) ?? FileNamer.recordingDefaultTemplate
         // Not registered: a missing value, or one that does not decode (a fill or aspect from a
         // newer build), means the default style.
         backgroundStyle = defaults.data(forKey: Keys.backgroundStyle)

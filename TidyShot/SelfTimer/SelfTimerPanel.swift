@@ -57,18 +57,19 @@ final class SelfTimerPanel: NSPanel {
 }
 
 /// The real stage: the badge and the dashed frame the scrolling capture uses, and the shared
-/// Escape hotkey. `subject` and `screenFrame` are in AppKit global points.
+/// Escape hotkey. `subject` and `screenFrame` are in AppKit global points. Without `showsFrame`
+/// (a fullscreen recording's count-in) only the badge shows.
 final class SelfTimerScreenStage: SelfTimerStage {
     private let model: SelfTimerModel
     private let panel: SelfTimerPanel
-    private let frameWindow: ScrollAreaFrameWindow
+    private let frameWindow: ScrollAreaFrameWindow?
 
-    init(subject: CGRect, screenFrame: CGRect) {
+    init(subject: CGRect, screenFrame: CGRect, showsFrame: Bool = true) {
         // A local first: a class cannot read `self.model` before every stored property is set.
         let model = SelfTimerModel()
         self.model = model
         panel = SelfTimerPanel(model: model, frame: SelfTimerGeometry.badgeFrame(around: subject, in: screenFrame))
-        frameWindow = ScrollAreaFrameWindow(area: subject)
+        frameWindow = showsFrame ? ScrollAreaFrameWindow(area: subject) : nil
     }
 
     func armEscape() {
@@ -81,7 +82,7 @@ final class SelfTimerScreenStage: SelfTimerStage {
 
     func show(seconds: Int) {
         model.seconds = seconds
-        frameWindow.orderFrontRegardless()
+        frameWindow?.orderFrontRegardless()
         panel.orderFrontRegardless()
     }
 
@@ -91,6 +92,6 @@ final class SelfTimerScreenStage: SelfTimerStage {
 
     func dismiss() {
         panel.orderOut(nil)
-        frameWindow.orderOut(nil)
+        frameWindow?.orderOut(nil)
     }
 }

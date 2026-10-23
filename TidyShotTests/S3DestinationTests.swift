@@ -303,4 +303,173 @@ struct S3DestinationTests {
             try await destination(config, session: session).exists(key: "a.png")
         }
     }
+
+    // MARK: Files
+
+    /// A fresh folder for one test; the caller removes it.
+    func makeFolder() throws -> URL {
+        let folder = FileManager.default.temporaryDirectory.appending(path: "S3DestinationTests-\(UUID().uuidString)",
+                                                                      directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        return folder
+    }
+
+    /// The body a request carried: URLSession hands a URLProtocol a file or data body as a stream.
+    nonisolated static func bodyBytes(of request: URLRequest) -> Data {
+        if let body = request.httpBody { return body }
+        guard let stream = request.httpBodyStream else { return Data() }
+        stream.open()
+        defer { stream.close() }
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 64 * 1024)
+        while true {
+            let count = stream.read(&buffer, maxLength: buffer.count)
+            if count <= 0 { break }
+            data.append(buffer, count: count)
+        }
+        return data
+    }
+
+    /// The PUT streams the file's bytes, signed with the file's hash. The signature equals the
+    /// in-memory upload's for the same bytes (`putIsSignedWithContentTypeAndNoACLByDefault`).
+    @Test func fileUploadSendsTheFilesBytes() async throws {
+        let folder = try makeFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let file = folder.appending(path: "Recording.mp4")
+        try body.write(to: file)
+        let received = Mutex<Data?>(nil)
+        let (session, stub) = StubSession.make { request in
+            received.withLock { $0 = Self.bodyBytes(of: request) }
+            return (200, Data())
+        }
+        let fractions = Mutex<[Double]>([])
+        try await destination(config, session: session).upload(fileAt: file, key: "aSIS7.png", contentType: "image/png",
+                                                                cacheControl: nil) { fraction in
+            fractions.withLock { $0.append(fraction) }
+        }
+
+        #expect(received.withLock { $0 } == body)
+        let request = try #require(stub.requests.first)
+        #expect(request.httpMethod == "PUT")
+        #expect(request.value(forHTTPHeaderField: "content-type") == "image/png")
+        #expect(request.value(forHTTPHeaderField: "x-amz-content-sha256") == "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824")
+        #expect(request.value(forHTTPHeaderField: "authorization") == "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20261019/us-east-1/s3/aws4_request, SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date, Signature=3ae54c07f6b6d4782a0ad2debd05c43fb93bcb0a1400d61138f78b140d700de9")
+        // The file is still there: the upload never moves or removes it.
+        #expect(FileManager.default.fileExists(atPath: file.path(percentEncoded: false)))
+    }
+
+    /// A video's PUT signs `Cache-Control` and the ACL like an image's.
+    @Test func fileUploadSignsCacheControlAndACL() async throws {
+        let folder = try makeFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let file = folder.appending(path: "Recording.mp4")
+        try body.write(to: file)
+        var acl = config
+        acl.sendPublicReadACL = true
+        let (session, stub) = StubSession.make { _ in (200, Data()) }
+        try await destination(acl, session: session).upload(fileAt: file, key: "a.mp4", contentType: "video/mp4",
+                                                             cacheControl: "no-cache") { _ in }
+
+        let request = try #require(stub.requests.first)
+        #expect(request.value(forHTTPHeaderField: "content-type") == "video/mp4")
+        #expect(request.value(forHTTPHeaderField: "cache-control") == "no-cache")
+        #expect(request.value(forHTTPHeaderField: "x-amz-acl") == "public-read")
+        #expect(request.value(forHTTPHeaderField: "authorization")?
+            .contains("SignedHeaders=cache-control;content-type;host;x-amz-acl;x-amz-content-sha256;x-amz-date,") == true)
+    }
+
+    @Test func fileUploadThrowsTheSummarisedError() async throws {
+        let folder = try makeFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let file = folder.appending(path: "Recording.mp4")
+        try body.write(to: file)
+        let xml = "<Error><Code>EntityTooLarge</Code><Message>Your proposed upload exceeds the maximum allowed size</Message></Error>"
+        let (session, _) = StubSession.make { _ in (400, Data(xml.utf8)) }
+        await #expect(throws: UploadError.httpStatus(400, body: "EntityTooLarge: Your proposed upload exceeds the maximum allowed size")) {
+            try await destination(config, session: session).upload(fileAt: file, key: "a.mp4", contentType: "video/mp4",
+                                                                   cacheControl: nil) { _ in }
+        }
+    }
+
+    /// A file that is gone fails before any request is sent, and is not retried.
+    @Test func fileUploadOfAMissingFileSendsNothing() async throws {
+        let folder = try makeFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let (session, stub) = StubSession.make { _ in (200, Data()) }
+        let error = await #expect(throws: (any Error).self) {
+            try await destination(config, session: session).upload(fileAt: folder.appending(path: "gone.mp4"), key: "a.mp4",
+                                                                   contentType: "video/mp4", cacheControl: nil) { _ in }
+        }
+        #expect(stub.requests.isEmpty)
+        #expect(error.map(UploadError.isRetryable) == false)
+    }
+
+    @Test func downloadToAFileWritesTheBody() async throws {
+        let folder = try makeFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let target = folder.appending(path: "Recording.mp4")
+        let movie = Data((0..<100_000).map { UInt8(truncatingIfNeeded: $0) })
+        let (session, stub) = StubSession.make { _ in (200, movie) }
+        try await destination(config, session: session).download(key: "aSIS7.png", to: target)
+
+        #expect(try Data(contentsOf: target) == movie)
+        let request = try #require(stub.requests.first)
+        #expect(request.httpMethod == "GET")
+        #expect(request.url?.absoluteString == "https://snap.s3.us-east-1.amazonaws.com/aSIS7.png")
+        // The same signed GET as `download(key:)`.
+        #expect(request.value(forHTTPHeaderField: "authorization") == "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20261019/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=2b2032e36f0ecee5dda47c71b2b5cb033deed81114e1626e47639929cb0f7162")
+    }
+
+    /// The save panel already asked to replace it.
+    @Test func downloadToAFileReplacesAnExistingFile() async throws {
+        let folder = try makeFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let target = folder.appending(path: "Recording.mp4")
+        try Data("old contents that are longer".utf8).write(to: target)
+        let (session, _) = StubSession.make { _ in (200, Data("new".utf8)) }
+        try await destination(config, session: session).download(key: "a.mp4", to: target)
+
+        #expect(try Data(contentsOf: target) == Data("new".utf8))
+        #expect(try FileManager.default.contentsOfDirectory(atPath: folder.path(percentEncoded: false)) == ["Recording.mp4"])
+    }
+
+    @Test func downloadFailureLeavesNoFile() async throws {
+        let folder = try makeFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let target = folder.appending(path: "Recording.mp4")
+        let xml = "<Error><Code>NoSuchKey</Code><Message>The specified key does not exist.</Message></Error>"
+        let (session, _) = StubSession.make { _ in (404, Data(xml.utf8)) }
+        await #expect(throws: UploadError.httpStatus(404, body: "NoSuchKey: The specified key does not exist.")) {
+            try await destination(config, session: session).download(key: "gone.mp4", to: target)
+        }
+        #expect(!FileManager.default.fileExists(atPath: target.path(percentEncoded: false)))
+        #expect(try FileManager.default.contentsOfDirectory(atPath: folder.path(percentEncoded: false)).isEmpty)
+    }
+
+    /// A failed download leaves an existing file as it was.
+    @Test func downloadFailureKeepsAnExistingFile() async throws {
+        let folder = try makeFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let target = folder.appending(path: "Recording.mp4")
+        try Data("mine".utf8).write(to: target)
+        let (session, _) = StubSession.make { _ in (403, Data()) }
+        await #expect(throws: UploadError.httpStatus(403, body: "")) {
+            try await destination(config, session: session).download(key: "a.mp4", to: target)
+        }
+        #expect(try Data(contentsOf: target) == Data("mine".utf8))
+    }
+
+    @Test func downloadToAFileRefusesRedirects() async throws {
+        let folder = try makeFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let target = folder.appending(path: "Recording.mp4")
+        let (session, stub) = StubSession.make(headerHandler: { _ in
+            (307, ["Location": "https://snap.s3.eu-west-1.amazonaws.com/a.mp4"], Data())
+        })
+        await #expect(throws: UploadError.httpStatus(307, body: "redirected to https://snap.s3.eu-west-1.amazonaws.com/a.mp4; check the endpoint and region")) {
+            try await destination(config, session: session).download(key: "a.mp4", to: target)
+        }
+        #expect(stub.requests.count == 1)
+        #expect(!FileManager.default.fileExists(atPath: target.path(percentEncoded: false)))
+    }
 }

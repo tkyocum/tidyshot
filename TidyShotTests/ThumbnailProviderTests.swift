@@ -113,6 +113,43 @@ struct ThumbnailProviderTests {
         #expect(await provider.preview(for: uploadOnly)?.size == CGSize(width: 300, height: 150))
     }
 
+    func video(thumbnail: String? = nil, file: URL? = URL(fileURLWithPath: "/Users/tim/Desktop/Recording.mp4"),
+               temporary: Bool = false) -> CaptureRecord {
+        CaptureRecord(fileURL: file, fileIsTemporary: temporary, thumbnailFileName: thumbnail, pixelWidth: 1600,
+                      pixelHeight: 1000, appName: nil, mediaKind: .video, durationSeconds: 42)
+    }
+
+    /// A video's file is never read: its thumbnail and its hover preview are the stored 320 px
+    /// poster, at its own size.
+    @Test func aVideosPreviewIsItsStoredThumbnail() async throws {
+        let item = video(thumbnail: try store.write(try png(width: 320, height: 200), id: UUID()))
+        history.add(item)
+        let data = try png(width: 2000, height: 1250)
+        let reads = Mutex(0)
+        let provider = makeProvider { _, _ in reads.withLock { $0 += 1 }; return data }
+        #expect(await provider.thumbnail(for: item)?.size == CGSize(width: 320, height: 200))
+        #expect(await provider.preview(for: item)?.size == CGSize(width: 320, height: 200))
+        #expect(reads.withLock { $0 } == 0)
+    }
+
+    /// A video with no stored thumbnail gets the placeholder (nil), from a save-folder or a pending
+    /// file alike, and no thumbnail is made from its file.
+    @Test func aVideoWithoutAThumbnailIsNeverRead() async throws {
+        let saved = video()
+        let pending = video(file: URL(fileURLWithPath: "/tmp/pending/\(UUID().uuidString).mp4"), temporary: true)
+        history.add(saved)
+        history.add(pending)
+        let data = try png(width: 640, height: 400)
+        let reads = Mutex(0)
+        let provider = makeProvider { _, _ in reads.withLock { $0 += 1 }; return data }
+        for item in [saved, pending] {
+            #expect(await provider.thumbnail(for: item) == nil)
+            #expect(await provider.preview(for: item) == nil)
+            #expect(history.record(id: item.id)?.thumbnailFileName == nil)
+        }
+        #expect(reads.withLock { $0 } == 0)
+    }
+
     /// `forget` runs while the load's read is in progress in its detached task: the reader
     /// blocks until the test has called it.
     @Test func forgetDuringALoadDiscardsIt() async throws {

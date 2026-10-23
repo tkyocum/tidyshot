@@ -51,6 +51,38 @@ struct FileNamerTests {
 
     @Test func emptyResultFallsBackToScreenshot() {
         #expect(namer("   ").name(counter: 1) == "Screenshot")
+        #expect(FileNamer(template: "", now: { fixedDate }).name(counter: 1) == "Screenshot")
+    }
+
+    func recordingNamer(_ template: String) -> FileNamer {
+        FileNamer(template: template, fallbackName: "Recording", now: { fixedDate },
+                  randomString: { String(repeating: "X", count: $0) }, hostname: "miffle")
+    }
+
+    @Test func recordingDefaultTemplate() {
+        #expect(FileNamer.recordingDefaultTemplate == "Recording {date} at {time}")
+        #expect(recordingNamer(FileNamer.recordingDefaultTemplate).name(counter: 1) == "Recording 2026-10-19 at 11.56.03")
+    }
+
+    /// An empty `Recording file name` falls back to `Recording`, not `Screenshot`.
+    @Test func anEmptyRecordingTemplateGivesRecording() {
+        #expect(recordingNamer("").name(counter: 1) == "Recording")
+        #expect(recordingNamer("  ").name(counter: 1) == "Recording")
+        #expect(FileNamer.recordingFallbackName == "Recording")
+    }
+
+    /// The move into the save folder names its file off the main actor.
+    @Test func uniqueURLRunsFromADetachedTask() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try Data().write(to: dir.appending(path: "Recording.mp4"))
+
+        let url = await Task.detached {
+            FileNamer.uniqueURL(baseName: "Recording", ext: "mp4", in: dir)
+        }.value
+
+        #expect(url.lastPathComponent == "Recording 2.mp4")
     }
 
     @Test func realRandomStringUsesAlphanumerics() {

@@ -22,6 +22,7 @@ struct GeneralSettingsView: View {
                     }
                 }
                 TextField("File name", text: $settings.fileNameTemplate)
+                TextField("Recording file name", text: $settings.recordingFileNameTemplate)
                 Text("Tokens: \(TemplateExpander.tokenList)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -35,18 +36,21 @@ struct GeneralSettingsView: View {
                 } else {
                     Toggle("Copy image to clipboard", isOn: $settings.copyImageToClipboard)
                 }
+                Text("For recordings, the file is copied.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 if settings.afterCaptureAction == .uploadOnly {
-                    Text("The PNG is kept inside TidyShot only until the upload succeeds. Recent Captures keeps a thumbnail and the URL; a failed upload keeps the file until you retry or delete it.")
+                    Text("The file is kept inside TidyShot only until the upload succeeds. Recent Captures keeps a thumbnail and the URL; a failed upload keeps the file until you retry or delete it.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
                 Toggle("Show notification", isOn: $settings.showNotification)
                 Toggle("Play sound", isOn: $settings.playSound)
             }
-            Section("Images") {
-                Toggle("Optimize images with Clop", isOn: $settings.optimiseWithClop)
+            Section("Optimization") {
+                Toggle("Optimize images and videos with Clop", isOn: $settings.optimiseWithClop)
                     .disabled(!clopInstalled)
-                Text("Clop is an image optimizer that greatly reduces file size. Clop keeps its own copy of each image it optimizes.")
+                Text("Clop greatly reduces file size. It keeps its own copy of each image and video it optimizes, so long recordings also take space in Clop's cache.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 if !clopInstalled {
