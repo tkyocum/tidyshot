@@ -17,6 +17,10 @@ struct CaptureSettingsView: View {
             Text("Window captures keep transparent rounded corners either way.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            Toggle("Hide desktop icons while capturing", isOn: $settings.hideDesktopIconsWhileCapturing)
+            Text("Covers desktop icons and widgets with the desktop picture during area, window, fullscreen, previous-area, All-in-One and self-timer captures.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
             Picker("Self-timer", selection: $settings.selfTimerSeconds) {
                 ForEach(AppSettings.selfTimerChoices, id: \.self) { seconds in
                     Text("\(seconds) seconds").tag(seconds)

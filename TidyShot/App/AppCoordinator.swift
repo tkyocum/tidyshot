@@ -39,6 +39,17 @@ final class AppCoordinator {
             self?.notifier.notifyError(notice.body, title: notice.title, subtitle: notice.subtitle)
         })
     @ObservationIgnored private lazy var selfTimer = SelfTimerController()
+    /// Hide desktop icons (spec 2.10): the wallpaper over the desktop's icons and widgets, while a
+    /// capture runs or until turned off. A display it cannot cover is reported once per session;
+    /// without Screen Recording, which is why nothing could be read, the permission window shows instead.
+    @ObservationIgnored private lazy var covers = DesktopCoverController(source: WallpaperSource(), reportFailure: { [weak self] in
+        guard let self else { return }
+        if !ScreenCapturePermission.isGranted {
+            self.showPermissionWindow()
+        } else {
+            self.notifier.notifyError("TidyShot could not read the desktop picture.", title: "Desktop icons still showing")
+        }
+    })
     /// Thumbnails and previews for Recent Captures.
     @ObservationIgnored private(set) lazy var thumbnailProvider = ThumbnailProvider(
         store: thumbnails, history: history, saveFolder: { [unowned self] in self.saveLocation.currentURL },
@@ -134,6 +145,10 @@ final class AppCoordinator {
         notifier.setUp()
         history.load()
         registerShortcuts()
+        // Hide Desktop Icons stays on across launches.
+        if settings.desktopIconsHidden {
+            Task { await covers.show(for: .persistent) }
+        }
         if !ScreenCapturePermission.isGranted {
             permissionWindow.show()
         }
@@ -149,6 +164,23 @@ final class AppCoordinator {
     /// when it is known. The handler holds it until `start()` has run.
     func handleURL(_ url: URL, sender: String?) {
         Task { await urlCommands.handle(url, sender: sender) }
+    }
+
+    /// The status menu's Hide Desktop Icons and the `hide-desktop-icons` and `show-desktop-icons`
+    /// URL commands: stores the state, then covers the desktop until turned off, or takes the
+    /// persistent covers away. A capture that is covering the desktop keeps its covers until it ends.
+    func setDesktopIconsHidden(_ hidden: Bool) async {
+        settings.desktopIconsHidden = hidden
+        if hidden {
+            await covers.show(for: .persistent)
+        } else {
+            covers.hide(for: .persistent)
+        }
+    }
+
+    /// The status menu item and `toggle-desktop-icons`.
+    func toggleDesktopIconsHidden() async {
+        await setDesktopIconsHidden(!settings.desktopIconsHidden)
     }
 
     private func registerShortcuts() {
@@ -173,6 +205,9 @@ final class AppCoordinator {
         KeyboardShortcuts.onKeyUp(for: .selfTimer) { [weak self] in
             Task { await self?.captureSelfTimer() }
         }
+        KeyboardShortcuts.onKeyUp(for: .captureText) { [weak self] in
+            Task { await self?.captureText() }
+        }
         KeyboardShortcuts.onKeyUp(for: .restoreOverlay) { [weak self] in
             Task { await self?.restoreClosedOverlay() }
         }
@@ -187,7 +222,7 @@ final class AppCoordinator {
     }
 
     func captureFullscreen(intent: CaptureIntent = .standard) async {
-        await withCaptureLock {
+        await withCaptureLock(coversDesktop: true) {
             guard let content = await loadContent() else { return }
             guard let display = Self.display(under: NSEvent.mouseLocation, in: content.displays) else { return }
             guard let result = await capture(.display(display), excludingWindows: await cardWindows()) else { return }
@@ -211,7 +246,7 @@ final class AppCoordinator {
     /// in `save(_:intent:)`.
     func captureAllInOne(intent: CaptureIntent = .standard, preselect: ScreenRect? = nil,
                          fromURLCommand: Bool = false) async {
-        await withCaptureLock {
+        await withCaptureLock(coversDesktop: true) {
             guard let content = await loadContent() else { return }
             // Freeze applies to Capture; the snapshots follow the cursor setting, as in area mode.
             let freeze = settings.freezeScreen ? CaptureOptions(settings: settings, duringSelection: false) : nil
@@ -237,6 +272,8 @@ final class AppCoordinator {
                 NSCursor.arrow.set()
                 result = await capture(.display(display), excludingWindows: overlays)
             case .scrolling(let rect, let display):
+                // As Capture Scrolling: the covers would stay up for the whole session.
+                covers.hide(for: .capture)
                 await runScrolling(rect: rect, display: display, intent: intent)
                 return
             case .timer(let rect, let display):
@@ -264,7 +301,7 @@ final class AppCoordinator {
             scrollCapture.advance()
             return
         }
-        await withCaptureLock {
+        await withCaptureLock(coversDesktop: false) {
             guard let content = await loadContent() else { return }
             if let preselect {
                 guard let display = content.displays.first(where: { $0.displayID == preselect.displayID }) else {
@@ -325,7 +362,7 @@ final class AppCoordinator {
     /// excluded and the pointer follows Show cursor, as for a fullscreen capture. It does not
     /// write `lastAreaRect`: a clipped rect would shrink the memory.
     func capturePreviousArea(intent: CaptureIntent = .standard) async {
-        await withCaptureLock {
+        await withCaptureLock(coversDesktop: true) {
             guard let content = await loadContent() else { return }
             let displays = content.displays.map { PreviousArea.Display(id: $0.displayID, frame: $0.frame) }
             switch PreviousArea.resolve(rect: settings.lastAreaRect?.cgRect, displays: displays) {
@@ -346,7 +383,7 @@ final class AppCoordinator {
     /// rect at once, live, with no selection overlay, as Capture Previous Area captures (the cards
     /// excluded, the pointer from Show cursor). It is stored as the previous area.
     func captureArea(at area: ScreenRect, intent: CaptureIntent) async {
-        await withCaptureLock {
+        await withCaptureLock(coversDesktop: true) {
             guard let content = await loadContent() else { return }
             guard let display = content.displays.first(where: { $0.displayID == area.displayID }) else {
                 NSLog("%@", "URL capture-area: display \(area.displayID) is gone")
@@ -363,7 +400,7 @@ final class AppCoordinator {
     /// Self-Timer: select an area or click a window, then count down and capture it live. The
     /// lock is held for the selection, the countdown and the capture.
     func captureSelfTimer(intent: CaptureIntent = .standard) async {
-        await withCaptureLock {
+        await withCaptureLock(coversDesktop: true) {
             guard let content = await loadContent() else { return }
             guard let selection = await selector.select(mode: .selfTimer, content: content) else { return }
             switch selection {
@@ -378,7 +415,7 @@ final class AppCoordinator {
 
     /// Show the overlay, capture with the overlay excluded (or cut the frozen snapshot), dismiss, then save.
     private func runSelection(mode: SelectionMode, intent: CaptureIntent) async {
-        await withCaptureLock {
+        await withCaptureLock(coversDesktop: true) {
             guard let content = await loadContent() else { return }
             // Freeze applies to area mode only. The snapshots follow the cursor setting: they are
             // taken before the overlay, so the pointer in them is the real one.
@@ -398,6 +435,77 @@ final class AppCoordinator {
             if let result {
                 await save(result, intent: intent)
             }
+        }
+    }
+
+    /// Capture Text (spec 2.10): Capture Area's overlay, with Freeze screen as there, and the image
+    /// Capture Area would have taken. The lock is held for the selection and the capture only, so
+    /// recognition (about 24 s the first time after a restart) never blocks another capture. It
+    /// does not write `lastAreaRect`: the previous area is for image captures.
+    func captureText() async {
+        var captured: CaptureResult?
+        await withCaptureLock(coversDesktop: false) {
+            guard let content = await loadContent() else { return }
+            let freeze = settings.freezeScreen ? CaptureOptions(settings: settings, duringSelection: false) : nil
+            guard let selection = await selector.select(mode: .area, content: content, freeze: freeze) else { return }
+            switch selection {
+            case .area(let rect, let display):
+                captured = await selectedAreaResult(rect: rect, display: display)
+            case .window(let window):
+                // Area mode never returns a window; a click without a drag cancels.
+                captured = await capture(.window(window), duringSelection: true)
+            }
+            selector.dismiss()
+        }
+        if let captured {
+            await copyText(in: captured.image)
+        }
+    }
+
+    /// A URL command's `capture-text` with a rect (the gate has allowed it): that rect at once,
+    /// live, with the cards excluded and no pointer. It does not write `lastAreaRect`.
+    func captureText(at area: ScreenRect) async {
+        var captured: CaptureResult?
+        await withCaptureLock(coversDesktop: false) {
+            guard let content = await loadContent() else { return }
+            guard let display = content.displays.first(where: { $0.displayID == area.displayID }) else {
+                NSLog("%@", "URL capture-text: display \(area.displayID) is gone")
+                return
+            }
+            let cards = await cardWindows()
+            captured = await capture(.area(rect: area.rect, display: display), excludingWindows: cards,
+                                     duringSelection: true)
+        }
+        if let captured {
+            await copyText(in: captured.image)
+        }
+    }
+
+    /// Reads the text or codes in `image` off the main actor, then puts the result on the
+    /// clipboard with the capture sound and a notification, as Play sound and Show notification
+    /// say. Nothing found and a Vision error are always posted, and leave the clipboard alone.
+    /// No file, record, card or upload; `clipboardOwner` stays, since the change count moved.
+    private func copyText(in image: CGImage) async {
+        let scan: TextScan
+        do {
+            scan = try await TextRecognizer().recognize(image)
+        } catch {
+            NSLog("%@", "Text recognition failed: \(error.localizedDescription)")
+            notifier.notifyError(error.localizedDescription, title: "Text not recognized")
+            return
+        }
+        let outcome = TextCaptureOutcome.decide(scan)
+        guard let text = outcome.clipboard else {
+            notifier.notifyError(outcome.body, title: outcome.title)
+            return
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        if settings.playSound {
+            SoundPlayer.playShutter()
+        }
+        if settings.showNotification {
+            notifier.notify(title: outcome.title, body: outcome.body, openURL: outcome.openURL)
         }
     }
 
@@ -452,6 +560,12 @@ final class AppCoordinator {
     /// it from the frozen snapshot or captures it live with the overlay and the cards excluded.
     private func areaResult(rect: CGRect, display: SCDisplay) async -> CaptureResult? {
         settings.lastAreaRect = StoredRect(rect)
+        return await selectedAreaResult(rect: rect, display: display)
+    }
+
+    /// An area chosen in the overlay, which is still up, cut from the frozen snapshot or captured
+    /// live with the overlay and the cards excluded. Stores nothing.
+    private func selectedAreaResult(rect: CGRect, display: SCDisplay) async -> CaptureResult? {
         if let frozen = frozenResult(for: rect, display: display) {
             return frozen
         }
@@ -2272,11 +2386,21 @@ final class AppCoordinator {
                                          pointerIndex: screens.firstIndex { $0.frame.contains(NSEvent.mouseLocation) })
     }
 
-    private func withCaptureLock(_ body: () async -> Void) async {
+    /// Runs `body` unless a capture already runs. With `coversDesktop` and Hide desktop icons while
+    /// capturing on, the desktop is covered before `body` reads the shareable content, so freeze
+    /// snapshots and window lists see the covers, and uncovered when it ends (spec 2.10). Capture
+    /// Scrolling and Capture Text pass false.
+    private func withCaptureLock(coversDesktop: Bool, _ body: () async -> Void) async {
         guard !isCapturing else { return }
         isCapturing = true
         defer { isCapturing = false }
+        guard coversDesktop, settings.hideDesktopIconsWhileCapturing else {
+            await body()
+            return
+        }
+        await covers.show(for: .capture)
         await body()
+        covers.hide(for: .capture)
     }
 
     /// The SCDisplay under an AppKit-global point, falling back to the first display.

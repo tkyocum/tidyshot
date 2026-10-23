@@ -60,6 +60,7 @@ rebuilds lose this grant like they lose Screen Recording.
 | Capture scrolling | ⌃⇧5 |
 | Capture previous area | ⌃⇧6 |
 | Self-timer | none; set one in Settings > Shortcuts |
+| Capture text | ⌃⇧7 |
 | Restore closed overlay | none; set one in Settings > Shortcuts |
 
 Change them in Settings > Shortcuts.
@@ -107,13 +108,14 @@ Horizontal scrolling is not supported.
 
 ## Capture options
 
-Settings > Capture has four options. *Freeze screen while selecting* shows a still picture of the
+Settings > Capture has five options. *Freeze screen while selecting* shows a still picture of the
 screen while you drag an area and cuts the capture from it, so menus, tooltips and video stay as
 they were when you pressed the shortcut; window mode and scrolling capture are live. *Show cursor in
-screenshots* puts the pointer into fullscreen, previous-area, self-timer and URL captures, and into
+screenshots* puts the pointer into fullscreen, previous-area, self-timer and URL captures (not `capture-text` with a rect), and into
 area captures only with freeze on; TidyShot never captures its own crosshair. *Include window
 shadow* keeps the system shadow around a window capture; the corners are transparent either way.
-*Self-timer* sets the countdown to 3, 5 or 10 seconds.
+*Hide desktop icons while capturing* is described under Hide desktop icons below. *Self-timer* sets
+the countdown to 3, 5 or 10 seconds.
 
 Capture Previous Area (⌃⇧6) captures the rectangle of your last area capture (or scrolling capture)
 again, with no selection. It says so when there is no previous area or its display is gone.
@@ -164,6 +166,38 @@ Image, Save As…, Annotate, Opacity, Actual Size, Lock and Close. A locked pin 
 the window beneath; *Unlock Pinned Screenshots* in the menu bar menu makes pins clickable again. Pins
 close when you quit, and deleting a capture closes its pins.
 
+## Capture Text
+
+Capture Text (⌃⇧7) copies the text in an area instead of an image. Select an area as for Capture
+Area (Freeze screen applies; a click without a drag closes the overlay and copies nothing); TidyShot reads it on the Mac with Apple's Vision
+and puts the text on the clipboard, one line for each line on screen. When the area holds a QR code
+(or another two-dimensional code: Micro QR, Aztec, Data Matrix or PDF417), the code's contents are
+copied instead, so a "Scan me" caption does not end up in the link; select without the code to get
+the text. Several codes are copied one per line. Nothing is saved, uploaded or added to Recent
+Captures, and the after-capture action does not apply.
+
+With Show notification on, a notification shows the first line, and when a single code holds a web
+link, clicking it opens the link. When nothing is found the clipboard is left alone and *No text
+found* says so. The first Capture Text after a restart can take about 25 seconds while macOS loads
+its text model; later ones take a fraction of a second, and other captures are not held up meanwhile.
+
+## Hide desktop icons
+
+TidyShot can cover the desktop's icons and widgets with the desktop picture, without changing
+Finder's settings. *Hide desktop icons while capturing* (Settings > Capture) covers them during
+area, window, fullscreen, previous-area, All-in-One and self-timer captures, the countdown included,
+and uncovers them when the capture ends; scrolling captures and Capture Text leave the desktop alone.
+*Hide Desktop Icons* in the menu bar menu covers them until you choose it again, also across
+launches, and has a checkmark while on.
+
+The covers sit below every window, on every Space and display. The picture is read again on a Space
+switch, a display change, wake and every 10 minutes, so a new wallpaper reaches the cover at the
+next of these. Clicks on the covered desktop do nothing: icons cannot be opened or dragged, and
+clicking the picture does not reveal the desktop. Captures show the desktop picture where the icons
+were. A scrolling capture over the desktop still shows the icons, even with Hide Desktop Icons on,
+because it leaves all of TidyShot's windows, the covers included, out of the picture. When TidyShot cannot read a display's desktop picture, that display stays uncovered and *Desktop
+icons still showing* is posted, once per launch.
+
 ## URL scheme
 
 Raycast, Keyboard Maestro, Shortcuts and scripts can drive TidyShot with `tidyshot://` URLs:
@@ -184,7 +218,11 @@ The names follow CleanShot X's, so a CleanShot macro works after changing `clean
 | `all-in-one` | All-in-One; a rectangle is preselected (or the previous area), and Return or a double-click captures it only after you click in the overlay or use its toolbar | `action`, `x`, `y`, `width`, `height`, `display` |
 | `self-timer` | Select, then count down | `action` |
 | `capture-scrolling` (or `scrolling-capture`) | Scrolling capture; a rectangle skips the selection, and the capture waits until you click Start (Return in the frontmost app does not start it); unstarted for a minute, it cancels itself | `action`, `x`, `y`, `width`, `height`, `display` |
+| `capture-text` | Capture Text; with a rectangle, read it at once. The text or code goes to the clipboard | `x`, `y`, `width`, `height`, `display` |
 | `restore-recently-closed` | Restore Closed Overlay | none |
+| `hide-desktop-icons` | Turn Hide Desktop Icons on | none |
+| `show-desktop-icons` | Turn Hide Desktop Icons off | none |
+| `toggle-desktop-icons` | Turn Hide Desktop Icons on or off | none |
 
 `action` is `upload` (upload only when that is your after-capture setting, otherwise save, upload
 and copy the URL), `save` (save and copy the image), `copy` (the image on the clipboard and nothing
@@ -196,24 +234,24 @@ CleanShot: all four or none, plain numbers such as `120` or `40.5`, width and he
 rectangle that runs off the display is clipped to it. `display` is 1 for the main display and 2, 3
 and so on for the others in the order macOS lists them; without it, the display under the pointer.
 Command and parameter names, and actions, may be in any case. Other parameters are ignored, and a
-parameter given twice is an error.
+parameter the command takes, given twice, is an error.
 
-**Security.** Any app on this Mac can open a `tidyshot://` URL, and a web page can once you let
-your browser open TidyShot. Settings > General > URL commands has two switches. *Allow URL commands
+**Security.** Any app on this Mac can open a `tidyshot://` URL, and a web page can once you let your
+browser open TidyShot. Settings > General > URL commands has two switches. *Allow URL commands
 (tidyshot://)* is on by default; off, every command is refused. *Allow URL commands that capture
-without a selection* is off by default: it covers the three commands that capture without your drag
-or click (`capture-fullscreen`, `capture-previous-area`, and `capture-area` with a rectangle), which
-are otherwise refused with a notification naming the app that sent them. Turn it on only for macros
-that need it (a Keyboard Maestro macro for a fullscreen shot, say): any app on the Mac can then take
-a screenshot through TidyShot and read it from the clipboard. The name shown is what the sending app
-calls itself. Every other command waits for your drag, click or Start, and commands never take a
-file path.
+without a selection* is off by default: it covers the commands that capture without your drag or
+click (`capture-fullscreen`, `capture-previous-area`, and `capture-area` and `capture-text` with a
+rectangle), which are otherwise refused with a notification naming the app that sent them. Turn it
+on only for macros that need it (a Keyboard Maestro macro for a fullscreen shot, say): any app on
+the Mac can then take a screenshot through TidyShot and read it from the clipboard. The name shown
+is what the sending app calls itself. Every other command waits for your drag, click or Start, or
+captures nothing, and commands never take a file path.
 
 Errors (an unknown command or action, a bad rectangle, a missing display, a parameter given twice)
-appear as notifications titled *TidyShot URL command*. A command that arrives while a capture runs
-is ignored, and of several URLs that wait for TidyShot to launch only the first capture command
-runs. If `open tidyshot://…` starts an old build, more than one TidyShot.app is registered: list
-them with
+appear as notifications titled *TidyShot URL command*. A capture command that arrives while a
+capture runs is ignored (restore and the desktop-icon commands still run), and of several URLs that
+wait for TidyShot to launch only the first capture command runs. If `open tidyshot://…` starts an
+old build, more than one TidyShot.app is registered: list them with
 `/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -dump | grep -i tidyshot`
 and remove the stale ones with `lsregister -u <path>`.
 
@@ -387,3 +425,4 @@ Cancelling the save panel keeps the editor open.
 - Phase 6a manual test checklist: `docs/testing/phase-6a-manual-checklist.md`
 - Phase 6b manual test checklist: `docs/testing/phase-6b-manual-checklist.md`
 - Phase 7 (Clop) manual test checklist: `docs/testing/phase-7-clop-manual-checklist.md`
+- Phase 7b (Capture Text, Hide desktop icons) manual test checklist: `docs/testing/phase-7b-manual-checklist.md`

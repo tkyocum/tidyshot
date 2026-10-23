@@ -8,6 +8,8 @@ extension KeyboardShortcuts.Name {
     static let captureFullscreen = Self("captureFullscreen", initial: .init(.three, modifiers: [.control, .shift]))
     static let captureScrolling = Self("captureScrolling", initial: .init(.five, modifiers: [.control, .shift]))
     static let capturePreviousArea = Self("capturePreviousArea", initial: .init(.six, modifiers: [.control, .shift]))
+    /// Capture Text (spec 2.10): ⌃⇧7, after ⌃⇧6.
+    static let captureText = Self("captureText", initial: .init(.seven, modifiers: [.control, .shift]))
     /// Self-Timer. No default; the Shortcuts tab records one.
     static let selfTimer = Self("selfTimer")
     /// Restore Closed Overlay. No default; the Shortcuts tab records one.

@@ -76,6 +76,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         menu.addItem(captureItem("Capture Scrolling", .captureScrolling, #selector(captureScrolling)))
         menu.addItem(captureItem("Capture Previous Area", .capturePreviousArea, #selector(capturePreviousArea)))
         menu.addItem(captureItem("Self-Timer", .selfTimer, #selector(captureSelfTimer)))
+        menu.addItem(captureItem("Capture Text", .captureText, #selector(captureText)))
         menu.addItem(.separator())
         recentCaptures.rebuild()
         menu.addItem(recentCaptures.item)
@@ -89,6 +90,10 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         let reveal = item("Reveal Last Capture", #selector(revealLastCapture))
         reveal.isEnabled = coordinator.lastCaptureURL != nil
         menu.addItem(reveal)
+        // Always enabled: a capture that is covering the desktop keeps its covers until it ends.
+        let hideIcons = item("Hide Desktop Icons", #selector(toggleDesktopIcons))
+        hideIcons.state = coordinator.settings.desktopIconsHidden ? .on : .off
+        menu.addItem(hideIcons)
         menu.addItem(.separator())
         if coordinator.hasLockedPins {
             menu.addItem(item("Unlock Pinned Screenshots", #selector(unlockPins)))
@@ -130,9 +135,11 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     @objc private func captureScrolling() { Task { await coordinator.captureScrolling() } }
     @objc private func capturePreviousArea() { Task { await coordinator.capturePreviousArea() } }
     @objc private func captureSelfTimer() { Task { await coordinator.captureSelfTimer() } }
+    @objc private func captureText() { Task { await coordinator.captureText() } }
     @objc private func retryFailedUploads() { coordinator.retryFailedUploads() }
     @objc private func restoreClosedOverlay() { Task { await coordinator.restoreClosedOverlay() } }
     @objc private func revealLastCapture() { coordinator.revealLastCapture() }
+    @objc private func toggleDesktopIcons() { Task { await coordinator.toggleDesktopIconsHidden() } }
     @objc private func unlockPins() { coordinator.unlockPins() }
     @objc private func closePins() { coordinator.closePins() }
     @objc private func openSettings() { settingsOpener.open() }

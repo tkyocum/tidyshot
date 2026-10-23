@@ -212,6 +212,25 @@ struct AppSettingsTests {
         #expect(AppSettings(defaults: defaults).optimiseWithClop)
     }
 
+    /// Hide desktop icons while capturing, and Hide Desktop Icons until turned off, are both off by
+    /// default and persist (spec 2.10).
+    @Test func desktopIconSettingsDefaultOffAndPersist() {
+        let defaults = freshDefaults()
+        let first = AppSettings(defaults: defaults)
+        #expect(!first.hideDesktopIconsWhileCapturing)
+        #expect(!first.desktopIconsHidden)
+        first.hideDesktopIconsWhileCapturing = true
+        first.desktopIconsHidden = true
+        #expect(defaults.object(forKey: "hideDesktopIconsWhileCapturing") as? Bool == true)
+        #expect(defaults.object(forKey: "desktopIconsHidden") as? Bool == true)
+        let second = AppSettings(defaults: defaults)
+        #expect(second.hideDesktopIconsWhileCapturing)
+        #expect(second.desktopIconsHidden)
+        second.desktopIconsHidden = false
+        #expect(!AppSettings(defaults: defaults).desktopIconsHidden)
+        #expect(AppSettings(defaults: defaults).hideDesktopIconsWhileCapturing)
+    }
+
     /// Phase 6b: Self-timer counts 5 seconds unless the Capture tab says 3 or 10 (spec 2.9).
     @Test func selfTimerSecondsDefaultsToFiveAndPersists() {
         let defaults = freshDefaults()
