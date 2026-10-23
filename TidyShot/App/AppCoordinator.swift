@@ -413,5 +413,5 @@ final class AppCoordinator {
     }
 }
 
-/// The URL scheme's routes are the capture functions above, with their own signatures.
+/// The URL scheme's routes are AppCoordinator's capture, overlay and desktop-icon functions (in +Capture, +Overlay and this file), with their own signatures.
 extension AppCoordinator: URLCommandTarget {}
