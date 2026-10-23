@@ -86,7 +86,8 @@ struct RecentCaptureRow: View {
             } else {
                 iconButton("doc.on.doc", label: "Copy File", enabled: canCopyFile) { actions.copyFile(record.id) }
             }
-            iconButton("trash", label: "Delete…", enabled: true) { actions.delete(record.id) }
+            iconButton("trash", label: CaptureDeletion.actionTitle(confirmBeforeDeleting: AppSettings.shared.confirmBeforeDeleting),
+                       enabled: true) { actions.delete(record.id) }
         }
         .padding(.horizontal, Self.horizontalPadding)
         .frame(width: Self.size.width, height: Self.size.height)

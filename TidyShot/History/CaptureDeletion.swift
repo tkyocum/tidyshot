@@ -22,6 +22,12 @@ nonisolated enum CaptureDeletion {
         confirmBeforeDeleting
     }
 
+    /// The card's and row's Delete label: `Delete…` while it asks first, `Delete` when it acts at
+    /// once, since the ellipsis promises a further step.
+    static func actionTitle(confirmBeforeDeleting: Bool) -> String {
+        asksFirst(confirmBeforeDeleting: confirmBeforeDeleting) ? "Delete…" : "Delete"
+    }
+
     /// The keys at `record.objectLocation` that may hold the capture, in order and without
     /// duplicates: the key it was uploaded under, and the key a cancelled upload had reserved (its
     /// PUT may have completed on the server as it was cancelled). `objects(for:)` adds the objects

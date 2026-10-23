@@ -87,6 +87,12 @@ struct CaptureDeletionTests {
         #expect(!CaptureDeletion.asksFirst(confirmBeforeDeleting: false))
     }
 
+    /// The ellipsis promises a confirmation, so it goes when Delete acts at once.
+    @Test func deleteLabelDropsTheEllipsisWhenItActsAtOnce() {
+        #expect(CaptureDeletion.actionTitle(confirmBeforeDeleting: true) == "Delete…")
+        #expect(CaptureDeletion.actionTitle(confirmBeforeDeleting: false) == "Delete")
+    }
+
     @Test func alertTexts() {
         #expect(CaptureDeletion.confirmationMessage == "Delete this capture?")
         #expect(CaptureDeletion.storageFailureMessage(reason: "Server returned HTTP 403: AccessDenied: Access Denied")

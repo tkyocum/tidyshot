@@ -1450,6 +1450,7 @@ Two changes Tim asked for after testing recording R1. They are on the branch `sm
 - **Off.** `deleteCapture(recordID:)` skips `confirmDelete(of:)`: the card's, pin's and row's Delete then act at once.
 - **Unchanged.** The second alert (`confirmRemoveFromHistory`), which appears only after the storage `DELETE` failed or a save-folder file could not be removed, still appears. It asks what to do about something that could not be deleted, which a routine confirmation does not cover.
 - **No other gate.** Nothing else reads the setting; retention pruning never asked and still does not.
+- **Labels.** The card's menu item and the row's button read `Delete…` while Delete asks first and `Delete` when it acts at once (`CaptureDeletion.actionTitle(confirmBeforeDeleting:)`).
 
 **Size in Recent Captures.**
 - **Format.** Each row's detail reads `3 hours ago · 5 KB`: the relative time, a middle dot with a space either side, then the size. The upload state follows as now, `3 hours ago · 5 KB · Uploading`.
@@ -1459,8 +1460,9 @@ Two changes Tim asked for after testing recording R1. They are on the branch `sm
   - **Edits and replaces:** an editor Save, or a Trim when R2 adds it, sets the new file's size.
   - **On upload:** `.uploaded` sets the size of the bytes sent, which is Clop's result when Clop's result was accepted. The size shown is then the uploaded object's.
   - **Not changed:** a failed upload, or a delete of the local file alone.
+  - **Also set (built):** a recording recovered at launch gets its file's size, and an editor Upload's local write sets the edited file's size until the upload succeeds. After a failed editor Upload, the record goes back to its earlier link and keeps the edited file's size.
 - **Old records.** At launch, records with no `byteCount` and a local file get it from the file's `fileSizeKey` resource value. That is `pending/` directly, and the save folder under its scope, all in one pass off the main actor. The file is never read. Records with neither a size nor a local file show no size.
-- **Pure parts.** `RecentCaptureFormatting.detail(for:now:locale:isOptimizing:)` takes the size from the record. The size text comes from `RecentCaptureFormatting.sizeText(_:locale:)`.
+- **Pure parts.** `RecentCaptureFormatting.detail(for:now:locale:isOptimizing:)` takes the size from the record. The size text comes from `RecentCaptureFormatting.sizeText(_:)`, in the current locale: `ByteCountFormatter` has no locale property, and the format-style API that takes one writes `kB`. When a row is too narrow for the whole line, it drops the size before it drops the upload state.
 
 **Tests (Swift Testing).**
 - `RecentCaptureFormattingTests`:
@@ -1468,7 +1470,7 @@ Two changes Tim asked for after testing recording R1. They are on the branch `sm
   - time, size and each upload state;
   - no size when nil or zero;
   - the middle-dot separator;
-  - `sizeText` for 999 bytes, 5 KB, 1.2 MB and 3.4 GB in the en_US locale.
+  - `sizeText` for 999 bytes, 5 KB, 1.2 MB and 3.4 GB (runs only when the Mac's locale is US English).
 - `CaptureRecordTests`: `byteCount` round-trips, and old JSON decodes as nil.
 - `AppSettingsTests`: `confirmBeforeDeleting` defaults to true and persists.
 - `CaptureDeletionTests` or a pure helper: whether Delete asks, for each value of the setting. The alert itself is a hand check.
