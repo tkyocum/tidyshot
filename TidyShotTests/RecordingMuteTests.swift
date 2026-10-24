@@ -215,8 +215,9 @@ struct RecordingMuteTests {
     /// An empty edit at the sound's start (`p-4096.mp4` has one of 210 frames) or at its end becomes
     /// silence: the rewrite's sound is one segment, exactly as long as the source's track, silent
     /// over the edit, and the tone keeps its time. An edit longer than a second is filled a second
-    /// at a time.
-    @Test(arguments: [VideoFixtures.EmptyEdit.leading(0.1), .trailing(0.1), .leading(1.75), .trailing(1.75)],
+    /// at a time, and one of exactly a second in one buffer.
+    @Test(arguments: [VideoFixtures.EmptyEdit.leading(0.1), .trailing(0.1), .leading(1.0), .trailing(1.0),
+                      .leading(1.75), .trailing(1.75)],
           [(44_100, 1), (48_000, 2)])
     func anEmptyEditAtEitherEndBecomesSilenceInPlace(edit: VideoFixtures.EmptyEdit, format: (Int, Int)) async throws {
         defer { cleanUp() }

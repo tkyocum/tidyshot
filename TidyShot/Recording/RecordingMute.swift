@@ -547,8 +547,8 @@ nonisolated enum RecordingMute {
     }
 
     /// `sample`, a buffer of the decoder's, with its frames inside `segments` zeroed on a copy of its
-    /// data; `sample` itself when none falls inside. Markers decode to nil before they reach it, so
-    /// the check for a buffer with no sound is defensive. A buffer whose frames cannot be placed
+    /// data; `sample` itself when none falls inside. A marker leaves the decoder nothing, so the
+    /// check for a buffer with no sound is defensive. A buffer whose frames cannot be placed
     /// throws, so its sound never passes unmuted.
     private static func silenced(_ sample: Sample, segments: [MuteInterval]) throws -> Sample {
         let copy = try sample.withUnsafeSampleBuffer { buffer -> CMSampleBuffer? in
