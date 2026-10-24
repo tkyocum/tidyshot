@@ -383,12 +383,14 @@ a start on one passes through), and the window, the pass and the wiring landed w
 - [ ] With two displays, the pointer on the second, `Trim…` from a card there: the window opens centred on the
   second display, at a size fitted to it.
 - [ ] Settings while a card shows a recording: forget the credentials in Settings > Upload, and an upload-only
-  recording's `Trim…` stays enabled, as it reads only the Upload tab's fields (plan, Gap 9); its sheet offers
-  `Save and Upload`, which posts `Upload not configured` / `Set up a destination in Settings > Upload, then
-  upload again.`, writes nothing and closes the window (save them again: it trims and uploads). Choose another
-  save folder in Settings > General, and a recording in the old folder that was never uploaded has `Trim…`
-  disabled at once; the same when the folder is first chosen at a save's own panel (a save with no folder set).
-  A `Trim…` clicked from a menu drawn before the change posts `Not trimmed` with the reason.
+  recording's `Trim…` stays enabled, as it reads only the Upload tab's fields (plan, Gap 9), but a click posts
+  `Not trimmed` / `No upload destination is configured.` and opens nothing, as its download needs the
+  credentials. On a recording with a local file and a link (saved and uploaded), or in a window opened before
+  the forget, the sheet's `Save and Upload` posts `Upload not configured` / `Set up a destination in Settings >
+  Upload, then upload again.`, writes nothing and closes the window (save the credentials again: it trims and
+  uploads). Choose another save folder in Settings > General, and a recording in the old folder that was never
+  uploaded has `Trim…` disabled at once; the same when the folder is first chosen at a save's own panel (a save
+  with no folder set). A `Trim…` clicked from a menu drawn before the change posts `Not trimmed` with the reason.
 - [ ] After a Save: the card's poster, the row's thumbnail, the duration badge and the row's size are the
   trimmed recording's (the size against `ls -l`).
 - [ ] Save, Save and Upload (the link plays the trimmed video), an upload-only record that needs the download
