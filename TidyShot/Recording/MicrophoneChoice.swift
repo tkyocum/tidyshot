@@ -140,12 +140,17 @@ nonisolated enum MicrophoneChoice {
     }
 
     /// The start's input, under the capture lock: Off, as every GIF's start is, reads nothing and
-    /// gives no device and no note; otherwise the access is read again, after any prompt, and
-    /// `resolve` runs over the inputs listed now.
+    /// gives no device and no note; otherwise the access is read first, again after any prompt.
+    /// Only with access are the inputs listed now and `resolve` run over them; without it, no
+    /// discovery session runs under the lock, and `resolve` gives the access note.
     static func resolveAtStart(_ stored: Stored, access: () -> MicrophoneAccess, devices: () -> [MicrophoneDevice],
                                defaultDevice: () -> MicrophoneDevice?) -> Resolution {
         guard stored != .off else { return Resolution(device: nil, note: nil) }
-        return resolve(stored: stored, devices: devices(), defaultDevice: defaultDevice(), access: access())
+        let access = access()
+        guard access == .authorized else {
+            return resolve(stored: stored, devices: [], defaultDevice: nil, access: access)
+        }
+        return resolve(stored: stored, devices: devices(), defaultDevice: defaultDevice(), access: access)
     }
 
     /// The resolved input as the recording takes it: none and no note for a GIF. The hand-off reads

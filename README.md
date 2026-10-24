@@ -51,9 +51,10 @@ rebuilds lose this grant like they lose Screen Recording.
 
 Recording the microphone (Screen recording below) needs a third, optional permission: Microphone, under
 the same pane. macOS asks the first time you choose an input in Settings > Capture > Recording >
-Microphone, or when you start an MP4 recording with one chosen while access is still undecided;
-ad-hoc rebuilds lose this grant too. The app's sandbox gains one entitlement for it,
-`com.apple.security.device.audio-input`, and its Info.plist a usage string.
+Microphone, or when you start an MP4 recording with one chosen while access is still undecided. An
+ad-hoc rebuild may keep this grant or lose it (`tccutil reset Microphone io.tky.tidyshot` makes macOS ask
+again). The app's sandbox gains one entitlement for it, `com.apple.security.device.audio-input`, and its
+Info.plist a usage string.
 
 ## Default shortcuts
 

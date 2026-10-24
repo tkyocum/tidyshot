@@ -191,29 +191,34 @@ struct MicrophoneChoiceTests {
 
     // MARK: The start, under the capture lock
 
-    /// Off, as every GIF's start is, reads neither the access nor the inputs.
+    /// Off, as every GIF's start is (`aGIFStartTreatsAnyStoredMicrophoneAsOff`), reads neither the
+    /// access nor the inputs.
     @Test func anOffStartReadsNothing() {
         var reads: [String] = []
-        for stored in [MicrophoneChoice.Stored.off, MicrophoneChoice.forRecording(missingRode, format: .gif),
-                       MicrophoneChoice.forRecording(.systemDefault, format: .gif)] {
-            let resolution = MicrophoneChoice.resolveAtStart(stored,
-                                                             access: { reads.append("access"); return .authorized },
-                                                             devices: { reads.append("devices"); return devices },
-                                                             defaultDevice: { reads.append("default"); return builtIn })
-            #expect(resolution == MicrophoneChoice.Resolution(device: nil, note: nil))
-        }
+        let resolution = MicrophoneChoice.resolveAtStart(.off,
+                                                         access: { reads.append("access"); return .authorized },
+                                                         devices: { reads.append("devices"); return devices },
+                                                         defaultDevice: { reads.append("default"); return builtIn })
+        #expect(resolution == MicrophoneChoice.Resolution(device: nil, note: nil))
         #expect(reads.isEmpty)
     }
 
-    /// A microphone reads the access as it is after the prompt, and the inputs as they are listed then.
-    @Test func aMicrophoneStartReadsTheAccessAfterThePrompt() async {
-        let microphones = FakeMicrophoneDevices(devices: devices, defaultInput: builtIn, access: .notDetermined, grants: true)
-        let stored = MicrophoneChoice.Stored.device(id: rode.uniqueID, name: "RODE AI-1")
-        _ = await microphones.requestAccess()
-        let resolution = MicrophoneChoice.resolveAtStart(stored, access: { microphones.access() },
-                                                         devices: { microphones.list() },
-                                                         defaultDevice: { microphones.defaultDevice() })
-        #expect(resolution == MicrophoneChoice.Resolution(device: rode, note: nil))
+    /// A microphone reads the access first. Only with access are the inputs listed, so a start
+    /// without it runs no discovery session under the capture lock.
+    @Test(arguments: [MicrophoneAccess.authorized, .denied, .restricted, .notDetermined])
+    func aMicrophoneStartReadsTheAccessFirstAndListsTheInputsOnlyWithIt(_ access: MicrophoneAccess) {
+        var reads: [String] = []
+        let resolution = MicrophoneChoice.resolveAtStart(.device(id: rode.uniqueID, name: "RODE AI-1"),
+                                                         access: { reads.append("access"); return access },
+                                                         devices: { reads.append("devices"); return devices },
+                                                         defaultDevice: { reads.append("default"); return builtIn })
+        if access == .authorized {
+            #expect(reads == ["access", "devices", "default"])
+            #expect(resolution == MicrophoneChoice.Resolution(device: rode, note: nil))
+        } else {
+            #expect(reads == ["access"])
+            #expect(resolution == MicrophoneChoice.Resolution(device: nil, note: accessNote))
+        }
     }
 
     /// A refused prompt, and an input unplugged since it was chosen, each give `resolve`'s note.

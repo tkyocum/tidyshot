@@ -20,7 +20,7 @@ extension AppCoordinator {
     /// and otherwise starts one, also while an earlier recording is being saved. While a start
     /// waits on the microphone prompt, another start is ignored.
     nonisolated static func recordingShortcutAction(for phase: RecordingPhase,
-                                                    isAskingMicrophone: Bool = false) -> RecordingShortcutAction {
+                                                    isAskingMicrophone: Bool) -> RecordingShortcutAction {
         switch phase {
         case .countIn: .cancelCountIn
         case .recording: .stop
@@ -114,8 +114,9 @@ extension AppCoordinator {
     /// a GIF, which never prompts. While access is not yet decided, the system prompt shows here,
     /// before the capture lock, so it never shows during a count-in or a recording. Meanwhile
     /// another start is ignored (`isAskingMicrophone`), and nothing else is held. Whatever the
-    /// answer, the start goes on: the access is read again under the lock. Nil when the app began
-    /// quitting while the prompt was up, so nothing starts.
+    /// answer, the start goes on: the access is read again under the lock. Nil, so nothing starts,
+    /// when another capture holds the lock, which would refuse the start, and the prompt would land
+    /// in its screenshot; and when the app began quitting while the prompt was up.
     private func recordingMicrophoneChoice() async -> MicrophoneChoice.Stored? {
         let format = settings.recordingFormat
         let stored = MicrophoneChoice.Stored(value: settings.recordingMicrophone, name: settings.recordingMicrophoneName)
@@ -124,6 +125,9 @@ extension AppCoordinator {
         guard choice != .off, MicrophoneChoice.asksForAccess(stored, format: format, access: microphones.access()) else {
             return choice
         }
+        // A screenshot's selection or self-timer, or a scrolling capture: the start ends here, with
+        // no prompt, as `withCaptureLock` ends any start while another capture runs.
+        guard !isCapturing else { return nil }
         isAskingMicrophone = true
         let granted = await microphones.requestAccess()
         isAskingMicrophone = false

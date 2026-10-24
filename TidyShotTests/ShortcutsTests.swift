@@ -78,10 +78,10 @@ struct ShortcutsTests {
     /// Either record shortcut cancels a count-in and stops a recording, whichever started it. Idle,
     /// or while a recording is saved, it starts a new one.
     @Test func recordShortcutsStartCancelOrStopByPhase() {
-        #expect(AppCoordinator.recordingShortcutAction(for: .idle) == .start)
-        #expect(AppCoordinator.recordingShortcutAction(for: .countIn) == .cancelCountIn)
-        #expect(AppCoordinator.recordingShortcutAction(for: .recording) == .stop)
-        #expect(AppCoordinator.recordingShortcutAction(for: .saving) == .start)
+        #expect(AppCoordinator.recordingShortcutAction(for: .idle, isAskingMicrophone: false) == .start)
+        #expect(AppCoordinator.recordingShortcutAction(for: .countIn, isAskingMicrophone: false) == .cancelCountIn)
+        #expect(AppCoordinator.recordingShortcutAction(for: .recording, isAskingMicrophone: false) == .stop)
+        #expect(AppCoordinator.recordingShortcutAction(for: .saving, isAskingMicrophone: false) == .start)
     }
 
     /// While a start waits on the microphone prompt, another start is ignored (R2 design, At the

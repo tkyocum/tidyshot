@@ -272,8 +272,8 @@ microphone. Play a steady sound from another app (`afplay /System/Library/Sounds
 loop, or music).
 - [ ] The bar is 208 x 44 pt with the time, the mute button (`speaker.wave.2.fill`), Stop and Cancel. With
   `Record system audio` off and no microphone the bar is 172 x 44 with no mute button, and the same for an
-  MP4 whose only sound would have been a microphone dropped at the start (an input set, access denied). For a GIF it is the `GIF` bar
-  (above).
+  MP4 whose only sound would have been a microphone dropped at the start (an input set, access denied).
+  For a GIF it is the `GIF` bar (above).
 - [ ] With another app frontmost, hover the mute button and then Cancel: the tool tips `Mute the sound` and
   `Discard the recording` show (R1's Cancel tool tip never showed before). After a press the button is
   `speaker.slash.fill` and its tip is `Unmute the sound`. Neither tip is in the video.
@@ -337,6 +337,9 @@ selection overlay or the count-in, and the stream's `Recording: starting …` li
   prompt looked like: ______
 - [ ] With the prompt up: a second Record press does nothing and logs `Recording: start ignored, the microphone
   prompt is open`; a screenshot shortcut works; Quit quits without starting a recording.
+- [ ] With access undecided (`tccutil reset Microphone io.tky.tidyshot`) and another capture under way (a
+  screenshot's area selection, its self-timer countdown, a scrolling capture): a Record press shows no
+  prompt, starts nothing and logs nothing; the capture goes on. Once it is done, a Record press prompts.
 - [ ] The chosen input unplugged before the recording (or the RODE AI-1 chosen while unplugged): the recording
   uses the default input, and `Recorded with <default input name>` / `<name> is not connected.` posts after
   Stop. With no input at all: `Recorded without the microphone` / `No microphone is connected.`
@@ -525,8 +528,8 @@ Four more where the build made a call the design did not settle. Tim confirmed a
 - [x] C. The cache note's title when a replaced upload's URL was not copied is `Uploaded` (the copied branch's `Uploaded,
   URL copied` would be untrue there). confirm (Tim, 2026-10-24)
 - [x] D. A recording that ends with nothing kept (`.nothing`) no longer posts `Recording failed` while TidyShot quits;
-  R1 posted it. In quit mode no notice posts at all (`RecordingNoticeOrder.afterStop(… quitMode:)`). confirm (Tim,
-  2026-10-24)
+  R1 posted it. In quit mode no notice posts at all (`RecordingNoticeOrder.afterStop(… quitMode:)`).
+  confirm (Tim, 2026-10-24)
 
 ## Regression
 - [ ] ⌃⇧1 to ⌃⇧7 behave as in the 6a, 6b and 7b checklists after a GIF and after an MP4 recording.
