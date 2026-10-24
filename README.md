@@ -293,7 +293,8 @@ copies the samples and saves at once, and any other start re-encodes the video a
 size, with a *Trimming…* bar and *Stop*. A trim under half a second is refused, and a trim needs free
 space for the recording's size (twice that for a re-encode) plus 1 GB. Saving over an uploaded
 recording leaves its link showing the full recording, and the card and row say *Link not updated* until
-*Upload Trimmed* replaces it. While a trim writes, Retry, *Upload Trimmed* and Delete wait.
+*Upload Trimmed* replaces it. While a trim writes, Retry, *Upload Trimmed* and Delete are refused until
+it finishes.
 
 **After you stop.** The recording follows Settings > General > After capture, as a screenshot does:
 - *Save and copy image* moves the file into the save folder and, with *Copy image to clipboard* on,

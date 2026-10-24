@@ -339,7 +339,10 @@ selection overlay or the count-in, and the stream's `Recording: starting …` li
   video. After Deny the input stays chosen in Settings, with the access note. Write down what the first
   prompt looked like: ______
 - [ ] With the prompt up: a second Record press does nothing and logs `Recording: start ignored, the microphone
-  prompt is open`; a screenshot shortcut works; Quit quits without starting a recording.
+  prompt is open`; a screenshot shortcut works; Quit quits without starting a recording. Open for Tim (the
+  design's Left as they are, A screenshot during the microphone prompt): whether that screenshot shows the
+  prompt, and that answering the prompt while it is still selecting starts no recording and posts nothing.
+  Write down what happened: ______
 - [ ] With access undecided (`tccutil reset Microphone io.tky.tidyshot`) and another capture under way (a
   screenshot's area selection, its self-timer countdown, a scrolling capture): a Record press shows no
   prompt, starts nothing and logs nothing; the capture goes on. Once it is done, a Record press prompts.

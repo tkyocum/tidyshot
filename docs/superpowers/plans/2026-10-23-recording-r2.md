@@ -358,7 +358,7 @@ The plan PR's one commit (`docs: recording R2 design, plan and probes`). The pro
 - [ ] Implement `MicrophoneChoice`, `LiveMicrophoneDevices`, the configuration, the driver's `captureMicrophone` and `microphoneCaptureDeviceID`, and the controller's loss reason. The live `microphoneLossReason` gives `The microphone was disconnected.` when the ID is missing from `microphones.list()`, and `Microphone access is off for TidyShot.` when access is not `.authorized`.
 - [ ] Add the `Microphone` row between `Record system audio` and the GIF caption (design, Setting and Permission):
   - a `Picker` over `MicrophoneChoice.entries`, refreshed when the tab appears and on the two device notifications; a pick writes the name, and the name is refreshed whenever the list sees the stored device;
-  - a pick while access is `notDetermined` calls `requestAccess`; a refusal, or a pick while access is denied, goes back to `Off`;
+  - a pick while access is `notDetermined` calls `requestAccess`; a refusal, or a pick while access is denied, goes back to `Off` (superseded by Decided 2026-10-24, 7: a pick is kept whatever the access);
   - with `showsAccessNote`, `Microphone access is off for TidyShot.` and `Privacy Settings…`, which opens `privacySettingsURL`; the access is read again on `NSWindow.didBecomeKeyNotification` for the Settings window;
   - disabled for GIF, as `Record system audio` is.
 - [ ] Wire the start (design, At the start):
