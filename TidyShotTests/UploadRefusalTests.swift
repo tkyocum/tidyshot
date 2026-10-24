@@ -40,7 +40,8 @@ struct UploadRefusalTests {
     }
 
     /// `Upload Trimmed` (design, Stale link): refused while trimmed or marked, then as the editor's
-    /// Upload is (deleted, being deleted, uploading), then with no local file.
+    /// Upload is (deleted, being deleted, uploading), then with no local file, then with a link that
+    /// is not stale or no link.
     @Test func uploadTrimmedIsRefusedInTheGatesOrder() {
         let folder = URL(filePath: "/Users/tim/Movies/TidyShot", directoryHint: .isDirectory)
         let link = URL(string: "https://snap.tky.io/rec.mp4")!
@@ -61,9 +62,10 @@ struct UploadRefusalTests {
         noFile.fileIsTemporary = false
         #expect(refusal(noFile) == "The file could not be read: no local file")
         // Last, as the menu shows the item only for a stale link: a link that shows the file already,
-        // as after an upload that ended while the menu was open.
+        // as after an upload that ended while the menu was open. A record with no link is told so.
         #expect(refusal(record(state: .uploaded(url: link, key: "rec.mp4"))) == "The link already shows the trimmed recording.")
-        #expect(refusal(record(state: .none)) == "The link already shows the trimmed recording.")
+        #expect(refusal(record(state: .none)) == "This capture has no link to update.")
+        #expect(refusal(record()) == "This capture has no link to update.")
         #expect(AppCoordinator.linkShowsTrimText == "The link already shows the trimmed recording.")
     }
 

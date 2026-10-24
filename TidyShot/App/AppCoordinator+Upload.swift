@@ -60,9 +60,10 @@ extension AppCoordinator {
     }
 
     /// Called by the Upload settings tab after saving or forgetting credentials, so the next
-    /// upload builds a queue from the new settings, and the shown cards' Trim items follow. The old queue is not dropped while it has
-    /// work: it moves to `drainingQueues` until it reports idle, so its jobs still deliver their
-    /// events (and finish against the destination they started with) and Delete can cancel them.
+    /// upload builds a queue from the new settings, and the shown cards' Trim items follow. The
+    /// old queue is not dropped while it has work: it moves to `drainingQueues` until it reports
+    /// idle, so its jobs still deliver their events (and finish against the destination they
+    /// started with) and Delete can cancel them.
     func destinationDidChange() {
         // `Trim…` and `Upload Trimmed` follow whether a destination is set.
         refreshCardTrimStates()

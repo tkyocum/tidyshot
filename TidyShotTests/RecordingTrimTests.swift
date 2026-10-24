@@ -199,7 +199,8 @@ struct RecordingTrimTests {
     /// save over with no destination (the sheet would have no button but `Cancel`).
     @Test func openRefusalGivesTheSourcesOrTheSaveTargetsReason() {
         func refusal(_ record: CaptureRecord, folder: URL?, destination: Bool) -> String? {
-            RecordingTrim.openRefusal(for: record, saveFolder: folder, hasDestination: destination)
+            RecordingTrim.openRefusal(for: record, source: RecordingTrim.source(for: record, saveFolder: folder),
+                                      saveFolder: folder, hasDestination: destination)
         }
         #expect(refusal(saved, folder: folder, destination: false) == nil)
         #expect(refusal(pending, folder: nil, destination: false) == nil)

@@ -238,6 +238,8 @@ final class AppCoordinator {
         dragFiles = DragFileStore(temporaryDirectory: FileManager.default.temporaryDirectory)
         history.didPrune = { [weak self] records in self?.removeFiles(ofPruned: records) }
         overlay.onDidClose = { [weak self] id, reason in self?.overlayDidClose(id, reason: reason) }
+        // The shown cards' Trim items follow a save folder chosen at any panel.
+        saveLocation.didStoreFolder = { [weak self] in self?.refreshCardTrimStates() }
     }
 
     func start() {

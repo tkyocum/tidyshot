@@ -17,12 +17,6 @@ extension AppCoordinator {
                                 isDeleting: deletingIDs.contains(record.id), isTrimming: trimmingIDs.contains(record.id))
     }
 
-    /// Called by the General settings tab once a new save folder is chosen: the shown cards' Trim
-    /// items follow it, as `destinationDidChange` has them follow the destination.
-    func saveFolderDidChange() {
-        refreshCardTrimStates()
-    }
-
     // MARK: The window
 
     /// `Trim…` from a card or a Recent Captures row, run once menu tracking has ended. An open window
@@ -30,21 +24,22 @@ extension AppCoordinator {
     /// (design, Source file): a pending file directly, a save-folder file under the folder's scope,
     /// held until the window closes, or the uploaded object downloaded to `tmp/Trim/<id>.mp4`.
     /// Nothing to read, or a sheet that would have no button, posts `Not trimmed` with the reason
-    /// (`RecordingTrim.openRefusal`).
+    /// (`RecordingTrim.openRefusal`, given the source worked out here, which the window then opens).
     func trimCapture(recordID: UUID) {
         if let open = trimWindows[recordID] {
             open.present()
             return
         }
         guard !openingTrimIDs.contains(recordID), let record = history.record(id: recordID) else { return }
-        if let reason = RecordingTrim.openRefusal(for: record, saveFolder: saveLocation.currentURL,
+        let source = RecordingTrim.source(for: record, saveFolder: saveLocation.currentURL)
+        if let reason = RecordingTrim.openRefusal(for: record, source: source, saveFolder: saveLocation.currentURL,
                                                   hasDestination: hasUploadDestination) {
             notifier.notifyError(reason, title: RecordingTrim.notTrimmedTitle)
             return
         }
         // Uploading, being deleted or trimmed: the item is disabled.
         guard trimMenuState(for: record).canTrim else { return }
-        switch RecordingTrim.source(for: record, saveFolder: saveLocation.currentURL) {
+        switch source {
         case .pendingFile(let fileURL):
             presentTrimWindow(for: record, fileURL: fileURL, scope: nil)
         case .saveFolderFile(let fileURL, let folder):
@@ -54,6 +49,7 @@ extension AppCoordinator {
             openingTrimIDs.insert(recordID)
             Task { await downloadAndPresentTrimWindow(for: record) }
         case .unavailable:
+            // Never reached: `openRefusal` gives this source's reason, posted above.
             break
         }
     }
@@ -355,20 +351,21 @@ extension AppCoordinator {
     /// The window closed, for any reason: the pass is cancelled, which stops it before its put; once it
     /// has ended, the folder's scope is released and `tmp/Trim/<id>*` removed (design, Cleanup), unless
     /// a new window for the record has opened since, whose own close removes them. A window that is not
-    /// the record's (none is replaced today) only lets its scope go, so each start has its stop.
+    /// the record's (none is replaced today) leaves the dictionary, the pass and the files alone, and
+    /// its scope too goes only once the record's pass has ended, so each start has its stop and no
+    /// pass loses the scope it reads under.
     private func trimWindowDidClose(_ controller: TrimWindowController, scope: URL?) {
         let id = controller.recordID
-        guard trimWindows[id] === controller else {
-            scope?.stopAccessingSecurityScopedResource()
-            return
-        }
-        trimWindows[id] = nil
         let pass = trimPasses[id]
-        pass?.cancel()
+        let isCurrent = trimWindows[id] === controller
+        if isCurrent {
+            trimWindows[id] = nil
+            pass?.cancel()
+        }
         Task { [weak self] in
             await pass?.value
             scope?.stopAccessingSecurityScopedResource()
-            guard let self, self.trimWindows[id] == nil, !self.openingTrimIDs.contains(id) else { return }
+            guard isCurrent, let self, self.trimWindows[id] == nil, !self.openingTrimIDs.contains(id) else { return }
             await Task.detached(priority: .utility) { RecordingTrim.removeWorkFiles(of: id) }.value
         }
     }
@@ -392,7 +389,8 @@ extension AppCoordinator {
     /// Why `Upload Trimmed` must not run, or nil: `uploadRefusal` (being trimmed, or marked `Sound not
     /// muted`), then the editor's Upload refusal (deleted, being deleted, uploading), then no local file,
     /// then a link that is not stale, as the menu shows the item only for a stale one (an upload that
-    /// ended while the menu was open).
+    /// ended while the menu was open). A record with no link, which the menu never offers it for, is
+    /// told so rather than that its link is current.
     nonisolated static func uploadTrimmedRefusal(for record: CaptureRecord, saveFolder: URL?, isDeleting: Bool,
                                                  isTrimming: Bool) -> String? {
         if let refusal = uploadRefusal(for: record, isTrimming: isTrimming) { return refusal }
@@ -401,7 +399,9 @@ extension AppCoordinator {
             return refusal
         }
         guard record.hasLocalFile else { return UploadError.fileUnreadable("no local file").localizedDescription }
-        guard record.uploadIsStale else { return linkShowsTrimText }
+        guard record.uploadIsStale else {
+            return record.linkURL == nil ? "This capture has no link to update." : linkShowsTrimText
+        }
         return nil
     }
 

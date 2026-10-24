@@ -170,15 +170,17 @@ nonisolated enum RecordingTrim {
     static func canTrim(_ record: CaptureRecord, saveFolder: URL?, hasDestination: Bool, isDeleting: Bool,
                         isTrimming: Bool) -> Bool {
         guard showsTrim(record), !record.isUploading, !isDeleting, !isTrimming else { return false }
-        return openRefusal(for: record, saveFolder: saveFolder, hasDestination: hasDestination) == nil
+        return openRefusal(for: record, source: source(for: record, saveFolder: saveFolder), saveFolder: saveFolder,
+                           hasDestination: hasDestination) == nil
     }
 
-    /// Why the window cannot open on the record, from the save folder and the destination alone, or
+    /// Why the window cannot open on the record, from its `source` (`source(for:saveFolder:)`, which
+    /// `trimCapture` works out once and then opens), the save folder and the destination alone, or
     /// nil: nothing to read (the source's reason), or a sheet with no button but `Cancel`, with
     /// nothing to save over and no destination (the Save target's reason). A card drawn before a
     /// change in Settings can still offer `Trim…`, so `trimCapture` posts it as `Not trimmed`.
-    static func openRefusal(for record: CaptureRecord, saveFolder: URL?, hasDestination: Bool) -> String? {
-        if case .unavailable(let reason) = source(for: record, saveFolder: saveFolder) { return reason }
+    static func openRefusal(for record: CaptureRecord, source: Source, saveFolder: URL?, hasDestination: Bool) -> String? {
+        if case .unavailable(let reason) = source { return reason }
         let plan = EditorSaveTarget.plan(for: record, saveFolder: saveFolder)
         guard sheet(plan: plan, hasDestination: hasDestination, hasLink: record.linkURL != nil) == nil,
               case .unavailable(let reason) = plan else { return nil }

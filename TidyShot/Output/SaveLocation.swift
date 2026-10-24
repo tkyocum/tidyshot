@@ -10,6 +10,10 @@ final class SaveLocation {
     /// `chooseFolder`'s open panels, for `cancelFolderChoice`.
     @ObservationIgnored private var folderPanels: [NSOpenPanel] = []
     private(set) var currentURL: URL?
+    /// Called each time a folder is stored, once it is `currentURL`, whichever panel chose it
+    /// (Settings > General's Choose… or a save's own, through `ensureFolder`), so what depends on
+    /// the folder can follow it.
+    @ObservationIgnored var didStoreFolder: (() -> Void)?
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -20,6 +24,7 @@ final class SaveLocation {
         let data = try url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil)
         defaults.set(data, forKey: Self.bookmarkKey)
         currentURL = url
+        didStoreFolder?()
     }
 
     /// Asks the user to pick a folder. Returns nil if cancelled, also by `cancelFolderChoice`.

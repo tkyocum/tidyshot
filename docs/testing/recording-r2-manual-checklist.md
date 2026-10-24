@@ -2,23 +2,24 @@
 
 Run after any change to `TidyShot/Recording/` (`GIF/`, `GIFMaker`, `GIFConversion`, `RecordingMute`,
 `MuteLog`, `MuteLogWriter`, `MicrophoneChoice`, `MicrophoneDevices`, `MicrophoneLatency`,
-`RecordingTrim`, `TrackPass`, the controller, the chrome and the panel), `AppCoordinator` (`+Recording`'s start
-with its microphone prompt, `makeGIF`, `muteAndSave`, `recoverRecordings` and `saveRecording`,
-`+Upload`'s `startUpload`, `retry` and the `uploadRefusal` gates, `+RecordActions`, `+DragOut`,
-`+Delete`, `+Overlay`, `+Trim`),
-`StatusMenuController`, the Recording section of Settings > Capture, the card, Recent Captures,
+`RecordingTrim`, `TrackPass`, the controller, the chrome and the panel), `AppCoordinator`
+(`+Recording`'s start with its microphone prompt, `makeGIF`, `muteAndSave`, `recoverRecordings` and
+`saveRecording`, `+Upload`'s `startUpload`, `retry` and the `uploadRefusal` gates, `+RecordActions`,
+`+DragOut`, `+Delete`, `+Overlay`, `+Trim`), `StatusMenuController`, `SaveLocation.store` (its
+`didStoreFolder` call), the Recording section of Settings > Capture, the card, Recent Captures,
 `ThumbnailProvider`, or the `Recording`, `MuteLog` and `CaptureRecord` fields. Automated tests cover the
 pure decisions (the GIF palette, differ, LZW writer, sink and encoder against ImageIO's decoder, the
-conversion steps and their one `saveRecording` call, the progress menu, the settings layout, the
-panel's three bars, the microphone choice, the lag, the mute segments and `apply` on tone fixtures,
-the ladder with injected steps, the mute log's writer, recovery's rules, the save plan for a marked
-recording, the refusals for a marked or trimming record, Trim's range, source, sheet and write plans,
-its export, its put's target and stale flag, `Upload Trimmed`'s refusals, the Trim window's first size
-and frame and its sheet's answer, its clean-up, the drag copy after a trim, the launch check's list-then-scan
-order, the microphone prompt's step, and the card, row and menu rules for a GIF, a stale link and a marked record). Everything here needs a
-real screen, Screen Recording, a microphone, real windows, a player, the network, Clop or eyes. The
-R1 checklist (`recording-r1-manual-checklist.md`) still covers starting, stopping, sleep, quitting and
-the upload paths for an MP4; run it too after a change to those.
+conversion steps and their one `saveRecording` call, the progress menu, the settings layout, the panel's
+three bars, the microphone choice, the lag, the mute segments and `apply` on tone fixtures, the ladder
+with injected steps, the mute log's writer, recovery's rules, the save plan for a marked recording, the
+refusals for a marked or trimming record, Trim's range, source, sheet and write plans, its export, its
+put's target and stale flag, `Upload Trimmed`'s refusals, the Trim window's first size and frame and its
+sheet's answer, its clean-up, the drag copy after a trim, the save folder's hook, the launch check's
+list-then-scan order, the microphone prompt's step, and the card, row and menu rules for a GIF, a stale
+link and a marked record). Everything here needs a real screen, Screen Recording, a microphone, real
+windows, a player, the network, Clop or eyes. The R1 checklist (`recording-r1-manual-checklist.md`)
+still covers starting, stopping, sleep, quitting and the upload paths for an MP4; run it too after a
+change to those.
 
 Several steps are probes: they run a small program next to the app, or read the app's log, and ask
 you to write down what the system did. Those results settle the R2 design's "Still to probe" list and
@@ -382,9 +383,12 @@ a start on one passes through), and the window, the pass and the wiring landed w
 - [ ] With two displays, the pointer on the second, `Trim…` from a card there: the window opens centred on the
   second display, at a size fitted to it.
 - [ ] Settings while a card shows a recording: forget the credentials in Settings > Upload, and an upload-only
-  recording's `Trim…` is disabled at once (save them again: enabled); choose another save folder in Settings >
-  General, and a recording in the old folder that was never uploaded has `Trim…` disabled. A `Trim…` clicked
-  from a menu drawn before the change posts `Not trimmed` with the reason.
+  recording's `Trim…` stays enabled, as it reads only the Upload tab's fields (plan, Gap 9); its sheet offers
+  `Save and Upload`, which posts `Upload not configured` / `Set up a destination in Settings > Upload, then
+  upload again.`, writes nothing and closes the window (save them again: it trims and uploads). Choose another
+  save folder in Settings > General, and a recording in the old folder that was never uploaded has `Trim…`
+  disabled at once; the same when the folder is first chosen at a save's own panel (a save with no folder set).
+  A `Trim…` clicked from a menu drawn before the change posts `Not trimmed` with the reason.
 - [ ] After a Save: the card's poster, the row's thumbnail, the duration badge and the row's size are the
   trimmed recording's (the size against `ls -l`).
 - [ ] Save, Save and Upload (the link plays the trimmed video), an upload-only record that needs the download
