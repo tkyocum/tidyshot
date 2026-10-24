@@ -422,10 +422,16 @@ sleep 12
 Answer the microphone prompt and speak during the 3 s. The prompt names TidyShot and shows the usage
 sentence. The log shows the access before and after the prompt, the answer, the default input's name and
 `uniqueID`, and `starting …, microphone <uniqueID>`; the file line says `soun×1`, and the recording is in
-`~/Library/Containers/io.tky.tidyshot/Data/tmp/RecordingSpike/` with the speech audible. Result: prompt
-______ access before/after ______ input ______ file line ______ audible ______ If the sandboxed capture differs
-from the unsandboxed probes (no prompt, no `soun` track, an error), the held steps wait for a design
-amendment.
+`~/Library/Containers/io.tky.tidyshot/Data/tmp/RecordingSpike/` with the speech audible. If the
+sandboxed capture differs from the unsandboxed probes (no prompt, no `soun` track, an error), the held
+steps wait for a design amendment.
+
+Result (2026-10-24), passed:
+- Prompt: none, because access was already granted. Access before and after: `authorized`.
+- `default` gave CalDigit TS4 Audio - Rear, a dock jack with nothing plugged in: a flat −50 dBFS hiss. The
+  passing run named the RODE AI-1:
+  `-RecordingSpikeMicrophone 'AppleUSBAudioEngine:RODE Microphones:RODE AI-1:8D1E47B5:1,2'`.
+- File line: `vide×1 soun×1, 3.21 s`. Speech audible: about −20 dBFS from 1.5 s, against −57 dBFS before.
 
 **Probe 5. The trim re-encode on Tim's recordings (H2).** Make `SCRecordingOutput` recordings of 60 s at
 2560×1664 and at 4096×2304 with the app (moving content, with system audio), then, with one start between
