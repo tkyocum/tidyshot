@@ -281,8 +281,9 @@ loop, or music).
   to the end), sound elsewhere is on time with the picture, and the audio ends with the video. `tmp/Mute` is
   empty afterwards. Write down anything off: ______
   Do it as the first muted recording after a launch, and write down the seconds from Stop to the card: ______
-  s. In the test host the first reader of a track's sound waits about 90 s on coreaudiod (built notes, The
-  suite's time); a wait like that here goes to Tim.
+  s. Expect about a second: the rewrite of a 10 s recording takes a fraction of that, because `apply` decodes
+  with `AVAudioConverter` and opens no audio queue. The reader's own decode waited 90 s on coreaudiod on
+  Tim's Mac (built notes, The suite's time); a wait of more than a few seconds here goes to Tim.
 - [ ] Press mute in the first second (the button is live as soon as the bar shows): the first stretch starts
   at 0. Press it before the first frame if you can.
 - [ ] With Clop on and `Upload and copy URL`, the same recording: the uploaded link plays in Safari and in

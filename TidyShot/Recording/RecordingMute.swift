@@ -145,12 +145,13 @@ nonisolated enum RecordingMute {
     // MARK: The steps
 
     /// Rewrites `source` to `output` with the audio inside `intervals` (segments; an open one runs
-    /// to the end) silent. Video samples pass through untouched. Audio is decoded to 16-bit
-    /// interleaved PCM, zeroed on a copy, and encoded again as AAC at the source's rate and channel
-    /// count. No empty edit and no audio mix: the output's audio is one continuous segment, which
-    /// FFmpeg-based readers, Clop among them, play right. A file with no audio track comes through
-    /// with its video alone. `output`'s folder is made when it is missing, any file there is
-    /// replaced, and a throw or a cancel removes what was written.
+    /// to the end) silent. Video samples pass through untouched. Audio is read as stored and decoded
+    /// to 16-bit interleaved PCM with `AVAudioConverter`, which needs no audio device (`AudioDecoder`),
+    /// zeroed on a copy, and encoded again as AAC at the source's rate and channel count. No empty
+    /// edit and no audio mix: the output's audio is one continuous segment, which FFmpeg-based
+    /// readers, Clop among them, play right. A file with no audio track comes through with its video
+    /// alone. `output`'s folder is made when it is missing, any file there is replaced, and a throw
+    /// or a cancel removes what was written.
     @concurrent
     static func apply(_ source: URL, intervals: [MuteInterval], to output: URL) async throws {
         try prepareOutput(output)
@@ -218,9 +219,9 @@ nonisolated enum RecordingMute {
 
     private typealias Sample = CMReadySampleBuffer<CMSampleBuffer.DynamicContent>
 
-    /// One reader and one writer. The first video track is copied as stored and the first audio
-    /// track decoded, silenced and encoded again, each on a task of its own, so the writer can
-    /// interleave them. Recordings have no other tracks.
+    /// One reader and one writer. The first video track is copied as stored, and the first audio
+    /// track read as stored, decoded, silenced and encoded again, each on a task of its own, so the
+    /// writer can interleave them. Recordings have no other tracks.
     private static func rewrite(_ source: URL, segments: [MuteInterval], to output: URL) async throws {
         let asset = AVURLAsset(url: source)
         guard let videoTrack = try await asset.loadTracks(withMediaType: .video).first else {
@@ -243,13 +244,7 @@ nonisolated enum RecordingMute {
                   let description = CMAudioFormatDescriptionGetStreamBasicDescription(format)?.pointee else {
                 throw RecordingMuteError.couldNotRead
             }
-            let pcm = AVAssetReaderTrackOutput(track: audioTrack, outputSettings: [
-                AVFormatIDKey: kAudioFormatLinearPCM,
-                AVLinearPCMBitDepthKey: 16,
-                AVLinearPCMIsFloatKey: false,
-                AVLinearPCMIsBigEndianKey: false,
-                AVLinearPCMIsNonInterleaved: false,
-            ])
+            let decoder = try AudioDecoder(format: format)
             let audioInput = AVAssetWriterInput(mediaType: .audio, outputSettings: [
                 AVFormatIDKey: kAudioFormatMPEG4AAC,
                 AVSampleRateKey: description.mSampleRate,
@@ -257,7 +252,8 @@ nonisolated enum RecordingMute {
                 AVEncoderBitRateKey: audioBitRate,
             ])
             audioInput.expectsMediaDataInRealTime = false
-            audio = Passage(from: reader.outputProvider(for: pcm), to: writer.inputReceiver(for: audioInput))
+            audio = Passage(from: reader.outputProvider(for: AVAssetReaderTrackOutput(track: audioTrack, outputSettings: nil)),
+                            to: writer.inputReceiver(for: audioInput), decoder: decoder)
         }
 
         try reader.start()
@@ -299,22 +295,30 @@ nonisolated enum RecordingMute {
         }
     }
 
-    /// One track's way from the reader to the writer.
+    /// One track's way from the reader to the writer, through `decoder` for the audio.
     private struct Passage {
         let provider: AVAssetReaderOutput.Provider<Sample>
         let receiver: AVAssetWriterInput.SampleBufferReceiver
+        let decoder: AudioDecoder?
 
-        init(from provider: AVAssetReaderOutput.Provider<Sample>, to receiver: AVAssetWriterInput.SampleBufferReceiver) {
+        init(from provider: AVAssetReaderOutput.Provider<Sample>, to receiver: AVAssetWriterInput.SampleBufferReceiver,
+             decoder: AudioDecoder? = nil) {
             self.provider = provider
             self.receiver = receiver
+            self.decoder = decoder
         }
 
-        /// Appends every sample, with `segments` silenced when given, then finishes the input. A
-        /// failure finishes it too, so the writer stops holding the other track back for it.
+        /// Appends every sample, decoded when there is a decoder and with `segments` silenced when
+        /// given, then finishes the input. A failure finishes it too, so the writer stops holding the
+        /// other track back for it.
         func run(silencing segments: [MuteInterval]?) async throws {
             do {
-                while let sample = try await provider.next() {
+                while let read = try await provider.next() {
                     try Task.checkCancellation()
+                    var sample: Sample? = read
+                    if let decoder { sample = try decoder.decode(read) }
+                    // A marker, or packets the trims take whole, decodes to nothing.
+                    guard let sample else { continue }
                     try await receiver.append(try segments.map { try silenced(sample, segments: $0) } ?? sample)
                 }
             } catch {
@@ -322,6 +326,138 @@ nonisolated enum RecordingMute {
                 throw error
             }
             receiver.finish()
+        }
+    }
+
+    /// The audio's way to 16-bit interleaved PCM. The reader's own PCM output sets up an audio queue
+    /// on the output device, and a device slow to answer held a rewrite there for 90 s (design, The
+    /// suite's time); `AVAudioConverter` decodes the packets as stored without one. What the reader
+    /// marks for trimming (the AAC priming, the padding after the last frame) is dropped, each buffer
+    /// starts at its output time, and a gap before one (an empty edit) is filled with silence, so the
+    /// sound runs from 0 without a break and each frame lands where the reader's PCM put it.
+    private final class AudioDecoder {
+        private let format: CMAudioFormatDescription
+        private let input: AVAudioFormat
+        private let output: AVAudioFormat
+        private let converter: AVAudioConverter
+        private let rate: Double
+        private let framesPerPacket: Int
+        private let bytesPerFrame: Int
+        /// The frame the next buffer's sound starts at.
+        private var next = 0
+
+        /// Throws for a track whose packets the converter cannot take as AAC's: a variable size and a
+        /// fixed number of frames at a whole sample rate.
+        init(format: CMAudioFormatDescription) throws {
+            guard let description = CMAudioFormatDescriptionGetStreamBasicDescription(format)?.pointee,
+                  description.mBytesPerPacket == 0, description.mFramesPerPacket > 0,
+                  description.mSampleRate > 0, description.mSampleRate == description.mSampleRate.rounded() else {
+                throw RecordingMuteError.couldNotRead
+            }
+            let input = AVAudioFormat(cmAudioFormatDescription: format)
+            guard let output = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: input.sampleRate,
+                                             channels: input.channelCount, interleaved: true),
+                  let converter = AVAudioConverter(from: input, to: output) else {
+                throw RecordingMuteError.couldNotRead
+            }
+            // The converter neither drops nor adds frames at the start: the reader's trim drops the
+            // priming, once.
+            converter.primeMethod = .none
+            self.format = format
+            self.input = input
+            self.output = output
+            self.converter = converter
+            rate = description.mSampleRate
+            framesPerPacket = Int(description.mFramesPerPacket)
+            bytesPerFrame = Int(output.streamDescription.pointee.mBytesPerFrame)
+        }
+
+        /// `sample`'s packets decoded, trimmed and placed at its output time, after the silence of
+        /// any gap since the last; nil for a marker or packets the trims take whole. A decode that
+        /// fails, or frames that cannot be placed, throw.
+        func decode(_ sample: Sample) throws -> Sample? {
+            let decoded = try sample.withUnsafeSampleBuffer { buffer -> CMSampleBuffer? in
+                guard buffer.numSamples > 0 else { return nil }
+                guard let bufferFormat = buffer.formatDescription,
+                      CMFormatDescriptionEqual(bufferFormat, otherFormatDescription: format),
+                      let data = buffer.dataBuffer else { throw RecordingMuteError.couldNotRead }
+                let pcm = try decode(packets: try buffer.audioStreamPacketDescriptions(), data: data,
+                                     frames: try frames(buffer.duration))
+                let dropped = try frames(trim(kCMSampleBufferAttachmentKey_TrimDurationAtStart, of: buffer))
+                let cut = try frames(trim(kCMSampleBufferAttachmentKey_TrimDurationAtEnd, of: buffer))
+                let start = try frames(buffer.outputPresentationTimeStamp)
+                let count = try frames(buffer.outputDuration)
+                // The trims account for every frame (no speed change), and nothing goes back in time.
+                guard dropped >= 0, cut >= 0, count >= 0, dropped + count + cut == Int(pcm.frameLength),
+                      start >= next else { throw RecordingMuteError.couldNotRead }
+                guard count > 0 else { return nil }
+                let gap = start - next
+                let block = try CMBlockBuffer(length: (gap + count) * bytesPerFrame, flags: .assureMemoryNow)
+                try block.withUnsafeMutableBytes { bytes in
+                    guard let base = bytes.baseAddress, let source = pcm.audioBufferList.pointee.mBuffers.mData else {
+                        throw RecordingMuteError.couldNotRead
+                    }
+                    memset(base, 0, gap * bytesPerFrame)
+                    memcpy(base + gap * bytesPerFrame, source + dropped * bytesPerFrame, count * bytesPerFrame)
+                }
+                let placed = try CMSampleBuffer(dataBuffer: block, formatDescription: output.formatDescription,
+                                                numSamples: gap + count,
+                                                presentationTimeStamp: CMTime(value: CMTimeValue(next),
+                                                                              timescale: CMTimeScale(rate)),
+                                                packetDescriptions: [])
+                next = start + count
+                // A new buffer over a new block: nothing else holds it.
+                nonisolated(unsafe) let made: CMSampleBuffer? = placed
+                return made
+            }
+            guard let decoded else { return nil }
+            nonisolated(unsafe) let made = decoded
+            return Sample(unsafeBuffer: made)
+        }
+
+        /// One buffer's packets decoded in one pass. Exactly `frames` must come out: the converter
+        /// holds nothing back, so the frames are those packets' own.
+        private func decode(packets: [AudioStreamPacketDescription], data: CMBlockBuffer,
+                            frames: Int) throws -> AVAudioPCMBuffer {
+            guard let largest = packets.map({ Int($0.mDataByteSize) }).max(), largest > 0 else {
+                throw RecordingMuteError.couldNotRead
+            }
+            let compressed = AVAudioCompressedBuffer(format: input, packetCapacity: AVAudioPacketCount(packets.count),
+                                                     maximumPacketSize: largest)
+            guard data.dataLength <= compressed.byteCapacity, let descriptions = compressed.packetDescriptions,
+                  let pcm = AVAudioPCMBuffer(pcmFormat: output,
+                                             frameCapacity: AVAudioFrameCount(frames + framesPerPacket)) else {
+                throw RecordingMuteError.couldNotRead
+            }
+            try data.copyDataBytes(to: UnsafeMutableRawBufferPointer(start: compressed.data, count: data.dataLength))
+            compressed.byteLength = UInt32(data.dataLength)
+            compressed.packetCount = AVAudioPacketCount(packets.count)
+            for (index, packet) in packets.enumerated() {
+                descriptions[index] = packet
+            }
+            var pending: AVAudioCompressedBuffer? = compressed
+            var error: NSError?
+            let status = converter.convert(to: pcm, error: &error) { _, status in
+                status.pointee = pending == nil ? .noDataNow : .haveData
+                defer { pending = nil }
+                return pending
+            }
+            guard status != .error, Int(pcm.frameLength) == frames else {
+                throw error ?? RecordingMuteError.couldNotRead
+            }
+            return pcm
+        }
+
+        /// `time` in whole frames; a time that is not numeric throws.
+        private func frames(_ time: CMTime) throws -> Int {
+            guard time.isNumeric else { throw RecordingMuteError.couldNotRead }
+            return Int((time.seconds * rate).rounded())
+        }
+
+        /// The trim `key` marks on `buffer`; zero when there is none.
+        private func trim(_ key: CFString, of buffer: CMSampleBuffer) -> CMTime {
+            guard let value = CMGetAttachment(buffer, key: key, attachmentModeOut: nil) else { return .zero }
+            return CMTimeMakeFromDictionary(value as? NSDictionary as CFDictionary?)
         }
     }
 

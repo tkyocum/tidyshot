@@ -24,12 +24,27 @@ struct RecordingMuteTests {
         try? FileManager.default.removeItem(at: dir)
     }
 
-    /// A tone fixture: 320 × 200, 4 s, the tone over `tone`.
-    func toneMovie(_ name: String = "source.mp4", seconds: Double = 4,
-                   tone: [ClosedRange<Double>] = [0...4]) async throws -> URL {
+    /// A tone fixture: 320 × 200, 4 s, the tone over `tone`, mono at 44.1 kHz unless told otherwise.
+    func toneMovie(_ name: String = "source.mp4", seconds: Double = 4, tone: [ClosedRange<Double>] = [0...4],
+                   sampleRate: Int = 44_100, channels: Int = 1) async throws -> URL {
         let url = dir.appending(path: name)
-        try await VideoFixtures.makeMP4(at: url, width: 320, height: 200, seconds: seconds, audio: true, tone: tone)
+        try await VideoFixtures.makeMP4(at: url, width: 320, height: 200, seconds: seconds, audio: true, tone: tone,
+                                        sampleRate: sampleRate, channels: channels)
         return url
+    }
+
+    /// The time of the first frame between `start` and `end` s with a channel louder than a tenth of
+    /// full scale, or with `last` of the last one; nil when none is.
+    func loud(_ audio: MovieSamples.Audio, from start: TimeInterval, to end: TimeInterval,
+              last: Bool = false) -> TimeInterval? {
+        let first = max(0, Int((start * audio.sampleRate).rounded(.down)))
+        let stop = min(audio.samples.count / audio.channels, Int((end * audio.sampleRate).rounded(.up)))
+        guard stop > first else { return nil }
+        func isLoud(_ frame: Int) -> Bool {
+            (0..<audio.channels).contains { abs(Int(audio.samples[frame * audio.channels + $0])) > 3_277 }
+        }
+        let frame = last ? (first..<stop).reversed().first(where: isLoud) : (first..<stop).first(where: isLoud)
+        return frame.map { Double($0) / audio.sampleRate }
     }
 
     /// Closed intervals from pairs.
@@ -157,6 +172,44 @@ struct RecordingMuteTests {
         #expect(audio.peak(from: 3.05, to: 3.9) > 0.5)
 
         #expect(try await MovieSamples.videoSamples(of: output) == (try await MovieSamples.videoSamples(of: source)))
+    }
+
+    /// The sound keeps its time to the millisecond, at the fixtures' rate and at a recording's: the
+    /// tone's starts and ends outside the segment are where the source has them. A decode that kept
+    /// the AAC priming (2,112 frames, 48 ms at 44.1 kHz) passes the 50 ms margins above but not this.
+    @Test(arguments: [(44_100, 1), (48_000, 2)])
+    func theSoundOutsideTheSegmentsKeepsItsTime(sampleRate: Int, channels: Int) async throws {
+        defer { cleanUp() }
+        let source = try await toneMovie(tone: [0.5...1.5, 2.0...3.5], sampleRate: sampleRate, channels: channels)
+        let output = dir.appending(path: "muted.mp4")
+        try await RecordingMute.apply(source, intervals: closed([(2.5, 3.0)]), to: output)
+        let before = try #require(try await MovieSamples.audio(of: source))
+        let after = try #require(try await MovieSamples.audio(of: output))
+        #expect(after.sampleRate == Double(sampleRate))
+        #expect(after.channels == channels)
+
+        for (edge, last) in [(0.5, false), (1.5, true), (2.0, false), (3.5, true)] {
+            let was = try #require(loud(before, from: edge - 0.1, to: edge + 0.1, last: last))
+            let now = try #require(loud(after, from: edge - 0.1, to: edge + 0.1, last: last))
+            #expect(abs(was - edge) < 0.005, "the source's edge at \(edge) s is at \(was) s")
+            #expect(abs(now - was) < 0.001, "the edge at \(edge) s moved from \(was) s to \(now) s")
+        }
+        #expect(after.peak(from: 2.55, to: 2.95) < 0.01)
+    }
+
+    /// The rewrite's sound is exactly as long as the source's: neither the priming nor the padding
+    /// after the last frame reaches it, and nothing is dropped.
+    @Test(arguments: [(44_100, 1), (48_000, 2)])
+    func theRewritesSoundIsAsLongAsTheSources(sampleRate: Int, channels: Int) async throws {
+        defer { cleanUp() }
+        let source = try await toneMovie(sampleRate: sampleRate, channels: channels)
+        let output = dir.appending(path: "muted.mp4")
+        try await RecordingMute.apply(source, intervals: closed([(1.0, 2.0)]), to: output)
+        let before = try #require(try await MovieSamples.audio(of: source))
+        let after = try #require(try await MovieSamples.audio(of: output))
+        let frames = before.samples.count / channels
+        #expect(frames == Int((4 * Double(sampleRate)).rounded()))
+        #expect(after.samples.count / channels == frames)
     }
 
     /// Sound spoken just before Unmute lands up to the input's latency later; the lag covers it.
