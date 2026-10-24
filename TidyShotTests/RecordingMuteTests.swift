@@ -157,7 +157,7 @@ struct RecordingMuteTests {
         let audioTrack = try #require(try await asset.loadTracks(withMediaType: .audio).first)
         let videoTrack = try #require(try await asset.loadTracks(withMediaType: .video).first)
         let audioSegments = try await audioTrack.load(.segments)
-        #expect(!audioSegments.isEmpty)
+        #expect(audioSegments.count == 1)
         #expect(audioSegments.allSatisfy { !$0.isEmpty })
         let audioLength = try await audioTrack.load(.timeRange).duration.seconds
         let videoLength = try await videoTrack.load(.timeRange).duration.seconds
@@ -213,9 +213,11 @@ struct RecordingMuteTests {
     }
 
     /// An empty edit at the sound's start (`p-4096.mp4` has one of 210 frames) or at its end becomes
-    /// silence: the rewrite's sound is one segment, exactly as long as the source's track, and the
-    /// tone keeps its time.
-    @Test(arguments: [VideoFixtures.EmptyEdit.leading(0.1), .trailing(0.1)], [(44_100, 1), (48_000, 2)])
+    /// silence: the rewrite's sound is one segment, exactly as long as the source's track, silent
+    /// over the edit, and the tone keeps its time. An edit longer than a second is filled a second
+    /// at a time.
+    @Test(arguments: [VideoFixtures.EmptyEdit.leading(0.1), .trailing(0.1), .leading(1.75), .trailing(1.75)],
+          [(44_100, 1), (48_000, 2)])
     func anEmptyEditAtEitherEndBecomesSilenceInPlace(edit: VideoFixtures.EmptyEdit, format: (Int, Int)) async throws {
         defer { cleanUp() }
         let (sampleRate, channels) = format
@@ -239,7 +241,7 @@ struct RecordingMuteTests {
         try await RecordingMute.apply(source, intervals: closed([(2.5, 3.0)]), to: output)
         let outputTrack = try #require(try await AVURLAsset(url: output).loadTracks(withMediaType: .audio).first)
         let outputSegments = try await outputTrack.load(.segments)
-        #expect(!outputSegments.isEmpty)
+        #expect(outputSegments.count == 1)
         #expect(outputSegments.allSatisfy { !$0.isEmpty })
 
         let before = try #require(try await MovieSamples.audio(of: source))
@@ -247,7 +249,14 @@ struct RecordingMuteTests {
         // The reader's PCM fills a leading empty edit, but stops where a trailing one starts.
         if case .leading = edit { #expect(before.samples.count / channels == frames) }
         #expect(after.samples.count / channels == frames)
-        for (edge, last) in [(0.5, false), (1.5, true), (2.0, false), (3.5, true)] {
+        // Where the source has sound, and the edit's silence 50 ms clear of it for the AAC smear.
+        let (sound, silence): (ClosedRange<Double>, ClosedRange<Double>) = switch edit {
+        case .leading(let seconds): (seconds...4, 0...(seconds - 0.05))
+        case .trailing(let seconds): (0...(4 - seconds), (4 - seconds + 0.05)...4)
+        }
+        #expect(after.peak(from: silence.lowerBound, to: silence.upperBound) < 0.01)
+        for (edge, last) in [(0.5, false), (1.5, true), (2.0, false), (3.5, true)]
+        where sound.contains(edge - 0.1) && sound.contains(edge + 0.1) {
             let was = try #require(loud(before, from: edge - 0.1, to: edge + 0.1, last: last))
             let now = try #require(loud(after, from: edge - 0.1, to: edge + 0.1, last: last))
             #expect(abs(was - edge) < 0.005, "the source's edge at \(edge) s is at \(was) s")
@@ -322,7 +331,7 @@ struct RecordingMuteTests {
 
         try FileManager.default.createDirectory(at: output.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data("stale".utf8).write(to: output)
-        await #expect(throws: (any Error).self) {
+        await #expect(throws: RecordingMuteError.couldNotRead) {
             try await RecordingMute.apply(file, intervals: intervals, to: output)
         }
         #expect(!exists(output))
