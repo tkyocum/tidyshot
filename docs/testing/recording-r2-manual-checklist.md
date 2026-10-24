@@ -2,7 +2,7 @@
 
 Run after any change to `TidyShot/Recording/` (`GIF/`, `GIFMaker`, `GIFConversion`, `RecordingMute`,
 `MuteLog`, `MuteLogWriter`, `MicrophoneChoice`, `MicrophoneDevices`, `MicrophoneLatency`,
-`RecordingTrim`, the controller, the chrome and the panel), `AppCoordinator` (`+Recording`'s start
+`RecordingTrim`, `TrackPass`, the controller, the chrome and the panel), `AppCoordinator` (`+Recording`'s start
 with its microphone prompt, `makeGIF`, `muteAndSave`, `recoverRecordings` and `saveRecording`,
 `+Upload`'s `startUpload`, `retry` and the `uploadRefusal` gates, `+RecordActions`, `+DragOut`,
 `+Delete`, `+Overlay`, `+Trim`),
@@ -14,7 +14,8 @@ panel's three bars, the microphone choice, the lag, the mute segments and `apply
 the ladder with injected steps, the mute log's writer, recovery's rules, the save plan for a marked
 recording, the refusals for a marked or trimming record, Trim's range, source, sheet and write plans,
 its export, its put's target and stale flag, `Upload Trimmed`'s refusals, the Trim window's first size
-and its clean-up, and the card, row and menu rules for a GIF, a stale link and a marked record). Everything here needs a
+and frame and its sheet's answer, its clean-up, the drag copy after a trim, the launch check's list-then-scan
+order, the microphone prompt's step, and the card, row and menu rules for a GIF, a stale link and a marked record). Everything here needs a
 real screen, Screen Recording, a microphone, real windows, a player, the network, Clop or eyes. The
 R1 checklist (`recording-r1-manual-checklist.md`) still covers starting, stopping, sleep, quitting and
 the upload paths for an MP4; run it too after a change to those.
@@ -374,6 +375,16 @@ a start on one passes through), and the window, the pass and the wiring landed w
   fit the screen; the trim bar (yellow handles, `Trim` and `Cancel`) appears by itself once the file has
   loaded; the close button is disabled while the save sheet or `Trimming…` is up; Escape in `Trimming…`
   is `Stop`. Write down anything odd: ______
+- [ ] The sheets' keys and close: Return takes the save sheet's first (default) button and Escape its `Cancel`;
+  Escape in `Trimming…` stops it and closes the window. With Console open on TidyShot, `Stop` and the end of a
+  re-encode's Save each close the window with `Trimming…` up and no AppKit message about a sheet ended twice,
+  and a window closed under the trim bar leaves nothing behind (`tmp/Trim/<id>*` gone).
+- [ ] With two displays, the pointer on the second, `Trim…` from a card there: the window opens centred on the
+  second display, at a size fitted to it.
+- [ ] Settings while a card shows a recording: forget the credentials in Settings > Upload, and an upload-only
+  recording's `Trim…` is disabled at once (save them again: enabled); choose another save folder in Settings >
+  General, and a recording in the old folder that was never uploaded has `Trim…` disabled. A `Trim…` clicked
+  from a menu drawn before the change posts `Not trimmed` with the reason.
 - [ ] After a Save: the card's poster, the row's thumbnail, the duration badge and the row's size are the
   trimmed recording's (the size against `ls -l`).
 - [ ] Save, Save and Upload (the link plays the trimmed video), an upload-only record that needs the download
@@ -414,6 +425,19 @@ a start on one passes through), and the window, the pass and the wiring landed w
 - [ ] A trim from a keyframe (a passthrough) keeps at most two AAC packets (2,048 sample frames) of audio
   before the start, hidden by the edit list; more goes back to Tim (Probe 5). A fixture test checks the
   bound; this checks it on real recordings.
+- [ ] A recording that ends on a still screen: record with sound for a few seconds, leave the screen still for
+  about 8 s, Stop, then Trim with both handles inside the last 5 s and Save. It saves and plays the still frame
+  with its sound; or `Not trimmed` / `The recording could not be read.` posts, which means ScreenCaptureKit
+  ended the video track before the audio and the range lies past its last sample (design, Trim and cards, as
+  built, A range past the video track's last sample). Write down which, and `ffprobe -show_streams` for the
+  video and audio durations: ______
+- [ ] Close the Trim window during a passthrough's Save and Upload put (a trim that only moves the end, of a
+  long recording in the folder on the other volume): the pass runs to its end and the trimmed file uploads.
+  Write down whether a close should cancel the upload half instead: ______ (design, Left as they are)
+- [ ] Rarer paths, if they can be made: `Stop` during a marked record's mute step (before the re-encode's bar
+  moves) writes nothing and keeps the mark; a prune of the record during a re-encode (retention at its limit)
+  writes nothing back; a put that fails on a record with a link (the save folder's volume ejected during the
+  re-encode) leaves the file as it was and the link not marked `Link not updated`. Write down what ran: ______
 
 ## Probes left open
 Each gives its command, a blank for the result and the log line. Copy the results into the R2 design's

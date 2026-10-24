@@ -265,11 +265,11 @@ badge, and with no Annotate, Pin, Copy Image or Trim.
 follows inputs as they are plugged in, an input that is gone stays chosen and reads *(not connected)*,
 and *Privacy Settings…* appears when macOS access is off. An input chosen while access is off, or refused
 at the prompt, stays chosen. An MP4 recording takes the chosen input, mixed with system audio in the
-recording's one audio track; a GIF has no sound and ignores it. When access is
-still undecided, macOS asks as you start, before the area selection or the countdown, and another record
-shortcut does nothing until you answer. A chosen input that is unplugged gives way to the default
-input; with access off, or no input at all, the recording goes on without the microphone. Either way a
-note says so after you stop, after the save's own notification, never during the recording.
+recording's one audio track; a GIF has no sound and ignores it. When access is still undecided, macOS
+asks as you start, before the area selection or the countdown, and another record shortcut does nothing
+until you answer. A chosen input that is unplugged gives way to the default input; with access off, or
+no input at all, the recording goes on without the microphone. Either way a note says so after you stop,
+after the save's own notification, never during the recording.
 
 The mute button is shown when a recording has sound (system audio, the microphone or both). Muted
 stretches are silent in the saved and uploaded file: after you stop, TidyShot rewrites the audio,
@@ -277,11 +277,11 @@ silencing each stretch from 0.1 s before the press to 0.3 s after the unmute (mo
 reports a longer latency, and at least 0.6 s for a Bluetooth input), and re-encodes the audio once; the
 video is untouched. If the rewrite fails, the file is saved without sound (*Sound removed*); if that
 fails too, it is kept inside TidyShot, marked *Sound not muted*, never uploaded, copied, saved to the
-folder or dragged, and offers Open, *Trim…* and Delete; a trim, of any range, silences the muted stretches
-and clears the mark. A crash leaves a small log in `tmp/Mute` and the next
-launch applies it before recovering the file. Two limits are accepted: sound from an input whose
-real latency exceeds its lag can leak in its last moments before Unmute, and a kill in the milliseconds
-between a press and its log write recovers that press's sound.
+folder or dragged, and offers Open, *Trim…* and Delete; a trim, of any range, silences the muted
+stretches and clears the mark. A crash leaves a small log in `tmp/Mute` and the next launch applies it
+before recovering the file. Two limits are accepted: sound from an input whose real latency exceeds its
+lag can leak in its last moments before Unmute, and a kill in the milliseconds between a press and its
+log write recovers that press's sound.
 
 **Trim.** *Trim…* in an MP4 recording's card menu and Recent Captures row (the scissors) opens it in a
 window with the system's trim bar, as in QuickTime: drag the yellow handles, then *Trim*. A recording
@@ -333,11 +333,11 @@ macOS to finish writing the file.
 
 TidyShot logs one `Recording:` line for each stream and output callback, with the time recorded so
 far: `/usr/bin/log show --last 10m --style compact --predicate 'process == "TidyShot"' | grep "Recording:"`
-(the full path, because zsh has a `log` builtin). Pause, uploads over 5 GiB, a separate upload lane for videos, dragging an uploaded
-video that has no local copy, and URL commands for recording are planned for a later release (the
-recording designs' lists). The start, the conversion, the mute ladder and recovery log `Recording:`
-lines too, among them `Recording: mute lag <s> s (<input>)` at each start and the microphone prompt's
-answer.
+(the full path, because zsh has a `log` builtin). Pause, uploads over 5 GiB, a separate upload lane for
+videos, dragging an uploaded video that has no local copy, and URL commands for recording are planned
+for a later release (the recording designs' lists). The start, the conversion, the mute ladder and
+recovery log `Recording:` lines too, among them `Recording: mute lag <s> s (<input>)` at each start and
+the microphone prompt's answer.
 
 ## URL scheme
 
