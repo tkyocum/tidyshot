@@ -314,7 +314,7 @@ extension AppCoordinator {
         if refuseUpload(action, recordID: recordID) { return .refused }
         // 2. Nothing is written, and the record stays as it is, without a destination.
         guard let destination = makeDestination() else {
-            notifier.notifyError("Set up a destination in Settings > Upload, then upload again.", title: "Upload not configured")
+            notifier.notifyError(Self.uploadNotConfiguredBody, title: "Upload not configured")
             return .refused
         }
         let png: Data
@@ -370,17 +370,10 @@ extension AppCoordinator {
         case .newObject, .replace:
             break
         }
-        // 5. Uploading, the prior link and any superseded object, in one write.
-        history.update(id: recordID) { $0 = EditorUploadPlan.startingUpload($0, plan: plan) }
-        // 6. startUpload skips this refresh for a record already uploading, so the overlay and the
-        // editor (through pushEditorState) show Uploading… now, before the first progress event.
-        refreshOverlay(for: recordID)
-        // 7. Through the live lane: uploadingIDs, progress, cancel, Delete and the menu bar icon.
-        if case .replace(let key) = plan {
-            startUpload(recordID: recordID, payload: .data(png), destination: destination, fixedKey: key)
-        } else {
-            startUpload(recordID: recordID, payload: .data(png), destination: destination)
-        }
+        // 5 to 7. Uploading, the prior link and any superseded object, in one write; the overlay and
+        // the editor (through pushEditorState) show Uploading… now, before the first progress event;
+        // then the live lane.
+        startPlannedUpload(recordID: recordID, plan: plan, payload: .data(png), destination: destination)
         return EditorUploadOutcome(wroteLocally: true, enqueued: true)
     }
 

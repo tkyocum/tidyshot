@@ -299,10 +299,12 @@ struct MicrophoneChoiceTests {
                 == MicrophoneChoice.Resolution(device: nil, note: accessNote))
     }
 
-    /// The prompt's answer changes nothing stored: Allow records the pick, and Don't Allow keeps it,
-    /// with the row's note and a recording without the microphone that says so.
+    /// A pick made while access is undecided asks for it. After the prompt, the kept pick records with
+    /// the microphone when the answer was Allow; after Don't Allow it shows the row's note, and a
+    /// recording goes without the microphone and says so. That the answer writes nothing is
+    /// `CaptureSettingsView.pickMicrophone`'s, which no test reaches: the Settings hand check pins it.
     @Test(arguments: [true, false])
-    func aPickIsKeptWhateverThePromptAnswers(_ grants: Bool) async {
+    func aKeptPickShowsTheNoteOnlyAfterARefusal(_ grants: Bool) async {
         let microphones = FakeMicrophoneDevices(devices: devices, defaultInput: builtIn, access: .notDetermined, grants: grants)
         let picked = MicrophoneChoice.Stored.device(id: rode.uniqueID, name: "RODE AI-1")
         let pick = MicrophoneChoice.pick(picked, access: microphones.access())

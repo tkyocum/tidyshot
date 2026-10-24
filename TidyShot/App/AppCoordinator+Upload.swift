@@ -21,6 +21,10 @@ extension AppCoordinator {
         notifier.notifyError(message, title: "Upload not configured")
     }
 
+    /// `Upload not configured`'s body when an upload the user asked for finds no destination: the
+    /// editor's Upload, Save and Upload and `Upload Trimmed`.
+    nonisolated static let uploadNotConfiguredBody = "Set up a destination in Settings > Upload, then upload again."
+
     /// The configured destination, or nil when the Upload tab is incomplete, no credentials are
     /// stored, or the keychain could not be read. "No item" is the normal not-configured case and
     /// stays silent here; any other keychain error is logged and reported once per launch.
@@ -56,10 +60,12 @@ extension AppCoordinator {
     }
 
     /// Called by the Upload settings tab after saving or forgetting credentials, so the next
-    /// upload builds a queue from the new settings. The old queue is not dropped while it has
+    /// upload builds a queue from the new settings, and the shown cards' Trim items follow. The old queue is not dropped while it has
     /// work: it moves to `drainingQueues` until it reports idle, so its jobs still deliver their
     /// events (and finish against the destination they started with) and Delete can cancel them.
     func destinationDidChange() {
+        // `Trim…` and `Upload Trimmed` follow whether a destination is set.
+        refreshCardTrimStates()
         guard let old = queue else { return }
         queue = nil
         drainingQueues.append(old)
@@ -71,6 +77,23 @@ extension AppCoordinator {
                 try? await Task.sleep(for: .milliseconds(500))
             }
             self?.drainingQueues.removeAll { $0.queue === old.queue }
+        }
+    }
+
+    /// The last steps of an upload over a plan the caller has checked, shared by the editor's Upload
+    /// and Trim's upload half: the record goes to uploading, with its prior link and any superseded
+    /// object, in one write (`EditorUploadPlan.startingUpload`); the card and the editor show
+    /// `Uploading…` now, as `startUpload` skips that refresh for a record already uploading; and the
+    /// job goes through the live lane (`uploadingIDs`, progress, cancel, Delete and the menu bar
+    /// icon), over the link's own key for a replace or under a new template key.
+    func startPlannedUpload(recordID: UUID, plan: EditorUploadPlan.Plan, payload: UploadPayload,
+                            destination: S3Destination) {
+        history.update(id: recordID) { $0 = EditorUploadPlan.startingUpload($0, plan: plan) }
+        refreshOverlay(for: recordID)
+        if case .replace(let key) = plan {
+            startUpload(recordID: recordID, payload: payload, destination: destination, fixedKey: key)
+        } else {
+            startUpload(recordID: recordID, payload: payload, destination: destination)
         }
     }
 

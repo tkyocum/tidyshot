@@ -323,6 +323,28 @@ struct RecordingRecoveryTests {
         #expect(!exists(recordings))
     }
 
+    /// `begin`, the launch check's start, lists `tmp/Mute` before it scans `tmp/Recording`: a log
+    /// written during the scan, as a recording made since launch writes one when Mute is pressed
+    /// before its first frame, is not in the list, so the sweep keeps it (Decided 2026-10-24, 6).
+    @Test func theListIsTakenBeforeTheScanSoALogWrittenDuringItIsKept() async throws {
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let (orphan, sinceLaunch) = (UUID(), UUID())
+        try writeMuteFiles([orphan])
+        try FileManager.default.createDirectory(at: recordings, withIntermediateDirectories: true)
+        var scanned: [URL] = []
+        let (listed, found) = await RecordingRecovery.begin(recordingDirectory: recordings, muteDirectory: mute) { folder in
+            scanned.append(folder)
+            try? writeLog(MuteLog(intervals: [MuteInterval(start: 0, end: nil)], lag: 0.3, sequence: 1), for: sinceLaunch)
+            return await RecordingRecovery.scan(folder)
+        }
+        #expect(scanned == [recordings])
+        #expect(found.isEmpty)
+        #expect(listed.map(\.lastPathComponent).sorted() == ["\(orphan.uuidString).json", "\(orphan.uuidString).mp4"])
+
+        RecordingRecovery.sweepMuteFolder(listed, recordingDirectory: recordings)
+        #expect(try muteFolderNames() == ["\(sinceLaunch.uuidString).json"])
+    }
+
     @Test func aMissingFolderListsNothingAndItsSweepDoesNothing() {
         defer { try? FileManager.default.removeItem(at: dir) }
         let listed = RecordingRecovery.listMuteFolder(mute)

@@ -28,6 +28,15 @@ extension AppCoordinator {
         }
     }
 
+    /// What a record function does about the microphone prompt, before the capture lock (R2 design,
+    /// At the start): with no access to ask for it goes on; with a prompt to show while another
+    /// capture holds the lock it ends there, with no prompt, as the lock would refuse the start and the
+    /// prompt would land in that capture; otherwise the prompt shows.
+    nonisolated static func microphonePromptStep(asksForAccess: Bool, isCapturing: Bool) -> MicrophonePromptStep {
+        guard asksForAccess else { return .goOn }
+        return isCapturing ? .end : .prompt
+    }
+
     /// The input a recording takes, resolved under the capture lock, and its mute lag.
     private typealias MicrophoneStart = (resolution: MicrophoneChoice.Resolution, lag: TimeInterval)
     /// What `recorder.run` gave, with the microphone note to post after Stop.
@@ -115,19 +124,22 @@ extension AppCoordinator {
     /// before the capture lock, so it never shows during a count-in or a recording. Meanwhile
     /// another start is ignored (`isAskingMicrophone`), and nothing else is held. Whatever the
     /// answer, the start goes on: the access is read again under the lock. Nil, so nothing starts,
-    /// when another capture holds the lock, which would refuse the start, and the prompt would land
-    /// in its screenshot; and when the app began quitting while the prompt was up.
+    /// when the prompt would show while another capture holds the lock, which would refuse the start,
+    /// and the prompt would land in its screenshot (`microphonePromptStep`); and when the app began
+    /// quitting while the prompt was up.
     private func recordingMicrophoneChoice() async -> MicrophoneChoice.Stored? {
         let format = settings.recordingFormat
         let stored = MicrophoneChoice.Stored(value: settings.recordingMicrophone, name: settings.recordingMicrophoneName)
         let choice = MicrophoneChoice.forRecording(stored, format: format)
         // Off, and so every GIF, reads no access.
-        guard choice != .off, MicrophoneChoice.asksForAccess(stored, format: format, access: microphones.access()) else {
-            return choice
+        let asks = choice != .off && MicrophoneChoice.asksForAccess(stored, format: format, access: microphones.access())
+        // A screenshot's selection or self-timer, or a scrolling capture, with a prompt to show: the
+        // start ends here, as `withCaptureLock` ends any start while another capture runs.
+        switch Self.microphonePromptStep(asksForAccess: asks, isCapturing: isCapturing) {
+        case .goOn: return choice
+        case .end: return nil
+        case .prompt: break
         }
-        // A screenshot's selection or self-timer, or a scrolling capture: the start ends here, with
-        // no prompt, as `withCaptureLock` ends any start while another capture runs.
-        guard !isCapturing else { return nil }
         isAskingMicrophone = true
         let granted = await microphones.requestAccess()
         isAskingMicrophone = false
@@ -304,10 +316,11 @@ extension AppCoordinator {
     /// `tmp/Recording` is kept; what was written since is not touched (Decided 2026-10-24, 6).
     func recoverRecordings() async {
         let ext = MediaKind.video.fileExtension
-        // Listed before the loop, which can run long after launch: the sweep never removes the log
-        // of a recording made since, even one muted before its first frame.
-        let muteFiles = RecordingRecovery.listMuteFolder(MuteLog.directory)
-        for found in await RecordingRecovery.scan(Recording.directory) {
+        // `tmp/Mute` is listed before the scan and the loop, which can run long after launch: the
+        // sweep never removes the log of a recording made since, even one muted before its first frame.
+        let (muteFiles, foundFiles) = await RecordingRecovery.begin(recordingDirectory: Recording.directory,
+                                                                    muteDirectory: MuteLog.directory)
+        for found in foundFiles {
             let (source, pending) = (found.url, pendingFiles)
             let prepared = await RecordingRecovery.prepare(found, records: history.records,
                                                            muteDirectory: MuteLog.directory) { file, duration, intervals, lag in
@@ -637,6 +650,16 @@ nonisolated enum RecordingPhase: Equatable, Sendable {
     case recording
     /// A kept recording on its way to `history.add`.
     case saving
+}
+
+/// What a start does about the microphone prompt
+/// (`AppCoordinator.microphonePromptStep(asksForAccess:isCapturing:)`).
+nonisolated enum MicrophonePromptStep: Equatable, Sendable {
+    case prompt
+    /// Nothing to ask: on to the capture lock.
+    case goOn
+    /// Another capture runs: nothing starts, and no prompt shows.
+    case end
 }
 
 /// What a record shortcut does (`AppCoordinator.recordingShortcutAction(for:isAskingMicrophone:)`).

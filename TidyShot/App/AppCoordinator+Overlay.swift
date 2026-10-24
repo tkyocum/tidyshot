@@ -108,6 +108,16 @@ extension AppCoordinator {
         pushEditorState(for: id)
     }
 
+    /// Every shown card's Trim items again, after a change that is on no record: the destination
+    /// (`destinationDidChange`) or the save folder (`saveFolderDidChange`). Only the items change.
+    func refreshCardTrimStates() {
+        for id in overlay.shownIDs {
+            if let record = history.record(id: id) {
+                overlay.setTrimState(trimMenuState(for: record), for: id)
+            }
+        }
+    }
+
     /// The card's flags that are not on the record: `Optimizing…`, whether the URL was copied, and its
     /// Trim items (`trimMenuState(for:)`), so every refresh after a change to `trimmingIDs` or
     /// `deletingIDs` updates them.

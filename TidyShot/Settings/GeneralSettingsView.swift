@@ -17,7 +17,11 @@ struct GeneralSettingsView: View {
                             .truncationMode(.middle)
                             .foregroundStyle(.secondary)
                         Button("Choose…") {
-                            Task { _ = await saveLocation.chooseFolder() }
+                            Task {
+                                if await saveLocation.chooseFolder() != nil {
+                                    AppCoordinator.shared.saveFolderDidChange()
+                                }
+                            }
                         }
                     }
                 }

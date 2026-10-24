@@ -217,8 +217,6 @@ nonisolated enum RecordingMute {
 
     // MARK: The rewrite
 
-    private typealias Sample = CMReadySampleBuffer<CMSampleBuffer.DynamicContent>
-
     /// One reader and one writer. The first video track is copied as stored, and the first audio
     /// track read as stored, decoded, silenced and encoded again, each on a task of its own, so the
     /// writer can interleave them. Recordings have no other tracks.
@@ -246,67 +244,28 @@ nonisolated enum RecordingMute {
                 throw RecordingMuteError.couldNotRead
             }
             let decoder = try AudioDecoder(format: format, end: range.end)
-            let audioInput = AVAssetWriterInput(mediaType: .audio, outputSettings: [
-                AVFormatIDKey: kAudioFormatMPEG4AAC,
-                AVSampleRateKey: description.mSampleRate,
-                AVNumberOfChannelsKey: Int(description.mChannelsPerFrame),
-                AVEncoderBitRateKey: audioBitRate,
-            ])
+            let audioInput = AVAssetWriterInput(mediaType: .audio, outputSettings: TrackPass.aacSettings(for: description))
             audioInput.expectsMediaDataInRealTime = false
             audio = Passage(from: reader.outputProvider(for: AVAssetReaderTrackOutput(track: audioTrack, outputSettings: nil)),
                             to: writer.inputReceiver(for: audioInput), decoder: decoder)
         }
 
-        try reader.start()
-        try writer.start()
-        writer.startSession(atSourceTime: .zero)
-        do {
-            try await run(video, audio, silencing: segments)
-        } catch {
-            // Only once neither track reads or appends: a reader cancelled under a read crashed,
-            // and a writer cancelled under an append it held never let the append return.
-            reader.cancelReading()
-            writer.cancelWriting()
-            throw error
+        // Each passage on a task of its own (`TrackPass.run`).
+        var tracks: [() async throws -> Void] = [{ try await video.run(silencing: nil) }]
+        if let audio {
+            tracks.append { try await audio.run(silencing: segments) }
         }
-        guard reader.status != .failed else {
-            writer.cancelWriting()
-            throw reader.error ?? RecordingMuteError.couldNotRead
-        }
-        await writer.finishWriting()
-        guard writer.status == .completed else {
-            throw writer.error ?? RecordingMuteError.couldNotWrite
-        }
-    }
-
-    /// Runs both passages, each on a task of its own. At the first failure the other passage's task
-    /// is cancelled, and it ends at its next sample: the failed passage has finished its input, so
-    /// the writer holds no append back for it. The failure is thrown once both have ended.
-    private static func run(_ video: Passage, _ audio: Passage?, silencing segments: [MuteInterval]) async throws {
-        // Each passage goes to its own task, and nothing here touches it again.
-        nonisolated(unsafe) let video = video
-        nonisolated(unsafe) let audio = audio
-        try await withThrowingTaskGroup(of: Void.self) { group in
-            group.addTask { try await video.run(silencing: nil) }
-            if audio != nil {
-                group.addTask { try await audio?.run(silencing: segments) }
-            }
-            do {
-                while try await group.next() != nil {}
-            } catch {
-                group.cancelAll()
-                throw error
-            }
-        }
+        try await TrackPass.run(reader: reader, writer: writer, tracks: tracks,
+                                readError: RecordingMuteError.couldNotRead, writeError: RecordingMuteError.couldNotWrite)
     }
 
     /// One track's way from the reader to the writer, through `decoder` for the audio.
     private struct Passage {
-        let provider: AVAssetReaderOutput.Provider<Sample>
+        let provider: AVAssetReaderOutput.Provider<ReadySample>
         let receiver: AVAssetWriterInput.SampleBufferReceiver
         let decoder: AudioDecoder?
 
-        init(from provider: AVAssetReaderOutput.Provider<Sample>, to receiver: AVAssetWriterInput.SampleBufferReceiver,
+        init(from provider: AVAssetReaderOutput.Provider<ReadySample>, to receiver: AVAssetWriterInput.SampleBufferReceiver,
              decoder: AudioDecoder? = nil) {
             self.provider = provider
             self.receiver = receiver
@@ -351,7 +310,7 @@ nonisolated enum RecordingMute {
             }
         }
 
-        private func append(_ sample: Sample, silencing segments: [MuteInterval]?) async throws {
+        private func append(_ sample: ReadySample, silencing segments: [MuteInterval]?) async throws {
             try await receiver.append(try segments.map { try silenced(sample, segments: $0) } ?? sample)
         }
     }
@@ -360,7 +319,7 @@ nonisolated enum RecordingMute {
     /// data; `sample` itself when none falls inside. A marker leaves the decoder nothing, so the
     /// check for a buffer with no sound is defensive. A buffer whose frames cannot be placed
     /// throws, so its sound never passes unmuted.
-    private static func silenced(_ sample: Sample, segments: [MuteInterval]) throws -> Sample {
+    private static func silenced(_ sample: ReadySample, segments: [MuteInterval]) throws -> ReadySample {
         let copy = try sample.withUnsafeSampleBuffer { buffer -> CMSampleBuffer? in
             guard buffer.numSamples > 0 else { return nil }
             guard let format = buffer.formatDescription,
@@ -391,7 +350,7 @@ nonisolated enum RecordingMute {
         }
         guard let copy else { return sample }
         nonisolated(unsafe) let made = copy
-        return Sample(unsafeBuffer: made)
+        return ReadySample(unsafeBuffer: made)
     }
 
     /// The frames of a buffer of `count` frames from `start` s whose time falls inside a segment,

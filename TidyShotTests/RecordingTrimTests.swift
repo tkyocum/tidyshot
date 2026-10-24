@@ -194,6 +194,29 @@ struct RecordingTrimTests {
         #expect(!can(recording(savedFile, kind: .image), folder: folder, destination: true))
     }
 
+    /// Why `Trim…` cannot open the window from the folder and the destination alone, which
+    /// `trimCapture` posts for a card drawn before Settings changed: nothing to read, or nothing to
+    /// save over with no destination (the sheet would have no button but `Cancel`).
+    @Test func openRefusalGivesTheSourcesOrTheSaveTargetsReason() {
+        func refusal(_ record: CaptureRecord, folder: URL?, destination: Bool) -> String? {
+            RecordingTrim.openRefusal(for: record, saveFolder: folder, hasDestination: destination)
+        }
+        #expect(refusal(saved, folder: folder, destination: false) == nil)
+        #expect(refusal(pending, folder: nil, destination: false) == nil)
+        #expect(refusal(uploadOnly, folder: folder, destination: true) == nil)
+        // The destination was forgotten: nothing to save over, and no button but Cancel.
+        #expect(refusal(uploadOnly, folder: folder, destination: false) == EditorSaveTarget.noFileReason)
+        #expect(refusal(savedAndUploaded, folder: nil, destination: false) == EditorSaveTarget.noFolderReason)
+        // The save folder changed: a file outside it that was never uploaded has nothing to read.
+        #expect(refusal(saved, folder: nil, destination: true) == EditorInput.outsideSaveFolderText)
+        #expect(refusal(recording(nil), folder: folder, destination: true) == EditorInput.neverUploadedText)
+        // Uploading, being deleted or trimmed are not its reasons: the item is disabled then.
+        let uploading = recording(savedFile, state: .uploading(fraction: 0.3))
+        #expect(refusal(uploading, folder: folder, destination: true) == nil)
+        #expect(!RecordingTrim.canTrim(uploading, saveFolder: folder, hasDestination: true, isDeleting: false,
+                                       isTrimming: false))
+    }
+
     @Test func canTrimIsFalseWhileUploadingDeletingOrTrimming() {
         let uploading = recording(savedFile, state: .uploading(fraction: 0.3))
         #expect(!RecordingTrim.canTrim(uploading, saveFolder: folder, hasDestination: true, isDeleting: false, isTrimming: false))
@@ -377,8 +400,10 @@ struct RecordingTrimTests {
         #expect(RecordingTrim.sheetButton(at: 0, of: buttons) == .saveAndUpload)
         #expect(RecordingTrim.sheetButton(at: 1, of: buttons) == .save)
         #expect(RecordingTrim.sheetButton(at: 2, of: buttons) == .cancel)
-        // The window closed under the sheet (`NSModalResponse.cancel`), or any other response.
-        #expect(RecordingTrim.sheetButton(at: -1001, of: buttons) == .cancel)
+        // The window closed under the sheet (`NSModalResponse.cancel`, 0, is index -1000), or any
+        // other response (`.abort`, -1001, is index -2001).
+        #expect(RecordingTrim.sheetButton(at: -1000, of: buttons) == .cancel)
+        #expect(RecordingTrim.sheetButton(at: -2001, of: buttons) == .cancel)
         #expect(RecordingTrim.sheetButton(at: 3, of: buttons) == .cancel)
     }
 
@@ -579,6 +604,36 @@ struct RecordingTrimTests {
         }
     }
 
+    /// A file with no video track has nothing to trim: `couldNotRead`. A start in an empty edit of the
+    /// video track shows no sample, so it is not on a sync sample (an empty edit's source has no
+    /// numeric start, which `mediaTime` refuses); after the edit, track time maps to media time 1 s
+    /// earlier, so 1.0 and 3.0 s are the keyframes at 0 and 2 s, and 2.0 s is frame 10.
+    @Test func startsOnSyncSampleWithNoVideoTrackOrInAnEmptyEdit() async throws {
+        let folder = try makeFolder()
+        defer { remove(folder) }
+        let source = try await movie(in: folder, keyframeInterval: 20)
+        let soundOnly = AVMutableMovie(url: source, options: nil)
+        let picture = try #require(try await soundOnly.load(.tracks).first { $0.mediaType == .video })
+        soundOnly.removeTrack(picture)
+        let noVideo = folder.appending(path: "sound.mov")
+        try soundOnly.writeHeader(to: noVideo, fileType: .mov, options: .addMovieHeaderToDestination)
+        await #expect(throws: RecordingTrimError.couldNotRead) {
+            try await RecordingTrim.startsOnSyncSample(noVideo, at: .zero)
+        }
+
+        let edited = AVMutableMovie(url: source, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
+        let video = try #require(try await edited.load(.tracks).first { $0.mediaType == .video })
+        video.insertEmptyTimeRange(CMTimeRange(start: .zero, duration: t(1)))
+        let empty = folder.appending(path: "empty.mov")
+        try edited.writeHeader(to: empty, fileType: .mov, options: .addMovieHeaderToDestination)
+        let edits = try await videoEdits(of: empty)
+        #expect(edits.count == 2 && edits.first?.1 == nil)
+        #expect(try await RecordingTrim.startsOnSyncSample(empty, at: t(0.5)) == false)
+        #expect(try await RecordingTrim.startsOnSyncSample(empty, at: t(1.0)))
+        #expect(try await RecordingTrim.startsOnSyncSample(empty, at: t(2.0)) == false)
+        #expect(try await RecordingTrim.startsOnSyncSample(empty, at: t(3.0)))
+    }
+
     // MARK: The export
 
     /// The plan's `export` item for each method: the requested duration within 0.05 s, the audio
@@ -651,6 +706,135 @@ struct RecordingTrimTests {
         #expect(try await MovieSamples.storedSamples(of: output, .video).count == 8)
     }
 
+    /// A format description as a recording's video track carries it: 2940×1912 H.264 with
+    /// `extensions`.
+    func videoFormat(_ extensions: [String: Any]) throws -> CMFormatDescription {
+        var format: CMFormatDescription?
+        let status = CMVideoFormatDescriptionCreate(allocator: nil, codecType: kCMVideoCodecType_H264, width: 2940,
+                                                    height: 1912, extensions: extensions as CFDictionary,
+                                                    formatDescriptionOut: &format)
+        #expect(status == noErr)
+        return try #require(format)
+    }
+
+    /// ITU-R 709 for all three, as every recording probed carries.
+    let rec709: [String: Any] = [
+        kCMFormatDescriptionExtension_ColorPrimaries as String: kCMFormatDescriptionColorPrimaries_ITU_R_709_2,
+        kCMFormatDescriptionExtension_TransferFunction as String: kCMFormatDescriptionTransferFunction_ITU_R_709_2,
+        kCMFormatDescriptionExtension_YCbCrMatrix as String: kCMFormatDescriptionYCbCrMatrix_ITU_R_709_2,
+    ]
+
+    /// The writer's settings (design, `.reencode`): H.264 High at the format's encoded size, the bit
+    /// rate when known, a sync frame at least every 2 s and no reordering; first with the format's
+    /// colour primaries, transfer function and YCbCr matrix when it carries all three, then without
+    /// them; only without them when one is missing.
+    @Test func videoSettingsCarryTheSourcesColourFirstWhenItHasAllThree() throws {
+        let settings = RecordingTrim.videoSettings(for: try videoFormat(rec709), bitRate: 8_000_000)
+        #expect(settings.count == 2)
+        let colour = try #require(settings.first?[AVVideoColorPropertiesKey] as? [String: String])
+        #expect(colour == [AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_709_2,
+                           AVVideoTransferFunctionKey: AVVideoTransferFunction_ITU_R_709_2,
+                           AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2])
+        #expect(settings.last?[AVVideoColorPropertiesKey] == nil)
+        for each in settings {
+            #expect(each[AVVideoCodecKey] as? AVVideoCodecType == .h264)
+            #expect(each[AVVideoWidthKey] as? Int == 2940 && each[AVVideoHeightKey] as? Int == 1912)
+            let compression = try #require(each[AVVideoCompressionPropertiesKey] as? [String: Any])
+            #expect(compression[AVVideoProfileLevelKey] as? String == AVVideoProfileLevelH264HighAutoLevel)
+            #expect(compression[AVVideoAverageBitRateKey] as? Int == 8_000_000)
+            #expect(compression[AVVideoMaxKeyFrameIntervalDurationKey] as? Int == 2)
+            #expect(compression[AVVideoAllowFrameReorderingKey] as? Bool == false)
+        }
+        var partial = rec709
+        partial[kCMFormatDescriptionExtension_YCbCrMatrix as String] = nil
+        let plain = RecordingTrim.videoSettings(for: try videoFormat(partial), bitRate: nil)
+        #expect(plain.count == 1)
+        #expect(plain.first?[AVVideoColorPropertiesKey] == nil)
+        let compression = try #require(plain.first?[AVVideoCompressionPropertiesKey] as? [String: Any])
+        #expect(compression[AVVideoAverageBitRateKey] == nil)
+    }
+
+    /// The writer input takes the first settings the writer can apply: the source's colour, or for a
+    /// writer that cannot apply it none, with the track's transform either way; and is not made when
+    /// the writer can apply neither.
+    @Test func theVideoInputTakesTheFirstSettingsTheWriterAppliesWithTheTransform() throws {
+        let format = try videoFormat(rec709)
+        let quarterTurn = CGAffineTransform(rotationAngle: .pi / 2)
+        let coloured = try #require(RecordingTrim.videoInput(for: format, bitRate: nil, transform: quarterTurn,
+                                                             canApply: { _ in true }))
+        #expect(coloured.outputSettings?[AVVideoColorPropertiesKey] != nil)
+        #expect(coloured.transform == quarterTurn)
+        #expect(!coloured.expectsMediaDataInRealTime)
+        let plain = try #require(RecordingTrim.videoInput(for: format, bitRate: nil, transform: quarterTurn,
+                                                          canApply: { $0[AVVideoColorPropertiesKey] == nil }))
+        #expect(plain.outputSettings?[AVVideoColorPropertiesKey] == nil)
+        #expect(plain.outputSettings?[AVVideoWidthKey] as? Int == 2940)
+        #expect(plain.transform == quarterTurn)
+        #expect(RecordingTrim.videoInput(for: format, bitRate: nil, transform: .identity, canApply: { _ in false }) == nil)
+    }
+
+    /// The track's estimated data rate, or its sample data over its duration when that is 0 (design,
+    /// `.reencode`); none when neither is known, which leaves the encoder its own.
+    @Test func averageBitRateFallsBackToTheSampleDataOverTheDuration() {
+        #expect(RecordingTrim.averageBitRate(estimated: 6_000_000, bytes: 1_000_000, over: t(2)) == 6_000_000)
+        #expect(RecordingTrim.averageBitRate(estimated: 0, bytes: 1_000_000, over: t(2)) == 4_000_000)
+        #expect(RecordingTrim.averageBitRate(estimated: .nan, bytes: 1_000_000, over: t(2)) == 4_000_000)
+        #expect(RecordingTrim.averageBitRate(estimated: 0, bytes: 0, over: t(2)) == nil)
+        #expect(RecordingTrim.averageBitRate(estimated: 0, bytes: 1_000_000, over: .zero) == nil)
+        #expect(RecordingTrim.averageBitRate(estimated: 0, bytes: 1_000_000, over: .invalid) == nil)
+    }
+
+    /// A decoded buffer of 16-bit mono at 48 kHz, `count` frames from frame `first`, each frame's
+    /// value its own number.
+    func pcmBuffer(at first: Int, count: Int) throws -> ReadySample {
+        let description = AudioStreamBasicDescription(mSampleRate: 48_000, mFormatID: kAudioFormatLinearPCM,
+                                                      mFormatFlags: kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked,
+                                                      mBytesPerPacket: 2, mFramesPerPacket: 1, mBytesPerFrame: 2,
+                                                      mChannelsPerFrame: 1, mBitsPerChannel: 16, mReserved: 0)
+        let format = try CMAudioFormatDescription(audioStreamBasicDescription: description)
+        let values = (first..<first + count).map { Int16(truncatingIfNeeded: $0) }
+        let block = try CMBlockBuffer(length: count * 2, flags: .assureMemoryNow)
+        try block.withUnsafeMutableBytes { bytes in
+            values.withUnsafeBytes { bytes.copyMemory(from: $0) }
+        }
+        let buffer = try CMSampleBuffer(dataBuffer: block, formatDescription: format, numSamples: count,
+                                        presentationTimeStamp: CMTime(value: CMTimeValue(first), timescale: 48_000),
+                                        packetDescriptions: [])
+        // A new buffer over a new block: nothing else holds it.
+        nonisolated(unsafe) let made = buffer
+        return ReadySample(unsafeBuffer: made)
+    }
+
+    /// A buffer's first frame, in frames at 48 kHz, and its values.
+    func frames(of sample: ReadySample) throws -> (start: Int64, values: [Int16]) {
+        try sample.withUnsafeSampleBuffer { buffer in
+            let data = try #require(buffer.dataBuffer)
+            let values = try data.withContiguousStorage { bytes in Array(bytes.bindMemory(to: Int16.self)) }
+            return (buffer.presentationTimeStamp.convertScale(48_000, method: .default).value, values)
+        }
+    }
+
+    /// `cut` keeps a decoded buffer's frames inside the range, moved back by its start (Decided
+    /// 2026-10-24, 4): a buffer that straddles the end gives only the frames before it, whatever the
+    /// reader's time range does; one that straddles the start only those from it; one inside all of
+    /// them; one outside none.
+    @Test func cutKeepsOnlyTheRangesFramesOfABuffer() throws {
+        let range = 48_000..<96_000
+        let end = try #require(try RecordingTrim.cut(try pcmBuffer(at: 95_000, count: 2_048), to: range, rate: 48_000))
+        let atEnd = try frames(of: end)
+        #expect(atEnd.start == 47_000)
+        #expect(atEnd.values == (95_000..<96_000).map { Int16(truncatingIfNeeded: $0) })
+        let start = try #require(try RecordingTrim.cut(try pcmBuffer(at: 47_000, count: 2_048), to: range, rate: 48_000))
+        let atStart = try frames(of: start)
+        #expect(atStart.start == 0)
+        #expect(atStart.values == (48_000..<49_048).map { Int16(truncatingIfNeeded: $0) })
+        let inside = try #require(try RecordingTrim.cut(try pcmBuffer(at: 60_000, count: 1_024), to: range, rate: 48_000))
+        #expect(try frames(of: inside).start == 12_000)
+        #expect(try frames(of: inside).values.count == 1_024)
+        #expect(try RecordingTrim.cut(try pcmBuffer(at: 96_000, count: 1_024), to: range, rate: 48_000) == nil)
+        #expect(try RecordingTrim.cut(try pcmBuffer(at: 40_000, count: 1_024), to: range, rate: 48_000) == nil)
+    }
+
     /// `SCRecordingOutput` writes a frame only when the screen changes, so a frame can be shown for
     /// seconds. A re-encode from 0.15 s to 3.0 s of frames at 0, 0.1, 0.2, 1.0 and 3.9 s writes the
     /// frames at 0.1 (shown at the start), 0.2 and 1.0 s, and the last is held to the range's end, not
@@ -717,6 +901,8 @@ struct RecordingTrimTests {
         #expect(after.peak(from: 0.55, to: 0.95) < 0.01)
         // Stored, the sound is the AAC encoder's priming (2,112 frames), the range's frames and under a
         // packet of padding: nothing from before the start or after the end hides behind the edit list.
+        // 2,112 is the encoder delay of macOS's AAC encoder, not Trim's: an OS change to it fails these
+        // two lines with nothing changed in Trim.
         #expect(try await hiddenAudioFrames(of: output) == 2_112)
         let padding = try await storedAudioFrames(of: output) - 2_112 - Double(2 * sampleRate)
         #expect(padding >= 0 && padding < 1_024, "\(padding) frames after the end")
@@ -767,10 +953,9 @@ struct RecordingTrimTests {
         #expect(stored.count == 20)
         let hidden = try await hiddenAudioFrames(of: output)
         #expect(hidden <= 2_048)
-        if hidden > 0 {
-            let sound = try #require(try await MovieSamples.storedAudio(of: output))
-            #expect(sound.peak(from: 0, to: hidden / 48_000) > 0.4)
-        }
+        // Stored, from its first packet, hidden or not, the sound is the tone.
+        let sound = try #require(try await MovieSamples.storedAudio(of: output))
+        #expect(sound.peak(from: 0, to: (hidden + 2_048) / 48_000) > 0.4)
     }
 
     @Test func aReencodesProgressRisesAndEndsWithExactlyOneOne() async throws {
@@ -817,41 +1002,68 @@ struct RecordingTrimTests {
         #expect(exists(source))
     }
 
-    /// `Stop` while the re-encode writes: cancelled at its first progress reading.
+    /// `Stop` while the re-encode writes: cancelled from inside its first progress reading. The
+    /// readings are taken once the export has ended, so one that throws before any reading fails at
+    /// once rather than at the suite's time limit.
     @Test func aCancelWhileAReencodeWritesThrowsAndLeavesNoOutput() async throws {
         let folder = try makeFolder()
         defer { remove(folder) }
         let source = try await movie(in: folder, seconds: 20, tone: [0...20])
         let before = try Data(contentsOf: source)
         let output = folder.appending(path: "trimmed.mp4")
-        let (readings, reading) = AsyncStream<Double>.makeStream()
-        let task = Task {
+        let (result, values) = await stopAtFirstReading { progress in
             try await RecordingTrim.export(source, range: range(1.0, 19.0), method: .reencode, to: output,
-                                           progress: { reading.yield($0) })
+                                           progress: progress)
         }
-        for await value in readings {
-            #expect(value < 1)
-            break
-        }
-        task.cancel()
-        let result = await task.result
         #expect(throws: CancellationError.self) { try result.get() }
+        #expect(!values.isEmpty && values.allSatisfy { $0 < 1 }, "\(values)")
         #expect(!exists(output))
         #expect(try Data(contentsOf: source) == before)
     }
 
+    /// Runs `export` in a task that its first progress reading cancels, as `Stop` does, and gives its
+    /// result and the readings. The task is held in a `Mutex` the progress closure reads, and the
+    /// readings' stream is finished once the result is in, so nothing waits on a reading that never
+    /// comes.
+    func stopAtFirstReading(_ export: @escaping @Sendable (@escaping @Sendable (Double) -> Void) async throws -> Void)
+        async -> (Result<Void, any Error>, [Double]) {
+        let running = Mutex<Task<Void, any Error>?>(nil)
+        let (readings, reading) = AsyncStream<Double>.makeStream()
+        let task = Task {
+            try await export { value in
+                reading.yield(value)
+                running.withLock { $0?.cancel() }
+            }
+        }
+        running.withLock { $0 = task }
+        let result = await task.result
+        reading.finish()
+        var values: [Double] = []
+        for await value in readings {
+            values.append(value)
+        }
+        return (result, values)
+    }
+
     /// Sound whose decode fails partway, as in the mute tests: an edit at another rate from 2 s. The
-    /// re-encode throws at once rather than wait on the video, and leaves nothing.
+    /// re-encode throws the decode's own error, `RecordingMuteError.couldNotRead` from
+    /// `AudioDecoder.decode` while the tracks run (its setup takes this AAC track, and setup's own
+    /// refusals are `RecordingTrimError`s or AVFoundation's), at once rather than wait on the video,
+    /// and leaves nothing.
     @Test func aReencodeThatFailsPartwayThrowsAndLeavesNoOutput() async throws {
         let folder = try makeFolder()
         defer { remove(folder) }
         let source = try await movie(in: folder)
         let file = folder.appending(path: "speed.mov")
         try await VideoFixtures.makeAudioSpeedChange(of: source, over: 2.0...3.0, lasting: 0.5, at: file)
+        let track = try #require(try await AVURLAsset(url: file).loadTracks(withMediaType: .audio).first)
+        let format = try #require(try await track.load(.formatDescriptions).first)
+        _ = try AudioDecoder(format: format, end: try await track.load(.timeRange).end)
         let output = folder.appending(path: "trimmed.mp4")
-        await #expect(throws: (any Error).self) {
+        let error = await #expect(throws: RecordingMuteError.self) {
             try await RecordingTrim.export(file, range: range(1.0, 3.5), method: .reencode, to: output, progress: { _ in })
         }
+        if case .couldNotRead? = error {} else { Issue.record("\(String(describing: error))") }
         #expect(!exists(output))
         #expect(exists(file))
     }
@@ -881,7 +1093,53 @@ struct RecordingTrimTests {
         }
     }
 
+    /// `isSameFile` reads the file system's identity when both files exist, so a hard link and
+    /// another spelling of the path (APFS ignores case) are the source; otherwise the paths, with
+    /// symbolic links resolved.
+    @Test func isSameFileFollowsTheFileNotItsPath() throws {
+        let folder = try makeFolder()
+        defer { remove(folder) }
+        let file = folder.appending(path: "source.mp4")
+        try Data("movie".utf8).write(to: file)
+        let other = folder.appending(path: "other.mp4")
+        try Data("movie".utf8).write(to: other)
+        let link = folder.appending(path: "link.mp4")
+        try FileManager.default.linkItem(at: file, to: link)
+        let alias = folder.appending(path: "SOURCE.mp4")
+        let caseInsensitive = exists(alias)
+        let symbolic = folder.appending(path: "symbolic.mp4")
+        try FileManager.default.createSymbolicLink(at: symbolic, withDestinationURL: file)
+
+        #expect(RecordingTrim.isSameFile(file, file))
+        #expect(RecordingTrim.isSameFile(file, link))
+        #expect(RecordingTrim.isSameFile(file, symbolic))
+        #expect(RecordingTrim.isSameFile(file, alias) == caseInsensitive)
+        #expect(!RecordingTrim.isSameFile(file, other))
+        // A file that is not there yet: its path.
+        let missing = folder.appending(path: "trimmed.mp4")
+        #expect(!RecordingTrim.isSameFile(file, missing))
+        #expect(RecordingTrim.isSameFile(missing, folder.appending(path: "./trimmed.mp4")))
+    }
+
     // MARK: The export for Save
+
+    /// A source whose size cannot be read fails closed (design, Disk space): `couldNotRead`, before
+    /// the check and before anything is written, even with exactly 1 GB free, which a size taken as
+    /// 0 would pass.
+    @Test func aSourceWhoseSizeCannotBeReadIsNotTrimmed() async throws {
+        let folder = try makeFolder()
+        defer { remove(folder) }
+        let directory = folder.appending(path: "Trim", directoryHint: .isDirectory)
+        let missing = folder.appending(path: "gone.mp4")
+        for method in [RecordingTrim.TrimMethod.passthrough, .reencode] {
+            await #expect(throws: RecordingTrimError.couldNotRead) {
+                try await RecordingTrim.exportForSave(missing, id: UUID(), range: range(1.0, 3.0), method: method,
+                                                      unmutedIntervals: [], directory: directory,
+                                                      freeBytes: { 1_000_000_000 }, progress: { _ in })
+            }
+            #expect(try contents(of: directory).isEmpty)
+        }
+    }
 
     /// The plan's missing `tmp/Trim` item: after the launch clear, a pending or save-folder source has
     /// downloaded nothing into it. Save's export makes it, with and without the mute step, and leaves
@@ -939,16 +1197,13 @@ struct RecordingTrimTests {
         }
 
         let long = try await movie(in: folder, "long.mp4", seconds: 20, tone: [0...20])
-        let (readings, reading) = AsyncStream<Double>.makeStream()
-        let task = Task {
-            try await RecordingTrim.exportForSave(long, id: UUID(), range: range(1.0, 19.0), method: .reencode,
-                                                  unmutedIntervals: [MuteInterval(start: 5, end: 6)], directory: directory,
-                                                  freeBytes: { nil }, progress: { reading.yield($0) })
+        let (result, values) = await stopAtFirstReading { progress in
+            _ = try await RecordingTrim.exportForSave(long, id: UUID(), range: range(1.0, 19.0), method: .reencode,
+                                                      unmutedIntervals: [MuteInterval(start: 5, end: 6)],
+                                                      directory: directory, freeBytes: { nil }, progress: progress)
         }
-        for await _ in readings { break }
-        task.cancel()
-        let result = await task.result
         #expect(throws: CancellationError.self) { try result.get() }
+        #expect(!values.isEmpty && values.allSatisfy { $0 < 1 }, "\(values)")
         #expect(try contents(of: directory).isEmpty)
     }
 

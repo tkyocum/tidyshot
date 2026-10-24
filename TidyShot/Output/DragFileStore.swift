@@ -75,6 +75,18 @@ nonisolated struct DragFileStore: Sendable {
         return try place(destination) { try fileManager.copyItem(at: source, to: $0) }
     }
 
+    /// The file in `id`'s folder when it is a copy of `source`, the record's file now: the same size
+    /// and modification date, as `stage` with `reusingMatch` tells, holding `scope` for the read. With
+    /// no `source`, a record with no local file, whose folder holds its only copy, the folder's file as
+    /// it is. Nil otherwise, as for a copy of a recording made before a trim rewrote it.
+    func copy(id: UUID, matching source: URL?, scope: URL?) -> URL? {
+        guard let source else { return stagedFile(id: id) }
+        let accessing = scope?.startAccessingSecurityScopedResource() ?? false
+        defer { if accessing { scope?.stopAccessingSecurityScopedResource() } }
+        return Self.entries(in: folder(for: id)).sorted { $0.lastPathComponent < $1.lastPathComponent }
+            .first { Self.sameSizeAndDate(source, $0) }
+    }
+
     /// Moves an upload-only capture's pending file to `Drag/<id>/<name>` (a rename: `pending` and
     /// `tmp` are both in the container) and returns it, replacing what the folder held. Throws,
     /// leaving the folder as it was, when `source` is gone.

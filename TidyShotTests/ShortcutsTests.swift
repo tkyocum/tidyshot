@@ -95,6 +95,16 @@ struct ShortcutsTests {
         #expect(AppCoordinator.recordingShortcutAction(for: .saving, isAskingMicrophone: false) == .start)
     }
 
+    /// Before the capture lock (R2 design, At the start): a start with no access to ask for goes on,
+    /// also while another capture runs, whose lock then refuses it; one that would prompt while
+    /// another capture runs ends there, with no prompt; otherwise the prompt shows.
+    @Test func theMicrophonePromptShowsOnlyWithNoCaptureRunning() {
+        #expect(AppCoordinator.microphonePromptStep(asksForAccess: true, isCapturing: false) == .prompt)
+        #expect(AppCoordinator.microphonePromptStep(asksForAccess: true, isCapturing: true) == .end)
+        #expect(AppCoordinator.microphonePromptStep(asksForAccess: false, isCapturing: false) == .goOn)
+        #expect(AppCoordinator.microphonePromptStep(asksForAccess: false, isCapturing: true) == .goOn)
+    }
+
     /// The Escape name serves scrolling and the self-timer now; the stored name is the old one,
     /// so nothing in UserDefaults moves.
     @Test func cancelCaptureKeepsTheStoredNameOfTheScrollingEscape() {

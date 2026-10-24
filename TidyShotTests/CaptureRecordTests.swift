@@ -315,6 +315,42 @@ struct CaptureRecordTests {
         }
     }
 
+    /// A trim's write (design, Trim, Save; `finishTrimWrite`): the trimmed file's length and size,
+    /// `editedAt`, and `Sound not muted` cleared; a length that could not be read (0) is the range's,
+    /// and a size that could not be read leaves none; a `.newPendingFile` put points the record at the
+    /// new pending file. The pixel size, the link and `uploadIsStale` stay.
+    @Test func aTrimsWriteRecordsTheTrimmedFile() {
+        let edited = Date(timeIntervalSince1970: 1_792_411_200)
+        let link = URL(string: "https://snap.tky.io/x.mp4")!
+        let saved = URL(filePath: "/Users/tim/Movies/TidyShot/x.mp4")
+        var record = CaptureRecord(fileURL: saved, fileIsTemporary: false, pixelWidth: 2560, pixelHeight: 1664,
+                                   appName: nil, uploadState: .uploaded(url: link, key: "x.mp4"), uploadIsStale: true,
+                                   mediaKind: .video, durationSeconds: 64.2, byteCount: 90_000_000,
+                                   unmutedIntervals: [MuteInterval(start: 1.9, end: 3.3)])
+        var trimmed = record
+        trimmed.recordTrimWrite(length: 12.4, byteCount: 17_000_000, rangeDuration: 12.5, pendingFile: nil, at: edited)
+        #expect(trimmed.durationSeconds == 12.4)
+        #expect(trimmed.byteCount == 17_000_000)
+        #expect(trimmed.editedAt == edited)
+        #expect(trimmed.unmutedIntervals.isEmpty && trimmed.uploadBlockedReason == nil)
+        #expect(trimmed.fileURL == saved && !trimmed.fileIsTemporary)
+        #expect(trimmed.pixelWidth == 2560 && trimmed.pixelHeight == 1664)
+        #expect(trimmed.uploadIsStale && trimmed.linkURL == link)
+
+        // Neither the length nor the size could be read.
+        trimmed = record
+        trimmed.recordTrimWrite(length: 0, byteCount: 0, rangeDuration: 12.5, pendingFile: nil, at: edited)
+        #expect(trimmed.durationSeconds == 12.5)
+        #expect(trimmed.byteCount == nil)
+
+        // Save and Upload with nothing to write over.
+        record.fileURL = nil
+        let pending = URL(filePath: "/tmp/pending/x.mp4")
+        record.recordTrimWrite(length: 12.4, byteCount: 17_000_000, rangeDuration: 12.5, pendingFile: pending, at: edited)
+        #expect(record.fileURL == pending && record.fileIsTemporary)
+        #expect(record.durationSeconds == 12.4 && record.unmutedIntervals.isEmpty)
+    }
+
     // MARK: Media kind (recording R1)
 
     @Test func historyWithoutMediaKindDecodesAsImages() throws {

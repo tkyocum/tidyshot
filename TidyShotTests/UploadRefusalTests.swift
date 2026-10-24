@@ -60,6 +60,17 @@ struct UploadRefusalTests {
         noFile.fileURL = nil
         noFile.fileIsTemporary = false
         #expect(refusal(noFile) == "The file could not be read: no local file")
+        // Last, as the menu shows the item only for a stale link: a link that shows the file already,
+        // as after an upload that ended while the menu was open.
+        #expect(refusal(record(state: .uploaded(url: link, key: "rec.mp4"))) == "The link already shows the trimmed recording.")
+        #expect(refusal(record(state: .none)) == "The link already shows the trimmed recording.")
+        #expect(AppCoordinator.linkShowsTrimText == "The link already shows the trimmed recording.")
+    }
+
+    /// `Upload not configured`'s body, one constant for the editor's Upload, Save and Upload and
+    /// `Upload Trimmed`.
+    @Test func theUploadNotConfiguredBodyHasTheDesignsText() {
+        #expect(AppCoordinator.uploadNotConfiguredBody == "Set up a destination in Settings > Upload, then upload again.")
     }
 
     @Test func retryFailedUploadsLeavesOutMarkedAndDeletingRecords() {

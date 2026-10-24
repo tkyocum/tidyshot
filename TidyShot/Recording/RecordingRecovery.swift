@@ -100,6 +100,17 @@ nonisolated enum RecordingRecovery {
         }
     }
 
+    /// The launch check's start: `muteDirectory` listed (`listMuteFolder`), then `recordingDirectory`
+    /// scanned, in that order, so a log written since launch, while the scan or the loop after it runs,
+    /// is never in the list `sweepMuteFolder` goes through (Decided 2026-10-24, 6). `scanning` is
+    /// `scan`, injected by tests.
+    static func begin(recordingDirectory: URL, muteDirectory: URL,
+                      scanning: (URL) async -> [Found] = { await RecordingRecovery.scan($0) })
+        async -> (muteFiles: [URL], found: [Found]) {
+        let muteFiles = listMuteFolder(muteDirectory)
+        return (muteFiles, await scanning(recordingDirectory))
+    }
+
     /// The files in `muteDirectory` as the launch check begins, before its loop: the only ones
     /// `sweepMuteFolder` may remove (Decided 2026-10-24, 6). A missing folder lists nothing.
     static func listMuteFolder(_ muteDirectory: URL) -> [URL] {

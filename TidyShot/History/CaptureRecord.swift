@@ -211,6 +211,23 @@ nonisolated struct CaptureRecord: Codable, Identifiable, Equatable, Sendable {
         self.editedAt = editedAt
     }
 
+    /// What a trim's write changes on the record (design, Trim, Save; `AppCoordinator.finishTrimWrite`),
+    /// in one update: Save and Upload's `.newPendingFile` put points it at `pendingFile`; then
+    /// `recordLocalTrim` with the trimmed file's `length`, or the range's when that could not be read
+    /// (0); the trimmed file's size, or none when it could not be read (0), for the next launch's
+    /// backfill rather than the untrimmed file's; and `unmutedIntervals` emptied, which clears `Sound
+    /// not muted`, as the trimmed file was cut from the muted copy.
+    mutating func recordTrimWrite(length: TimeInterval, byteCount: Int64, rangeDuration: TimeInterval,
+                                  pendingFile: URL?, at editedAt: Date) {
+        if let pendingFile {
+            fileURL = pendingFile
+            fileIsTemporary = true
+        }
+        recordLocalTrim(duration: length > 0 ? length : rangeDuration, at: editedAt)
+        self.byteCount = byteCount > 0 ? Int(byteCount) : nil
+        unmutedIntervals = []
+    }
+
     var hasLocalFile: Bool { fileURL != nil }
 
     /// A recording, MP4 or GIF: no image actions, no editor, and its file is never read for a

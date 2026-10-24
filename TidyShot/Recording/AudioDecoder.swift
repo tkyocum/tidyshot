@@ -13,8 +13,6 @@ import Foundation
 /// marks for a decoder reset (where another edit starts) resets the converter first. One decoder
 /// serves one pass: `RecordingMute`'s rewrite or `RecordingTrim`'s re-encode.
 nonisolated final class AudioDecoder {
-    typealias Sample = CMReadySampleBuffer<CMSampleBuffer.DynamicContent>
-
     private let format: CMAudioFormatDescription
     private let input: AVAudioFormat
     private let output: AVAudioFormat
@@ -65,7 +63,7 @@ nonisolated final class AudioDecoder {
     /// Decodes `sample`'s packets and trims them, for `nextBuffer()` to place at its output time
     /// after the silence of any gap since the last; a marker or packets the trims take whole
     /// leave nothing. A decode that fails, or frames that cannot be placed, throw.
-    func decode(_ sample: Sample) throws {
+    func decode(_ sample: ReadySample) throws {
         guard waiting == nil else { throw RecordingMuteError.couldNotRead }
         try sample.withUnsafeSampleBuffer { buffer in
             guard buffer.numSamples > 0 else { return }
@@ -101,7 +99,7 @@ nonisolated final class AudioDecoder {
     /// The next PCM buffer of what `decode` or `finish` left, nil once it is all out: a second of
     /// silence while more than that is left before the sound, then the rest of the silence with
     /// the sound, if there is any.
-    func nextBuffer() throws -> Sample? {
+    func nextBuffer() throws -> ReadySample? {
         guard let waiting else { return nil }
         let placed: CMSampleBuffer
         if waiting.start - next > chunk {
@@ -112,7 +110,7 @@ nonisolated final class AudioDecoder {
         }
         // A new buffer over a new block: nothing else holds it.
         nonisolated(unsafe) let made = placed
-        return Sample(unsafeBuffer: made)
+        return ReadySample(unsafeBuffer: made)
     }
 
     /// A PCM buffer from the last frame placed: silence up to frame `start`, then `frames` of

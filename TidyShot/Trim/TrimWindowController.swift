@@ -49,7 +49,13 @@ final class TrimWindowController: NSWindowController, NSWindowDelegate {
         window.contentView = playerView
         super.init(window: window)
         window.delegate = self
-        window.center()
+        // Centred on the screen it was sized for, which `center()` would not be with several displays.
+        if let screen {
+            let size = window.frameRect(forContentRect: NSRect(origin: .zero, size: contentSize)).size
+            window.setFrame(Self.frame(size: size, centredIn: screen.visibleFrame), display: false)
+        } else {
+            window.center()
+        }
         observeStatus()
     }
 
@@ -152,9 +158,16 @@ final class TrimWindowController: NSWindowController, NSWindowDelegate {
                 added.keyEquivalent = "\u{1b}"
             }
         }
-        let response = await alert.beginSheetModal(for: window)
-        return RecordingTrim.sheetButton(at: response.rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue,
-                                         of: buttons)
+        return Self.sheetButton(response: await alert.beginSheetModal(for: window), of: buttons)
+    }
+
+    /// The save sheet's button for its `response`: `alertFirstButtonReturn` is the first of `buttons`
+    /// and each later return the next. Any other response, as `.cancel` when the window closes under
+    /// the sheet, is `Cancel` (`RecordingTrim.sheetButton(at:of:)`).
+    nonisolated static func sheetButton(response: NSApplication.ModalResponse,
+                                        of buttons: [RecordingTrim.SheetButton]) -> RecordingTrim.SheetButton {
+        RecordingTrim.sheetButton(at: response.rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue,
+                                  of: buttons)
     }
 
     // MARK: The Trimming… sheet
@@ -185,13 +198,15 @@ final class TrimWindowController: NSWindowController, NSWindowDelegate {
 
     // MARK: Closing
 
-    /// Closes the window for any reason. A sheet still up is ended first, the save sheet answering
-    /// `Cancel`.
+    /// Closes the window for any reason. A sheet still up is ended first, each once, the save sheet
+    /// answering `Cancel`: `hideProgress` ends `Trimming…`, which can still be listed among the window's
+    /// sheets while it animates away.
     override func close() {
         guard !isClosed else { return }
+        let progress = progressSheet?.panel
         hideProgress()
         if let window {
-            for sheet in window.sheets {
+            for sheet in window.sheets where sheet !== progress {
                 window.endSheet(sheet, returnCode: .cancel)
             }
         }
@@ -227,6 +242,13 @@ final class TrimWindowController: NSWindowController, NSWindowDelegate {
     nonisolated static let minimumContentSize = CGSize(width: 480, height: 300)
     /// The share of the screen's visible frame the window's first size may take.
     nonisolated static let maximumScreenShare: CGFloat = 0.8
+
+    /// The window's first frame: `size` centred in `visibleFrame`, the visible frame of the screen it
+    /// was sized for, on whole points.
+    nonisolated static func frame(size: CGSize, centredIn visibleFrame: CGRect) -> CGRect {
+        CGRect(x: (visibleFrame.midX - size.width / 2).rounded(), y: (visibleFrame.midY - size.height / 2).rounded(),
+               width: size.width, height: size.height)
+    }
 
     /// The window's first content size: the recording at its point size (`pixelSize` over the
     /// screen's `scale`), scaled down to fit `maximumScreenShare` of `visibleSize` with its aspect

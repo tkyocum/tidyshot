@@ -17,26 +17,34 @@ extension AppCoordinator {
                                 isDeleting: deletingIDs.contains(record.id), isTrimming: trimmingIDs.contains(record.id))
     }
 
+    /// Called by the General settings tab once a new save folder is chosen: the shown cards' Trim
+    /// items follow it, as `destinationDidChange` has them follow the destination.
+    func saveFolderDidChange() {
+        refreshCardTrimStates()
+    }
+
     // MARK: The window
 
     /// `Trim…` from a card or a Recent Captures row, run once menu tracking has ended. An open window
     /// comes forward. Otherwise, while the menu rule allows it, the window opens on the recording
     /// (design, Source file): a pending file directly, a save-folder file under the folder's scope,
     /// held until the window closes, or the uploaded object downloaded to `tmp/Trim/<id>.mp4`.
+    /// Nothing to read, or a sheet that would have no button, posts `Not trimmed` with the reason
+    /// (`RecordingTrim.openRefusal`).
     func trimCapture(recordID: UUID) {
         if let open = trimWindows[recordID] {
             open.present()
             return
         }
         guard !openingTrimIDs.contains(recordID), let record = history.record(id: recordID) else { return }
-        let source = RecordingTrim.source(for: record, saveFolder: saveLocation.currentURL)
-        if case .unavailable(let reason) = source {
+        if let reason = RecordingTrim.openRefusal(for: record, saveFolder: saveLocation.currentURL,
+                                                  hasDestination: hasUploadDestination) {
             notifier.notifyError(reason, title: RecordingTrim.notTrimmedTitle)
             return
         }
-        // Uploading, being deleted or trimmed, or a sheet with no button: the item is disabled.
+        // Uploading, being deleted or trimmed: the item is disabled.
         guard trimMenuState(for: record).canTrim else { return }
-        switch source {
+        switch RecordingTrim.source(for: record, saveFolder: saveLocation.currentURL) {
         case .pendingFile(let fileURL):
             presentTrimWindow(for: record, fileURL: fileURL, scope: nil)
         case .saveFolderFile(let fileURL, let folder):
@@ -164,7 +172,7 @@ extension AppCoordinator {
         // With no credentials, nothing is written (plan, Gap 9). This only gates the pass: the upload
         // half reads the destination again, as Settings > Upload can change during the export.
         if button == .saveAndUpload, makeDestination() == nil {
-            notifier.notifyError("Set up a destination in Settings > Upload, then upload again.", title: "Upload not configured")
+            notifier.notifyError(Self.uploadNotConfiguredBody, title: "Upload not configured")
             controller.close()
             return
         }
@@ -247,14 +255,8 @@ extension AppCoordinator {
         // Pruning does not read the marker, so the record can be gone.
         switch RecordingTrim.afterPut(plan, fileURL: written, recordExists: history.record(id: id) != nil) {
         case .finish:
-            if target == .newPendingFile {
-                history.update(id: id) { record in
-                    record.fileURL = written
-                    record.fileIsTemporary = true
-                }
-            }
-            finishTrimWrite(id: id, duration: facts.duration > 0 ? facts.duration : range.duration.seconds,
-                            byteCount: facts.byteCount > 0 ? Int(facts.byteCount) : nil)
+            finishTrimWrite(id: id, length: facts.duration, byteCount: facts.byteCount, range: range,
+                            pendingFile: target == .newPendingFile ? written : nil)
             if button == .saveAndUpload {
                 uploadTrimmedFile(of: id)
             }
@@ -300,16 +302,16 @@ extension AppCoordinator {
     }
 
     /// The one bookkeeping step after any write, Save's put or Save and Upload's new pending file, so
-    /// the two cannot drift (design, Save): the length, `editedAt` and the trimmed file's size in one
-    /// update, with `unmutedIntervals` emptied, as the trimmed file was cut from the muted copy; the
-    /// drag copy dropped, as it holds the untrimmed video; the card refreshed; and the thumbnail made
-    /// again from the new file.
-    private func finishTrimWrite(id: UUID, duration: Double, byteCount: Int?) {
+    /// the two cannot drift (design, Save): `CaptureRecord.recordTrimWrite` in one update (the new
+    /// pending file, the length, `editedAt`, the trimmed file's size, and `unmutedIntervals` emptied,
+    /// as the trimmed file was cut from the muted copy); the drag copy dropped, as it holds the
+    /// untrimmed video; the card refreshed; and the thumbnail made again from the new file. `length`
+    /// and `byteCount` are the trimmed file's, 0 when unreadable.
+    private func finishTrimWrite(id: UUID, length: TimeInterval, byteCount: Int64, range: CMTimeRange, pendingFile: URL?) {
         let editedAt = Date()
         history.update(id: id) { record in
-            record.recordLocalTrim(duration: duration, at: editedAt)
-            record.byteCount = byteCount
-            record.unmutedIntervals = []
+            record.recordTrimWrite(length: length, byteCount: byteCount, rangeDuration: range.duration.seconds,
+                                   pendingFile: pendingFile, at: editedAt)
         }
         removeDragFolder(id)
         overlay.setDragFile(nil, for: id)
@@ -319,9 +321,26 @@ extension AppCoordinator {
         Task { [weak self] in
             let poster = await Self.posterFrame(of: fileURL, scope: scope)
             // A later trim, a delete or a prune got there first.
-            guard let self, let poster, self.history.record(id: id)?.editedAt == editedAt else { return }
+            guard let self, self.history.record(id: id)?.editedAt == editedAt else { return }
+            guard let poster else {
+                self.dropThumbnail(of: id)
+                return
+            }
             self.replaceThumbnail(for: id, from: poster, editedAt: editedAt)
             self.showCardPoster(poster, for: id)
+        }
+    }
+
+    /// A trimmed recording whose poster could not be read keeps no thumbnail, rather than the
+    /// untrimmed recording's first frame: the record names none, the provider drops what it cached,
+    /// and the old file goes. The row then shows the placeholder, as `ThumbnailProvider` never makes a
+    /// recording's thumbnail from its file.
+    private func dropThumbnail(of id: UUID) {
+        let previous = history.record(id: id)?.thumbnailFileName
+        history.update(id: id) { $0.thumbnailFileName = nil }
+        thumbnailProvider.forget(id)
+        if let previous {
+            thumbnails.remove(fileName: previous)
         }
     }
 
@@ -335,10 +354,14 @@ extension AppCoordinator {
 
     /// The window closed, for any reason: the pass is cancelled, which stops it before its put; once it
     /// has ended, the folder's scope is released and `tmp/Trim/<id>*` removed (design, Cleanup), unless
-    /// a new window for the record has opened since, whose own close removes them.
+    /// a new window for the record has opened since, whose own close removes them. A window that is not
+    /// the record's (none is replaced today) only lets its scope go, so each start has its stop.
     private func trimWindowDidClose(_ controller: TrimWindowController, scope: URL?) {
         let id = controller.recordID
-        guard trimWindows[id] === controller else { return }
+        guard trimWindows[id] === controller else {
+            scope?.stopAccessingSecurityScopedResource()
+            return
+        }
         trimWindows[id] = nil
         let pass = trimPasses[id]
         pass?.cancel()
@@ -367,7 +390,9 @@ extension AppCoordinator {
     }
 
     /// Why `Upload Trimmed` must not run, or nil: `uploadRefusal` (being trimmed, or marked `Sound not
-    /// muted`), then the editor's Upload refusal (deleted, being deleted, uploading), then no local file.
+    /// muted`), then the editor's Upload refusal (deleted, being deleted, uploading), then no local file,
+    /// then a link that is not stale, as the menu shows the item only for a stale one (an upload that
+    /// ended while the menu was open).
     nonisolated static func uploadTrimmedRefusal(for record: CaptureRecord, saveFolder: URL?, isDeleting: Bool,
                                                  isTrimming: Bool) -> String? {
         if let refusal = uploadRefusal(for: record, isTrimming: isTrimming) { return refusal }
@@ -376,20 +401,25 @@ extension AppCoordinator {
             return refusal
         }
         guard record.hasLocalFile else { return UploadError.fileUnreadable("no local file").localizedDescription }
+        guard record.uploadIsStale else { return linkShowsTrimText }
         return nil
     }
+
+    /// `Upload Trimmed`'s refusal for a link that shows the file already.
+    nonisolated static let linkShowsTrimText = "The link already shows the trimmed recording."
 
     /// The upload half (design, Save and Upload): the record's file over the link's own key
     /// (`EditorUploadPlan`, never as new), or as a first upload. The destination is read here, not
     /// when a pass started, so a Settings > Upload change during the export is followed; with none
     /// now it posts `Upload not configured`, and a trimmed file with a link keeps `uploadIsStale`.
     /// The clipboard's change count is taken first, so an unchanged clipboard gets the URL as after a
-    /// save. `trimmingIDs` is cleared right before `startUpload`, in this main-actor turn, so its
-    /// trimming check passes and nothing else can start in between.
+    /// save. `trimmingIDs` is cleared right before `startPlannedUpload` (the editor's Upload's last
+    /// steps), in this main-actor turn, so `startUpload`'s trimming check passes and nothing else can
+    /// start in between.
     private func uploadTrimmedFile(of id: UUID) {
         guard let record = history.record(id: id) else { return }
         guard let destination = makeDestination() else {
-            notifier.notifyError("Set up a destination in Settings > Upload, then upload again.", title: "Upload not configured")
+            notifier.notifyError(Self.uploadNotConfiguredBody, title: "Upload not configured")
             return
         }
         let location = queue?.location ?? ObjectLocation(config: destination.config)
@@ -411,14 +441,7 @@ extension AppCoordinator {
             notifier.notify(title: "New link", body: notice)
         }
         videoClipboardCounts[id] = NSPasteboard.general.changeCount
-        history.update(id: id) { $0 = EditorUploadPlan.startingUpload($0, plan: plan) }
         trimmingIDs.remove(id)
-        // startUpload skips this refresh for a record already uploading.
-        refreshOverlay(for: id)
-        if case .replace(let key) = plan {
-            startUpload(recordID: id, payload: payload, destination: destination, fixedKey: key)
-        } else {
-            startUpload(recordID: id, payload: payload, destination: destination)
-        }
+        startPlannedUpload(recordID: id, plan: plan, payload: payload, destination: destination)
     }
 }
