@@ -161,15 +161,12 @@ extension AppCoordinator {
             controller.close()
             return
         }
-        var destination: S3Destination?
-        if button == .saveAndUpload {
-            // With no credentials, nothing is written (plan, Gap 9).
-            guard let made = makeDestination() else {
-                notifier.notifyError("Set up a destination in Settings > Upload, then upload again.", title: "Upload not configured")
-                controller.close()
-                return
-            }
-            destination = made
+        // With no credentials, nothing is written (plan, Gap 9). This only gates the pass: the upload
+        // half reads the destination again, as Settings > Upload can change during the export.
+        if button == .saveAndUpload, makeDestination() == nil {
+            notifier.notifyError("Set up a destination in Settings > Upload, then upload again.", title: "Upload not configured")
+            controller.close()
+            return
         }
         guard !trimmingIDs.contains(id), let record = history.record(id: id) else {
             controller.close()
@@ -179,8 +176,7 @@ extension AppCoordinator {
         refreshOverlay(for: id)
         let intervals = record.unmutedIntervals
         trimPasses[id] = Task { [weak self] in
-            await self?.runTrimPass(button, range: range, unmutedIntervals: intervals, destination: destination,
-                                    in: controller)
+            await self?.runTrimPass(button, range: range, unmutedIntervals: intervals, in: controller)
         }
     }
 
@@ -189,7 +185,7 @@ extension AppCoordinator {
     /// Save and Upload the upload. A stop or a close before the put writes nothing. Once the put
     /// starts the pass runs to its end. Every exit goes through `endTrimPass`.
     private func runTrimPass(_ button: RecordingTrim.SheetButton, range: CMTimeRange, unmutedIntervals: [MuteInterval],
-                             destination: S3Destination?, in controller: TrimWindowController) async {
+                             in controller: TrimWindowController) async {
         let id = controller.recordID
         let source = controller.fileURL
         let method: RecordingTrim.TrimMethod
@@ -259,8 +255,8 @@ extension AppCoordinator {
             }
             finishTrimWrite(id: id, duration: facts.duration > 0 ? facts.duration : range.duration.seconds,
                             byteCount: facts.byteCount > 0 ? Int(facts.byteCount) : nil)
-            if let destination {
-                uploadTrimmedFile(of: id, destination: destination)
+            if button == .saveAndUpload {
+                uploadTrimmedFile(of: id)
             }
         case .removePendingFile(let fileURL):
             removePendingFile(at: fileURL, context: "after a trim of a pruned record")
@@ -367,11 +363,7 @@ extension AppCoordinator {
             notifier.notifyError(refusal, title: "Not uploaded")
             return
         }
-        guard let destination = makeDestination() else {
-            notifier.notifyError("Set up a destination in Settings > Upload, then upload again.", title: "Upload not configured")
-            return
-        }
-        uploadTrimmedFile(of: recordID, destination: destination)
+        uploadTrimmedFile(of: recordID)
     }
 
     /// Why `Upload Trimmed` must not run, or nil: `uploadRefusal` (being trimmed, or marked `Sound not
@@ -388,12 +380,18 @@ extension AppCoordinator {
     }
 
     /// The upload half (design, Save and Upload): the record's file over the link's own key
-    /// (`EditorUploadPlan`, never as new), or as a first upload. The clipboard's change count is taken
-    /// first, so an unchanged clipboard gets the URL as after a save. `trimmingIDs` is cleared right
-    /// before `startUpload`, in this main-actor turn, so its trimming check passes and nothing else can
-    /// start in between.
-    private func uploadTrimmedFile(of id: UUID, destination: S3Destination) {
+    /// (`EditorUploadPlan`, never as new), or as a first upload. The destination is read here, not
+    /// when a pass started, so a Settings > Upload change during the export is followed; with none
+    /// now it posts `Upload not configured`, and a trimmed file with a link keeps `uploadIsStale`.
+    /// The clipboard's change count is taken first, so an unchanged clipboard gets the URL as after a
+    /// save. `trimmingIDs` is cleared right before `startUpload`, in this main-actor turn, so its
+    /// trimming check passes and nothing else can start in between.
+    private func uploadTrimmedFile(of id: UUID) {
         guard let record = history.record(id: id) else { return }
+        guard let destination = makeDestination() else {
+            notifier.notifyError("Set up a destination in Settings > Upload, then upload again.", title: "Upload not configured")
+            return
+        }
         let location = queue?.location ?? ObjectLocation(config: destination.config)
         let plan = EditorUploadPlan.plan(record: record, currentLocation: location,
                                          others: history.records.filter { $0.id != id }, asNew: false)

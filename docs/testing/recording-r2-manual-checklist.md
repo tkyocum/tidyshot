@@ -395,6 +395,11 @@ a start on one passes through), and the window, the pass and the wiring landed w
   uploading.`, and the uploaded object still matches the local file.
 - [ ] Delete the record while its Trim window is open: the window closes, and nothing reappears in the save
   folder or `pending/`.
+- [ ] Settings > Upload during a Save and Upload's `Trimming…` (a 4K re-encode is long enough): save another
+  bucket, and the trimmed recording (with `New link` when it had one) and the next capture both upload there,
+  not to the old bucket; or forget the credentials, and
+  the trim is saved, `Upload not configured` posts, nothing uploads, and a record with a link shows `Link not
+  updated`.
 - [ ] During a slow Save to the other volume (a long recording): Retry, `Upload Trimmed` and Delete are
   disabled or refused with `This capture is being trimmed.` (`Not deleted` / `This capture is being trimmed.
   Delete it when the trim finishes.`), and once the put finishes the file plays trimmed and Delete works.
