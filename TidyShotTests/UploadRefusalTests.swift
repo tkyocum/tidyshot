@@ -40,8 +40,8 @@ struct UploadRefusalTests {
     }
 
     /// `Upload Trimmed` (design, Stale link): refused while trimmed or marked, then as the editor's
-    /// Upload is (deleted, being deleted, uploading), then with no local file, then with a link that
-    /// is not stale or no link.
+    /// Upload is (being deleted, uploading), then with no local file, then with a link that is not
+    /// stale or no link. A deleted record is refused before this, by `uploadTrimmed`'s lookup.
     @Test func uploadTrimmedIsRefusedInTheGatesOrder() {
         let folder = URL(filePath: "/Users/tim/Movies/TidyShot", directoryHint: .isDirectory)
         let link = URL(string: "https://snap.tky.io/rec.mp4")!
