@@ -148,6 +148,8 @@ struct RecordingRecoveryTests {
         try writeLog(MuteLog(intervals: [MuteInterval(start: 1.0, end: 2.0)], lag: 0.3, sequence: 2), for: id)
         let rewrite = mute.appending(path: "\(id.uuidString).mp4")
 
+        // Listed before the loop, as `recoverRecordings` lists it.
+        let listed = RecordingRecovery.listMuteFolder(mute)
         let found = try #require(await RecordingRecovery.scan(recordings).first)
         let prepared = await RecordingRecovery.prepare(found, records: [], muteDirectory: mute) { file, duration, intervals, lag in
             await RecordingMute.resolve(file: file, output: rewrite, duration: duration, intervals: intervals, lag: lag,
@@ -166,7 +168,7 @@ struct RecordingRecoveryTests {
 
         // The move to `pending/` takes the file out of `tmp/Recording`; the sweep then removes its log.
         try FileManager.default.removeItem(at: file)
-        RecordingRecovery.sweepMuteFolder(mute, recordingDirectory: recordings)
+        RecordingRecovery.sweepMuteFolder(listed, recordingDirectory: recordings)
         #expect(!exists(mute.appending(path: "\(id.uuidString).json")))
     }
 
@@ -265,29 +267,67 @@ struct RecordingRecoveryTests {
         #expect(await prepare(found(id), records: [video], ladder: ladder) != .savedAsGIF)
     }
 
-    /// Logs and partial rewrites whose recording has left `tmp/Recording` go; a recording still there
-    /// (a failed move, or one started since launch) keeps its own.
-    @Test func theSweepRemovesWhatHasNoRecording() throws {
-        defer { try? FileManager.default.removeItem(at: dir) }
-        let (kept, gone) = (UUID(), UUID())
-        try FileManager.default.createDirectory(at: recordings, withIntermediateDirectories: true)
+    /// Writes a log and a partial rewrite for each id into `tmp/Mute`.
+    func writeMuteFiles(_ ids: [UUID]) throws {
         try FileManager.default.createDirectory(at: mute, withIntermediateDirectories: true)
-        try Data("movie".utf8).write(to: recordings.appending(path: "\(kept.uuidString).mp4"))
-        for id in [kept, gone] {
+        for id in ids {
             try Data("{}".utf8).write(to: mute.appending(path: "\(id.uuidString).json"))
             try Data("partial".utf8).write(to: mute.appending(path: "\(id.uuidString).mp4"))
         }
-        try Data("stray".utf8).write(to: mute.appending(path: "stray.txt"))
+    }
 
-        RecordingRecovery.sweepMuteFolder(mute, recordingDirectory: recordings)
-        let left = try FileManager.default.contentsOfDirectory(atPath: mute.path(percentEncoded: false)).sorted()
-        #expect(left == ["\(kept.uuidString).json", "\(kept.uuidString).mp4"])
+    func muteFolderNames() throws -> [String] {
+        try FileManager.default.contentsOfDirectory(atPath: mute.path(percentEncoded: false)).sorted()
+    }
+
+    /// Logs and partial rewrites listed before the loop whose recording has left `tmp/Recording` go,
+    /// whatever their names.
+    @Test func aListedFileWithNoRecordingIsSwept() throws {
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try writeMuteFiles([UUID(), UUID()])
+        try Data("stray".utf8).write(to: mute.appending(path: "stray.txt"))
+        let listed = RecordingRecovery.listMuteFolder(mute)
+        #expect(listed.count == 5)
+
+        RecordingRecovery.sweepMuteFolder(listed, recordingDirectory: recordings)
+        #expect(try muteFolderNames().isEmpty)
+    }
+
+    /// A listed log whose recording is still in `tmp/Recording` (a move that failed) keeps it, with its
+    /// partial rewrite, for the next launch.
+    @Test func aListedFileWhoseRecordingIsThereIsKept() throws {
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let kept = UUID()
+        try FileManager.default.createDirectory(at: recordings, withIntermediateDirectories: true)
+        try Data("movie".utf8).write(to: recordings.appending(path: "\(kept.uuidString).mp4"))
+        try writeMuteFiles([kept])
+        let listed = RecordingRecovery.listMuteFolder(mute)
+
+        RecordingRecovery.sweepMuteFolder(listed, recordingDirectory: recordings)
+        #expect(try muteFolderNames() == ["\(kept.uuidString).json", "\(kept.uuidString).mp4"])
         #expect(exists(recordings.appending(path: "\(kept.uuidString).mp4")))
     }
 
-    @Test func theSweepOfAMissingFolderDoesNothing() {
+    /// A log written after the list, as a recording made since launch writes one when Mute is pressed
+    /// before its first frame, is kept with no `<id>.mp4` in `tmp/Recording`, while a listed one
+    /// beside it goes (Decided 2026-10-24, 6).
+    @Test func aFileWrittenAfterTheListIsKeptWithNoRecording() throws {
         defer { try? FileManager.default.removeItem(at: dir) }
-        RecordingRecovery.sweepMuteFolder(mute, recordingDirectory: recordings)
+        let (orphan, sinceLaunch) = (UUID(), UUID())
+        try writeMuteFiles([orphan])
+        let listed = RecordingRecovery.listMuteFolder(mute)
+        try writeLog(MuteLog(intervals: [MuteInterval(start: 0, end: nil)], lag: 0.3, sequence: 1), for: sinceLaunch)
+
+        RecordingRecovery.sweepMuteFolder(listed, recordingDirectory: recordings)
+        #expect(try muteFolderNames() == ["\(sinceLaunch.uuidString).json"])
+        #expect(!exists(recordings))
+    }
+
+    @Test func aMissingFolderListsNothingAndItsSweepDoesNothing() {
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let listed = RecordingRecovery.listMuteFolder(mute)
+        #expect(listed.isEmpty)
+        RecordingRecovery.sweepMuteFolder(listed, recordingDirectory: recordings)
         #expect(!exists(mute))
     }
 

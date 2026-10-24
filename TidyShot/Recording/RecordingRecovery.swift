@@ -100,14 +100,20 @@ nonisolated enum RecordingRecovery {
         }
     }
 
-    /// After the launch check's loop: every file in `muteDirectory` whose name's stem has no
-    /// `<stem>.mp4` in `recordingDirectory` goes, the logs of recovered files and partial rewrites a
-    /// crash left. A file whose move failed keeps its log for the next launch, and a recording
-    /// started since launch keeps its own. A missing folder is fine.
-    static func sweepMuteFolder(_ muteDirectory: URL, recordingDirectory: URL) {
+    /// The files in `muteDirectory` as the launch check begins, before its loop: the only ones
+    /// `sweepMuteFolder` may remove (Decided 2026-10-24, 6). A missing folder lists nothing.
+    static func listMuteFolder(_ muteDirectory: URL) -> [URL] {
+        (try? FileManager.default.contentsOfDirectory(at: muteDirectory, includingPropertiesForKeys: nil)) ?? []
+    }
+
+    /// After the launch check's loop: each of the files `listMuteFolder` listed before it whose
+    /// name's stem has no `<stem>.mp4` in `recordingDirectory` goes, the logs of recovered files and
+    /// partial rewrites a crash left. A file whose move failed keeps its log for the next launch. A
+    /// file written after the list is never touched, so a recording made since launch keeps its
+    /// log, also before its `<stem>.mp4` exists (a Mute press before the first frame).
+    static func sweepMuteFolder(_ listed: [URL], recordingDirectory: URL) {
         let manager = FileManager.default
-        guard let urls = try? manager.contentsOfDirectory(at: muteDirectory, includingPropertiesForKeys: nil) else { return }
-        for url in urls {
+        for url in listed {
             let stem = url.deletingPathExtension().lastPathComponent
             let recording = recordingDirectory.appending(path: "\(stem).\(MediaKind.video.fileExtension)",
                                                          directoryHint: .notDirectory)

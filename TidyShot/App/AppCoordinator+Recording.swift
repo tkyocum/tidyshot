@@ -296,9 +296,13 @@ extension AppCoordinator {
     /// Before its move, a file with a mute log goes through the mute ladder with the same live steps
     /// as the end of a recording (`RecordingRecovery.prepare`): its record is marked when the
     /// muting failed, the body says how it went, and the log goes once the record exists. After
-    /// the loop, `tmp/Mute` keeps only what belongs to a file still in `tmp/Recording`.
+    /// the loop, of what `tmp/Mute` held before it, only what belongs to a file still in
+    /// `tmp/Recording` is kept; what was written since is not touched (Decided 2026-10-24, 6).
     func recoverRecordings() async {
         let ext = MediaKind.video.fileExtension
+        // Listed before the loop, which can run long after launch: the sweep never removes the log
+        // of a recording made since, even one muted before its first frame.
+        let muteFiles = RecordingRecovery.listMuteFolder(MuteLog.directory)
         for found in await RecordingRecovery.scan(Recording.directory) {
             let (source, pending) = (found.url, pendingFiles)
             let prepared = await RecordingRecovery.prepare(found, records: history.records,
@@ -348,9 +352,9 @@ extension AppCoordinator {
             let body = "\(fileURL.lastPathComponent), \(RecordingClock.format(found.facts.duration)). Find it in Recent Captures."
             notifier.notifyError(bodySuffix.map { "\(body) \($0)" } ?? body, title: "Recovered a recording")
         }
-        let (mute, recordings) = (MuteLog.directory, Recording.directory)
+        let recordings = Recording.directory
         await Task.detached(priority: .utility) {
-            RecordingRecovery.sweepMuteFolder(mute, recordingDirectory: recordings)
+            RecordingRecovery.sweepMuteFolder(muteFiles, recordingDirectory: recordings)
         }.value
     }
 

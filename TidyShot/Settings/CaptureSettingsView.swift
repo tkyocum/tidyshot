@@ -148,37 +148,22 @@ struct CaptureSettingsView: View {
         }
     }
 
-    /// A pick writes the choice and the device's name (design, Microphone, Permission). A pick
-    /// while access is not determined asks for it; a refusal, or a pick while access is denied,
-    /// goes back to Off.
+    /// A pick writes the choice and the device's name, whatever the access (`MicrophoneChoice.pick`;
+    /// design, Microphone, Permission). A microphone picked while access is not determined asks for
+    /// it. The answer changes nothing stored: after a refusal, or a pick while access is off, the row
+    /// shows the access note.
     private func pickMicrophone(_ tag: String) {
         let name = microphoneDevices.first { $0.uniqueID == tag }?.name
             ?? (tag == settings.recordingMicrophone ? settings.recordingMicrophoneName : "")
         microphoneAccess = microphones.access()
-        guard MicrophoneChoice.Stored(value: tag, name: name) != .off else {
-            setMicrophone(tag, name: name)
-            return
+        let pick = MicrophoneChoice.pick(MicrophoneChoice.Stored(value: tag, name: name), access: microphoneAccess)
+        settings.recordingMicrophone = pick.stored.value
+        settings.recordingMicrophoneName = pick.stored.name
+        guard pick.asksForAccess else { return }
+        Task {
+            _ = await microphones.requestAccess()
+            microphoneAccess = microphones.access()
         }
-        switch microphoneAccess {
-        case .authorized:
-            setMicrophone(tag, name: name)
-        case .denied, .restricted:
-            setMicrophone("", name: "")
-        case .notDetermined:
-            setMicrophone(tag, name: name)
-            Task {
-                let granted = await microphones.requestAccess()
-                microphoneAccess = microphones.access()
-                if !granted {
-                    setMicrophone("", name: "")
-                }
-            }
-        }
-    }
-
-    private func setMicrophone(_ value: String, name: String) {
-        settings.recordingMicrophone = value
-        settings.recordingMicrophoneName = name
     }
 }
 

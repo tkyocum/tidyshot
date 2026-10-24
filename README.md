@@ -262,8 +262,9 @@ badge, and with no Annotate, Pin, Copy Image or Trim.
 
 **Microphone and mute.** *Microphone* lists *Off*, *System Default* and each input by name; the list
 follows inputs as they are plugged in, an input that is gone stays chosen and reads *(not connected)*,
-and *Privacy Settings…* appears when macOS access is off. An MP4 recording takes the chosen input, mixed
-with system audio in the recording's one audio track; a GIF has no sound and ignores it. When access is
+and *Privacy Settings…* appears when macOS access is off. An input chosen while access is off, or refused
+at the prompt, stays chosen. An MP4 recording takes the chosen input, mixed with system audio in the
+recording's one audio track; a GIF has no sound and ignores it. When access is
 still undecided, macOS asks as you start, before the area selection or the countdown, and another record
 shortcut does nothing until you answer. A chosen input that is unplugged gives way to the default
 input; with access off, or no input at all, the recording goes on without the microphone. Either way a

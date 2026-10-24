@@ -259,6 +259,57 @@ struct MicrophoneChoiceTests {
                 == MicrophoneChoice.Entry(tag: rode.uniqueID, title: "RODE AI-1"))
     }
 
+    // MARK: A pick in Settings
+
+    @Test func aStoredChoiceGivesBackTheTwoSettings() {
+        #expect(MicrophoneChoice.Stored.off.value == "")
+        #expect(MicrophoneChoice.Stored.off.name == "")
+        #expect(MicrophoneChoice.Stored.systemDefault.value == "default")
+        #expect(MicrophoneChoice.Stored.systemDefault.name == "")
+        #expect(missingRode.value == rode.uniqueID)
+        #expect(missingRode.name == "RODE AI-1")
+        for stored in [MicrophoneChoice.Stored.off, .systemDefault, missingRode, .device(id: brio.uniqueID, name: "")] {
+            #expect(MicrophoneChoice.Stored(value: stored.value, name: stored.name) == stored)
+        }
+    }
+
+    /// A pick is stored as it was made, whatever the access (Decided 2026-10-24, 7): never turned
+    /// back to Off. Only a microphone picked while access is not determined asks for it.
+    @Test(arguments: [MicrophoneAccess.authorized, .denied, .restricted, .notDetermined])
+    func aPickIsStoredWhateverTheAccess(_ access: MicrophoneAccess) {
+        for picked in [MicrophoneChoice.Stored.systemDefault, missingRode, .device(id: brio.uniqueID, name: "Brio 500")] {
+            #expect(MicrophoneChoice.pick(picked, access: access)
+                    == MicrophoneChoice.Pick(stored: picked, asksForAccess: access == .notDetermined))
+        }
+        #expect(MicrophoneChoice.pick(.off, access: access) == MicrophoneChoice.Pick(stored: .off, asksForAccess: false))
+    }
+
+    /// While access is off, the kept pick shows the row's note, and a recording goes without the
+    /// microphone and says so after Stop.
+    @Test(arguments: [MicrophoneAccess.denied, .restricted])
+    func aPickWhileAccessIsOffShowsTheNote(_ access: MicrophoneAccess) {
+        let pick = MicrophoneChoice.pick(.device(id: rode.uniqueID, name: "RODE AI-1"), access: access)
+        #expect(MicrophoneChoice.showsAccessNote(stored: pick.stored, access: access))
+        #expect(MicrophoneChoice.resolve(stored: pick.stored, devices: devices, defaultDevice: builtIn, access: access)
+                == MicrophoneChoice.Resolution(device: nil, note: accessNote))
+    }
+
+    /// The prompt's answer changes nothing stored: Allow records the pick, and Don't Allow keeps it,
+    /// with the row's note and a recording without the microphone that says so.
+    @Test(arguments: [true, false])
+    func aPickIsKeptWhateverThePromptAnswers(_ grants: Bool) async {
+        let microphones = FakeMicrophoneDevices(devices: devices, defaultInput: builtIn, access: .notDetermined, grants: grants)
+        let picked = MicrophoneChoice.Stored.device(id: rode.uniqueID, name: "RODE AI-1")
+        let pick = MicrophoneChoice.pick(picked, access: microphones.access())
+        #expect(pick == MicrophoneChoice.Pick(stored: picked, asksForAccess: true))
+        _ = await microphones.requestAccess()
+        let access = microphones.access()
+        #expect(MicrophoneChoice.showsAccessNote(stored: pick.stored, access: access) == !grants)
+        #expect(MicrophoneChoice.resolve(stored: pick.stored, devices: devices, defaultDevice: builtIn, access: access)
+                == (grants ? MicrophoneChoice.Resolution(device: rode, note: nil)
+                           : MicrophoneChoice.Resolution(device: nil, note: accessNote)))
+    }
+
     @Test func theAccessNoteShowsOnlyWithAMicrophoneSetAndAccessDeniedOrRestricted() {
         for access in [MicrophoneAccess.authorized, .denied, .restricted, .notDetermined] {
             #expect(!MicrophoneChoice.showsAccessNote(stored: .off, access: access))

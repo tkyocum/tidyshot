@@ -19,6 +19,28 @@ nonisolated enum MicrophoneChoice {
             default: self = .device(id: value, name: name)
             }
         }
+
+        /// What `recordingMicrophone` stores for it.
+        var value: String {
+            switch self {
+            case .off: ""
+            case .systemDefault: MicrophoneChoice.systemDefaultValue
+            case .device(let id, _): id
+            }
+        }
+
+        /// What `recordingMicrophoneName` stores for it: empty for Off and System Default.
+        var name: String {
+            if case .device(_, let name) = self { name } else { "" }
+        }
+    }
+
+    /// What a pick in the pop-up does (design, Microphone, Permission).
+    struct Pick: Equatable, Sendable {
+        /// What is stored, at once.
+        var stored: Stored
+        /// Whether the system prompt shows.
+        var asksForAccess: Bool
     }
 
     /// The input a recording takes, if any, and the note that posts after Stop.
@@ -89,6 +111,15 @@ nonisolated enum MicrophoneChoice {
             entries.append(Entry(tag: id, title: "\(displayName(name)) (not connected)"))
         }
         return entries
+    }
+
+    /// A pick in the pop-up is stored as it was made, whatever the access, and the prompt's answer
+    /// changes nothing stored (Decided 2026-10-24, 7). A microphone picked while access is denied
+    /// or restricted, or refused at the prompt, stays set: the row shows the access note, and a
+    /// recording goes without it and says so after Stop. A microphone picked while access is not
+    /// determined asks for it.
+    static func pick(_ picked: Stored, access: MicrophoneAccess) -> Pick {
+        Pick(stored: picked, asksForAccess: picked != .off && access == .notDetermined)
     }
 
     /// `Microphone access is off for TidyShot.` and `Privacy Settings…` show while a microphone

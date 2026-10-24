@@ -160,13 +160,15 @@ prints the GIF frame count and the summed delays; `ffprobe -v error -show_entrie
   plain name returns.
 - [ ] Choosing an input with access not yet decided shows the system prompt, which reads `TidyShot
   records your microphone in screen recordings when you turn it on.`. Allow keeps the choice. After
-  `tccutil reset Microphone io.tky.tidyshot`, choosing an input and answering Don't Allow puts the row
-  back on `Off`.
+  `tccutil reset Microphone io.tky.tidyshot`, choosing an input and answering Don't Allow keeps it too:
+  the row stays on the input and shows `Microphone access is off for TidyShot.` with `Privacy Settings…`
+  (Decided 2026-10-24, 7).
 - [ ] With a microphone chosen and TidyShot's access turned off in System Settings > Privacy & Security >
   Microphone, the row shows `Microphone access is off for TidyShot.` with `Privacy Settings…`. The button
   opens the Microphone pane. Turn access on again and come back to Settings: the note clears when the
-  window becomes key. Choosing an input while access is already denied puts the row back on `Off` and
-  shows no note (a design-silent corner; write down what you think: ______).
+  window becomes key. Choosing an input while access is already off keeps it and shows the note at once;
+  an MP4 recording then goes without the microphone, and `Recorded without the microphone` / `Microphone
+  access is off for TidyShot.` posts after Stop (Decided 2026-10-24, 7).
 - [ ] The entitlements and the usage string. `codesign -d --entitlements - .build-rel/Build/Products/Release/TidyShot.app`
   lists R1's entitlements plus `com.apple.security.device.audio-input` and nothing else new, and
   `/usr/libexec/PlistBuddy -c "Print :NSMicrophoneUsageDescription" .build-rel/Build/Products/Release/TidyShot.app/Contents/Info.plist`
@@ -308,7 +310,9 @@ loop, or music).
 - [ ] `kill -9` (a) during a recording while muted, (b) just after Stop, (c) during the mute rewrite (a long
   recording makes the window longer). After each relaunch only one record appears, the muted stretch is
   silent, and `Recovered a recording` ends `The muted parts were silenced.` (and `tmp/Mute` is empty after the
-  sweep). Write down which of the three left what: ______
+  sweep). Write down which of the three left what: ______ The sweep removes only what `tmp/Mute` held
+  before the launch's recovery began, so a recording made while it still runs keeps its log (Decided
+  2026-10-24, 6); that timing cannot be forced by hand, and `RecordingRecoveryTests` cover it.
 - [ ] A mute that cannot start for want of space cannot be run by hand; `RecordingMuteTests` cover the
   `Recording: mute skipped, not enough disk space` path.
 - [ ] A discarded muted recording leaves no log: mute for a second, press Cancel past 5 s and Discard;
@@ -329,7 +333,8 @@ selection overlay or the count-in, and the stream's `Recording: starting …` li
   microphone access allowed at the prompt` or `… refused at the prompt`. Allow records with the microphone;
   Deny records without it, the note `Recorded without the microphone` / `Microphone access is off for
   TidyShot.` posts only after Stop and after the save's own notification, and no prompt or banner is in the
-  video. Write down what the first prompt looked like: ______
+  video. After Deny the input stays chosen in Settings, with the access note. Write down what the first
+  prompt looked like: ______
 - [ ] With the prompt up: a second Record press does nothing and logs `Recording: start ignored, the microphone
   prompt is open`; a screenshot shortcut works; Quit quits without starting a recording.
 - [ ] The chosen input unplugged before the recording (or the RODE AI-1 chosen while unplugged): the recording
@@ -510,15 +515,18 @@ came out). Write `confirm` or `overrule` and why, then copy the result to the de
 - [ ] 12. `saveRecording`'s new parameters: `saveNotice:`, `microphoneNote:` and `unmutedIntervals:`, each
   defaulting to none so R1's callers compile. Internal; nothing to see. ______
 
-Four more where the build made a call the design did not settle. Each needs Tim's confirm or overrule
-before merge:
-- [ ] A. `GIFMakerError.couldNotRead` (`The recording could not be read.`) is the body when a recording cannot be
-  read for conversion: `GIF not made` / `The recording could not be read. The recording was saved as an MP4.` ______
-- [ ] B. The marked card keeps a disabled `Copy URL` (a marked record never has a link). Leave it, or drop it? ______
-- [ ] C. The cache note's title when a replaced upload's URL was not copied is `Uploaded` (the copied branch's `Uploaded,
-  URL copied` would be untrue there). ______
-- [ ] D. A recording that ends with nothing kept (`.nothing`) no longer posts `Recording failed` while TidyShot quits;
-  R1 posted it. In quit mode no notice posts at all (`RecordingNoticeOrder.afterStop(… quitMode:)`). ______
+Four more where the build made a call the design did not settle. Tim confirmed all four as built on
+2026-10-24 (design, Decided 2026-10-24, 5):
+- [x] A. `GIFMakerError.couldNotRead` (`The recording could not be read.`) is the body when a recording cannot be
+  read for conversion: `GIF not made` / `The recording could not be read. The recording was saved as an MP4.`
+  confirm (Tim, 2026-10-24)
+- [x] B. The marked card keeps a disabled `Copy URL` (a marked record never has a link). Leave it, or drop it?
+  confirm: leave it (Tim, 2026-10-24)
+- [x] C. The cache note's title when a replaced upload's URL was not copied is `Uploaded` (the copied branch's `Uploaded,
+  URL copied` would be untrue there). confirm (Tim, 2026-10-24)
+- [x] D. A recording that ends with nothing kept (`.nothing`) no longer posts `Recording failed` while TidyShot quits;
+  R1 posted it. In quit mode no notice posts at all (`RecordingNoticeOrder.afterStop(… quitMode:)`). confirm (Tim,
+  2026-10-24)
 
 ## Regression
 - [ ] ⌃⇧1 to ⌃⇧7 behave as in the 6a, 6b and 7b checklists after a GIF and after an MP4 recording.
