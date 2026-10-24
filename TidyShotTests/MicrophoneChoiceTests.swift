@@ -174,6 +174,63 @@ struct MicrophoneChoiceTests {
         }
     }
 
+    /// The hand-off reads `Format` again: a start that became a GIF since the choice was read takes
+    /// no microphone and posts no note.
+    @Test func aGIFRecordingDropsTheResolvedInputAndItsNote() {
+        let resolutions = [
+            MicrophoneChoice.Resolution(device: rode, note: nil),
+            MicrophoneChoice.Resolution(device: builtIn, note: RecordingNotice(title: "Recorded with MacBook Pro Microphone",
+                                                                               body: "RODE AI-1 is not connected.")),
+            MicrophoneChoice.Resolution(device: nil, note: accessNote),
+        ]
+        for resolution in resolutions {
+            #expect(MicrophoneChoice.forRecording(resolution, format: .gif) == MicrophoneChoice.Resolution(device: nil, note: nil))
+            #expect(MicrophoneChoice.forRecording(resolution, format: .mp4) == resolution)
+        }
+    }
+
+    // MARK: The start, under the capture lock
+
+    /// Off, as every GIF's start is, reads neither the access nor the inputs.
+    @Test func anOffStartReadsNothing() {
+        var reads: [String] = []
+        for stored in [MicrophoneChoice.Stored.off, MicrophoneChoice.forRecording(missingRode, format: .gif),
+                       MicrophoneChoice.forRecording(.systemDefault, format: .gif)] {
+            let resolution = MicrophoneChoice.resolveAtStart(stored,
+                                                             access: { reads.append("access"); return .authorized },
+                                                             devices: { reads.append("devices"); return devices },
+                                                             defaultDevice: { reads.append("default"); return builtIn })
+            #expect(resolution == MicrophoneChoice.Resolution(device: nil, note: nil))
+        }
+        #expect(reads.isEmpty)
+    }
+
+    /// A microphone reads the access as it is after the prompt, and the inputs as they are listed then.
+    @Test func aMicrophoneStartReadsTheAccessAfterThePrompt() async {
+        let microphones = FakeMicrophoneDevices(devices: devices, defaultInput: builtIn, access: .notDetermined, grants: true)
+        let stored = MicrophoneChoice.Stored.device(id: rode.uniqueID, name: "RODE AI-1")
+        _ = await microphones.requestAccess()
+        let resolution = MicrophoneChoice.resolveAtStart(stored, access: { microphones.access() },
+                                                         devices: { microphones.list() },
+                                                         defaultDevice: { microphones.defaultDevice() })
+        #expect(resolution == MicrophoneChoice.Resolution(device: rode, note: nil))
+    }
+
+    /// A refused prompt, and an input unplugged since it was chosen, each give `resolve`'s note.
+    @Test func aMicrophoneStartGivesTheNoteOfWhatItFound() async {
+        let refused = FakeMicrophoneDevices(devices: devices, defaultInput: builtIn, access: .notDetermined, grants: false)
+        _ = await refused.requestAccess()
+        let stored = MicrophoneChoice.Stored.device(id: rode.uniqueID, name: "RODE AI-1")
+        #expect(MicrophoneChoice.resolveAtStart(stored, access: { refused.access() }, devices: { refused.list() },
+                                                defaultDevice: { refused.defaultDevice() })
+                == MicrophoneChoice.Resolution(device: nil, note: accessNote))
+        let unplugged = FakeMicrophoneDevices(devices: [builtIn], defaultInput: builtIn, access: .authorized)
+        #expect(MicrophoneChoice.resolveAtStart(missingRode, access: { unplugged.access() }, devices: { unplugged.list() },
+                                                defaultDevice: { unplugged.defaultDevice() })
+                == MicrophoneChoice.Resolution(device: builtIn, note: RecordingNotice(
+                    title: "Recorded with MacBook Pro Microphone", body: "RODE AI-1 is not connected.")))
+    }
+
     // MARK: The pop-up
 
     @Test func theEntriesAreOffSystemDefaultThenEachInput() {

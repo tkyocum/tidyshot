@@ -84,6 +84,17 @@ struct ShortcutsTests {
         #expect(AppCoordinator.recordingShortcutAction(for: .saving) == .start)
     }
 
+    /// While a start waits on the microphone prompt, another start is ignored (R2 design, At the
+    /// start). Nothing counts in or records then; were it so, the shortcut would still cancel or stop.
+    @Test func aStartWhileTheMicrophonePromptIsOpenIsIgnored() {
+        #expect(AppCoordinator.recordingShortcutAction(for: .idle, isAskingMicrophone: true) == .ignore)
+        #expect(AppCoordinator.recordingShortcutAction(for: .saving, isAskingMicrophone: true) == .ignore)
+        #expect(AppCoordinator.recordingShortcutAction(for: .countIn, isAskingMicrophone: true) == .cancelCountIn)
+        #expect(AppCoordinator.recordingShortcutAction(for: .recording, isAskingMicrophone: true) == .stop)
+        #expect(AppCoordinator.recordingShortcutAction(for: .idle, isAskingMicrophone: false) == .start)
+        #expect(AppCoordinator.recordingShortcutAction(for: .saving, isAskingMicrophone: false) == .start)
+    }
+
     /// The Escape name serves scrolling and the self-timer now; the stored name is the old one,
     /// so nothing in UserDefaults moves.
     @Test func cancelCaptureKeepsTheStoredNameOfTheScrollingEscape() {

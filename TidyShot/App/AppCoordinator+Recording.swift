@@ -17,25 +17,34 @@ extension AppCoordinator {
     private static let recordingCountInSeconds = 3
 
     /// What a record shortcut does in each phase: it cancels a count-in and stops a recording,
-    /// and otherwise starts one, also while an earlier recording is being saved.
-    nonisolated static func recordingShortcutAction(for phase: RecordingPhase) -> RecordingShortcutAction {
+    /// and otherwise starts one, also while an earlier recording is being saved. While a start
+    /// waits on the microphone prompt, another start is ignored.
+    nonisolated static func recordingShortcutAction(for phase: RecordingPhase,
+                                                    isAskingMicrophone: Bool = false) -> RecordingShortcutAction {
         switch phase {
         case .countIn: .cancelCountIn
         case .recording: .stop
-        case .idle, .saving: .start
+        case .idle, .saving: isAskingMicrophone ? .ignore : .start
         }
     }
+
+    /// The input a recording takes, resolved under the capture lock, and its mute lag.
+    private typealias MicrophoneStart = (resolution: MicrophoneChoice.Resolution, lag: TimeInterval)
+    /// What `recorder.run` gave, with the microphone note to post after Stop.
+    private typealias RecordingEnded = (outcome: RecordingOutcome, microphoneNote: RecordingNotice?)
 
     /// Record Screen (recording design, Starting): select an area or click a window, then the
     /// hand-off and the recording. The lock is held from the selection to the end of the recording,
     /// and the file is saved after it. An area under 32×32 pt is refused, and no area becomes the
-    /// previous area: that is for image captures.
+    /// previous area: that is for image captures. The microphone prompt, when it shows, comes
+    /// before the lock, and the input is resolved under it before the selection (R2 design, At the
+    /// start).
     func recordScreen() async {
-        guard recordShortcutStarts() else { return }
+        guard recordShortcutStarts(), let choice = await recordingMicrophoneChoice() else { return }
         let intent = CaptureIntent.standard
-        var outcome: RecordingOutcome?
+        var ended: RecordingEnded?
         await withCaptureLock(coversDesktop: true) {
-            guard recordingCanStart() else { return }
+            guard let microphone = recordingCanStart(microphone: choice) else { return }
             guard let content = await loadContent(failureTitle: RecordingEnd.failedTitle) else { return }
             guard let selection = await selector.select(mode: .recording, content: content) else { return }
             let target: CaptureTarget
@@ -53,29 +62,29 @@ extension AppCoordinator {
                 covers.hide(for: .capture)
                 target = .window(window)
             }
-            outcome = await record(target)
+            ended = await record(target, microphone: microphone)
         }
-        await endRecording(outcome, intent: intent)
+        await endRecording(ended, intent: intent)
     }
 
-    /// Record Fullscreen: the display under the pointer, with the same re-entry, lock and checks as
-    /// Record Screen. There is no selection overlay to dismiss and no activation to give up; the
-    /// count-in is centred on the display with no frame.
+    /// Record Fullscreen: the display under the pointer, with the same re-entry, lock, checks and
+    /// microphone as Record Screen. There is no selection overlay to dismiss and no activation to
+    /// give up; the count-in is centred on the display with no frame.
     func recordFullscreen() async {
-        guard recordShortcutStarts() else { return }
+        guard recordShortcutStarts(), let choice = await recordingMicrophoneChoice() else { return }
         let intent = CaptureIntent.standard
-        var outcome: RecordingOutcome?
+        var ended: RecordingEnded?
         await withCaptureLock(coversDesktop: true) {
-            guard recordingCanStart() else { return }
+            guard let microphone = recordingCanStart(microphone: choice) else { return }
             recordingCountIn = true
             guard let content = await loadContent(failureTitle: RecordingEnd.failedTitle),
                   let display = Self.display(under: NSEvent.mouseLocation, in: content.displays) else {
                 recordingCountIn = false
                 return
             }
-            outcome = await record(.display(display))
+            ended = await record(.display(display), microphone: microphone)
         }
-        await endRecording(outcome, intent: intent)
+        await endRecording(ended, intent: intent)
     }
 
     /// The status menu's Stop Recording, as the panel's Stop. Nothing happens when no recording runs.
@@ -85,11 +94,14 @@ extension AppCoordinator {
 
     /// Both record functions start here, before the capture lock, as Capture Scrolling's shortcut
     /// reaches `advance()`: a count-in is cancelled and a recording stopped, whichever of the two
-    /// started it. True when a new recording may start, never once the app is quitting.
+    /// started it. True when a new recording may start, never once the app is quitting nor while
+    /// another start waits on the microphone prompt.
     private func recordShortcutStarts() -> Bool {
-        switch Self.recordingShortcutAction(for: recordingPhase) {
+        switch Self.recordingShortcutAction(for: recordingPhase, isAskingMicrophone: isAskingMicrophone) {
         case .start:
             return !isQuitting
+        case .ignore:
+            RecordingLog.note("Recording: start ignored, the microphone prompt is open")
         case .cancelCountIn:
             selfTimer.cancel()
         case .stop:
@@ -98,16 +110,41 @@ extension AppCoordinator {
         return false
     }
 
+    /// The stored microphone a recording starts with, read once (R2 design, At the start): Off for
+    /// a GIF, which never prompts. While access is not yet decided, the system prompt shows here,
+    /// before the capture lock, so it never shows during a count-in or a recording. Meanwhile
+    /// another start is ignored (`isAskingMicrophone`), and nothing else is held. Whatever the
+    /// answer, the start goes on: the access is read again under the lock. Nil when the app began
+    /// quitting while the prompt was up, so nothing starts.
+    private func recordingMicrophoneChoice() async -> MicrophoneChoice.Stored? {
+        let format = settings.recordingFormat
+        let stored = MicrophoneChoice.Stored(value: settings.recordingMicrophone, name: settings.recordingMicrophoneName)
+        let choice = MicrophoneChoice.forRecording(stored, format: format)
+        // Off, and so every GIF, reads no access.
+        guard choice != .off, MicrophoneChoice.asksForAccess(stored, format: format, access: microphones.access()) else {
+            return choice
+        }
+        isAskingMicrophone = true
+        let granted = await microphones.requestAccess()
+        isAskingMicrophone = false
+        RecordingLog.note("Recording: microphone access \(granted ? "allowed" : "refused") at the prompt")
+        return isQuitting ? nil : choice
+    }
+
     /// Makes `tmp/Recording`, then reads its free space. A folder that cannot be made fails the
     /// start with `Recording failed`; under 2 GB refuses it. An unreadable value counts as enough.
-    private func recordingCanStart() -> Bool {
+    /// Beside that check, before the selection overlay or the count-in, the input the recording
+    /// takes (R2 design, At the start; Lag): for a microphone, the access is read again and the
+    /// input resolved, with its mute lag; Off, and so every GIF, reads nothing and takes the lag
+    /// with no microphone. Nothing here awaits. Nil when the start is refused.
+    private func recordingCanStart(microphone choice: MicrophoneChoice.Stored) -> MicrophoneStart? {
         do {
             try Recording.makeDirectory()
         } catch {
             RecordingLog.note("Recording: tmp/Recording could not be made: \(error.localizedDescription)")
             let notice = RecordingEnd.startFailure(error.localizedDescription)
             notifier.notifyError(notice.body, title: notice.title)
-            return false
+            return nil
         }
         let freeBytes = RecordingLimits.freeBytes(at: Recording.directory)
         if freeBytes == nil {
@@ -115,9 +152,12 @@ extension AppCoordinator {
         }
         guard !RecordingLimits.refusesStart(freeBytes: freeBytes) else {
             notifier.notifyError(RecordingLimits.diskFullText, title: RecordingEnd.refusalTitle)
-            return false
+            return nil
         }
-        return true
+        let resolution = MicrophoneChoice.resolveAtStart(choice, access: { microphones.access() },
+                                                         devices: { microphones.list() },
+                                                         defaultDevice: { microphones.defaultDevice() })
+        return (resolution, muteLag(for: resolution.device))
     }
 
     /// The hand-off and the recording, with the capture lock held. `recordingCountIn` is true
@@ -125,9 +165,10 @@ extension AppCoordinator {
     /// `recordingSavesInFlight` before `recorder.close()`, so the phase goes from `.recording` to
     /// `.saving` with nothing between. Nil when nothing started, also when a quit came during the
     /// hand-off: `isQuitting` is read just before `recorder.run`, with no suspension between.
-    private func record(_ target: CaptureTarget) async -> RecordingOutcome? {
+    /// Otherwise the outcome comes back with the microphone note, which posts after Stop.
+    private func record(_ target: CaptureTarget, microphone: MicrophoneStart) async -> RecordingEnded? {
         recordingCountIn = true
-        let start = await recordingHandOff(target)
+        let start = await recordingHandOff(target, microphone: microphone)
         recordingCountIn = false
         guard let start, !isQuitting else { return nil }
         let outcome = await recorder.run(start.request, chrome: start.chrome) { [weak self] in
@@ -137,7 +178,7 @@ extension AppCoordinator {
             recordingSavesInFlight += 1
         }
         recorder.close()
-        return outcome
+        return (outcome, start.microphoneNote)
     }
 
     /// The hand-off (recording design, Starting), in order, with the count-in on or off:
@@ -146,8 +187,10 @@ extension AppCoordinator {
     /// 4. the settle delay; 5. the display or window is found by id in fresh shareable content, as
     /// `captureAfterCountdown` does, and a window is sized from its fresh frame. A cancelled
     /// count-in, a quit, or a display or window that went (`Screen recording`), gives nil: nothing
-    /// started.
-    private func recordingHandOff(_ target: CaptureTarget) async -> (request: RecordingRequest, chrome: any RecordingChrome)? {
+    /// started. The input resolved under the lock goes into `RecordingOptions.microphoneID`, with
+    /// its lag in the request, and its note comes back for after Stop; a GIF takes neither.
+    private func recordingHandOff(_ target: CaptureTarget, microphone: MicrophoneStart)
+        async -> (request: RecordingRequest, chrome: any RecordingChrome, microphoneNote: RecordingNotice?)? {
         let isFullscreen: Bool
         if case .display = target { isFullscreen = true } else { isFullscreen = false }
         if !isFullscreen {
@@ -201,28 +244,22 @@ extension AppCoordinator {
         }
         let id = UUID()
         // Read once: a change in Settings during the recording or its conversion does not reach it.
-        let options = settings.recordingOptions
-        // The start resolves no input until the microphone's start path lands (the plan's Gates hold
-        // Task 4's), so until then every recording takes the lag with no microphone.
-        let lag = muteLag(for: nil)
+        var options = settings.recordingOptions
+        // `Format` is read again here, so a start that became a GIF drops the input and its note.
+        let input = MicrophoneChoice.forRecording(microphone.resolution, format: options.format)
+        options.microphoneID = input.device?.uniqueID
         let request = RecordingRequest(id: id, configuration: RecordingConfiguration.make(source, options: options),
                                        displayID: displayID, outputURL: Recording.fileURL(for: id),
-                                       muteLogURL: MuteLog.url(for: id), lag: lag,
+                                       muteLogURL: MuteLog.url(for: id), lag: microphone.lag,
                                        gif: options.format == .gif ? options.gif : nil)
-        return (request, RecordingScreenChrome(placement: placement))
+        return (request, RecordingScreenChrome(placement: placement), input.note)
     }
 
-    /// The recording's mute lag (design, Lag): for the resolved input, from the latency CoreAudio
-    /// reports for it; with none, as for every GIF and `Off` start, `noMicrophone`, reading no
-    /// CoreAudio property. Logged at the start.
+    /// The recording's mute lag (design, Lag), read beside `resolve`: for the resolved input, from
+    /// the latency CoreAudio reports for it; with none, as for every GIF and `Off` start,
+    /// `noMicrophone`, reading no CoreAudio property. Logged at the start.
     private func muteLag(for device: MicrophoneDevice?) -> TimeInterval {
-        let lag: TimeInterval
-        if let device {
-            let latency = MicrophoneLatency.read(deviceUID: device.uniqueID)
-            lag = MicrophoneLatency.lag(reported: latency.reported, transport: latency.transport)
-        } else {
-            lag = MicrophoneLatency.noMicrophone
-        }
+        let lag = MicrophoneLatency.lag(forDeviceUID: device?.uniqueID)
         RecordingLog.note("Recording: mute lag \(String(format: "%.3f", lag)) s (\(device?.name ?? "no microphone"))")
         return lag
     }
@@ -320,22 +357,25 @@ extension AppCoordinator {
     /// After the capture lock: a kept file is handed to `saveRecording`, with `Recording stopped`
     /// when something other than the user's Stop ended it, through a GIF conversion for a GIF
     /// recording and through the mute ladder for a muted one; otherwise the recorder's notice, if
-    /// any, posts, in `RecordingNoticeOrder`'s order. `record.circle` goes as the file is handed on,
-    /// or once it was removed.
-    private func endRecording(_ outcome: RecordingOutcome?, intent: CaptureIntent) async {
-        guard let outcome else { return }
+    /// any, posts, in `RecordingNoticeOrder`'s order. The microphone note posts last either way,
+    /// as `recorder.run` ran (R2 design, The note posts after Stop). `record.circle` goes as the
+    /// file is handed on, or once it was removed.
+    private func endRecording(_ ended: RecordingEnded?, intent: CaptureIntent) async {
+        guard let ended else { return }
         isRecording = false
-        switch outcome {
+        let microphoneNote = ended.microphoneNote
+        switch ended.outcome {
         case .keep(let recording, let notice):
             if let gif = recording.gif {
+                // A GIF takes no microphone, so it has no note.
                 await makeGIF(from: recording, settings: gif, intent: intent, stopNotice: notice)
             } else if !recording.muteIntervals.isEmpty {
-                await muteAndSave(recording, intent: intent, stopNotice: notice)
+                await muteAndSave(recording, intent: intent, stopNotice: notice, microphoneNote: microphoneNote)
             } else {
-                await saveRecording(recording, intent: intent, stopNotice: notice)
+                await saveRecording(recording, intent: intent, stopNotice: notice, microphoneNote: microphoneNote)
             }
         case .nothing(let notice):
-            postAfterStop(save: nil, stop: notice, quitMode: isQuitting, revealing: nil)
+            postAfterStop(save: nil, stop: notice, microphone: microphoneNote, quitMode: isQuitting, revealing: nil)
         }
     }
 
@@ -347,8 +387,9 @@ extension AppCoordinator {
     /// fail in Debug builds. `.muted` and `.soundRemoved` remove the log and save, the second with
     /// `Sound removed` (nothing posts in quit mode; the ladder's log line is the trace). `.notMuted`
     /// saves the file marked with the segments, and the log goes once the record exists; with none
-    /// (`.leftInTmp`) it stays for the next launch.
-    private func muteAndSave(_ recording: Recording, intent: CaptureIntent, stopNotice: RecordingNotice?) async {
+    /// (`.leftInTmp`) it stays for the next launch. The microphone note goes to the save either way.
+    private func muteAndSave(_ recording: Recording, intent: CaptureIntent, stopNotice: RecordingNotice?,
+                             microphoneNote: RecordingNotice?) async {
         let log = MuteLog.url(for: recording.id)
         let resolution = await RecordingMute.resolve(file: recording.fileURL,
                                                      output: RecordingMute.rewriteURL(for: recording.id),
@@ -357,13 +398,13 @@ extension AppCoordinator {
         switch resolution.outcome {
         case .muted:
             Recording.removeFile(at: log)
-            await saveRecording(recording, intent: intent, stopNotice: stopNotice)
+            await saveRecording(recording, intent: intent, stopNotice: stopNotice, microphoneNote: microphoneNote)
         case .soundRemoved:
             Recording.removeFile(at: log)
             await saveRecording(recording, intent: intent, stopNotice: stopNotice,
-                                saveNotice: RecordingMute.soundRemovedNotice)
+                                saveNotice: RecordingMute.soundRemovedNotice, microphoneNote: microphoneNote)
         case .notMuted:
-            if await saveRecording(recording, intent: intent, stopNotice: stopNotice,
+            if await saveRecording(recording, intent: intent, stopNotice: stopNotice, microphoneNote: microphoneNote,
                                    unmutedIntervals: resolution.segments) != nil {
                 Recording.removeFile(at: log)
             }
@@ -427,7 +468,8 @@ extension AppCoordinator {
     /// with the poster as the thumbnail and the card's image. The record's kind and the file's
     /// extension are `recording.mediaKind`'s. `saveNotice` (`GIF not made`) and `stopNotice`
     /// (`Recording stopped`) post last, in `RecordingNoticeOrder`'s order, `Recording stopped`
-    /// revealing the file, in place of `Recording saved`. Quit mode (`mode`, or `isQuitting` once
+    /// revealing the file, in place of `Recording saved`; `microphoneNote` posts after them both,
+    /// after `Recording saved` too, and replaces neither. Quit mode (`mode`, or `isQuitting` once
     /// set) never asks for a folder and has no Clop, upload, card or notification; it returns once
     /// the thumbnail is written. `intent.then` and `intent.copyOnly` are ignored. `unmutedIntervals`
     /// (the mute ladder's `.notMuted` segments) keep the file in `pending/` with no folder asked for,
@@ -437,6 +479,7 @@ extension AppCoordinator {
     @discardableResult
     func saveRecording(_ recording: Recording, intent: CaptureIntent = .standard, stopNotice: RecordingNotice? = nil,
                        mode: RecordingSaveMode = .normal, saveNotice: RecordingNotice? = nil,
+                       microphoneNote: RecordingNotice? = nil,
                        unmutedIntervals: [MuteInterval] = []) async -> CaptureRecord? {
         // Its only callers, the record functions and their GIF conversions, counted the recording in
         // when the recorder kept it.
@@ -487,7 +530,8 @@ extension AppCoordinator {
             if case .notice(let notice) = plan.notification {
                 notifier.notifyError(notice.body, title: notice.title)
             }
-            postAfterStop(save: saveNotice, stop: stopNotice, quitMode: quitMode, revealing: recoveryURL)
+            postAfterStop(save: saveNotice, stop: stopNotice, microphone: microphoneNote, quitMode: quitMode,
+                          revealing: recoveryURL)
             return nil
         }
         if plan.setsLastCaptureURL {
@@ -515,14 +559,16 @@ extension AppCoordinator {
                          notConfiguredWarning: plan.notConfiguredWarning, showsCard: plan.showsCard,
                          upload: plan.uploads ? destination : nil, payload: { try uploadPayload(for: record) },
                          notification: notification, awaitsThumbnail: quitMode)
-        postAfterStop(save: saveNotice, stop: stopNotice, quitMode: quitMode, revealing: fileURL)
+        postAfterStop(save: saveNotice, stop: stopNotice, microphone: microphoneNote, quitMode: quitMode,
+                      revealing: fileURL)
         return record
     }
 
     /// The notices after Stop (plan Gap 2) in `RecordingNoticeOrder`'s order, none in quit mode.
     /// `stop` reveals `file`, the recording's final file.
-    private func postAfterStop(save: RecordingNotice?, stop: RecordingNotice?, quitMode: Bool, revealing file: URL?) {
-        for notice in RecordingNoticeOrder.afterStop(save: save, stop: stop, microphone: nil, quitMode: quitMode) {
+    private func postAfterStop(save: RecordingNotice?, stop: RecordingNotice?, microphone: RecordingNotice?,
+                               quitMode: Bool, revealing file: URL?) {
+        for notice in RecordingNoticeOrder.afterStop(save: save, stop: stop, microphone: microphone, quitMode: quitMode) {
             notifier.notifyError(notice.body, title: notice.title, revealing: notice == stop ? file : nil)
         }
     }
@@ -585,9 +631,11 @@ nonisolated enum RecordingPhase: Equatable, Sendable {
     case saving
 }
 
-/// What a record shortcut does (`AppCoordinator.recordingShortcutAction(for:)`).
+/// What a record shortcut does (`AppCoordinator.recordingShortcutAction(for:isAskingMicrophone:)`).
 nonisolated enum RecordingShortcutAction: Equatable, Sendable {
     case start
+    /// A start while another waits on the microphone prompt.
+    case ignore
     case cancelCountIn
     case stop
 }

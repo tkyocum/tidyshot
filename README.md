@@ -51,7 +51,8 @@ rebuilds lose this grant like they lose Screen Recording.
 
 Recording the microphone (Screen recording below) needs a third, optional permission: Microphone, under
 the same pane. macOS asks the first time you choose an input in Settings > Capture > Recording >
-Microphone; ad-hoc rebuilds lose this grant too. The app's sandbox gains one entitlement for it,
+Microphone, or when you start an MP4 recording with one chosen while access is still undecided;
+ad-hoc rebuilds lose this grant too. The app's sandbox gains one entitlement for it,
 `com.apple.security.device.audio-input`, and its Info.plist a usage string.
 
 ## Default shortcuts
@@ -261,15 +262,18 @@ badge, and with no Annotate, Pin, Copy Image or Trim.
 
 **Microphone and mute.** *Microphone* lists *Off*, *System Default* and each input by name; the list
 follows inputs as they are plugged in, an input that is gone stays chosen and reads *(not connected)*,
-and *Privacy Settings…* appears when macOS access is off. The microphone mixes with system audio in the
-recording's one audio track. **Held in this build:** recording from the microphone. Choosing an input
-stores the choice and asks macOS for access, but a recording does not capture the microphone yet (the
-start path waits for a sandboxed probe; see the R2 design's built notes).
+and *Privacy Settings…* appears when macOS access is off. An MP4 recording takes the chosen input, mixed
+with system audio in the recording's one audio track; a GIF has no sound and ignores it. When access is
+still undecided, macOS asks as you start, before the area selection or the countdown, and another record
+shortcut does nothing until you answer. A chosen input that is unplugged gives way to the default
+input; with access off, or no input at all, the recording goes on without the microphone. Either way a
+note says so after you stop, after the save's own notification, never during the recording.
 
-The mute button is shown when a recording has sound (system audio now). Muted stretches are silent in
-the saved and uploaded file: after you stop, TidyShot rewrites the audio, silencing each stretch from 0.1
-s before the press to 0.3 s after the unmute (more for a Bluetooth input), and re-encodes the audio once;
-the video is untouched. If the rewrite fails, the file is saved without sound (*Sound removed*); if that
+The mute button is shown when a recording has sound (system audio, the microphone or both). Muted
+stretches are silent in the saved and uploaded file: after you stop, TidyShot rewrites the audio,
+silencing each stretch from 0.1 s before the press to 0.3 s after the unmute (more for an input that
+reports a longer latency, and at least 0.6 s for a Bluetooth input), and re-encodes the audio once; the
+video is untouched. If the rewrite fails, the file is saved without sound (*Sound removed*); if that
 fails too, it is kept inside TidyShot, marked *Sound not muted*, never uploaded, copied, saved to the
 folder or dragged, and offers Open and Delete. A crash leaves a small log in `tmp/Mute` and the next
 launch applies it before recovering the file. Two limits are accepted: sound from an input whose
@@ -319,11 +323,12 @@ macOS to finish writing the file.
 
 TidyShot logs one `Recording:` line for each stream and output callback, with the time recorded so
 far: `/usr/bin/log show --last 10m --style compact --predicate 'process == "TidyShot"' | grep "Recording:"`
-(the full path, because zsh has a `log` builtin). Recording from the microphone and Trim are built in
-parts and held (R2 built notes in the R2 design). Pause, uploads over 5 GiB, a separate upload lane for
-videos, dragging an uploaded video that has no local copy, and URL commands for recording are planned
-for a later release (the recording designs' lists). The conversion, the mute ladder and recovery log
-`Recording:` lines too, among them `Recording: mute lag <s> s (<input>)` at each start.
+(the full path, because zsh has a `log` builtin). Trim is built in parts and held (R2 built notes in
+the R2 design). Pause, uploads over 5 GiB, a separate upload lane for videos, dragging an uploaded
+video that has no local copy, and URL commands for recording are planned for a later release (the
+recording designs' lists). The start, the conversion, the mute ladder and recovery log `Recording:`
+lines too, among them `Recording: mute lag <s> s (<input>)` at each start and the microphone prompt's
+answer.
 
 ## URL scheme
 

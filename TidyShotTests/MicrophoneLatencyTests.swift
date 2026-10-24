@@ -42,6 +42,30 @@ struct MicrophoneLatencyTests {
         #expect(abs(MicrophoneLatency.lag(reported: 0.3, transport: nil) - 0.65) < 1e-9)
     }
 
+    /// With no resolved input, as for every GIF and `Off` start, no property is read.
+    @Test func noInputReadsNothingAndTakesTheNoMicrophoneLag() {
+        var reads: [String] = []
+        let lag = MicrophoneLatency.lag(forDeviceUID: nil) { uid in
+            reads.append(uid)
+            return (0.3, .other)
+        }
+        #expect(lag == MicrophoneLatency.noMicrophone)
+        #expect(reads.isEmpty)
+    }
+
+    /// The resolved input's lag comes from what it reports, read once by its UID.
+    @Test func anInputsLagComesFromWhatItReports() {
+        var reads: [String] = []
+        let lag = MicrophoneLatency.lag(forDeviceUID: "RODE AI-1") { uid in
+            reads.append(uid)
+            return (0.3, .other)
+        }
+        #expect(abs(lag - 0.65) < 1e-9)
+        #expect(reads == ["RODE AI-1"])
+        #expect(MicrophoneLatency.lag(forDeviceUID: "AirPods") { _ in (0.02, .bluetooth) } == 0.6)
+        #expect(MicrophoneLatency.lag(forDeviceUID: "gone") { _ in (nil, nil) } == 0.6)
+    }
+
     @Test func anUnknownDeviceReadsAsNothing() {
         let read = MicrophoneLatency.read(deviceUID: "TidyShotTests:no such input")
         #expect(read.reported == nil)

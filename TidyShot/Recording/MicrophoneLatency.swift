@@ -24,6 +24,16 @@ nonisolated enum MicrophoneLatency {
         return reported != nil && transport == .other ? lag : max(lag, bluetoothOrUnread)
     }
 
+    /// A recording's lag: for the input with CoreAudio UID `deviceUID`, from what `read` finds it
+    /// reports; with no input, as for every GIF and `Off` start, `noMicrophone`, reading nothing.
+    static func lag(forDeviceUID deviceUID: String?,
+                    read: (String) -> (reported: TimeInterval?, transport: Transport?) = MicrophoneLatency.read(deviceUID:))
+        -> TimeInterval {
+        guard let deviceUID else { return noMicrophone }
+        let latency = read(deviceUID)
+        return lag(reported: latency.reported, transport: latency.transport)
+    }
+
     /// The input with CoreAudio UID `deviceUID` (`AVCaptureDevice.uniqueID`): its reported latency
     /// in seconds, the input scope's device latency, safety offset and buffer frame size plus the
     /// first input stream's latency over the nominal sample rate, and its transport. Each is nil

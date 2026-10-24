@@ -42,8 +42,8 @@ final class AppCoordinator {
                            },
                            microphones: microphones),
         makeDriver: { [engine] in ScreenRecordingDriver(engine: engine) })
-    /// The audio inputs and the microphone access, for a recording's loss reason and its start (held
-    /// with the microphone, R2 plan, Gates). Capture → Recording → `Microphone` reads its own.
+    /// The audio inputs and the microphone access, for a recording's start (the prompt, then the
+    /// input under the capture lock) and its loss reason. Capture → Recording → `Microphone` reads its own.
     @ObservationIgnored lazy var microphones: any MicrophoneDevices = LiveMicrophoneDevices()
     /// Hide desktop icons (spec 2.10): the wallpaper over the desktop's icons and widgets, while a
     /// capture runs or until turned off. A display it cannot cover is reported once per session;
@@ -79,6 +79,10 @@ final class AppCoordinator {
     /// count-in, the settle delay and the fresh content read, with the count-in on or off.
     /// `selfTimer.isRunning` cannot serve: it stays true until `run`'s capture closure returns.
     @ObservationIgnored var recordingCountIn = false
+    /// True while a record function waits on the system's microphone prompt, before the capture
+    /// lock: another start is ignored. Nothing else is held: the lock is free and `recordingPhase`
+    /// does not change.
+    @ObservationIgnored var isAskingMicrophone = false
     /// Recordings between the recorder's `.keep` and `history.add` (in quit mode, until the
     /// thumbnail is written), a GIF's conversion included, so the phase never reads `.idle` in
     /// between.

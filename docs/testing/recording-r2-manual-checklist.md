@@ -2,9 +2,10 @@
 
 Run after any change to `TidyShot/Recording/` (`GIF/`, `GIFMaker`, `GIFConversion`, `RecordingMute`,
 `MuteLog`, `MuteLogWriter`, `MicrophoneChoice`, `MicrophoneDevices`, `MicrophoneLatency`,
-`RecordingTrim`, the controller, the chrome and the panel), `AppCoordinator` (`+Recording`'s
-`makeGIF`, `muteAndSave`, `recoverRecordings` and `saveRecording`, `+Upload`'s `startUpload`, `retry`
-and the `uploadRefusal` gates, `+RecordActions`, `+DragOut`, `+Delete`, `+Overlay`, `+Trim`),
+`RecordingTrim`, the controller, the chrome and the panel), `AppCoordinator` (`+Recording`'s start
+with its microphone prompt, `makeGIF`, `muteAndSave`, `recoverRecordings` and `saveRecording`,
+`+Upload`'s `startUpload`, `retry` and the `uploadRefusal` gates, `+RecordActions`, `+DragOut`,
+`+Delete`, `+Overlay`, `+Trim`),
 `StatusMenuController`, the Recording section of Settings > Capture, the card, Recent Captures,
 `ThumbnailProvider`, or the `Recording`, `MuteLog` and `CaptureRecord` fields. Automated tests cover the
 pure decisions (the GIF palette, differ, LZW writer, sink and encoder against ImageIO's decoder, the
@@ -26,18 +27,17 @@ its R2 built notes.
 ## Held gates (read this first)
 
 R2 was built with these steps held, as the plan's Gates section says. The branch is not offered for
-merge while one is held. Each needs Tim; none could run unattended, because the Debug build has no
-Screen Recording grant and a grant is Tim's to give.
+merge while one is held (H1 no longer is). Each needs Tim; none could run unattended, because the Debug
+build has no Screen Recording grant and a grant is Tim's to give.
 
-- **H1. The microphone's start (Task 4's sandboxed-capture gate).** Held: "Wire the start" (the
-  permission prompt before the capture lock, `isAskingMicrophone`, `MicrophoneChoice.resolve` under the
-  lock, the `Resolution` carried into `RecordingOptions.microphoneID`), "Post the note last"
-  (`saveRecording(… microphoneNote:)`) and the microphone hand checks. Until it lands no recording
-  captures the microphone, the mute lag is always the no-microphone 0.3 s, and Settings > Capture >
-  Recording > `Microphone` stores a choice that nothing reads at the start. What Tim does: the
-  sandboxed `RecordingSpike` run in Probe 4 below, then write the result into the design's Probes.
-  If the sandboxed capture differs from the unsandboxed probes (no prompt, no `soun` track, an
-  error), the held steps wait for a design amendment.
+- **H1. The microphone's start (Task 4's sandboxed-capture gate). Passed and built.** Probe 4 passed on
+  2026-10-24, so "Wire the start" (the permission prompt before the capture lock, `isAskingMicrophone`,
+  `MicrophoneChoice.resolve` under the lock with the input's lag, the `Resolution` carried into
+  `RecordingOptions.microphoneID`) and "Post the note last" (`saveRecording(… microphoneNote:)`) are
+  built: a recording now captures the chosen input. What stays for Tim: the Microphone section below,
+  its mute and lag items included, and the Mute section's bar for a dropped microphone, none of which has
+  run, and the first prompt, which Probe 4 did not see because access was already granted. Neither holds
+  code.
 - **H2. Trim's re-encode (Task 7's trim gate, tripped).** Held: `RecordingTrim.startsOnSyncSample`,
   `export` and `exportForSave` with their tests, `TrimWindowController`, `trimWindows`, the pass, the
   put, the download and the clean-up in `AppCoordinator+Trim.swift` (`trimCapture`, `uploadTrimmed`,
@@ -59,10 +59,10 @@ Screen Recording grant and a grant is Tim's to give.
   real wallpaper gradient first.
 - **H5. Hand checks no one has run.** Tasks 3, 6 and 8 each left their hand checks (a GIF recording,
   the mute button, a GIF's card and row) because the Debug build had no grant. They are the GIF,
-  Settings and Mute sections below. The Microphone and Trim sections wait for H1 and H2.
+  Settings and Mute sections below, and, now that H1's start is built, the Microphone section. The
+  Trim section waits for H2.
 
-Sections marked **(held: H1)** or **(held: H2)** can only run once that step has landed. Run
-everything else now.
+Sections marked **(held: H2)** can only run once that step has landed. Run everything else now.
 
 ## Setup
 
@@ -263,13 +263,14 @@ Format = GIF. ⌃⇧8 and drag an area; the bar is for GIF.
   after a second GIF upload in the same launch; after a relaunch, one more. An MP4 recording still goes through
   Clop (`Optimizing…`, a smaller object). With Clop off the GIF line is never logged.
 
-## Mute (system audio now; the microphone is held: H1)
+## Mute
 The button shows for `capturesAudio || captureMicrophone`. Settings > Capture > `Record system audio` on,
-`Format` MP4. Play a steady sound from another app (`afplay /System/Library/Sounds/Submarine.aiff` in a
+`Microphone` Off unless a step says otherwise, `Format` MP4; the Microphone section below mutes through a
+microphone. Play a steady sound from another app (`afplay /System/Library/Sounds/Submarine.aiff` in a
 loop, or music).
 - [ ] The bar is 208 x 44 pt with the time, the mute button (`speaker.wave.2.fill`), Stop and Cancel. With
   `Record system audio` off and no microphone the bar is 172 x 44 with no mute button, and the same for an
-  MP4 whose only sound would have been a microphone dropped at the start. For a GIF it is the `GIF` bar
+  MP4 whose only sound would have been a microphone dropped at the start (an input set, access denied). For a GIF it is the `GIF` bar
   (above).
 - [ ] With another app frontmost, hover the mute button and then Cancel: the tool tips `Mute the sound` and
   `Discard the recording` show (R1's Cancel tool tip never showed before). After a press the button is
@@ -313,23 +314,30 @@ loop, or music).
 - [ ] A discarded muted recording leaves no log: mute for a second, press Cancel past 5 s and Discard;
   `ls $C/tmp/Mute $C/tmp/Recording` shows both empty.
 
-## Microphone (held: H1)
-These need the start path. Until it lands the recording does not use the microphone (see H1); do the
-Settings checks above now and the rest later.
+## Microphone
+`Format` MP4 and an input chosen in Settings > Capture > `Microphone` unless a step says otherwise; the
+Settings checks above come first. The log line shows `Recording: mute lag <s> s (<input>)` before the
+selection overlay or the count-in, and the stream's `Recording: starting …` line ends `microphone
+<uniqueID>`, or `microphone off` when none was taken.
 - [ ] Each input (Tim's six), access denied and allowed: the file has a stereo AAC track with the voice, mixed
   with system audio when both are on; `afinfo` shows one audio track. The log line shows the chosen input's
   `uniqueID` on the stream start.
-- [ ] After a rebuild (new ad-hoc signature, so no grant) with a microphone set, for Record Screen and for
-  Record Fullscreen: the system prompt appears before the selection overlay or the count-in; Allow records
-  with the microphone; Deny (or `tccutil reset Microphone io.tky.tidyshot` then Deny) records without it, the
-  note `Recorded without the microphone` / `Microphone access is off for TidyShot.` posts only after Stop and
-  after the save's own notification, and no prompt or banner is in the video.
+- [ ] With a microphone set and access undecided, for Record Screen and for Record Fullscreen: run
+  `tccutil reset Microphone io.tky.tidyshot` first (a rebuild may keep the grant: Probe 4 found it still
+  `authorized`). The system prompt appears before the selection overlay or the count-in, names TidyShot and
+  shows the usage sentence (the first prompt, which Probe 4 did not see), and the log says `Recording:
+  microphone access allowed at the prompt` or `… refused at the prompt`. Allow records with the microphone;
+  Deny records without it, the note `Recorded without the microphone` / `Microphone access is off for
+  TidyShot.` posts only after Stop and after the save's own notification, and no prompt or banner is in the
+  video. Write down what the first prompt looked like: ______
 - [ ] With the prompt up: a second Record press does nothing and logs `Recording: start ignored, the microphone
   prompt is open`; a screenshot shortcut works; Quit quits without starting a recording.
 - [ ] The chosen input unplugged before the recording (or the RODE AI-1 chosen while unplugged): the recording
   uses the default input, and `Recorded with <default input name>` / `<name> is not connected.` posts after
   Stop. With no input at all: `Recorded without the microphone` / `No microphone is connected.`
-- [ ] A GIF with a microphone set never prompts and never posts a microphone note.
+- [ ] A GIF with a microphone set, once with access denied and once with the input unplugged: no prompt, no
+  microphone note after Stop, and the start's log reads `mute lag 0.300 s (no microphone)` and `microphone
+  off`.
 - [ ] Access turned off, and the input unplugged, during a recording: what ScreenCaptureKit does (the stream
   stops, the output fails, or the file goes on with silence), whether the file is saved and plays, and the
   `Recording stopped` body (`The microphone was disconnected.` or `Microphone access is off for TidyShot.`).
@@ -486,7 +494,7 @@ came out). Write `confirm` or `overrule` and why, then copy the result to the de
   its own `LiveMicrophoneDevices`, the recorder's loss reason the coordinator's. ______
 - [ ] 7. Microphone loss mid-recording: the controller asks `microphoneLossReason` on `.outputFailed` and
   `.streamStopped`, giving `The microphone was disconnected.` or `Microphone access is off for TidyShot.`
-  (needs H1 to see). ______
+  (the Microphone section's mid-recording step). ______
 - [ ] 8. The mute log is `tmp/Mute/<id>.json`, created by the first write, made at the first toggle; a
   recording never muted has none. ______
 - [ ] 9. Trim: the download posts `Downloading <key>` under `Opening the recording…`; `Trim…`, the sheet and `Upload
@@ -499,8 +507,8 @@ came out). Write `confirm` or `overrule` and why, then copy the result to the de
 - [ ] 11. Sizes (spec 2.13): a GIF's size is the GIF's after its move (after a failed conversion the MP4's); a muted
   recording's is the rewritten file's; Trim's is the trimmed file's (held with H2). Check a GIF's and a muted
   recording's row sizes against `ls -l`. ______
-- [ ] 12. `saveRecording`'s new parameters: `saveNotice:`, `unmutedIntervals:` (built) and `microphoneNote:` (held
-  with H1), each defaulting to none so R1's callers compile. Internal; nothing to see. ______
+- [ ] 12. `saveRecording`'s new parameters: `saveNotice:`, `microphoneNote:` and `unmutedIntervals:`, each
+  defaulting to none so R1's callers compile. Internal; nothing to see. ______
 
 Four more where the build made a call the design did not settle. Each needs Tim's confirm or overrule
 before merge:

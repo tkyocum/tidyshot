@@ -108,6 +108,21 @@ nonisolated enum MicrophoneChoice {
         forRecording(stored, format: format) != .off && access == .notDetermined
     }
 
+    /// The start's input, under the capture lock: Off, as every GIF's start is, reads nothing and
+    /// gives no device and no note; otherwise the access is read again, after any prompt, and
+    /// `resolve` runs over the inputs listed now.
+    static func resolveAtStart(_ stored: Stored, access: () -> MicrophoneAccess, devices: () -> [MicrophoneDevice],
+                               defaultDevice: () -> MicrophoneDevice?) -> Resolution {
+        guard stored != .off else { return Resolution(device: nil, note: nil) }
+        return resolve(stored: stored, devices: devices(), defaultDevice: defaultDevice(), access: access())
+    }
+
+    /// The resolved input as the recording takes it: none and no note for a GIF. The hand-off reads
+    /// `Format` again, so a start that became a GIF since the choice was read drops its microphone.
+    static func forRecording(_ resolution: Resolution, format: RecordingFormat) -> Resolution {
+        format == .gif ? Resolution(device: nil, note: nil) : resolution
+    }
+
     /// A stored name, or `Unknown microphone` when none was stored.
     private static func displayName(_ name: String) -> String {
         name.isEmpty ? unknownName : name
