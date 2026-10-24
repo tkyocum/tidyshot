@@ -240,11 +240,12 @@ nonisolated enum RecordingMute {
 
         var audio: Passage?
         if let audioTrack {
-            guard let format = try await audioTrack.load(.formatDescriptions).first,
+            let (formats, range) = try await audioTrack.load(.formatDescriptions, .timeRange)
+            guard let format = formats.first,
                   let description = CMAudioFormatDescriptionGetStreamBasicDescription(format)?.pointee else {
                 throw RecordingMuteError.couldNotRead
             }
-            let decoder = try AudioDecoder(format: format)
+            let decoder = try AudioDecoder(format: format, end: range.end)
             let audioInput = AVAssetWriterInput(mediaType: .audio, outputSettings: [
                 AVFormatIDKey: kAudioFormatMPEG4AAC,
                 AVSampleRateKey: description.mSampleRate,
@@ -259,10 +260,14 @@ nonisolated enum RecordingMute {
         try reader.start()
         try writer.start()
         writer.startSession(atSourceTime: .zero)
-        try await run(video, audio, silencing: segments) {
-            // The other track's reads and appends end once the reader and writer are cancelled.
+        do {
+            try await run(video, audio, silencing: segments)
+        } catch {
+            // Only once neither track reads or appends: a reader cancelled under a read crashed,
+            // and a writer cancelled under an append it held never let the append return.
             reader.cancelReading()
             writer.cancelWriting()
+            throw error
         }
         guard reader.status != .failed else {
             writer.cancelWriting()
@@ -274,10 +279,10 @@ nonisolated enum RecordingMute {
         }
     }
 
-    /// Runs both passages, each on a task of its own. At the first failure `cancel` runs, so the
-    /// other passage ends too, and the failure is thrown once both have.
-    private static func run(_ video: Passage, _ audio: Passage?, silencing segments: [MuteInterval],
-                            cancel: () -> Void) async throws {
+    /// Runs both passages, each on a task of its own. At the first failure the other passage's task
+    /// is cancelled, and it ends at its next sample: the failed passage has finished its input, so
+    /// the writer holds no append back for it. The failure is thrown once both have ended.
+    private static func run(_ video: Passage, _ audio: Passage?, silencing segments: [MuteInterval]) async throws {
         // Each passage goes to its own task, and nothing here touches it again.
         nonisolated(unsafe) let video = video
         nonisolated(unsafe) let audio = audio
@@ -289,7 +294,7 @@ nonisolated enum RecordingMute {
             do {
                 while try await group.next() != nil {}
             } catch {
-                cancel()
+                group.cancelAll()
                 throw error
             }
         }
@@ -309,8 +314,8 @@ nonisolated enum RecordingMute {
         }
 
         /// Appends every sample, decoded when there is a decoder and with `segments` silenced when
-        /// given, then finishes the input. A failure finishes it too, so the writer stops holding the
-        /// other track back for it.
+        /// given, then the decoder's silence to the track's end, and finishes the input. A failure
+        /// finishes it too, so the writer stops holding the other track back for it.
         func run(silencing segments: [MuteInterval]?) async throws {
             do {
                 while let read = try await provider.next() {
@@ -319,7 +324,11 @@ nonisolated enum RecordingMute {
                     if let decoder { sample = try decoder.decode(read) }
                     // A marker, or packets the trims take whole, decodes to nothing.
                     guard let sample else { continue }
-                    try await receiver.append(try segments.map { try silenced(sample, segments: $0) } ?? sample)
+                    try await append(sample, silencing: segments)
+                }
+                try Task.checkCancellation()
+                if let end = try decoder?.finish() {
+                    try await append(end, silencing: segments)
                 }
             } catch {
                 receiver.finish()
@@ -327,14 +336,20 @@ nonisolated enum RecordingMute {
             }
             receiver.finish()
         }
+
+        private func append(_ sample: Sample, silencing segments: [MuteInterval]?) async throws {
+            try await receiver.append(try segments.map { try silenced(sample, segments: $0) } ?? sample)
+        }
     }
 
     /// The audio's way to 16-bit interleaved PCM. The reader's own PCM output sets up an audio queue
     /// on the output device, and a device slow to answer held a rewrite there for 90 s (design, The
     /// suite's time); `AVAudioConverter` decodes the packets as stored without one. What the reader
     /// marks for trimming (the AAC priming, the padding after the last frame) is dropped, each buffer
-    /// starts at its output time, and a gap before one (an empty edit) is filled with silence, so the
-    /// sound runs from 0 without a break and each frame lands where the reader's PCM put it.
+    /// starts at its output time, and a gap before one (an empty edit) is filled with silence, as is
+    /// a gap after the last up to the end of the track's time range. So the sound runs from 0 to
+    /// there without a break, and each frame lands where the reader's PCM put it. A buffer the reader
+    /// marks for a decoder reset (where another edit starts) resets the converter first.
     private final class AudioDecoder {
         private let format: CMAudioFormatDescription
         private let input: AVAudioFormat
@@ -343,15 +358,19 @@ nonisolated enum RecordingMute {
         private let rate: Double
         private let framesPerPacket: Int
         private let bytesPerFrame: Int
+        /// The frame the track's time range ends at.
+        private let end: Int
         /// The frame the next buffer's sound starts at.
         private var next = 0
 
-        /// Throws for a track whose packets the converter cannot take as AAC's: a variable size and a
-        /// fixed number of frames at a whole sample rate.
-        init(format: CMAudioFormatDescription) throws {
+        /// Throws for a track whose packets the converter cannot take as AAC's, which have a variable
+        /// size and a fixed number of frames, at a whole sample rate; and for an `end` (the track's)
+        /// that is not numeric.
+        init(format: CMAudioFormatDescription, end: CMTime) throws {
             guard let description = CMAudioFormatDescriptionGetStreamBasicDescription(format)?.pointee,
                   description.mBytesPerPacket == 0, description.mFramesPerPacket > 0,
-                  description.mSampleRate > 0, description.mSampleRate == description.mSampleRate.rounded() else {
+                  description.mSampleRate > 0, description.mSampleRate == description.mSampleRate.rounded(),
+                  end.isNumeric else {
                 throw RecordingMuteError.couldNotRead
             }
             let input = AVAudioFormat(cmAudioFormatDescription: format)
@@ -370,6 +389,7 @@ nonisolated enum RecordingMute {
             rate = description.mSampleRate
             framesPerPacket = Int(description.mFramesPerPacket)
             bytesPerFrame = Int(output.streamDescription.pointee.mBytesPerFrame)
+            self.end = Int((end.seconds * rate).rounded())
         }
 
         /// `sample`'s packets decoded, trimmed and placed at its output time, after the silence of
@@ -381,6 +401,11 @@ nonisolated enum RecordingMute {
                 guard let bufferFormat = buffer.formatDescription,
                       CMFormatDescriptionEqual(bufferFormat, otherFormatDescription: format),
                       let data = buffer.dataBuffer else { throw RecordingMuteError.couldNotRead }
+                // Another edit starts here: its pre-roll packets decode without the last one's state.
+                if (CMGetAttachment(buffer, key: kCMSampleBufferAttachmentKey_ResetDecoderBeforeDecoding,
+                                    attachmentModeOut: nil) as? Bool) == true {
+                    converter.reset()
+                }
                 let pcm = try decode(packets: try buffer.audioStreamPacketDescriptions(), data: data,
                                      frames: try frames(buffer.duration))
                 let dropped = try frames(trim(kCMSampleBufferAttachmentKey_TrimDurationAtStart, of: buffer))
@@ -391,21 +416,9 @@ nonisolated enum RecordingMute {
                 guard dropped >= 0, cut >= 0, count >= 0, dropped + count + cut == Int(pcm.frameLength),
                       start >= next else { throw RecordingMuteError.couldNotRead }
                 guard count > 0 else { return nil }
-                let gap = start - next
-                let block = try CMBlockBuffer(length: (gap + count) * bytesPerFrame, flags: .assureMemoryNow)
-                try block.withUnsafeMutableBytes { bytes in
-                    guard let base = bytes.baseAddress, let source = pcm.audioBufferList.pointee.mBuffers.mData else {
-                        throw RecordingMuteError.couldNotRead
-                    }
-                    memset(base, 0, gap * bytesPerFrame)
-                    memcpy(base + gap * bytesPerFrame, source + dropped * bytesPerFrame, count * bytesPerFrame)
-                }
-                let placed = try CMSampleBuffer(dataBuffer: block, formatDescription: output.formatDescription,
-                                                numSamples: gap + count,
-                                                presentationTimeStamp: CMTime(value: CMTimeValue(next),
-                                                                              timescale: CMTimeScale(rate)),
-                                                packetDescriptions: [])
-                next = start + count
+                guard let source = pcm.audioBufferList.pointee.mBuffers.mData else { throw RecordingMuteError.couldNotRead }
+                let placed = try place(UnsafeRawBufferPointer(start: source + dropped * bytesPerFrame,
+                                                              count: count * bytesPerFrame), at: start)
                 // A new buffer over a new block: nothing else holds it.
                 nonisolated(unsafe) let made: CMSampleBuffer? = placed
                 return made
@@ -413,6 +426,36 @@ nonisolated enum RecordingMute {
             guard let decoded else { return nil }
             nonisolated(unsafe) let made = decoded
             return Sample(unsafeBuffer: made)
+        }
+
+        /// The silence from the last frame placed to the end of the track's time range, where an
+        /// empty edit ends the sound; nil when the sound reaches it.
+        func finish() throws -> Sample? {
+            guard end > next else { return nil }
+            // A new buffer over a new block: nothing else holds it.
+            nonisolated(unsafe) let made = try place(UnsafeRawBufferPointer(start: nil, count: 0), at: end)
+            return Sample(unsafeBuffer: made)
+        }
+
+        /// A PCM buffer from the last frame placed: silence up to frame `start`, then `sound`'s frames.
+        private func place(_ sound: UnsafeRawBufferPointer, at start: Int) throws -> CMSampleBuffer {
+            let gap = start - next
+            let count = sound.count / bytesPerFrame
+            // Nothing goes back in time, and no buffer is made empty.
+            guard gap >= 0, gap + count > 0 else { throw RecordingMuteError.couldNotRead }
+            let block = try CMBlockBuffer(length: (gap + count) * bytesPerFrame, flags: .assureMemoryNow)
+            try block.withUnsafeMutableBytes { bytes in
+                guard let base = bytes.baseAddress else { throw RecordingMuteError.couldNotRead }
+                memset(base, 0, gap * bytesPerFrame)
+                if let source = sound.baseAddress { memcpy(base + gap * bytesPerFrame, source, count * bytesPerFrame) }
+            }
+            let placed = try CMSampleBuffer(dataBuffer: block, formatDescription: output.formatDescription,
+                                            numSamples: gap + count,
+                                            presentationTimeStamp: CMTime(value: CMTimeValue(next),
+                                                                          timescale: CMTimeScale(rate)),
+                                            packetDescriptions: [])
+            next = start + count
+            return placed
         }
 
         /// One buffer's packets decoded in one pass. Exactly `frames` must come out: the converter
@@ -461,9 +504,10 @@ nonisolated enum RecordingMute {
         }
     }
 
-    /// `sample` with its frames inside `segments` zeroed, on a copy of its data, never the reader's
-    /// own memory; `sample` itself when none falls inside, or when it holds no sound (a marker). A
-    /// buffer whose frames cannot be placed throws, so its sound never passes unmuted.
+    /// `sample`, a buffer of the decoder's, with its frames inside `segments` zeroed on a copy of its
+    /// data; `sample` itself when none falls inside. Markers decode to nil before they reach it, so
+    /// the check for a buffer with no sound is defensive. A buffer whose frames cannot be placed
+    /// throws, so its sound never passes unmuted.
     private static func silenced(_ sample: Sample, segments: [MuteInterval]) throws -> Sample {
         let copy = try sample.withUnsafeSampleBuffer { buffer -> CMSampleBuffer? in
             guard buffer.numSamples > 0 else { return nil }

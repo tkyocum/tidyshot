@@ -212,6 +212,50 @@ struct RecordingMuteTests {
         #expect(after.samples.count / channels == frames)
     }
 
+    /// An empty edit at the sound's start (`p-4096.mp4` has one of 210 frames) or at its end becomes
+    /// silence: the rewrite's sound is one segment, exactly as long as the source's track, and the
+    /// tone keeps its time.
+    @Test(arguments: [VideoFixtures.EmptyEdit.leading(0.1), .trailing(0.1)], [(44_100, 1), (48_000, 2)])
+    func anEmptyEditAtEitherEndBecomesSilenceInPlace(edit: VideoFixtures.EmptyEdit, format: (Int, Int)) async throws {
+        defer { cleanUp() }
+        let (sampleRate, channels) = format
+        let source = dir.appending(path: "source.mp4")
+        try await VideoFixtures.makeMP4(at: source, width: 320, height: 200, seconds: 4, audio: true,
+                                        tone: [0.5...1.5, 2.0...3.5], sampleRate: sampleRate, channels: channels,
+                                        emptyEdit: edit)
+        let sourceTrack = try #require(try await AVURLAsset(url: source).loadTracks(withMediaType: .audio).first)
+        let sourceSegments = try await sourceTrack.load(.segments)
+        #expect(sourceSegments.count == 2)
+        if case .leading = edit {
+            #expect(sourceSegments.first?.isEmpty == true)
+        } else {
+            #expect(sourceSegments.last?.isEmpty == true)
+        }
+        let frames = 4 * sampleRate
+        #expect(try await sourceTrack.load(.timeRange).duration == CMTime(value: CMTimeValue(frames),
+                                                                         timescale: CMTimeScale(sampleRate)))
+
+        let output = dir.appending(path: "muted.mp4")
+        try await RecordingMute.apply(source, intervals: closed([(2.5, 3.0)]), to: output)
+        let outputTrack = try #require(try await AVURLAsset(url: output).loadTracks(withMediaType: .audio).first)
+        let outputSegments = try await outputTrack.load(.segments)
+        #expect(!outputSegments.isEmpty)
+        #expect(outputSegments.allSatisfy { !$0.isEmpty })
+
+        let before = try #require(try await MovieSamples.audio(of: source))
+        let after = try #require(try await MovieSamples.audio(of: output))
+        // The reader's PCM fills a leading empty edit, but stops where a trailing one starts.
+        if case .leading = edit { #expect(before.samples.count / channels == frames) }
+        #expect(after.samples.count / channels == frames)
+        for (edge, last) in [(0.5, false), (1.5, true), (2.0, false), (3.5, true)] {
+            let was = try #require(loud(before, from: edge - 0.1, to: edge + 0.1, last: last))
+            let now = try #require(loud(after, from: edge - 0.1, to: edge + 0.1, last: last))
+            #expect(abs(was - edge) < 0.005, "the source's edge at \(edge) s is at \(was) s")
+            #expect(abs(now - was) < 0.001, "the edge at \(edge) s moved from \(was) s to \(now) s")
+        }
+        #expect(after.peak(from: 2.55, to: 2.95) < 0.01)
+    }
+
     /// Sound spoken just before Unmute lands up to the input's latency later; the lag covers it.
     @Test func aToneEndingPastAnIntervalIsSilencedThroughThatEdge() async throws {
         defer { cleanUp() }
@@ -261,6 +305,60 @@ struct RecordingMuteTests {
             #expect(difference < 0.05, "window at \(window) s")
         }
         #expect(try await MovieSamples.videoSamples(of: twice) == (try await MovieSamples.videoSamples(of: source)))
+    }
+
+    /// Sound the decode cannot take (linear PCM here; recordings are always AAC) fails closed: `apply`
+    /// throws and leaves nothing, and the live ladder removes the sound rather than keep it.
+    @Test func soundThatIsNotAACThrowsAndTheLadderRemovesIt() async throws {
+        defer { cleanUp() }
+        let file = dir.appending(path: "pcm.mov")
+        try await VideoFixtures.makeMP4(at: file, width: 320, height: 200, seconds: 2, audio: true, tone: [0...2],
+                                        linearPCM: true)
+        let track = try #require(try await AVURLAsset(url: file).loadTracks(withMediaType: .audio).first)
+        let format = try #require(try await track.load(.formatDescriptions).first)
+        #expect(CMFormatDescriptionGetMediaSubType(format) == kAudioFormatLinearPCM)
+        let output = dir.appending(path: "Mute/pcm.mp4")
+        let intervals = closed([(0.5, 1.0)])
+
+        try FileManager.default.createDirectory(at: output.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("stale".utf8).write(to: output)
+        await #expect(throws: (any Error).self) {
+            try await RecordingMute.apply(file, intervals: intervals, to: output)
+        }
+        #expect(!exists(output))
+
+        let resolution = await RecordingMute.resolve(file: file, output: output, duration: 2, intervals: intervals,
+                                                     lag: RecordingMute.defaultLag, steps: .live)
+        #expect(resolution.outcome == .soundRemoved)
+        #expect(try await MovieSamples.trackCount(of: file, .audio) == 0)
+        #expect(try await MovieSamples.trackCount(of: file, .video) == 1)
+        #expect(!exists(output))
+    }
+
+    /// A decode that fails partway, with both tracks under way: an edit at another rate from 2 s,
+    /// whose frames cannot be placed. `apply` throws at once instead of waiting on the other track,
+    /// and the live ladder removes the sound.
+    @Test func aDecodeThatFailsPartwayThrowsAndTheLadderRemovesTheSound() async throws {
+        defer { cleanUp() }
+        let source = try await toneMovie()
+        let file = dir.appending(path: "speed.mov")
+        try await VideoFixtures.makeAudioSpeedChange(of: source, over: 2.0...3.0, lasting: 0.5, at: file)
+        let track = try #require(try await AVURLAsset(url: file).loadTracks(withMediaType: .audio).first)
+        #expect(try await track.load(.segments).count == 3)
+        let output = dir.appending(path: "Mute/speed.mp4")
+        let intervals = closed([(0.5, 1.0)])
+
+        await #expect(throws: (any Error).self) {
+            try await RecordingMute.apply(file, intervals: intervals, to: output)
+        }
+        #expect(!exists(output))
+
+        let resolution = await RecordingMute.resolve(file: file, output: output, duration: 4, intervals: intervals,
+                                                     lag: RecordingMute.defaultLag, steps: .live)
+        #expect(resolution.outcome == .soundRemoved)
+        #expect(try await MovieSamples.trackCount(of: file, .audio) == 0)
+        #expect(try await MovieSamples.trackCount(of: file, .video) == 1)
+        #expect(!exists(output))
     }
 
     @Test func applyReplacesAFileAlreadyAtTheOutput() async throws {
