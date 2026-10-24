@@ -268,6 +268,80 @@ nonisolated enum RecordingTrim {
         }
     }
 
+    /// Where the put writes the trimmed file.
+    enum PutTarget: Equatable, Sendable {
+        /// Over the Save target with `FileReplacement`, holding `scope` (the save folder's for a
+        /// save-folder file; none for `pending/<id>.mp4`).
+        case replace(URL, scope: URL?)
+        /// Moved in as `pending/<id>.mp4`, and the record points at it.
+        case newPendingFile
+    }
+
+    /// The put for a plan the write-time checks let through; nil for one they refuse.
+    static func putTarget(for plan: WritePlan) -> PutTarget? {
+        switch plan {
+        case .saveTarget(.saveFolderFile(let fileURL, let folder)): .replace(fileURL, scope: folder)
+        case .saveTarget(.pendingFile(let fileURL)): .replace(fileURL, scope: nil)
+        case .newPendingFile: .newPendingFile
+        case .saveTarget(.unavailable), .refuse: nil
+        }
+    }
+
+    /// The put over a Save target (design, Save): `trimmed` is moved into `destination`'s replacement
+    /// folder and swapped in with `replaceItemAt`, as `FileReplacement` does, holding `scope` throughout.
+    /// A failed put leaves the file at `destination` as it was. Runs in a detached task.
+    static func putTrimmed(_ trimmed: URL, over destination: URL, scope: URL?) throws {
+        let accessing = scope?.startAccessingSecurityScopedResource() ?? false
+        defer { if accessing { scope?.stopAccessingSecurityScopedResource() } }
+        try FileReplacement.put(at: destination) { try FileManager.default.moveItem(at: trimmed, to: $0) }
+    }
+
+    /// Whether the pass sets `uploadIsStale` before its put: the record has a link (`linkURL`, so also
+    /// one kept only in `priorUpload`) that is not marked stale already. A failed put clears only what
+    /// its pass set.
+    static func putMarksLinkStale(_ record: CaptureRecord) -> Bool {
+        record.linkURL != nil && !record.uploadIsStale
+    }
+
+    /// The button the save sheet's response chose, by its index among `buttons` (0 for the first).
+    /// Any other response, as when the window closes under the sheet, is `Cancel`.
+    static func sheetButton(at index: Int, of buttons: [SheetButton]) -> SheetButton {
+        buttons.indices.contains(index) ? buttons[index] : .cancel
+    }
+
+    // MARK: Failure and cleanup
+
+    /// `Not trimmed`'s body for a full disk (design, Failure).
+    static let diskFullText = "Disk Full"
+
+    /// `Not trimmed`'s body for a failed download, export or put: `Disk Full` for a full disk, else the
+    /// error's own text.
+    static func failureText(for error: any Error) -> String {
+        isDiskFull(error) ? diskFullText : error.localizedDescription
+    }
+
+    /// Out of space, from Foundation, POSIX or AVFoundation, also as an underlying error.
+    static func isDiskFull(_ error: any Error) -> Bool {
+        let error = error as NSError
+        switch (error.domain, error.code) {
+        case (NSCocoaErrorDomain, NSFileWriteOutOfSpaceError), (NSPOSIXErrorDomain, Int(ENOSPC)),
+             (AVFoundationErrorDomain, AVError.Code.diskFull.rawValue):
+            return true
+        default:
+            return (error.userInfo[NSUnderlyingErrorKey] as? NSError).map { isDiskFull($0) } ?? false
+        }
+    }
+
+    /// Removes `tmp/Trim/<id>*` (design, Cleanup): the download and whatever a failed or stopped step
+    /// left. Another record's files stay. A folder that is missing is nothing to remove.
+    static func removeWorkFiles(of id: UUID, in folder: URL = RecordingTrim.directory) {
+        let fileManager = FileManager.default
+        let names = (try? fileManager.contentsOfDirectory(atPath: folder.path(percentEncoded: false))) ?? []
+        for name in names where name.hasPrefix(id.uuidString) {
+            try? fileManager.removeItem(at: folder.appending(path: name, directoryHint: .notDirectory))
+        }
+    }
+
     /// How the export cuts (design, Method): `.passthrough` when the start is on a sync sample,
     /// else `.reencode`.
     enum TrimMethod: Equatable, Sendable {

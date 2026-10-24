@@ -436,9 +436,10 @@ Captures; no pause.
   `deleteCapture`, which refuses before its alert. The two members widened are `replaceThumbnail`
   (`+Editor`) and `downloadSource` (`+RecordActions`), each by dropping `private`. The new entry points
   for code outside the family are `trimCapture(recordID:)`, `uploadTrimmed(recordID:)` and
-  `trimMenuState(for:)`. Built so far: the marker, its gates, `trimMenuState(for:)` and the two
-  widenings; the pass, the window and the wiring are held, see the R2 design's built notes. The
-  surface check's list of widened members takes both names.)
+  `trimMenuState(for:)`. All of it is built: the marker, its gates, `trimMenuState(for:)`, the two
+  widenings, and since H2's part 2 the window, the pass and the wiring, with `showCardPoster(_:for:)`
+  (`+Overlay`) the one other member `+Trim` reaches across the family; see the R2 design's built notes.
+  The surface check's list of widened members takes both names, and Trim's.)
 - **Mute.** (R2.) `+Recording`: the mute ladder at the end of a recording (`muteAndSave`, between the
   recorder's file and `saveRecording`, inside `recordingSavesInFlight`) and in `recoverRecordings`,
   both through `RecordingMute.resolve`. `saveRecording` takes the ladder's `unmutedIntervals`, which

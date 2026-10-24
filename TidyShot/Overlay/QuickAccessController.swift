@@ -183,6 +183,12 @@ final class QuickAccessController {
         model.trimState = trimState
     }
 
+    /// Shows a new thumbnail on the card showing `recordID`: a trimmed recording's poster. Does
+    /// nothing when no card shows the record.
+    func setThumbnail(_ thumbnail: NSImage, for recordID: UUID) {
+        cards.first { $0.id == recordID }?.model.thumbnail = thumbnail
+    }
+
     /// Hands the card showing `recordID` its staged drag file, or nil while one is being made.
     /// Does nothing when no card shows the record.
     func setDragFile(_ url: URL?, for recordID: UUID) {

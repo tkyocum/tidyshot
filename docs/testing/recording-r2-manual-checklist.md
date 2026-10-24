@@ -13,7 +13,8 @@ conversion steps and their one `saveRecording` call, the progress menu, the sett
 panel's three bars, the microphone choice, the lag, the mute segments and `apply` on tone fixtures,
 the ladder with injected steps, the mute log's writer, recovery's rules, the save plan for a marked
 recording, the refusals for a marked or trimming record, Trim's range, source, sheet and write plans,
-and the card, row and menu rules for a GIF, a stale link and a marked record). Everything here needs a
+its export, its put's target and stale flag, `Upload Trimmed`'s refusals, the Trim window's first size
+and its clean-up, and the card, row and menu rules for a GIF, a stale link and a marked record). Everything here needs a
 real screen, Screen Recording, a microphone, real windows, a player, the network, Clop or eyes. The
 R1 checklist (`recording-r1-manual-checklist.md`) still covers starting, stopping, sleep, quitting and
 the upload paths for an MP4; run it too after a change to those.
@@ -26,9 +27,9 @@ its R2 built notes.
 
 ## Held gates (read this first)
 
-R2 was built with these steps held, as the plan's Gates section says. The branch is not offered for
-merge while one is held (H1 no longer is). Each needs Tim; none could run unattended, because the Debug
-build has no Screen Recording grant and a grant is Tim's to give.
+R2 was built with these steps held, as the plan's Gates section says. None is held now: H1 passed and
+H2's design was amended, and the steps both held are built. What is left needs Tim; none of it could
+run unattended, because the Debug build has no Screen Recording grant and a grant is Tim's to give.
 
 - **H1. The microphone's start (Task 4's sandboxed-capture gate). Passed and built.** Probe 4 passed on
   2026-10-24, so "Wire the start" (the permission prompt before the capture lock, `isAskingMicrophone`,
@@ -44,14 +45,13 @@ build has no Screen Recording grant and a grant is Tim's to give.
   larger than its source. Tim decided the amendment (the design's Decided 2026-10-24, 1 to 4): Trim
   re-encodes with its own pass at the source's size, the disk check reserves twice the source for a
   re-encode, the method maps the start through the video's edit list, and a re-encode cuts the sound
-  exactly at the start. Part 1, the export (`RecordingTrim.startsOnSyncSample`, `export` and
-  `exportForSave`, with their tests), is built to it. Still held for part 2: `TrimWindowController`,
-  `trimWindows`, the pass, the put, the download and the clean-up in `AppCoordinator+Trim.swift`
-  (`trimCapture`, `uploadTrimmed`, `finishTrimWrite`), closing a Trim window in `removeRecord` and
-  `removeFiles(ofPruned:)`, and the card's and row's wiring (`trimState` stays at its default, so
-  `Trim…` and `Upload Trimmed` are hidden, and the closures are no-ops). What Tim does: nothing until
-  part 2 lands; then the Trim section and Probe 5, which is no longer a gate but a hand check of the
-  built export on his own 60 s recordings.
+  exactly at the start. **Built.** Part 1, the export (`RecordingTrim.startsOnSyncSample`, `export` and
+  `exportForSave`, with their tests, `feat: Trim's export`), and part 2 (`feat: Trim`):
+  `TrimWindowController`, `trimWindows`, the download, the pass, the put and the clean-up in
+  `AppCoordinator+Trim.swift` (`trimCapture`, `uploadTrimmed`, `finishTrimWrite`), closing a Trim
+  window in `removeRecord` and `removeFiles(ofPruned:)`, and the card's and row's wiring, so `Trim…`
+  shows on every MP4 and `Upload Trimmed` on a stale one. What Tim does: the Trim section below and
+  Probe 5, a hand check of the built export on his own 60 s recordings. Neither holds code.
 - **H3. The input-latency measurements (Task 6).** Holds no code: the design's constants stay, and an
   input whose measured offset falls outside its lag goes back to Tim and into the PR. What Tim does:
   Probe 6 below with AirPods, the Brio 500, the iPhone input and a USB input.
@@ -62,10 +62,10 @@ build has no Screen Recording grant and a grant is Tim's to give.
   real wallpaper gradient first.
 - **H5. Hand checks no one has run.** Tasks 3, 6 and 8 each left their hand checks (a GIF recording,
   the mute button, a GIF's card and row) because the Debug build had no grant. They are the GIF,
-  Settings and Mute sections below, and, now that H1's start is built, the Microphone section. The
-  Trim section waits for H2.
+  Settings and Mute sections below, and, now that H1's start and H2 are built, the Microphone and Trim
+  sections.
 
-Sections marked **(held: H2)** can only run once that step has landed. Run everything else now.
+No section is held any more. Run everything now.
 
 ## Setup
 
@@ -304,8 +304,8 @@ loop, or music).
   nothing uploads, the clipboard is unchanged, `Sound not muted` / `Muting failed. The recording is kept in
   TidyShot and not uploaded. Trim it to fix the sound, or delete it.` posts, the card and the row read `Sound
   not muted` (the card's tooltip shows the whole sentence), Retry Failed Uploads skips it with no notice, and
-  a relaunch keeps the mark. The marked card offers the thumbnail's Open and Delete (and `Trim…`, once H2
-  lands), with no Copy File, Save As… or drag; the row's click opens the file. Write down what the card and
+  a relaunch keeps the mark. The marked card offers the thumbnail's Open, `Trim…` and Delete, with no Copy
+  File, Save As… or drag; the row's click opens the file. Write down what the card and
   menu offered: ______
 - [ ] **(Debug)** `kill -9` during a muted recording, then relaunch with `--args -MuteFailure both`: the
   recovered record shows `Sound not muted`, and `Recovered a recording` ends `Its sound is not muted, so it
@@ -361,12 +361,18 @@ selection overlay or the count-in, and the stream's `Recording: starting …` li
   logged lag (`Recording: mute lag <s> s (<name>)`), and a word started within 0.2 s of each mute and unmute
   click is silent. Write down each input's logged lag: ______ (see Probe 6)
 
-## Trim (held: H2)
-Run these once the window and the wiring (H2's part 2) have landed. The export (part 1) is built to the
-amended design: a start between keyframes re-encodes with TidyShot's own pass, a start on one passes
-through.
+## Trim
+The export is built to the amended design (a start between keyframes re-encodes with TidyShot's own pass,
+a start on one passes through), and the window, the pass and the wiring landed with it (H2).
 - [ ] `Trim…` shows in the card's menu and the Recent Captures row actions (`scissors`) for MP4 recordings only,
   not for a GIF; it is disabled while the record uploads or is being deleted.
+- [ ] The window: one per record (a second `Trim…` brings it forward); its title is the save-folder file's
+  name, or `Recording <time>` for a file inside TidyShot; it opens at the recording's size, or smaller to
+  fit the screen; the trim bar (yellow handles, `Trim` and `Cancel`) appears by itself once the file has
+  loaded; the close button is disabled while the save sheet or `Trimming…` is up; Escape in `Trimming…`
+  is `Stop`. Write down anything odd: ______
+- [ ] After a Save: the card's poster, the row's thumbnail, the duration badge and the row's size are the
+  trimmed recording's (the size against `ls -l`).
 - [ ] Save, Save and Upload (the link plays the trimmed video), an upload-only record that needs the download
   (the sheet offers `Save and Upload` only), and both Cancels (the bar's and the sheet's).
 - [ ] A start between keyframes: `Trimming…` shows with a moving bar and `Stop`; the result plays from the
@@ -374,7 +380,7 @@ through.
   the chosen point, with nothing from before it; it keeps the original's size (a 4096×2304 recording stays
   4096×2304); text is as sharp as in the original; `Stop` writes nothing and closes the window. Write down
   the time of a 60 s 4K re-encode and its size against the original's: ______ s, ______ MB of ______ MB
-- [ ] A trim that only moves the end: saved at once, with no sheet.
+- [ ] A trim that only moves the end: saved at once after the save sheet, with no `Trimming…` sheet.
 - [ ] The sheet's text, buttons and default button for each row of the design's table (Save target with a
   destination and a link, with a destination and no link, with no destination; `.unavailable` with a
   destination; `.unavailable` with none disables `Trim…`). Save on an uploaded recording shows `Link not
@@ -456,8 +462,8 @@ Result (2026-10-24), passed:
   `-RecordingSpikeMicrophone 'AppleUSBAudioEngine:RODE Microphones:RODE AI-1:8D1E47B5:1,2'`.
 - File line: `vide×1 soun×1, 3.21 s`. Speech audible: about −20 dBFS from 1.5 s, against −57 dBFS before.
 
-**Probe 5. Trim's export on Tim's recordings (H2, once the Trim window lands).** No longer a gate: the
-export is built to the amended design, and this checks it by hand. Make `SCRecordingOutput` recordings of
+**Probe 5. Trim's export on Tim's recordings (H2).** No longer a gate: the export, the window and the
+wiring are built to the amended design, and this checks them by hand. Make `SCRecordingOutput` recordings of
 60 s at 2560×1664 and at 4096×2304 with the app (moving content with text, with system audio). The trim
 probe's first lines give each one's edit lists and sync samples (it then runs its own three exports into
 `$W`; only those first lines matter now):
@@ -526,14 +532,14 @@ came out). Write `confirm` or `overrule` and why, then copy the result to the de
   recording never muted has none. ______
 - [ ] 9. Trim: the download posts `Downloading <key>` under `Opening the recording…`; `Trim…`, the sheet and `Upload
   Trimmed` read `hasUploadDestination` (built); the method is decided on the source before the mute step; a
-  quit does not wait for a Trim pass; `trimWindows`, `trimPasses` and `trimmingIDs` live in the class body's
-  Trim group (`trimWindows` is held with H2). ______
+  quit does not wait for a Trim pass; `trimWindows`, `openingTrimIDs` (the build's), `trimPasses` and
+  `trimmingIDs` live in the class body's Trim group. ______
 - [ ] 10. Rows: a Recent Captures row has no Retry; a video row gains `scissors` (`Trim…`) and, when shown,
   `arrow.up.circle` (`Upload Trimmed`) after Copy File; a marked row opens the file on a click and has no Copy
   File. The size gives way first when the detail is too wide. ______
 - [ ] 11. Sizes (spec 2.13): a GIF's size is the GIF's after its move (after a failed conversion the MP4's); a muted
-  recording's is the rewritten file's; Trim's is the trimmed file's (held with H2). Check a GIF's and a muted
-  recording's row sizes against `ls -l`. ______
+  recording's is the rewritten file's; Trim's is the trimmed file's. Check a GIF's, a muted recording's and a
+  trimmed recording's row sizes against `ls -l`. ______
 - [ ] 12. `saveRecording`'s new parameters: `saveNotice:`, `microphoneNote:` and `unmutedIntervals:`, each
   defaulting to none so R1's callers compile. Internal; nothing to see. ______
 

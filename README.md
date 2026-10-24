@@ -277,16 +277,23 @@ silencing each stretch from 0.1 s before the press to 0.3 s after the unmute (mo
 reports a longer latency, and at least 0.6 s for a Bluetooth input), and re-encodes the audio once; the
 video is untouched. If the rewrite fails, the file is saved without sound (*Sound removed*); if that
 fails too, it is kept inside TidyShot, marked *Sound not muted*, never uploaded, copied, saved to the
-folder or dragged, and offers Open and Delete. A crash leaves a small log in `tmp/Mute` and the next
+folder or dragged, and offers Open, *Trim…* and Delete; a trim, of any range, silences the muted stretches
+and clears the mark. A crash leaves a small log in `tmp/Mute` and the next
 launch applies it before recovering the file. Two limits are accepted: sound from an input whose
 real latency exceeds its lag can leak in its last moments before Unmute, and a kill in the milliseconds
 between a press and its log write recovers that press's sound.
 
-**Trim.** *Trim…* in a recording's card menu and Recent Captures row is designed (R2 design, Trim) and
-**held in this build**: its pure rules, the in-progress marker and Delete's refusal are built and
-tested, but the export, the Trim window and the menu wiring wait for a design amendment, because the
-system's re-encode preset passes H.264 at or under 3840 by 2160 through and scales larger recordings
-down. Nothing in the app shows *Trim…* yet.
+**Trim.** *Trim…* in an MP4 recording's card menu and Recent Captures row (the scissors) opens it in a
+window with the system's trim bar, as in QuickTime: drag the yellow handles, then *Trim*. A recording
+with no local file, or one outside the save folder, downloads first (*Opening the recording…*). A sheet
+then offers *Save* (over the recording's own file), *Save and Upload* (save, then replace the uploaded
+object at the same link) and *Cancel*, as there is a file to save over and an upload destination. What
+you cut is gone from the file, not hidden: a start on a keyframe, or a trim that only moves the end,
+copies the samples and saves at once, and any other start re-encodes the video at the recording's own
+size, with a *Trimming…* bar and *Stop*. A trim under half a second is refused, and a trim needs free
+space for the recording's size (twice that for a re-encode) plus 1 GB. Saving over an uploaded
+recording leaves its link showing the full recording, and the card and row say *Link not updated* until
+*Upload Trimmed* replaces it. While a trim writes, Retry, *Upload Trimmed* and Delete wait.
 
 **After you stop.** The recording follows Settings > General > After capture, as a screenshot does:
 - *Save and copy image* moves the file into the save folder and, with *Copy image to clipboard* on,
@@ -325,8 +332,7 @@ macOS to finish writing the file.
 
 TidyShot logs one `Recording:` line for each stream and output callback, with the time recorded so
 far: `/usr/bin/log show --last 10m --style compact --predicate 'process == "TidyShot"' | grep "Recording:"`
-(the full path, because zsh has a `log` builtin). Trim is built in parts and held (R2 built notes in
-the R2 design). Pause, uploads over 5 GiB, a separate upload lane for videos, dragging an uploaded
+(the full path, because zsh has a `log` builtin). Pause, uploads over 5 GiB, a separate upload lane for videos, dragging an uploaded
 video that has no local copy, and URL commands for recording are planned for a later release (the
 recording designs' lists). The start, the conversion, the mute ladder and recovery log `Recording:`
 lines too, among them `Recording: mute lag <s> s (<input>)` at each start and the microphone prompt's

@@ -324,6 +324,102 @@ struct RecordingTrimTests {
                                        recordExists: false) == .keepFile)
     }
 
+    // MARK: The put
+
+    /// A save-folder file is put under the folder's scope and `pending/<id>.mp4` under none; Save and
+    /// Upload with nothing to write over moves the file in as a new pending file.
+    @Test func thePutHoldsTheSaveFoldersScopeOnlyForASaveFolderFile() {
+        #expect(RecordingTrim.putTarget(for: .saveTarget(.saveFolderFile(savedFile, folder: folder)))
+                == .replace(savedFile, scope: folder))
+        #expect(RecordingTrim.putTarget(for: .saveTarget(.pendingFile(pendingFile))) == .replace(pendingFile, scope: nil))
+        #expect(RecordingTrim.putTarget(for: .newPendingFile) == .newPendingFile)
+        #expect(RecordingTrim.putTarget(for: .refuse(EditorAvailability.uploadingRefusal)) == nil)
+        #expect(RecordingTrim.putTarget(for: .saveTarget(.unavailable(EditorSaveTarget.noFileReason))) == nil)
+    }
+
+    /// The put swaps the trimmed file in over the recording, and a put that fails leaves the recording
+    /// as it was.
+    @Test func thePutReplacesTheRecordingAndAFailedPutLeavesIt() throws {
+        let folder = FileManager.default.temporaryDirectory.appending(path: "TrimPut-\(UUID().uuidString)",
+                                                                     directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let recording = folder.appending(path: "Recording.mp4")
+        let trimmed = folder.appending(path: "A-trimmed.mp4")
+        try Data("full".utf8).write(to: recording)
+        try Data("trimmed".utf8).write(to: trimmed)
+
+        try RecordingTrim.putTrimmed(trimmed, over: recording, scope: nil)
+        #expect(try Data(contentsOf: recording) == Data("trimmed".utf8))
+        #expect(!FileManager.default.fileExists(atPath: trimmed.path(percentEncoded: false)))
+
+        // Nothing to move: the put throws and the recording stays.
+        #expect(throws: (any Error).self) { try RecordingTrim.putTrimmed(trimmed, over: recording, scope: nil) }
+        #expect(try Data(contentsOf: recording) == Data("trimmed".utf8))
+    }
+
+    /// `uploadIsStale` is set before the put for a record with a link, also one kept only in
+    /// `priorUpload`, and not again for one already stale, whose flag a failed put must leave set.
+    @Test func thePutMarksTheLinkStaleOnlyWhenItSetsTheFlag() {
+        #expect(RecordingTrim.putMarksLinkStale(savedAndUploaded))
+        #expect(!RecordingTrim.putMarksLinkStale(saved))
+        #expect(!RecordingTrim.putMarksLinkStale(pending))
+        var stale = savedAndUploaded
+        stale.uploadIsStale = true
+        #expect(!RecordingTrim.putMarksLinkStale(stale))
+        var interrupted = recording(savedFile, state: .failed(message: "Upload was interrupted."), located: true)
+        interrupted.priorUpload = PriorUpload(url: link, key: "rec.mp4", location: location, isReplace: true)
+        #expect(RecordingTrim.putMarksLinkStale(interrupted))
+    }
+
+    @Test func theSheetsResponseChoosesItsButtonByIndex() {
+        let buttons: [RecordingTrim.SheetButton] = [.saveAndUpload, .save, .cancel]
+        #expect(RecordingTrim.sheetButton(at: 0, of: buttons) == .saveAndUpload)
+        #expect(RecordingTrim.sheetButton(at: 1, of: buttons) == .save)
+        #expect(RecordingTrim.sheetButton(at: 2, of: buttons) == .cancel)
+        // The window closed under the sheet (`NSModalResponse.cancel`), or any other response.
+        #expect(RecordingTrim.sheetButton(at: -1001, of: buttons) == .cancel)
+        #expect(RecordingTrim.sheetButton(at: 3, of: buttons) == .cancel)
+    }
+
+    // MARK: Failure and cleanup
+
+    @Test func aFullDiskReadsDiskFullAndOtherErrorsTheirOwnText() {
+        #expect(RecordingTrim.diskFullText == "Disk Full")
+        #expect(RecordingTrim.failureText(for: CocoaError(.fileWriteOutOfSpace)) == "Disk Full")
+        #expect(RecordingTrim.failureText(for: POSIXError(.ENOSPC)) == "Disk Full")
+        #expect(RecordingTrim.failureText(for: AVError(.diskFull)) == "Disk Full")
+        let wrapped = NSError(domain: NSCocoaErrorDomain, code: NSFileWriteUnknownError,
+                              userInfo: [NSUnderlyingErrorKey: POSIXError(.ENOSPC) as NSError])
+        #expect(RecordingTrim.failureText(for: wrapped) == "Disk Full")
+        #expect(RecordingTrim.failureText(for: RecordingTrimError.notEnoughSpace) == "Not enough disk space.")
+        #expect(RecordingTrim.failureText(for: RecordingTrimError.couldNotRead) == "The recording could not be read.")
+        let missing = CocoaError(.fileNoSuchFile)
+        #expect(RecordingTrim.failureText(for: missing) == missing.localizedDescription)
+    }
+
+    /// Closing a Trim window removes `tmp/Trim/<id>*`: the download, the trimmed file and the muted
+    /// copy. Another record's files stay, and a missing folder is nothing to remove.
+    @Test func closingAWindowRemovesOnlyItsRecordsWorkFiles() throws {
+        let folder = FileManager.default.temporaryDirectory.appending(path: "TrimClean-\(UUID().uuidString)",
+                                                                     directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let (id, other) = (UUID(), UUID())
+        let mine = [folder.appending(path: "\(id.uuidString).mp4"), RecordingTrim.trimmedURL(for: id, in: folder),
+                    RecordingTrim.mutedURL(for: id, in: folder)]
+        let theirs = [folder.appending(path: "\(other.uuidString).mp4"), RecordingTrim.trimmedURL(for: other, in: folder)]
+        for file in mine + theirs {
+            try Data("x".utf8).write(to: file)
+        }
+
+        RecordingTrim.removeWorkFiles(of: id, in: folder)
+        let left = try FileManager.default.contentsOfDirectory(atPath: folder.path(percentEncoded: false)).sorted()
+        #expect(left == theirs.map(\.lastPathComponent).sorted())
+
+        RecordingTrim.removeWorkFiles(of: id, in: folder.appending(path: "Missing", directoryHint: .isDirectory))
+    }
+
     // MARK: The in-progress marker
 
     @Test func whileTrimmingEditorAvailabilityRefusesWithTheTrimmingText() {

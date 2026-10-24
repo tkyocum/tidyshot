@@ -7,11 +7,7 @@ extension AppCoordinator {
     func showOverlay(for record: CaptureRecord, image: CGImage?, scale: CGFloat, captureDisplayID: CGDirectDisplayID,
                              retainsImage: Bool) {
         guard settings.showOverlay, let screen = overlayScreen(captureDisplayID: captureDisplayID) else { return }
-        // The well shows the top of a tall capture, as its thumbnail does. The crop shares the pixels.
-        let shown = image.map { full in
-            full.cropping(to: ThumbnailMaker.cropForThumbnail(CGSize(width: full.width, height: full.height))) ?? full
-        }
-        let thumbnail = shown.map { NSImage(cgImage: $0, size: NSSize(width: CGFloat($0.width) / scale, height: CGFloat($0.height) / scale)) }
+        let thumbnail = image.map { Self.cardThumbnail(of: $0, scale: scale) }
         overlay.show(record: record, thumbnail: thumbnail, screen: screen,
                      autoCloseSeconds: settings.overlayAutoCloseSeconds, actions: overlayActions())
         pushCardFlags(for: record.id)
@@ -34,12 +30,23 @@ extension AppCoordinator {
             copyImage: { [weak self] id in self?.afterMenuTracking { Task { await self?.copyImage(recordID: id) } } },
             open: { [weak self] id in self?.openCapture(recordID: id) },
             copyFile: { [weak self] id in self?.afterMenuTracking { Task { await self?.copyFile(recordID: id) } } },
-            // Held with Trim (R2 plan, Gates): `pushCardFlags` leaves the card's `trimState` at its
-            // default, so neither item shows and these are never called.
-            trim: { _ in },
-            uploadTrimmed: { _ in },
+            trim: { [weak self] id in self?.afterMenuTracking { self?.trimCapture(recordID: id) } },
+            uploadTrimmed: { [weak self] id in self?.afterMenuTracking { self?.uploadTrimmed(recordID: id) } },
             prepareDrag: { [weak self] id in self?.prepareDragFile(recordID: id) },
             dragEnded: { [weak self] id, accepted in self?.dragDidEnd(recordID: id, accepted: accepted) })
+    }
+
+    /// What a card shows for `image`: the top of a tall capture, as its thumbnail does (the crop
+    /// shares the pixels), at its point size.
+    private static func cardThumbnail(of image: CGImage, scale: CGFloat) -> NSImage {
+        let shown = image.cropping(to: ThumbnailMaker.cropForThumbnail(CGSize(width: image.width, height: image.height))) ?? image
+        return NSImage(cgImage: shown, size: NSSize(width: CGFloat(shown.width) / scale, height: CGFloat(shown.height) / scale))
+    }
+
+    /// A trimmed recording's new poster on the card that shows it, as a recording's card shows one
+    /// (scale 1). Does nothing when no card shows the record.
+    func showCardPoster(_ poster: CGImage, for id: UUID) {
+        overlay.setThumbnail(Self.cardThumbnail(of: poster, scale: 1), for: id)
     }
 
     /// The screen for the card stack under `settings.overlayDisplay`; nil without screens.
@@ -92,7 +99,7 @@ extension AppCoordinator {
 
     /// Pushes the record's current state into the overlay, if the overlay is showing it, and into
     /// the record's editor, so every upload progress, success, failure and retry reaches both.
-    /// Every change to `optimizingVideoIDs` or `linkNotCopiedIDs` calls it too.
+    /// Every change to `optimizingVideoIDs`, `linkNotCopiedIDs`, `trimmingIDs` or `deletingIDs` calls it too.
     func refreshOverlay(for id: UUID) {
         if let record = history.record(id: id) {
             overlay.update(record: record)
@@ -101,10 +108,14 @@ extension AppCoordinator {
         pushEditorState(for: id)
     }
 
-    /// The card's two flags that are not on the record: `Optimizing…` and whether the URL was copied.
-    /// Its `trimState` waits for the trim gate (R2 plan, Gates) and stays at its default.
+    /// The card's flags that are not on the record: `Optimizing…`, whether the URL was copied, and its
+    /// Trim items (`trimMenuState(for:)`), so every refresh after a change to `trimmingIDs` or
+    /// `deletingIDs` updates them.
     private func pushCardFlags(for id: UUID) {
         overlay.setOptimizing(optimizingVideoIDs.contains(id), for: id)
         overlay.setLinkWasCopied(!linkNotCopiedIDs.contains(id), for: id)
+        if let record = history.record(id: id) {
+            overlay.setTrimState(trimMenuState(for: record), for: id)
+        }
     }
 }

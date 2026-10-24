@@ -39,6 +39,29 @@ struct UploadRefusalTests {
         #expect(retried.map(\.id) == [first.id, last.id])
     }
 
+    /// `Upload Trimmed` (design, Stale link): refused while trimmed or marked, then as the editor's
+    /// Upload is (deleted, being deleted, uploading), then with no local file.
+    @Test func uploadTrimmedIsRefusedInTheGatesOrder() {
+        let folder = URL(filePath: "/Users/tim/Movies/TidyShot", directoryHint: .isDirectory)
+        let link = URL(string: "https://snap.tky.io/rec.mp4")!
+        var stale = record(state: .uploaded(url: link, key: "rec.mp4"))
+        stale.uploadIsStale = true
+        func refusal(_ record: CaptureRecord, deleting: Bool = false, trimming: Bool = false) -> String? {
+            AppCoordinator.uploadTrimmedRefusal(for: record, saveFolder: folder, isDeleting: deleting, isTrimming: trimming)
+        }
+        #expect(refusal(stale) == nil)
+        #expect(refusal(stale, deleting: true, trimming: true) == EditorAvailability.trimmingRefusal)
+        var marked = stale
+        marked.unmutedIntervals = [MuteInterval(start: 0, end: 1)]
+        #expect(refusal(marked, deleting: true) == CaptureRecord.soundNotMutedBody)
+        #expect(refusal(stale, deleting: true) == EditorAvailability.deletingRefusal)
+        #expect(refusal(record(state: .uploading(fraction: 0.4))) == EditorAvailability.uploadingRefusal)
+        var noFile = stale
+        noFile.fileURL = nil
+        noFile.fileIsTemporary = false
+        #expect(refusal(noFile) == "The file could not be read: no local file")
+    }
+
     @Test func retryFailedUploadsLeavesOutMarkedAndDeletingRecords() {
         let (first, marked, deleting, last) = (record(.image), record(unmuted: [MuteInterval(start: 0, end: 4)]),
                                                record(), record(.gif))

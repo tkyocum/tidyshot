@@ -19,12 +19,13 @@ extension AppCoordinator {
             return
         }
         deletingIDs.insert(recordID)
-        // The record's editor drops Save and Upload before the alert shows, through
-        // `cancelUpload`, `deleteObjects` and the second alert, and learns the outcome either way.
-        pushEditorState(for: recordID)
+        // The record's editor drops Save and Upload, and its card `Trim…` and `Upload Trimmed`, before
+        // the alert shows, through `cancelUpload`, `deleteObjects` and the second alert, and both learn
+        // the outcome either way.
+        refreshOverlay(for: recordID)
         defer {
             deletingIDs.remove(recordID)
-            pushEditorState(for: recordID)
+            refreshOverlay(for: recordID)
         }
         if CaptureDeletion.asksFirst(confirmBeforeDeleting: settings.confirmBeforeDeleting) {
             guard confirmDelete(of: record) else { return }
@@ -132,10 +133,10 @@ extension AppCoordinator {
         removeRecord(id: recordID)
     }
 
-    /// Removes the record and its thumbnail, and closes the overlay if it shows the record. The
-    /// record is read again here, not taken from before the delete's awaits, and the thumbnail
-    /// named for the id is removed even when the record does not name it yet: one that finished
-    /// during those awaits is not left behind.
+    /// Removes the record and its thumbnail, and closes the overlay, the pin and the Trim window that
+    /// show the record. The record is read again here, not taken from before the delete's awaits, and
+    /// the thumbnail named for the id is removed even when the record does not name it yet: one that
+    /// finished during those awaits is not left behind.
     private func removeRecord(id: UUID) {
         let defaultName = thumbnails.fileName(for: id)
         if let name = history.record(id: id)?.thumbnailFileName, name != defaultName {
@@ -151,6 +152,8 @@ extension AppCoordinator {
         forgetLatestCapture(id)
         overlay.close(recordID: id, reason: .deleted)
         pins.close(recordID: id)
+        // Cancels a pass before its put; Delete refuses while one writes.
+        trimWindows[id]?.close()
         removeDragFolder(id)
         pushEditorState(for: id)
     }
@@ -210,8 +213,8 @@ extension AppCoordinator {
         }
     }
 
-    /// Thumbnails and temporary files of records dropped by retention, their pins closed, the
-    /// retained image dropped when it is theirs, and their editors told the record is gone
+    /// Thumbnails and temporary files of records dropped by retention, their pins and Trim windows
+    /// closed, the retained image dropped when it is theirs, and their editors told the record is gone
     /// (`didPrune` runs after the store dropped them). Files in the save folder are
     /// left alone. (A record whose temporary file is its only copy, or holds an edit its link does
     /// not show yet, is never pruned.)
@@ -231,6 +234,9 @@ extension AppCoordinator {
             }
             forgetLatestCapture(record.id)
             pins.close(recordID: record.id)
+            // Cancels a pass before its put; a put under way finishes and removes its pending file
+            // (`RecordingTrim.afterPut`).
+            trimWindows[record.id]?.close()
             pushEditorState(for: record.id)
         }
     }

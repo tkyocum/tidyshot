@@ -176,7 +176,12 @@ final class AppCoordinator {
     @ObservationIgnored var deletingIDs: Set<UUID> = []
 
     // MARK: Trim state (AppCoordinator+Trim.swift)
-    // +Upload and +Delete read trimmingIDs.
+    // +Upload and +Delete read trimmingIDs; +Delete closes trimWindows.
+    /// Open Trim windows, one per record.
+    @ObservationIgnored var trimWindows: [UUID: TrimWindowController] = [:]
+    /// Records whose recording is downloading for a Trim window, so a second `Trim…` does not
+    /// download it again.
+    @ObservationIgnored var openingTrimIDs: Set<UUID> = []
     /// Each record's Trim pass, from the export through the put and its bookkeeping. `Stop` and
     /// closing the Trim window cancel it before the put, and the window's clean-up waits for it.
     @ObservationIgnored var trimPasses: [UUID: Task<Void, Never>] = [:]
