@@ -42,8 +42,8 @@ final class AppCoordinator {
                            },
                            microphones: microphones),
         makeDriver: { [engine] in ScreenRecordingDriver(engine: engine) })
-    /// The audio inputs and the microphone access, for Capture → Recording → `Microphone` and a
-    /// recording's start and loss reason.
+    /// The audio inputs and the microphone access, for a recording's loss reason and its start (held
+    /// with the microphone, R2 plan, Gates). Capture → Recording → `Microphone` reads its own.
     @ObservationIgnored lazy var microphones: any MicrophoneDevices = LiveMicrophoneDevices()
     /// Hide desktop icons (spec 2.10): the wallpaper over the desktop's icons and widgets, while a
     /// capture runs or until turned off. A display it cannot cover is reported once per session;

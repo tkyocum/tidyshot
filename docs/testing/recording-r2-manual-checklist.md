@@ -145,15 +145,19 @@ prints the GIF frame count and the summed delays; `ffprobe -v error -show_entrie
   exist`: the five defaults are registered, not written. Change `Format` to GIF, `GIF frame rate` to
   20 fps and `GIF size` to `Full size`, quit and reopen: the panes still show them, and `defaults read
   io.tky.tidyshot <key>` (one key per call) reads `gif`, `20` and `0` for `recordingFormat`,
-  `gifFrameRate` and `gifMaxSide`. Hand-written values fall back: `defaults write io.tky.tidyshot
-  gifFrameRate -int 12` shows `15 fps`, `gifMaxSide -int 640` shows `1280 px`, `recordingFormat -string
-  webm` shows `MP4`. Put them back with the reset loop (quit first).
+  `gifFrameRate` and `gifMaxSide`. Hand-written values fall back. TidyShot reads its settings only at
+  launch, so quit it first, then `defaults write io.tky.tidyshot gifFrameRate -int 12`, `defaults write
+  io.tky.tidyshot gifMaxSide -int 640` and `defaults write io.tky.tidyshot recordingFormat -string webm`,
+  and open it again: `Format` shows `MP4`; switch it to GIF and the rows show `15 fps` and `1280 px`.
+  Quit, put them back with the reset loop, and open it again.
 - [ ] `Microphone` lists `Off`, `System Default` and each input by name (Tim's six: TKY Microphone,
   Brio 500, MacBook Pro Microphone, LG UltraFine Display Audio, CalDigit TS4 Audio - Rear, RODE AI-1).
   With the Recording tab open, plug the RODE AI-1 in: it appears; unplug it: it goes. Choose it, then
   unplug it: the row reads `RODE AI-1 (not connected)` and stays selected; plug it in
-  again and the plain name returns. After `defaults delete io.tky.tidyshot recordingMicrophoneName` and
-  an unplug it reads `Unknown microphone (not connected)`.
+  again and the plain name returns. With it chosen and unplugged, quit TidyShot, run `defaults delete
+  io.tky.tidyshot recordingMicrophoneName` and open it again (it reads the name only at launch, and writes it
+  back while the input is plugged in): the row reads `Unknown microphone (not connected)`. Plug it in, and the
+  plain name returns.
 - [ ] Choosing an input with access not yet decided shows the system prompt, which reads `TidyShot
   records your microphone in screen recordings when you turn it on.`. Allow keeps the choice. After
   `tccutil reset Microphone io.tky.tidyshot`, choosing an input and answering Don't Allow puts the row
@@ -223,13 +227,17 @@ Format = GIF. ⌃⇧8 and drag an area; the bar is for GIF.
   one MP4 recording, it plays, no record shows a GIF, and `tmp/Recording` is empty. If a GIF had been moved
   and the kill came before the MP4 was removed (a few milliseconds; probably not reproducible by hand), the
   next launch logs `Recording: <name> was saved as a GIF, removed`. Write down what happened: ______
-- [ ] A nearly full disk. The conversion needs 1 GB free where it starts, and a recording stops itself under
-  1 GB, so the two meet. Fill the startup volume with `mkfile <n>g ~/Desktop/fill1.bin` until `df -g /` shows
-  about 2.2 GB free, start a GIF recording, then `mkfile 1500m ~/Desktop/fill2.bin` so under 1 GB is left:
-  the recording stops itself, and the conversion does not start. `GIF not made` / `Not enough disk space to
-  make the GIF. The recording was saved as an MP4.` posts, the MP4 is saved with its record, and no `<id>.gif`
-  is left in `tmp/Recording`. Delete both filler files at once. (The mid-write check at every 32 MB cannot be
-  forced by hand; `GIFFileSinkTests` cover it.) Write down whether you ran it: ______
+- [ ] A nearly full disk (optional). **This fills the startup volume. With under 1 GB free, other apps, swap
+  and macOS itself can fail or lose unsaved work, so save and quit what you can first, keep `rm
+  ~/Desktop/fill1.bin ~/Desktop/fill2.bin` typed in a second Terminal window, and skip the step (write
+  `skipped` below) if you would rather not.** The conversion needs 1 GB free where it starts, and a recording
+  stops itself under 1 GB, so the two meet. Fill the startup volume with `mkfile <n>g ~/Desktop/fill1.bin`
+  until `df -g /` shows about 2.2 GB free, start a GIF recording, then `mkfile 1500m ~/Desktop/fill2.bin` so
+  under 1 GB is left: the recording stops itself, and the conversion does not start. `GIF not made` / `Not
+  enough disk space to make the GIF. The recording was saved as an MP4.` posts, the MP4 is saved with its
+  record, and no `<id>.gif` is left in `tmp/Recording`. Delete both filler files at once. (The mid-write
+  check at every 32 MB cannot be forced by hand; `GIFFileSinkTests` cover it.) Write down whether you ran
+  it: ______
 - [ ] Conversion times. Record 30 s and 60 s at 15 fps and 1280 px of scrolling text, of a mostly static
   screen and of colour-heavy content, and 30 s at `Full size` of the colour-heavy content. Write down each
   time against the recording's length: ______ (the spike took 3.8 s for 10.3 s of text at 1280 px, 4.2 s
@@ -272,6 +280,9 @@ loop, or music).
   stretch is silenced from 0.1 s before the press to 0.3 s after the unmute (about 2.9 s to 6.3 s, and 7.9 s
   to the end), sound elsewhere is on time with the picture, and the audio ends with the video. `tmp/Mute` is
   empty afterwards. Write down anything off: ______
+  Do it as the first muted recording after a launch, and write down the seconds from Stop to the card: ______
+  s. In the test host the first reader of a track's sound waits about 90 s on coreaudiod (built notes, The
+  suite's time); a wait like that here goes to Tim.
 - [ ] Press mute in the first second (the button is live as soon as the bar shows): the first stretch starts
   at 0. Press it before the first frame if you can.
 - [ ] With Clop on and `Upload and copy URL`, the same recording: the uploaded link plays in Safari and in
@@ -457,7 +468,7 @@ came out). Write `confirm` or `overrule` and why, then copy the result to the de
 - [ ] 2. Notices after Stop come in a fixed order (`RecordingNoticeOrder`): the save's own notification
   (`GIF not made`, `Sound removed`, or `Recording saved`/`Sound not muted` from the plan), then `Recording
   stopped`, then the microphone note. `GIF not made` and `Sound removed` always post in normal mode, whatever
-  Show notification says. A quit's `Recording failed` no longer posts in quit mode. ______
+  Show notification says. Nothing posts in quit mode (D below). ______
 - [ ] 3. `Recording.recoveryURL` is the MP4 for a GIF: when the GIF cannot leave `tmp/Recording`, `Not saved to a
   folder` names the MP4's path. (Not reachable by hand.) ______
 - [ ] 4. Testable steps: `GIFConversion`, `RecordingRecovery.prepare` and `sweepMuteFolder`, and `RecordingMute.resolve`
@@ -484,12 +495,15 @@ came out). Write `confirm` or `overrule` and why, then copy the result to the de
 - [ ] 12. `saveRecording`'s new parameters: `saveNotice:`, `unmutedIntervals:` (built) and `microphoneNote:` (held
   with H1), each defaulting to none so R1's callers compile. Internal; nothing to see. ______
 
-Three more where the build made a call the design did not settle; confirm or overrule:
+Four more where the build made a call the design did not settle. Each needs Tim's confirm or overrule
+before merge:
 - [ ] A. `GIFMakerError.couldNotRead` (`The recording could not be read.`) is the body when a recording cannot be
   read for conversion: `GIF not made` / `The recording could not be read. The recording was saved as an MP4.` ______
 - [ ] B. The marked card keeps a disabled `Copy URL` (a marked record never has a link). Leave it, or drop it? ______
 - [ ] C. The cache note's title when a replaced upload's URL was not copied is `Uploaded` (the copied branch's `Uploaded,
   URL copied` would be untrue there). ______
+- [ ] D. A recording that ends with nothing kept (`.nothing`) no longer posts `Recording failed` while TidyShot quits;
+  R1 posted it. In quit mode no notice posts at all (`RecordingNoticeOrder.afterStop(… quitMode:)`). ______
 
 ## Regression
 - [ ] ⌃⇧1 to ⌃⇧7 behave as in the 6a, 6b and 7b checklists after a GIF and after an MP4 recording.

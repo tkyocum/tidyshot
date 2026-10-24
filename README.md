@@ -219,8 +219,8 @@ Escape, or either record shortcut, cancels the countdown. Recording needs the sa
 permission as screenshots, and Microphone access only when you choose an input (see Permissions).
 
 A small panel shows the elapsed time (orange from 5:00, or from 0:30 for a GIF, with no limit), a mute
-button when the recording has sound, Stop and Cancel. A GIF's panel has a `GIF` tag where the mute
-button would be. It never takes focus, you can drag it, and it is not in the video. An area recording
+button when the recording has sound, Stop and Cancel. A GIF's panel has no mute button and shows a `GIF`
+tag before the time. It never takes focus, you can drag it, and it is not in the video. An area recording
 also has the dashed frame of a scrolling capture. Stop with the panel, with ⌃⇧8 or the fullscreen shortcut, or with *Stop
 Recording* at the top of the menu; the menu bar icon is a `record.circle` meanwhile. Escape is left
 to your own apps while recording. Cancel discards the recording: at once under 5 seconds, and from 5
