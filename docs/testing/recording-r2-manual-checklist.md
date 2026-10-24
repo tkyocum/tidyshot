@@ -38,17 +38,20 @@ build has no Screen Recording grant and a grant is Tim's to give.
   its mute and lag items included, and the Mute section's bar for a dropped microphone, none of which has
   run, and the first prompt, which Probe 4 did not see because access was already granted. Neither holds
   code.
-- **H2. Trim's re-encode (Task 7's trim gate, tripped).** Held: `RecordingTrim.startsOnSyncSample`,
-  `export` and `exportForSave` with their tests, `TrimWindowController`, `trimWindows`, the pass, the
-  put, the download and the clean-up in `AppCoordinator+Trim.swift` (`trimCapture`, `uploadTrimmed`,
-  `finishTrimWrite`), closing a Trim window in `removeRecord` and `removeFiles(ofPruned:)`, and the
-  card's and row's wiring (`trimState` stays at its default, so `Trim…` and `Upload Trimmed` are
-  hidden, and the closures are no-ops). The probe showed `HighestQuality` passes H.264 at or under
-  3840×2160 through (its progress does not move and the cut samples stay in the file), scales larger
-  recordings down to 3840×2160, and one re-encode came out larger than its source. The design needs an
-  amendment before the export is built; what it has to settle is under Trim in the R2 built notes.
-  What Tim does: decide the four points there, and run Probe 5 on his own 60 s recordings. Every Trim
-  section of this checklist waits for it.
+- **H2. Trim (Task 7's trim gate, tripped; the design amended on 2026-10-24).** The probe showed
+  `HighestQuality` passes H.264 at or under 3840×2160 through (its progress does not move and the cut
+  samples stay in the file), scales larger recordings down to 3840×2160, and one re-encode came out
+  larger than its source. Tim decided the amendment (the design's Decided 2026-10-24, 1 to 4): Trim
+  re-encodes with its own pass at the source's size, the disk check reserves twice the source for a
+  re-encode, the method maps the start through the video's edit list, and a re-encode cuts the sound
+  exactly at the start. Part 1, the export (`RecordingTrim.startsOnSyncSample`, `export` and
+  `exportForSave`, with their tests), is built to it. Still held for part 2: `TrimWindowController`,
+  `trimWindows`, the pass, the put, the download and the clean-up in `AppCoordinator+Trim.swift`
+  (`trimCapture`, `uploadTrimmed`, `finishTrimWrite`), closing a Trim window in `removeRecord` and
+  `removeFiles(ofPruned:)`, and the card's and row's wiring (`trimState` stays at its default, so
+  `Trim…` and `Upload Trimmed` are hidden, and the closures are no-ops). What Tim does: nothing until
+  part 2 lands; then the Trim section and Probe 5, which is no longer a gate but a hand check of the
+  built export on his own 60 s recordings.
 - **H3. The input-latency measurements (Task 6).** Holds no code: the design's constants stay, and an
   input whose measured offset falls outside its lag goes back to Tim and into the PR. What Tim does:
   Probe 6 below with AirPods, the Brio 500, the iPhone input and a USB input.
@@ -359,15 +362,18 @@ selection overlay or the count-in, and the stream's `Recording: starting …` li
   click is silent. Write down each input's logged lag: ______ (see Probe 6)
 
 ## Trim (held: H2)
-Run these once the export, the window and the wiring have landed; the amended design may change a step.
+Run these once the window and the wiring (H2's part 2) have landed. The export (part 1) is built to the
+amended design: a start between keyframes re-encodes with TidyShot's own pass, a start on one passes
+through.
 - [ ] `Trim…` shows in the card's menu and the Recent Captures row actions (`scissors`) for MP4 recordings only,
   not for a GIF; it is disabled while the record uploads or is being deleted.
 - [ ] Save, Save and Upload (the link plays the trimmed video), an upload-only record that needs the download
   (the sheet offers `Save and Upload` only), and both Cancels (the bar's and the sheet's).
 - [ ] A start between keyframes: `Trimming…` shows with a moving bar and `Stop`; the result plays from the
-  chosen frame; IINA or `ffmpeg -ignore_editlist` shows nothing from before the start; text is as sharp as in
-  the original; `Stop` writes nothing and closes the window. Write down the time of a 60 s 4K re-encode:
-  ______ s
+  chosen frame; IINA or `ffmpeg -ignore_editlist` shows nothing from before the start; its sound starts at
+  the chosen point, with nothing from before it; it keeps the original's size (a 4096×2304 recording stays
+  4096×2304); text is as sharp as in the original; `Stop` writes nothing and closes the window. Write down
+  the time of a 60 s 4K re-encode and its size against the original's: ______ s, ______ MB of ______ MB
 - [ ] A trim that only moves the end: saved at once, with no sheet.
 - [ ] The sheet's text, buttons and default button for each row of the design's table (Save target with a
   destination and a link, with a destination and no link, with no destination; `.unavailable` with a
@@ -391,8 +397,9 @@ Run these once the export, the window and the wiring have landed; the amended de
   As… give the trimmed video, and `tmp/Drag/<id>` holds the trimmed file, not the old copy.
 - [ ] A `Sound not muted` record: Trim then Save leaves its muted stretches silent and clears the mark; after
   that Upload works.
-- [ ] A passthrough keeps at most two AAC packets (2,048 sample frames) of audio before the start; more goes
-  back to Tim before the export is built (Probe 5).
+- [ ] A trim from a keyframe (a passthrough) keeps at most two AAC packets (2,048 sample frames) of audio
+  before the start, hidden by the edit list; more goes back to Tim (Probe 5). A fixture test checks the
+  bound; this checks it on real recordings.
 
 ## Probes left open
 Each gives its command, a blank for the result and the log line. Copy the results into the R2 design's
@@ -449,21 +456,33 @@ Result (2026-10-24), passed:
   `-RecordingSpikeMicrophone 'AppleUSBAudioEngine:RODE Microphones:RODE AI-1:8D1E47B5:1,2'`.
 - File line: `vide×1 soun×1, 3.21 s`. Speech audible: about −20 dBFS from 1.5 s, against −57 dBFS before.
 
-**Probe 5. The trim re-encode on Tim's recordings (H2).** Make `SCRecordingOutput` recordings of 60 s at
-2560×1664 and at 4096×2304 with the app (moving content, with system audio), then, with one start between
-keyframes and one on a keyframe's track time (its media time minus the first edit's media start):
+**Probe 5. Trim's export on Tim's recordings (H2, once the Trim window lands).** No longer a gate: the
+export is built to the amended design, and this checks it by hand. Make `SCRecordingOutput` recordings of
+60 s at 2560×1664 and at 4096×2304 with the app (moving content with text, with system audio). The trim
+probe's first lines give each one's edit lists and sync samples (it then runs its own three exports into
+`$W`; only those first lines matter now):
 ```bash
-$W/trim-reencode ~/Movies/rec-2560.mp4 12.5 $W && $W/trim-reencode ~/Movies/rec-2560.mp4 <keyframe track time> $W
-$W/trim-reencode ~/Movies/rec-4096.mp4 12.5 $W && $W/trim-reencode ~/Movies/rec-4096.mp4 <keyframe track time> $W
-ffmpeg -ignore_editlist 1 -i $W/trim-hq-composed.mp4 -f null - 2>&1 | grep -i frame=
+$W/trim-reencode ~/Movies/rec-2560.mp4 12.5 $W 2>&1 | head -12
+$W/trim-reencode ~/Movies/rec-4096.mp4 12.5 $W 2>&1 | head -12
+```
+Then, in the app, Trim each recording twice and Save: once from 12.5 s (between keyframes: `Trimming…`
+shows, a re-encode), and once from a keyframe's track time (its media time minus the first edit's media
+start: saved at once, a passthrough). For each trimmed file:
+```bash
+ffmpeg -ignore_editlist 1 -i <trimmed.mp4> -f null - 2>&1 | grep -i frame=
+ffmpeg -i <trimmed.mp4> -f null - 2>&1 | grep -i frame=
+$W/trim-reencode <trimmed.mp4> 0 $W 2>&1 | head -6
 /usr/bin/log show --last 10m --style compact --predicate 'process == "TidyShot"' | grep "Recording:"
 ```
-Write down for each size: whether `AVSampleCursor` reports the sync samples (about 2 s apart); the passthrough's,
-`HighestQuality`'s and the composed re-encode's time, size and `fractionCompleted` readings; whether the
-progress moves; whether the output holds a video sample before the start; the audio packets before the start
-(at most 2, 2,048 sample frames); whether text is sharp in the re-encode; whether the re-encode is larger than
-its source. 2560: ______ 4096: ______ (The earlier probe, on the recordings at hand, is in the design's
-Probes: `HighestQuality` passed H.264 at or under 3840×2160 through.)
+Write down for each size: whether `AVSampleCursor` reports the sync samples (about 2 s apart); the
+re-encode's time (from Save until the card updates) and its size against the original's and the
+passthrough's; whether `Trimming…`'s bar moves; for the re-encode, that both `ffmpeg` lines count the same
+frames (nothing stored before the start), that its size is the original's, that text is as sharp as in
+the original, and that its sound starts at the chosen point; for the passthrough, the audio sample frames
+before the start that the probe's `audio:` line reports (at most 2,048; more goes back to Tim).
+2560: ______ 4096: ______ (Measured so far on fixtures and the recordings at hand: the design's Probes,
+`Trim export, as built`. The earlier probe of `HighestQuality`, which tripped the gate, is `Trim
+re-encode, as probed`.)
 
 **Probe 6. Input latency (H3).** List the inputs, read each one's reported latency and lag without recording,
 then record the offset per input:
@@ -550,6 +569,7 @@ Write these into the R2 design's Probes section (and the built notes for the gap
 - The sandboxed microphone run (Probe 4) and what the first prompt looked like.
 - What ScreenCaptureKit did when access was turned off or the input unplugged mid-recording.
 - Each input's measured offset against its lag (Probe 6).
-- The trim probe on the 60 s recordings (Probe 5), and Tim's decisions on the four points (built notes, Trim).
+- Probe 5 on the 60 s recordings: the export's times and sizes, its progress, sharpness, and what each
+  trimmed file stores before its start.
 - Whether the sandbox let Trim's put replace a file on another volume.
 - Anything above that failed.

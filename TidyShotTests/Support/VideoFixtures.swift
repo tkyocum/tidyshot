@@ -42,11 +42,14 @@ nonisolated enum VideoFixtures {
     /// sound starts late or ends early by that much, with an empty edit in its place, and the tone
     /// keeps its times. With `linearPCM` the sound is stored as 16-bit linear PCM in a QuickTime
     /// movie, which MP4 cannot hold. With `keyframeInterval` a sync sample comes at least every that
-    /// many frames, with frame reordering off, so decode order is presentation order.
+    /// many frames, with frame reordering off, so decode order is presentation order; with
+    /// `reordersFrames` too, frames are reordered as `SCRecordingOutput`'s are, and the video's first
+    /// sample is then at a media time after 0 (0.2 s at 10 fps), shown at track time 0 by an edit.
     @concurrent
     static func makeMP4(at url: URL, width: Int, height: Int, seconds: Double, audio: Bool,
                         pattern: Int? = nil, frameTimes: [Double]? = nil,
                         tone: [ClosedRange<Double>]? = nil, keyframeInterval: Int? = nil,
+                        reordersFrames: Bool = false,
                         sampleRate: Int = 44_100, channels: Int = 1, emptyEdit: EmptyEdit? = nil,
                         linearPCM: Bool = false) async throws {
         try? FileManager.default.removeItem(at: url)
@@ -60,7 +63,7 @@ nonisolated enum VideoFixtures {
         if let keyframeInterval {
             settings[AVVideoCompressionPropertiesKey] = [
                 AVVideoMaxKeyFrameIntervalKey: keyframeInterval,
-                AVVideoAllowFrameReorderingKey: false,
+                AVVideoAllowFrameReorderingKey: reordersFrames,
             ]
         }
         let video = AVAssetWriterInput(mediaType: .video, outputSettings: settings)

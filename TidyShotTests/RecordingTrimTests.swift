@@ -1,11 +1,13 @@
 import AVFoundation
 import Foundation
+import Synchronization
 import Testing
 @testable import TidyShot
 
-/// Trim's pure decisions (design, Trim): the range, the source, the sheet, the menu, the write-time
-/// plans, what follows a put, and the in-progress marker's refusals. The export, the sync-sample
-/// check and the window wait for the trim gate (plan, Gates).
+/// Trim (design, Trim): the range, the source, the sheet, the menu, the write-time plans, what
+/// follows a put and the in-progress marker's refusals, which are pure; then the method, the export
+/// and Save's export over `VideoFixtures` movies (Export, Method, Progress, Disk space).
+@Suite(.timeLimit(.minutes(2)))
 struct RecordingTrimTests {
     let folder = URL(filePath: "/Users/tim/Movies/TidyShot", directoryHint: .isDirectory)
     let savedFile = URL(filePath: "/Users/tim/Movies/TidyShot/Recording 2026-10-23 at 10.00.00.mp4")
@@ -52,6 +54,7 @@ struct RecordingTrimTests {
         #expect(RecordingTrim.tooShortText == "The trimmed recording would be too short.")
         #expect(RecordingTrim.notEnoughSpaceText == "Not enough disk space.")
         #expect(TrimRefusal.tooShort.message == RecordingTrim.tooShortText)
+        #expect(RecordingTrimError.notEnoughSpace.localizedDescription == "Not enough disk space.")
         #expect(EditorAvailability.trimmingRefusal == "This capture is being trimmed.")
         #expect(CaptureDeletion.trimmingRefusal == "This capture is being trimmed. Delete it when the trim finishes.")
     }
@@ -343,23 +346,540 @@ struct RecordingTrimTests {
 
     // MARK: Fixtures
 
-    /// The sync-sample tests (held with the export) read a 10 fps fixture with a sync sample every
-    /// 2 s; this checks the fixture gives one.
-    @Test func aKeyframeIntervalFixtureHasASyncSampleEveryInterval() async throws {
-        let url = FileManager.default.temporaryDirectory.appending(path: "RecordingTrimTests-\(UUID().uuidString).mp4")
-        defer { try? FileManager.default.removeItem(at: url) }
-        try await VideoFixtures.makeMP4(at: url, width: 64, height: 64, seconds: 5, audio: false, keyframeInterval: 20)
+    /// A folder of its own for one test's movies.
+    func makeFolder() throws -> URL {
+        let folder = FileManager.default.temporaryDirectory.appending(path: "RecordingTrimTests-\(UUID().uuidString)",
+                                                                     directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        return folder
+    }
+
+    func remove(_ folder: URL) {
+        try? FileManager.default.removeItem(at: folder)
+    }
+
+    func exists(_ url: URL) -> Bool {
+        FileManager.default.fileExists(atPath: url.path(percentEncoded: false))
+    }
+
+    func contents(of folder: URL) throws -> [String] {
+        try FileManager.default.contentsOfDirectory(atPath: folder.path(percentEncoded: false)).sorted()
+    }
+
+    func range(_ start: Double, _ end: Double) -> CMTimeRange {
+        CMTimeRange(start: t(start), end: t(end))
+    }
+
+    /// 320 × 200 at 10 fps with frame `n` a grey of level `64 + 16n mod 128`, a 1 kHz tone over
+    /// `tone` (mono at 44.1 kHz unless told otherwise) or no sound, and with `keyframeInterval` a
+    /// sync sample every that many frames; `reorders` gives it a recording's frame reordering and
+    /// leading edit.
+    func movie(in folder: URL, _ name: String = "source.mp4", seconds: Double = 4,
+               tone: [ClosedRange<Double>]? = [0...4], keyframeInterval: Int? = nil, reorders: Bool = false,
+               sampleRate: Int = 44_100, channels: Int = 1, width: Int = 320, height: Int = 200) async throws -> URL {
+        let url = folder.appending(path: name)
+        try await VideoFixtures.makeMP4(at: url, width: width, height: height, seconds: seconds, audio: tone != nil,
+                                        tone: tone, keyframeInterval: keyframeInterval, reordersFrames: reorders,
+                                        sampleRate: sampleRate, channels: channels)
+        return url
+    }
+
+    /// The time of the first frame between `start` and `end` s with a channel louder than a tenth of
+    /// full scale, or with `last` of the last one; nil when none is (the mute tests' timing method).
+    func loud(_ audio: MovieSamples.Audio, from start: TimeInterval, to end: TimeInterval,
+              last: Bool = false) -> TimeInterval? {
+        let first = max(0, Int((start * audio.sampleRate).rounded(.down)))
+        let stop = min(audio.samples.count / audio.channels, Int((end * audio.sampleRate).rounded(.up)))
+        guard stop > first else { return nil }
+        func isLoud(_ frame: Int) -> Bool {
+            (0..<audio.channels).contains { abs(Int(audio.samples[frame * audio.channels + $0])) > 3_277 }
+        }
+        let frame = last ? (first..<stop).reversed().first(where: isLoud) : (first..<stop).first(where: isLoud)
+        return frame.map { Double($0) / audio.sampleRate }
+    }
+
+    /// Sample frames of the first audio track stored before the media time its edit list starts at,
+    /// which only the edit list hides.
+    func hiddenAudioFrames(of url: URL) async throws -> Double {
+        let start = try #require(try await MovieSamples.mediaStart(of: url, .audio))
+        let rate = try #require(try await AVURLAsset(url: url).loadTracks(withMediaType: .audio).first?
+            .load(.naturalTimeScale))
+        return try await MovieSamples.storedSamples(of: url, .audio).reduce(0) { sum, sample in
+            let kept = CMTimeSubtract(CMTimeMinimum(CMTimeAdd(sample.time, sample.duration), start), sample.time)
+            return sum + max(0, kept.seconds) * Double(rate)
+        }
+    }
+
+    /// Sample frames the first audio track stores, whatever its edit list shows.
+    func storedAudioFrames(of url: URL) async throws -> Double {
+        let rate = try #require(try await AVURLAsset(url: url).loadTracks(withMediaType: .audio).first?
+            .load(.naturalTimeScale))
+        return try await MovieSamples.storedSamples(of: url, .audio).reduce(0) { $0 + $1.duration.seconds * Double(rate) }
+    }
+
+    /// The first video track's edit list as (track start, media start or nil for an empty edit,
+    /// track duration), in seconds.
+    func videoEdits(of url: URL) async throws -> [(Double, Double?, Double)] {
         let track = try #require(try await AVURLAsset(url: url).loadTracks(withMediaType: .video).first)
-        let cursor = try #require(track.makeSampleCursorAtFirstSampleInDecodeOrder())
-        var syncTimes: [Double] = []
-        var count = 0
-        repeat {
-            count += 1
-            if cursor.currentSampleSyncInfo.sampleIsFullSync.boolValue {
-                syncTimes.append(cursor.presentationTimeStamp.seconds)
+        return try await track.load(.segments).map { segment in
+            let mapping = segment.timeMapping
+            return (mapping.target.start.seconds, segment.isEmpty ? nil : mapping.source.start.seconds,
+                    mapping.target.duration.seconds)
+        }
+    }
+
+    /// The fixture's options: `keyframeInterval` puts a sync sample every 2 s at 10 fps, with frame
+    /// reordering off; with `reordersFrames` the video's first sample is at media time 0.2 s, shown at
+    /// track time 0, as in `SCRecordingOutput`'s recordings (Probes, Trim re-encode, as probed).
+    @Test(arguments: [false, true])
+    func aKeyframeIntervalFixtureHasASyncSampleEveryInterval(reorders: Bool) async throws {
+        let folder = try makeFolder()
+        defer { remove(folder) }
+        let url = try await movie(in: folder, seconds: 5, tone: nil, keyframeInterval: 20, reorders: reorders)
+        let samples = try await MovieSamples.storedSamples(of: url, .video)
+        #expect(samples.count == 50)
+        let start = try #require(try await MovieSamples.mediaStart(of: url, .video))
+        #expect(abs(start.seconds - (reorders ? 0.2 : 0)) < 0.001)
+        // In track time.
+        let syncTimes = samples.filter(\.isSync).map { (($0.time - start).seconds * 10).rounded() / 10 }.sorted()
+        #expect(syncTimes == [0, 2, 4])
+        let inDecodeOrder = samples.map(\.time)
+        #expect((inDecodeOrder == inDecodeOrder.sorted()) == !reorders)
+    }
+
+    // MARK: The method
+
+    @Test func mediaTimeMapsThroughTheSegmentHoldingTheTime() {
+        let edit = CMTimeMapping(source: CMTimeRange(start: t(0.2), duration: t(4)),
+                                 target: CMTimeRange(start: .zero, duration: t(4)))
+        #expect(RecordingTrim.mediaTime(of: .zero, through: [edit]) == t(0.2))
+        #expect(RecordingTrim.mediaTime(of: t(2), through: [edit]) == t(2.2))
+        // Outside every segment, and not a time.
+        #expect(RecordingTrim.mediaTime(of: t(4), through: [edit]) == nil)
+        #expect(RecordingTrim.mediaTime(of: t(-0.1), through: [edit]) == nil)
+        #expect(RecordingTrim.mediaTime(of: .invalid, through: [edit]) == nil)
+        // An empty edit, then a second of track time showing two of media.
+        let empty = CMTimeMapping(source: .invalid, target: CMTimeRange(start: .zero, duration: t(1)))
+        let fast = CMTimeMapping(source: CMTimeRange(start: t(3), duration: t(2)),
+                                 target: CMTimeRange(start: t(1), duration: t(1)))
+        #expect(RecordingTrim.mediaTime(of: t(0.5), through: [empty, fast]) == nil)
+        #expect(RecordingTrim.mediaTime(of: t(1.5), through: [empty, fast]) == t(4))
+    }
+
+    /// Sync samples at 0, 2 and 4 s (frames 0, 20 and 40). A start inside a sync sample's frame is
+    /// on it (0, 2.0, 2.05 and 4.0); inside the next two frames (2.15, 2.25), and between keyframes
+    /// (1.0, 3.95), it is not. With the reordered fixture's edit to media time 0.2 s, a cursor read at
+    /// the start unmapped answers 0, 2.0, 2.05, 2.25 and 4.0 wrongly: at 2.25 it would read the
+    /// keyframe while frame 22 is shown, and a passthrough would keep the keyframe's earlier frames.
+    @Test(arguments: [false, true])
+    func startsOnSyncSampleReadsTheSampleShownAtTheStart(reorders: Bool) async throws {
+        let folder = try makeFolder()
+        defer { remove(folder) }
+        let url = try await movie(in: folder, seconds: 5, tone: nil, keyframeInterval: 20, reorders: reorders)
+        let answers: [(Double, Bool)] = [(0, true), (2.0, true), (2.05, true), (4.0, true),
+                                         (2.15, false), (2.25, false), (1.0, false), (3.95, false)]
+        for (start, expected) in answers {
+            #expect(try await RecordingTrim.startsOnSyncSample(url, at: t(start)) == expected, "at \(start) s")
+        }
+    }
+
+    // MARK: The export
+
+    /// The plan's `export` item for each method: the requested duration within 0.05 s, the audio
+    /// track kept, `output`'s missing folder made, and the source as it was.
+    @Test(arguments: [RecordingTrim.TrimMethod.passthrough, .reencode])
+    func exportWritesTheRangeIntoAFolderItMakes(method: RecordingTrim.TrimMethod) async throws {
+        let folder = try makeFolder()
+        defer { remove(folder) }
+        let source = try await movie(in: folder)
+        let before = try Data(contentsOf: source)
+        let output = folder.appending(path: "Trim/deeper/trimmed.mp4")
+        try await RecordingTrim.export(source, range: range(1.0, 3.0), method: method, to: output, progress: { _ in })
+        #expect(abs(try await MovieSamples.duration(of: output) - 2) <= 0.05)
+        #expect(try await MovieSamples.trackCount(of: output, .audio) == 1)
+        #expect(try await MovieSamples.trackCount(of: output, .video) == 1)
+        #expect(try Data(contentsOf: source) == before)
+    }
+
+    /// A re-encode from 1.05 s, inside frame 10, of a recording-shaped source (reordered frames and a
+    /// leading edit): the file stores frame 10 at 0, then frames 11 to 29 at their times minus the
+    /// start, and nothing from before; its first frame is frame 10's grey (96), not frame 9's (80),
+    /// frame 11's (112) or the keyframe's (64); its size is the source's and its length the range's.
+    /// A passthrough from the same start stores frames from before it, hidden by the edit list: the
+    /// keyframe and those that decode from it (7 here).
+    @Test func aReencodeStoresOnlyTheFramesFromTheStart() async throws {
+        let folder = try makeFolder()
+        defer { remove(folder) }
+        let source = try await movie(in: folder, keyframeInterval: 20, reorders: true)
+        let output = folder.appending(path: "trimmed.mp4")
+        try await RecordingTrim.export(source, range: range(1.05, 3.0), method: .reencode, to: output, progress: { _ in })
+
+        let start = try #require(try await MovieSamples.mediaStart(of: output, .video))
+        let stored = try await MovieSamples.storedSamples(of: output, .video)
+        let expected = [0.0] + (11..<30).map { Double($0) / 10 - 1.05 }
+        #expect(stored.count == expected.count)
+        for (sample, time) in zip(stored, expected) {
+            #expect(abs((sample.time - start).seconds - time) < 0.001, "a frame at \((sample.time - start).seconds) s")
+        }
+        #expect(stored.allSatisfy { $0.time >= start })
+        // One edit, from track time 0 for the range's length: the frames are on the track's timeline
+        // where the times above say, with no empty edit before them.
+        let edits = try await videoEdits(of: output)
+        #expect(edits.count == 1)
+        #expect(edits.first?.0 == 0 && edits.first?.1 != nil)
+        #expect(abs((edits.first?.2 ?? 0) - 1.95) < 0.001)
+        let level = try #require(try await MovieSamples.firstFrameLevel(of: output))
+        #expect(abs(level - 96) <= 6, "the first frame's level is \(level)")
+        let size = try #require(try await MovieSamples.videoSize(of: output))
+        #expect(size.width == 320 && size.height == 200)
+        #expect(abs(try await MovieSamples.duration(of: output) - 1.95) <= 0.1)
+
+        let passthrough = folder.appending(path: "passthrough.mp4")
+        try await RecordingTrim.export(source, range: range(1.05, 3.0), method: .passthrough, to: passthrough,
+                                       progress: { _ in })
+        let kept = try #require(try await MovieSamples.mediaStart(of: passthrough, .video))
+        #expect(try await MovieSamples.storedSamples(of: passthrough, .video).filter { $0.time < kept }.isEmpty == false)
+    }
+
+    /// The source's size above 3840×2160, which `HighestQuality` scaled down (Probes).
+    @Test func aReencodeKeepsTheSourcesSizeAbove3840By2160() async throws {
+        let folder = try makeFolder()
+        defer { remove(folder) }
+        let source = try await movie(in: folder, seconds: 1, tone: nil, width: 4096, height: 2304)
+        let output = folder.appending(path: "trimmed.mp4")
+        try await RecordingTrim.export(source, range: range(0.25, 0.95), method: .reencode, to: output, progress: { _ in })
+        let size = try #require(try await MovieSamples.videoSize(of: output))
+        #expect(size.width == 4096 && size.height == 2304)
+        #expect(abs(try await MovieSamples.duration(of: output) - 0.7) <= 0.1)
+        // Frame 2, shown at the start, then frames 3 to 9.
+        #expect(try await MovieSamples.storedSamples(of: output, .video).count == 8)
+    }
+
+    /// `SCRecordingOutput` writes a frame only when the screen changes, so a frame can be shown for
+    /// seconds. A re-encode from 0.15 s to 3.0 s of frames at 0, 0.1, 0.2, 1.0 and 3.9 s writes the
+    /// frames at 0.1 (shown at the start), 0.2 and 1.0 s, and the last is held to the range's end, not
+    /// for the gap before it. With sound, which runs to the end on its own, the writer does not hold
+    /// the last frame by itself (Probes, `Trim export, as built`).
+    @Test func aReencodeHoldsItsLastFrameToTheRangesEnd() async throws {
+        let folder = try makeFolder()
+        defer { remove(folder) }
+        let source = folder.appending(path: "still.mp4")
+        try await VideoFixtures.makeMP4(at: source, width: 320, height: 200, seconds: 4, audio: true,
+                                        frameTimes: [0, 0.1, 0.2, 1.0, 3.9], tone: [0...4])
+        let output = folder.appending(path: "trimmed.mp4")
+        try await RecordingTrim.export(source, range: range(0.15, 3.0), method: .reencode, to: output, progress: { _ in })
+        #expect(try await MovieSamples.storedSamples(of: output, .video).map { ($0.time.seconds * 100).rounded() / 100 }
+            == [0, 0.05, 0.85])
+        let edits = try await videoEdits(of: output)
+        #expect(edits.count == 1)
+        #expect(abs((edits.first?.2 ?? 0) - 2.85) < 0.001)
+        #expect(abs(try await MovieSamples.duration(of: output) - 2.85) < 0.001)
+    }
+
+    /// A range that no frame of the video track shows (past its last sample) gives no file with
+    /// sound and no picture: the re-encode throws and leaves nothing.
+    @Test func aReencodeWithNoFrameToShowThrowsAndLeavesNoOutput() async throws {
+        let folder = try makeFolder()
+        defer { remove(folder) }
+        let source = folder.appending(path: "short.mp4")
+        try await VideoFixtures.makeMP4(at: source, width: 320, height: 200, seconds: 4, audio: true,
+                                        frameTimes: [0, 0.1, 0.2, 1.0], tone: [0...4])
+        let video = try #require(try await AVURLAsset(url: source).loadTracks(withMediaType: .video).first)
+        #expect(try await video.load(.timeRange).end.seconds < 1.5)
+        let output = folder.appending(path: "trimmed.mp4")
+        await #expect(throws: RecordingTrimError.couldNotRead) {
+            try await RecordingTrim.export(source, range: range(1.5, 3.5), method: .reencode, to: output, progress: { _ in })
+        }
+        #expect(!exists(output))
+    }
+
+    /// The sound starts at the start and ends at the end (Decided 2026-10-24, 4): exactly the range's
+    /// frames, and each edge of the tone, the cut ones included, within 1 ms of the source's.
+    @Test(arguments: [(44_100, 1), (48_000, 2)])
+    func aReencodesSoundStartsAndEndsWithTheRange(sampleRate: Int, channels: Int) async throws {
+        let folder = try makeFolder()
+        defer { remove(folder) }
+        let source = try await movie(in: folder, tone: [0.5...1.5, 2.0...3.5], sampleRate: sampleRate, channels: channels)
+        let output = folder.appending(path: "trimmed.mp4")
+        try await RecordingTrim.export(source, range: range(1.0, 3.0), method: .reencode, to: output, progress: { _ in })
+        let before = try #require(try await MovieSamples.audio(of: source))
+        let after = try #require(try await MovieSamples.audio(of: output))
+        #expect(after.sampleRate == Double(sampleRate))
+        #expect(after.channels == channels)
+        #expect(after.samples.count / channels == 2 * sampleRate)
+
+        // Source seconds, output seconds, and whether the edge is a tone's last frame.
+        let edges: [(ClosedRange<Double>, ClosedRange<Double>, Bool)] = [
+            (1.0...1.1, 0.0...0.1, false), (1.4...1.6, 0.4...0.6, true),
+            (1.9...2.1, 0.9...1.1, false), (2.9...3.0, 1.9...2.0, true),
+        ]
+        for (was, now, last) in edges {
+            let sourceEdge = try #require(loud(before, from: was.lowerBound, to: was.upperBound, last: last))
+            let outputEdge = try #require(loud(after, from: now.lowerBound, to: now.upperBound, last: last))
+            #expect(abs(outputEdge - (sourceEdge - 1.0)) < 0.001, "the edge at \(sourceEdge) s is at \(outputEdge) s")
+        }
+        #expect(after.peak(from: 0.55, to: 0.95) < 0.01)
+        // Stored, the sound is the AAC encoder's priming (2,112 frames), the range's frames and under a
+        // packet of padding: nothing from before the start or after the end hides behind the edit list.
+        #expect(try await hiddenAudioFrames(of: output) == 2_112)
+        let padding = try await storedAudioFrames(of: output) - 2_112 - Double(2 * sampleRate)
+        #expect(padding >= 0 && padding < 1_024, "\(padding) frames after the end")
+    }
+
+    /// A tone that ends 50 ms before the start (the AAC smear's margin) is nowhere in the output:
+    /// not in the sound it plays, nor in the packets it stores, which the edit list could hide.
+    @Test func nothingOfAToneThatEndsBeforeTheStartIsInAReencode() async throws {
+        let folder = try makeFolder()
+        defer { remove(folder) }
+        let source = try await movie(in: folder, tone: [0.2...0.95, 1.6...2.5], sampleRate: 48_000, channels: 2)
+        let output = folder.appending(path: "trimmed.mp4")
+        try await RecordingTrim.export(source, range: range(1.0, 3.0), method: .reencode, to: output, progress: { _ in })
+        let played = try #require(try await MovieSamples.audio(of: output))
+        #expect(played.peak(from: 0, to: 0.55) < 0.01)
+        #expect(played.peak(from: 0.65, to: 1.45) > 0.5)
+        let stored = try #require(try await MovieSamples.storedAudio(of: output))
+        let start = try #require(try await MovieSamples.mediaStart(of: output, .audio))
+        #expect(stored.peak(from: 0, to: start.seconds + 0.55) < 0.01)
+        #expect(stored.peak(from: start.seconds + 0.65, to: start.seconds + 1.45) > 0.5)
+    }
+
+    @Test func aReencodeOfASourceWithNoSoundHasNone() async throws {
+        let folder = try makeFolder()
+        defer { remove(folder) }
+        let source = try await movie(in: folder, tone: nil)
+        let output = folder.appending(path: "trimmed.mp4")
+        try await RecordingTrim.export(source, range: range(1.0, 3.0), method: .reencode, to: output, progress: { _ in })
+        #expect(try await MovieSamples.trackCount(of: output, .audio) == 0)
+        #expect(try await MovieSamples.trackCount(of: output, .video) == 1)
+        #expect(abs(try await MovieSamples.duration(of: output) - 2) <= 0.1)
+    }
+
+    /// From a keyframe of a recording-shaped source: no video sample before the start, and at most
+    /// two AAC packets (2,048 sample frames) of sound before it, hidden by the edit list: the one
+    /// exception to Decided 2026-10-23, 3. The stored sound shows those hidden frames are the tone.
+    @Test func aPassthroughFromASyncSampleKeepsNoEarlierFrameAndAtMostTwoPacketsOfSound() async throws {
+        let folder = try makeFolder()
+        defer { remove(folder) }
+        let source = try await movie(in: folder, keyframeInterval: 10, reorders: true, sampleRate: 48_000, channels: 2)
+        #expect(try await RecordingTrim.startsOnSyncSample(source, at: t(2.0)))
+        let output = folder.appending(path: "trimmed.mp4")
+        try await RecordingTrim.export(source, range: range(2.0, 4.0), method: .passthrough, to: output, progress: { _ in })
+
+        let start = try #require(try await MovieSamples.mediaStart(of: output, .video))
+        let stored = try await MovieSamples.storedSamples(of: output, .video)
+        #expect(stored.filter { $0.time < start }.isEmpty)
+        #expect(stored.count == 20)
+        let hidden = try await hiddenAudioFrames(of: output)
+        #expect(hidden <= 2_048)
+        if hidden > 0 {
+            let sound = try #require(try await MovieSamples.storedAudio(of: output))
+            #expect(sound.peak(from: 0, to: hidden / 48_000) > 0.4)
+        }
+    }
+
+    @Test func aReencodesProgressRisesAndEndsWithExactlyOneOne() async throws {
+        let folder = try makeFolder()
+        defer { remove(folder) }
+        let source = try await movie(in: folder, seconds: 20, tone: [0...20])
+        let readings = Mutex<[Double]>([])
+        try await RecordingTrim.export(source, range: range(1.0, 19.0), method: .reencode,
+                                       to: folder.appending(path: "trimmed.mp4"),
+                                       progress: { value in readings.withLock { $0.append(value) } })
+        let values = readings.withLock { $0 }
+        #expect(values.last == 1)
+        #expect(values.filter { $0 == 1 }.count == 1)
+        #expect(values.count >= 2)
+        #expect(values.allSatisfy { $0 > 0 && $0 <= 1 })
+        #expect(zip(values, values.dropFirst()).allSatisfy { $0 <= $1 }, "\(values)")
+    }
+
+    @Test func aPassthroughReportsOnlyOne() async throws {
+        let folder = try makeFolder()
+        defer { remove(folder) }
+        let source = try await movie(in: folder)
+        let readings = Mutex<[Double]>([])
+        try await RecordingTrim.export(source, range: range(1.0, 3.0), method: .passthrough,
+                                       to: folder.appending(path: "trimmed.mp4"),
+                                       progress: { value in readings.withLock { $0.append(value) } })
+        #expect(readings.withLock { $0 } == [1])
+    }
+
+    /// A cancel before anything is read.
+    @Test func aCancelledReencodeThrowsAndLeavesNoOutput() async throws {
+        let folder = try makeFolder()
+        defer { remove(folder) }
+        let source = try await movie(in: folder)
+        let output = folder.appending(path: "trimmed.mp4")
+        try Data("stale".utf8).write(to: output)
+        let task = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            try await RecordingTrim.export(source, range: range(1.0, 3.0), method: .reencode, to: output, progress: { _ in })
+        }
+        let result = await task.result
+        #expect(throws: CancellationError.self) { try result.get() }
+        #expect(!exists(output))
+        #expect(exists(source))
+    }
+
+    /// `Stop` while the re-encode writes: cancelled at its first progress reading.
+    @Test func aCancelWhileAReencodeWritesThrowsAndLeavesNoOutput() async throws {
+        let folder = try makeFolder()
+        defer { remove(folder) }
+        let source = try await movie(in: folder, seconds: 20, tone: [0...20])
+        let before = try Data(contentsOf: source)
+        let output = folder.appending(path: "trimmed.mp4")
+        let (readings, reading) = AsyncStream<Double>.makeStream()
+        let task = Task {
+            try await RecordingTrim.export(source, range: range(1.0, 19.0), method: .reencode, to: output,
+                                           progress: { reading.yield($0) })
+        }
+        for await value in readings {
+            #expect(value < 1)
+            break
+        }
+        task.cancel()
+        let result = await task.result
+        #expect(throws: CancellationError.self) { try result.get() }
+        #expect(!exists(output))
+        #expect(try Data(contentsOf: source) == before)
+    }
+
+    /// Sound whose decode fails partway, as in the mute tests: an edit at another rate from 2 s. The
+    /// re-encode throws at once rather than wait on the video, and leaves nothing.
+    @Test func aReencodeThatFailsPartwayThrowsAndLeavesNoOutput() async throws {
+        let folder = try makeFolder()
+        defer { remove(folder) }
+        let source = try await movie(in: folder)
+        let file = folder.appending(path: "speed.mov")
+        try await VideoFixtures.makeAudioSpeedChange(of: source, over: 2.0...3.0, lasting: 0.5, at: file)
+        let output = folder.appending(path: "trimmed.mp4")
+        await #expect(throws: (any Error).self) {
+            try await RecordingTrim.export(file, range: range(1.0, 3.5), method: .reencode, to: output, progress: { _ in })
+        }
+        #expect(!exists(output))
+        #expect(exists(file))
+    }
+
+    /// Never the recording: an export onto its own source refuses before it clears anything, and so
+    /// does Save's export of a source at its own working paths.
+    @Test func anExportOverItsSourceIsRefusedAndTheSourceKept() async throws {
+        let folder = try makeFolder()
+        defer { remove(folder) }
+        let source = try await movie(in: folder)
+        let before = try Data(contentsOf: source)
+        for method in [RecordingTrim.TrimMethod.passthrough, .reencode] {
+            await #expect(throws: RecordingTrimError.couldNotWrite) {
+                try await RecordingTrim.export(source, range: range(1.0, 3.0), method: method, to: source, progress: { _ in })
             }
-        } while cursor.stepInDecodeOrder(byCount: 1) == 1
-        #expect(count == 50)
-        #expect(syncTimes.map { ($0 * 10).rounded() / 10 } == [0, 2, 4])
+        }
+        #expect(try Data(contentsOf: source) == before)
+        let id = UUID()
+        for working in [RecordingTrim.mutedURL(for: id, in: folder), RecordingTrim.trimmedURL(for: id, in: folder)] {
+            try FileManager.default.copyItem(at: source, to: working)
+            await #expect(throws: RecordingTrimError.couldNotWrite) {
+                try await RecordingTrim.exportForSave(working, id: id, range: range(1.0, 3.0), method: .reencode,
+                                                      unmutedIntervals: [MuteInterval(start: 1, end: 2)],
+                                                      directory: folder, freeBytes: { nil }, progress: { _ in })
+            }
+            #expect(try Data(contentsOf: working) == before)
+        }
+    }
+
+    // MARK: The export for Save
+
+    /// The plan's missing `tmp/Trim` item: after the launch clear, a pending or save-folder source has
+    /// downloaded nothing into it. Save's export makes it, with and without the mute step, and leaves
+    /// only `<id>-trimmed.mp4` there.
+    @Test(arguments: [RecordingTrim.TrimMethod.passthrough, .reencode], [false, true])
+    func exportForSaveMakesAMissingFolderAndLeavesOnlyTheTrimmedFile(method: RecordingTrim.TrimMethod,
+                                                                     marked: Bool) async throws {
+        let folder = try makeFolder()
+        defer { remove(folder) }
+        let source = try await movie(in: folder)
+        let directory = folder.appending(path: "tmp/Trim", directoryHint: .isDirectory)
+        let id = UUID()
+        let trimmed = try await RecordingTrim.exportForSave(
+            source, id: id, range: range(1.0, 3.0), method: method,
+            unmutedIntervals: marked ? [MuteInterval(start: 1.5, end: 2.0)] : [], directory: directory,
+            freeBytes: { nil }, progress: { _ in })
+        #expect(trimmed == RecordingTrim.trimmedURL(for: id, in: directory))
+        #expect(try contents(of: directory) == ["\(id.uuidString)-trimmed.mp4"])
+        #expect(abs(try await MovieSamples.duration(of: trimmed) - 2) <= 0.05)
+    }
+
+    /// Never save muted sound: a marked record is muted before it is trimmed, by either method.
+    @Test(arguments: [RecordingTrim.TrimMethod.passthrough, .reencode])
+    func aMarkedRecordsTrimHasItsMutedStretchesSilent(method: RecordingTrim.TrimMethod) async throws {
+        let folder = try makeFolder()
+        defer { remove(folder) }
+        let source = try await movie(in: folder)
+        let trimmed = try await RecordingTrim.exportForSave(
+            source, id: UUID(), range: range(1.0, 3.5), method: method,
+            unmutedIntervals: [MuteInterval(start: 1.5, end: 2.5)], directory: folder.appending(path: "Trim"),
+            freeBytes: { nil }, progress: { _ in })
+        let sound = try #require(try await MovieSamples.audio(of: trimmed))
+        // 50 ms at each edge for the AAC smear.
+        #expect(sound.peak(from: 0.55, to: 1.45) < 0.01)
+        #expect(sound.peak(from: 0.05, to: 0.45) > 0.5)
+        #expect(sound.peak(from: 1.55, to: 2.45) > 0.5)
+    }
+
+    /// A mute step that fails, a re-encode that fails partway, and a re-encode stopped while it
+    /// writes after the mute step: none leaves `<id>-muted.mp4` or `<id>-trimmed.mp4`.
+    @Test func aFailedOrStoppedSaveExportLeavesNoWorkingFile() async throws {
+        let folder = try makeFolder()
+        defer { remove(folder) }
+        let source = try await movie(in: folder)
+        let speed = folder.appending(path: "speed.mov")
+        try await VideoFixtures.makeAudioSpeedChange(of: source, over: 2.0...3.0, lasting: 0.5, at: speed)
+        let directory = folder.appending(path: "Trim", directoryHint: .isDirectory)
+        for marks in [[MuteInterval(start: 1.5, end: 2.0)], []] {
+            await #expect(throws: (any Error).self) {
+                try await RecordingTrim.exportForSave(speed, id: UUID(), range: range(1.0, 3.5), method: .reencode,
+                                                      unmutedIntervals: marks, directory: directory,
+                                                      freeBytes: { nil }, progress: { _ in })
+            }
+            #expect(try contents(of: directory).isEmpty)
+        }
+
+        let long = try await movie(in: folder, "long.mp4", seconds: 20, tone: [0...20])
+        let (readings, reading) = AsyncStream<Double>.makeStream()
+        let task = Task {
+            try await RecordingTrim.exportForSave(long, id: UUID(), range: range(1.0, 19.0), method: .reencode,
+                                                  unmutedIntervals: [MuteInterval(start: 5, end: 6)], directory: directory,
+                                                  freeBytes: { nil }, progress: { reading.yield($0) })
+        }
+        for await _ in readings { break }
+        task.cancel()
+        let result = await task.result
+        #expect(throws: CancellationError.self) { try result.get() }
+        #expect(try contents(of: directory).isEmpty)
+    }
+
+    /// The disk check (design, Disk space; Decided 2026-10-24, 2): the source's size for a
+    /// passthrough, twice that for a re-encode, the source's size again with the mute step, plus
+    /// 1 GB. One byte short refuses before anything is written; exactly enough writes.
+    @Test(arguments: [(RecordingTrim.TrimMethod.passthrough, false, Int64(1)), (.reencode, false, 2),
+                      (.passthrough, true, 2), (.reencode, true, 3)])
+    func theDiskCheckNeedsTheSourcesSizeTimesItsFactorAndAGigabyte(method: RecordingTrim.TrimMethod, marked: Bool,
+                                                                   factor: Int64) async throws {
+        let folder = try makeFolder()
+        defer { remove(folder) }
+        let source = try await movie(in: folder)
+        let size = Int64(try #require(FileSizes.byteCount(of: source)))
+        #expect(RecordingTrim.bytesNeeded(sourceBytes: size, method: method, mutes: marked) == size * factor)
+        let room = size * factor + 1_000_000_000
+        let directory = folder.appending(path: "Trim", directoryHint: .isDirectory)
+        let marks = marked ? [MuteInterval(start: 1.5, end: 2.0)] : []
+        await #expect(throws: RecordingTrimError.notEnoughSpace) {
+            try await RecordingTrim.exportForSave(source, id: UUID(), range: range(1.0, 3.0), method: method,
+                                                  unmutedIntervals: marks, directory: directory,
+                                                  freeBytes: { room - 1 }, progress: { _ in })
+        }
+        #expect(try contents(of: directory).isEmpty)
+        let trimmed = try await RecordingTrim.exportForSave(source, id: UUID(), range: range(1.0, 3.0), method: method,
+                                                            unmutedIntervals: marks, directory: directory,
+                                                            freeBytes: { room }, progress: { _ in })
+        #expect(exists(trimmed))
     }
 }
