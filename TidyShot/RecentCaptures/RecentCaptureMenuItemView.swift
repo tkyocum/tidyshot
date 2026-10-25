@@ -14,10 +14,10 @@ final class RecentCaptureMenuItemView: NSView {
     private var rowArea: NSTrackingArea?
     private var thumbnailArea: NSTrackingArea?
 
-    /// `saveFolder` and `retainedID` say what Annotate can load from, and `isOptimizing` whether a
-    /// recording waits for Clop; the menu reads them once per rebuild.
+    /// `saveFolder` and `retainedID` say what Annotate can load from, `isOptimizing` whether a
+    /// recording waits for Clop, and `trimState` its Trim items; the menu reads them once per rebuild.
     init(record: CaptureRecord, now: Date, saveFolder: URL?, retainedID: UUID?, isOptimizing: Bool,
-         provider: ThumbnailProvider, actions: RecentCaptureActions,
+         trimState: RecordingTrim.MenuState, provider: ThumbnailProvider, actions: RecentCaptureActions,
          onThumbnailHover: @escaping (RecentCaptureMenuItemView, Bool) -> Void) {
         recordID = record.id
         self.onThumbnailHover = onThumbnailHover
@@ -33,7 +33,8 @@ final class RecentCaptureMenuItemView: NSView {
                                                                                     saveFolder: saveFolder),
                                    showsImageActions: RecentCaptureFormatting.showsImageActions(record),
                                    canCopyFile: RecentCaptureFormatting.canCopyFile(record),
-                                   state: state, provider: provider, actions: actions)
+                                   clickOpens: RecentCaptureFormatting.rowClickOpens(record),
+                                   trimState: trimState, state: state, provider: provider, actions: actions)
         let host = NSHostingView(rootView: row)
         host.frame = bounds
         host.autoresizingMask = [.width, .height]

@@ -14,7 +14,11 @@ nonisolated enum QuickAccessStatus: Equatable {
     case urlCopied(URL)
     /// A recording's URL did not replace the clipboard, because it had changed since the save.
     case uploaded(URL)
+    /// A trimmed MP4 whose link still shows the full recording (design, Stale link).
+    case linkNotUpdated(URL)
     case failed(String)
+    /// A recording whose muting failed: kept in TidyShot and never uploaded (design, Privacy rule).
+    case soundNotMuted
 }
 
 /// State behind the Quick Access panel: the capture it shows and the actions its buttons run.
@@ -34,6 +38,10 @@ final class QuickAccessModel {
     @ObservationIgnored var dragFileURL: URL?
     /// True while a drag-out session from this card runs; the auto-close countdown waits meanwhile.
     @ObservationIgnored var isDraggingOut = false
+    /// The card's `Trim…` and `Upload Trimmed`, and whether a Trim pass writes the record's file
+    /// (`AppCoordinator.trimMenuState(for:)`); set by `QuickAccessController.setTrimState(_:for:)`.
+    /// All false until then, so neither item shows.
+    var trimState = RecordingTrim.MenuState()
 
     @ObservationIgnored var onCopy: () -> Void = {}
     @ObservationIgnored var onRetry: () -> Void = {}
@@ -49,6 +57,10 @@ final class QuickAccessModel {
     /// `copyFile(recordID:)`.
     @ObservationIgnored var onOpen: () -> Void = {}
     @ObservationIgnored var onCopyFile: () -> Void = {}
+    /// A recording's `Trim…` and `Upload Trimmed`: `AppCoordinator.trimCapture(recordID:)` and
+    /// `uploadTrimmed(recordID:)`.
+    @ObservationIgnored var onTrim: () -> Void = {}
+    @ObservationIgnored var onUploadTrimmed: () -> Void = {}
     /// A press on the card's drag surface: stage the drag file now.
     @ObservationIgnored var onPrepareDrag: () -> Void = {}
     /// A drag-out session ended; true when a receiver took the file.
@@ -75,13 +87,40 @@ final class QuickAccessModel {
         RecentCaptureFormatting.showsImageActions(record)
     }
 
-    /// Copy File, for a recording with a local file.
+    /// Copy File, for a recording with a local file that is not marked `Sound not muted`.
     var canCopyFile: Bool {
         RecentCaptureFormatting.canCopyFile(record)
     }
 
+    /// Save As…, left out for a recording marked `Sound not muted`, whose file still holds the
+    /// muted sound (design, Privacy rule).
+    var canSaveAs: Bool {
+        !RecentCaptureFormatting.isSoundNotMuted(record)
+    }
+
+    /// A recording's thumbnail click opens its local file, or its link when only the upload is left.
+    var canOpen: Bool {
+        record.isTimeBased && (record.hasLocalFile || record.linkURL != nil)
+    }
+
+    /// The poster's badge: `play.fill` for an MP4, `GIF` for a GIF; nil for an image.
+    var badge: RecentCaptureFormatting.RecordingBadge? {
+        RecentCaptureFormatting.badge(for: record)
+    }
+
+    /// Retry and Delete are disabled while a Trim pass writes the record's file (design, Write-time
+    /// checks); `Upload Trimmed` is, through `trimState.canUploadTrimmed`.
+    var canRetry: Bool {
+        !trimState.isTrimming
+    }
+
+    var canDelete: Bool {
+        !trimState.isTrimming
+    }
+
     var status: QuickAccessStatus {
-        switch record.uploadState {
+        if RecentCaptureFormatting.isSoundNotMuted(record) { return .soundNotMuted }
+        return switch record.uploadState {
         case .none:
             record.fileIsTemporary && record.hasLocalFile
                 ? .kept
@@ -89,7 +128,9 @@ final class QuickAccessModel {
         case .uploading(let fraction):
             isOptimizing ? .optimizing : .uploading(fraction)
         case .uploaded(let url, _):
-            linkWasCopied ? .urlCopied(url) : .uploaded(url)
+            RecentCaptureFormatting.linkIsNotUpdated(record)
+                ? .linkNotUpdated(url)
+                : linkWasCopied ? .urlCopied(url) : .uploaded(url)
         case .failed(let message):
             .failed(message)
         }

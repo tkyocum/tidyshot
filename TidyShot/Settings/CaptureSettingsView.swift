@@ -1,8 +1,33 @@
+import AppKit
+import Combine
 import SwiftUI
 
 struct CaptureSettingsView: View {
     @Bindable private var settings = AppSettings.shared
     @State private var editingBackground = false
+    /// `Microphone`'s inputs and the access, read when the tab appears and again on the device
+    /// notifications; the access also when the Settings window becomes key.
+    @State private var microphoneDevices: [MicrophoneDevice] = []
+    @State private var microphoneAccess = MicrophoneAccess.authorized
+    /// The Settings window, so another window becoming key does not count.
+    @State private var settingsWindow: ObjectIdentifier?
+
+    /// A SwiftUI `Picker` has no menu-will-open hook, so the list refreshes when an input comes or goes.
+    private static let microphoneChanges = Publishers.MergeMany(
+        LiveMicrophoneDevices.changeNotifications.map { NotificationCenter.default.publisher(for: $0) })
+        .receive(on: DispatchQueue.main)
+
+    /// Which Recording rows show and which are enabled, for the chosen format.
+    private var recordingLayout: RecordingSettingsLayout {
+        RecordingSettingsLayout(format: settings.recordingFormat)
+    }
+
+    /// The same `AVCaptureDevice` reads the recorder's `microphones` makes; it holds no state.
+    private let microphones: any MicrophoneDevices = LiveMicrophoneDevices()
+
+    private var storedMicrophone: MicrophoneChoice.Stored {
+        MicrophoneChoice.Stored(value: settings.recordingMicrophone, name: settings.recordingMicrophoneName)
+    }
 
     var body: some View {
         Form {
@@ -35,9 +60,30 @@ struct CaptureSettingsView: View {
                 }
             }
             Section("Recording") {
-                Picker("Frame rate", selection: $settings.recordingFrameRate) {
-                    ForEach(AppSettings.recordingFrameRates, id: \.self) { rate in
-                        Text("\(rate) fps").tag(rate)
+                Picker("Format", selection: $settings.recordingFormat) {
+                    Text("MP4").tag(RecordingFormat.mp4)
+                    Text("GIF").tag(RecordingFormat.gif)
+                }
+                if recordingLayout.showsGIFRows {
+                    Picker("GIF frame rate", selection: $settings.gifFrameRate) {
+                        ForEach(AppSettings.gifFrameRates, id: \.self) { rate in
+                            Text("\(rate) fps").tag(rate)
+                        }
+                    }
+                    Picker("GIF size", selection: $settings.gifMaxSide) {
+                        ForEach(AppSettings.gifMaxSides, id: \.self) { side in
+                            Text(side == 0 ? "Full size" : "\(side) px").tag(side)
+                        }
+                    }
+                    Text(RecordingSettingsLayout.fullSizeCaption)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if recordingLayout.showsFrameRate {
+                    Picker("Frame rate", selection: $settings.recordingFrameRate) {
+                        ForEach(AppSettings.recordingFrameRates, id: \.self) { rate in
+                            Text("\(rate) fps").tag(rate)
+                        }
                     }
                 }
                 Picker("Resolution", selection: $settings.recordingRetina) {
@@ -48,6 +94,29 @@ struct CaptureSettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Toggle("Record system audio", isOn: $settings.recordingSystemAudio)
+                    .disabled(!recordingLayout.audioRowsEnabled)
+                Picker("Microphone", selection: Binding(get: { settings.recordingMicrophone }, set: pickMicrophone)) {
+                    ForEach(MicrophoneChoice.entries(stored: storedMicrophone, devices: microphoneDevices), id: \.tag) { entry in
+                        Text(entry.title).tag(entry.tag)
+                    }
+                }
+                .disabled(!recordingLayout.audioRowsEnabled)
+                if MicrophoneChoice.showsAccessNote(stored: storedMicrophone, access: microphoneAccess) {
+                    HStack {
+                        Text(MicrophoneChoice.accessOffText)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Privacy Settings…") {
+                            NSWorkspace.shared.open(MicrophoneChoice.privacySettingsURL)
+                        }
+                    }
+                }
+                if recordingLayout.showsGIFCaption {
+                    Text(RecordingSettingsLayout.gifCaption)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 Toggle("Show cursor in recordings", isOn: $settings.recordingShowsCursor)
                 Toggle("Count down before recording", isOn: $settings.recordingCountdown)
             }
@@ -57,6 +126,74 @@ struct CaptureSettingsView: View {
             BackgroundStyleSheet(settings: settings, onUnusableImage: { name in
                 AppCoordinator.shared.notifyUnusableBackgroundImage(named: name)
             })
+        }
+        .background(WindowReader { settingsWindow = $0.map(ObjectIdentifier.init) })
+        .onAppear(perform: refreshMicrophones)
+        .onReceive(Self.microphoneChanges) { _ in refreshMicrophones() }
+        // Back from System Settings, the note clears once access is allowed.
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notification in
+            guard let window = notification.object as? NSWindow, ObjectIdentifier(window) == settingsWindow else { return }
+            microphoneAccess = microphones.access()
+        }
+    }
+
+    /// Reads the inputs and the access. A stored device that is listed gets its name written
+    /// again, as a disconnected `uniqueID` cannot be turned back into a name.
+    private func refreshMicrophones() {
+        microphoneDevices = microphones.list()
+        microphoneAccess = microphones.access()
+        if case .device(let id, let name) = storedMicrophone,
+           let device = microphoneDevices.first(where: { $0.uniqueID == id }), device.name != name {
+            settings.recordingMicrophoneName = device.name
+        }
+    }
+
+    /// A pick writes the choice and the device's name, whatever the access (`MicrophoneChoice.pick`;
+    /// design, Microphone, Permission). A microphone picked while access is not determined asks for
+    /// it. The answer changes nothing stored: after a refusal, or a pick while access is off, the row
+    /// shows the access note.
+    private func pickMicrophone(_ tag: String) {
+        let name = microphoneDevices.first { $0.uniqueID == tag }?.name
+            ?? (tag == settings.recordingMicrophone ? settings.recordingMicrophoneName : "")
+        microphoneAccess = microphones.access()
+        let pick = MicrophoneChoice.pick(MicrophoneChoice.Stored(value: tag, name: name), access: microphoneAccess)
+        settings.recordingMicrophone = pick.stored.value
+        settings.recordingMicrophoneName = pick.stored.name
+        guard pick.asksForAccess else { return }
+        Task {
+            _ = await microphones.requestAccess()
+            microphoneAccess = microphones.access()
+        }
+    }
+}
+
+/// Reports the window its view is in, once it is in one.
+private struct WindowReader: NSViewRepresentable {
+    let onWindow: (NSWindow?) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        WindowReportingView(onWindow: onWindow)
+    }
+
+    func updateNSView(_ view: NSView, context: Context) {}
+
+    private final class WindowReportingView: NSView {
+        let onWindow: (NSWindow?) -> Void
+
+        init(onWindow: @escaping (NSWindow?) -> Void) {
+            self.onWindow = onWindow
+            super.init(frame: .zero)
+        }
+
+        required init?(coder: NSCoder) {
+            fatalError("init(coder:) is not used")
+        }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            // After SwiftUI's update, so the state change is not made during it.
+            let window = window
+            DispatchQueue.main.async { [onWindow] in onWindow(window) }
         }
     }
 }

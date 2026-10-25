@@ -245,6 +245,30 @@ struct DragFileStoreTests {
         #expect(names(id) == ["aSIS7.mp4"])
     }
 
+    /// After a stage that straddled a change to the folder, the copy a card may get is the folder's
+    /// file only when it is a copy of the record's file now (`reusingMatch`'s test): a trim's put
+    /// changes the size and date, so the untrimmed copy is not handed out. A record with no local
+    /// file has its folder's file as it is; an empty folder has none.
+    @Test func aCopyIsHandedOutOnlyWhenItMatchesTheRecordsFileNow() throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let id = UUID()
+        let movie = try source("Recording.mp4", [1, 2, 3, 4])
+        #expect(store.copy(id: id, matching: movie, scope: nil) == nil)
+        #expect(store.copy(id: id, matching: nil, scope: nil) == nil)
+        let staged = try store.stage(id: id, name: "Recording 5.mp4", from: movie, scope: nil, reusingMatch: true)
+        #expect(store.copy(id: id, matching: movie, scope: nil) == staged)
+
+        // The trim's put: the file at the record's path is now the trimmed one.
+        try Data([9, 9]).write(to: movie)
+        #expect(store.copy(id: id, matching: movie, scope: nil) == nil)
+        #expect(store.copy(id: id, matching: nil, scope: nil) == staged)
+        // The same size, another date: still not the file.
+        try Data([5, 6, 7, 8]).write(to: movie)
+        try setModified(movie, try modified(staged).addingTimeInterval(60))
+        #expect(store.copy(id: id, matching: movie, scope: nil) == nil)
+        #expect(names(id) == ["Recording 5.mp4"])
+    }
+
     /// The launch sweep removes `Drag` and everything in it; a second sweep is no error.
     @Test func sweepRemovesTheWholeDragFolder() throws {
         defer { try? FileManager.default.removeItem(at: root) }

@@ -9,11 +9,13 @@ extension AppCoordinator {
     /// card appears. The name and the source are worked out here; the copy runs detached. The
     /// card's `dragFileURL` is nil until it is done. A record with no readable file uses its kept
     /// copy, or, uploaded, a quiet download (`prefetchDragFile`). A recording goes through
-    /// `stageVideoDragFile`, which reuses its copy and never downloads.
+    /// `stageVideoDragFile`, which reuses its copy and never downloads. A recording marked `Sound not
+    /// muted` stages nothing, so its card has no file to drag.
     func prepareDragFile(recordID: UUID) {
-        guard let record = history.record(id: recordID), overlay.isShowing(recordID: recordID) else { return }
+        guard let record = history.record(id: recordID), overlay.isShowing(recordID: recordID),
+              record.uploadBlockedReason == nil else { return }
         dragCleanups.removeValue(forKey: recordID)?.cancel()
-        if record.isVideo {
+        if record.isTimeBased {
             Task { await stageVideoDragFile(recordID: recordID) }
             return
         }
@@ -65,7 +67,7 @@ extension AppCoordinator {
     /// its drag folder. A failure is only logged; the card then cannot be dragged. Never for a
     /// recording: a silent download of hundreds of MB on a click would surprise (R2).
     private func prefetchDragFile(recordID: UUID, name: String) async {
-        guard !prefetchingDragIDs.contains(recordID), let record = history.record(id: recordID), !record.isVideo,
+        guard !prefetchingDragIDs.contains(recordID), let record = history.record(id: recordID), !record.isTimeBased,
               record.uploadedKey != nil, record.objectLocation != nil else { return }
         prefetchingDragIDs.insert(recordID)
         defer { prefetchingDragIDs.remove(recordID) }
@@ -93,7 +95,7 @@ extension AppCoordinator {
     /// point at and an adopt would delete, so its pending file is removed instead (Gap 7).
     func keepForDragOut(_ fileURL: URL, record: CaptureRecord, url: URL, key: String) -> Bool {
         guard overlay.isShowing(recordID: record.id) else { return false }
-        if record.isVideo, dragFiles.stagedFile(id: record.id) != nil { return false }
+        if record.isTimeBased, dragFiles.stagedFile(id: record.id) != nil { return false }
         var uploaded = record
         uploaded.uploadState = .uploaded(url: url, key: key)
         let name = DragFileName.name(for: uploaded, suggestion: saveAsSuggestion(recordID: record.id))
@@ -184,11 +186,14 @@ extension AppCoordinator {
             }.value
             guard let self else { return nil }
             if self.dragGenerations[recordID, default: 0] != generation {
-                // The folder was removed (Delete, the clean-up) or the pending file adopted while
-                // the copy ran. A card still showing gets what the folder holds now; otherwise the
-                // folder this stage recreated goes.
+                // The folder was removed (Delete, the clean-up, a trim's write) or the pending file
+                // adopted while the copy ran, so the copy can be of the file as it was. A card still
+                // showing gets the folder's file only when it is a copy of the record's file now;
+                // otherwise the folder goes, and the next press stages again, so a trimmed recording
+                // is never dragged as its untrimmed copy. With no card, the folder this stage
+                // recreated goes.
                 if self.overlay.isShowing(recordID: recordID) {
-                    staged = await Task.detached(priority: .userInitiated) { store.stagedFile(id: recordID) }.value
+                    staged = await self.currentDragCopy(of: recordID)
                 } else {
                     self.dropStaleDragFolder(recordID)
                     staged = nil
@@ -202,6 +207,27 @@ extension AppCoordinator {
         }
         stagingVideoIDs[recordID] = stage
         return await stage.value
+    }
+
+    /// The record's drag copy after a stage that straddled a change to its folder: the folder's file
+    /// when it is a copy of the record's file now (`DragFileStore.copy(id:matching:scope:)`). When it
+    /// is not, or the record is gone, the folder is removed, unless it changed again meanwhile, and
+    /// nil comes back.
+    private func currentDragCopy(of recordID: UUID) async -> URL? {
+        let store = dragFiles
+        let generation = dragGenerations[recordID, default: 0]
+        var copy: URL?
+        if let record = history.record(id: recordID) {
+            let source = record.fileURL
+            let scope = record.fileIsTemporary ? nil : saveLocation.currentURL
+            copy = await Task.detached(priority: .userInitiated) {
+                store.copy(id: recordID, matching: source, scope: scope)
+            }.value
+        }
+        if copy == nil, dragGenerations[recordID, default: 0] == generation {
+            dragFiles.remove(id: recordID)
+        }
+        return copy
     }
 
     /// A stage or download finished after its folder was removed or replaced: unless a card shows

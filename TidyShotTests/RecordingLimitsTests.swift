@@ -22,6 +22,22 @@ struct RecordingLimitsTests {
         #expect(!RecordingLimits.stopsRecording(freeBytes: nil))
     }
 
+    /// Room for a step that writes a copy (R2): the copy's size plus the 1 GB a recording keeps free.
+    @Test func roomNeedsTheSizePlus1GB() {
+        let size: Int64 = 420_000_000
+        #expect(RecordingLimits.hasRoom(for: size, freeBytes: size + 1_000_000_000))
+        #expect(!RecordingLimits.hasRoom(for: size, freeBytes: size + 999_999_999))
+        #expect(RecordingLimits.hasRoom(for: size, freeBytes: 50_000_000_000))
+        #expect(RecordingLimits.hasRoom(for: 0, freeBytes: 1_000_000_000))
+        #expect(!RecordingLimits.hasRoom(for: 0, freeBytes: 999_999_999))
+    }
+
+    /// An unreadable free-space value counts as enough, as in R1.
+    @Test func unknownFreeSpaceHasRoom() {
+        #expect(RecordingLimits.hasRoom(for: 0, freeBytes: nil))
+        #expect(RecordingLimits.hasRoom(for: 5_000_000_000, freeBytes: nil))
+    }
+
     @Test func cancelAsksFromFiveSeconds() {
         #expect(!RecordingLimits.asksBeforeDiscarding(elapsed: 4.9))
         #expect(RecordingLimits.asksBeforeDiscarding(elapsed: 5))

@@ -67,7 +67,7 @@ final class QuickAccessCardDragView: NSView, NSDraggingSource {
         dragStarted = true
         model.isDraggingOut = true
         let item = NSDraggingItem(pasteboardWriter: fileURL as NSURL)
-        let placeholder = model.record.isVideo ? "film" : "photo"
+        let placeholder = model.record.isTimeBased ? "film" : "photo"
         let image = model.thumbnail ?? NSImage(systemSymbolName: placeholder, accessibilityDescription: nil) ?? NSImage()
         item.setDraggingFrame(Self.dragFrame(imageSize: image.size, centredOn: convert(down.locationInWindow, from: nil)),
                               contents: image)

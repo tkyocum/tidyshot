@@ -5,10 +5,15 @@ import AppKit
 protocol RecordingChrome: AnyObject {
     /// The panel and the frame, for the filter's fallback exclusion. Valid once shown.
     var windowNumbers: Set<CGWindowID> { get }
-    /// Orders the frame and the panel front, with Stop enabled and the time at `0:00`.
-    func show(onStop: @escaping () -> Void, onCancel: @escaping () -> Void)
+    /// Orders the frame and the panel front, laid out as `bar`, with Stop enabled, the time at
+    /// `0:00` and the sound not muted. `onMute` is the mute button's, which only the mute bar has.
+    func show(onStop: @escaping () -> Void, onCancel: @escaping () -> Void, onMute: @escaping () -> Void,
+              bar: RecordingPanelLayout.Bar)
     func update(elapsed: TimeInterval)
+    /// Stop, Cancel and the mute button together.
     func setStopEnabled(_ enabled: Bool)
+    /// The mute button's state.
+    func setMuted(_ muted: Bool)
     /// `Discard this recording?` with `<m:ss> of recording will be deleted.`. True for Discard,
     /// false for Save.
     func askToDiscard(elapsed: TimeInterval) async -> Bool
@@ -32,24 +37,31 @@ final class RecordingScreenChrome: RecordingChrome {
     private let model = RecordingPanelModel()
     private let panel: RecordingPanel
     private let frameWindow: ScrollAreaFrameWindow?
-    private let panelFrame: CGRect
+    /// Kept until `show`, which knows the bar and so the panel's size.
+    private let placement: RecordingChromePlacement
     /// `askToDiscard`'s answer, from its call until the alert or a quit gives it.
     private var discardAnswer: CheckedContinuation<Bool, Never>?
 
     init(placement: RecordingChromePlacement) {
-        let size = RecordingPanelView.size
-        switch placement {
-        case .area(let area, let visibleFrame):
-            panelFrame = ScrollPanelGeometry.frame(panelSize: size, area: area, visibleFrame: visibleFrame)
+        self.placement = placement
+        if case .area(let area, _) = placement {
             frameWindow = ScrollAreaFrameWindow(area: area)
-        case .window(let frame, let visibleFrame):
-            panelFrame = ScrollPanelGeometry.frame(panelSize: size, area: frame, visibleFrame: visibleFrame)
-            frameWindow = nil
-        case .fullscreen(let visibleFrame):
-            panelFrame = ScrollPanelGeometry.bottomCentre(panelSize: size, visibleFrame: visibleFrame)
+        } else {
             frameWindow = nil
         }
         panel = RecordingPanel(model: model)
+    }
+
+    /// The panel's frame for a bar of `size` at `placement`.
+    private static func panelFrame(size: CGSize, placement: RecordingChromePlacement) -> CGRect {
+        switch placement {
+        case .area(let area, let visibleFrame):
+            ScrollPanelGeometry.frame(panelSize: size, area: area, visibleFrame: visibleFrame)
+        case .window(let frame, let visibleFrame):
+            ScrollPanelGeometry.frame(panelSize: size, area: frame, visibleFrame: visibleFrame)
+        case .fullscreen(let visibleFrame):
+            ScrollPanelGeometry.bottomCentre(panelSize: size, visibleFrame: visibleFrame)
+        }
     }
 
     var windowNumbers: Set<CGWindowID> {
@@ -57,12 +69,16 @@ final class RecordingScreenChrome: RecordingChrome {
         return Set(windows.compactMap { $0.isVisible && $0.windowNumber > 0 ? CGWindowID($0.windowNumber) : nil })
     }
 
-    func show(onStop: @escaping () -> Void, onCancel: @escaping () -> Void) {
+    func show(onStop: @escaping () -> Void, onCancel: @escaping () -> Void, onMute: @escaping () -> Void,
+              bar: RecordingPanelLayout.Bar) {
         model.onStop = onStop
         model.onCancel = onCancel
+        model.onMute = onMute
         model.elapsed = 0
         model.stopEnabled = true
-        panel.setFrame(panelFrame, display: false)
+        model.isMuted = false
+        model.bar = bar
+        panel.setFrame(Self.panelFrame(size: RecordingPanelLayout.size(of: bar), placement: placement), display: false)
         frameWindow?.orderFrontRegardless()
         panel.orderFrontRegardless()
     }
@@ -73,6 +89,10 @@ final class RecordingScreenChrome: RecordingChrome {
 
     func setStopEnabled(_ enabled: Bool) {
         model.stopEnabled = enabled
+    }
+
+    func setMuted(_ muted: Bool) {
+        model.isMuted = muted
     }
 
     /// Runs as `confirmRemoveFromHistory` does: in a block the run loop performs only in its
@@ -114,6 +134,7 @@ final class RecordingScreenChrome: RecordingChrome {
     func close() {
         model.onStop = {}
         model.onCancel = {}
+        model.onMute = {}
         panel.orderOut(nil)
         frameWindow?.orderOut(nil)
     }

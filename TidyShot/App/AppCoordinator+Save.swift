@@ -212,7 +212,7 @@ extension AppCoordinator {
         let thumbnail = image.map { makeThumbnail(from: $0, for: record.id) }
         if showsCard {
             showOverlay(for: record, image: image, scale: scale, captureDisplayID: captureDisplayID,
-                        retainsImage: !record.isVideo)
+                        retainsImage: !record.isTimeBased)
         }
         if let destination {
             do {

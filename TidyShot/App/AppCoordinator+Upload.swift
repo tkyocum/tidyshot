@@ -21,6 +21,10 @@ extension AppCoordinator {
         notifier.notifyError(message, title: "Upload not configured")
     }
 
+    /// `Upload not configured`'s body when an upload the user asked for finds no destination: the
+    /// editor's Upload, Save and Upload and `Upload Trimmed`.
+    nonisolated static let uploadNotConfiguredBody = "Set up a destination in Settings > Upload, then upload again."
+
     /// The configured destination, or nil when the Upload tab is incomplete, no credentials are
     /// stored, or the keychain could not be read. "No item" is the normal not-configured case and
     /// stays silent here; any other keychain error is logged and reported once per launch.
@@ -56,10 +60,13 @@ extension AppCoordinator {
     }
 
     /// Called by the Upload settings tab after saving or forgetting credentials, so the next
-    /// upload builds a queue from the new settings. The old queue is not dropped while it has
-    /// work: it moves to `drainingQueues` until it reports idle, so its jobs still deliver their
-    /// events (and finish against the destination they started with) and Delete can cancel them.
+    /// upload builds a queue from the new settings, and the shown cards' Trim items follow. The
+    /// old queue is not dropped while it has work: it moves to `drainingQueues` until it reports
+    /// idle, so its jobs still deliver their events (and finish against the destination they
+    /// started with) and Delete can cancel them.
     func destinationDidChange() {
+        // `Trim…` and `Upload Trimmed` follow whether a destination is set.
+        refreshCardTrimStates()
         guard let old = queue else { return }
         queue = nil
         drainingQueues.append(old)
@@ -71,6 +78,23 @@ extension AppCoordinator {
                 try? await Task.sleep(for: .milliseconds(500))
             }
             self?.drainingQueues.removeAll { $0.queue === old.queue }
+        }
+    }
+
+    /// The last steps of an upload over a plan the caller has checked, shared by the editor's Upload
+    /// and Trim's upload half: the record goes to uploading, with its prior link and any superseded
+    /// object, in one write (`EditorUploadPlan.startingUpload`); the card and the editor show
+    /// `Uploading…` now, as `startUpload` skips that refresh for a record already uploading; and the
+    /// job goes through the live lane (`uploadingIDs`, progress, cancel, Delete and the menu bar
+    /// icon), over the link's own key for a replace or under a new template key.
+    func startPlannedUpload(recordID: UUID, plan: EditorUploadPlan.Plan, payload: UploadPayload,
+                            destination: S3Destination) {
+        history.update(id: recordID) { $0 = EditorUploadPlan.startingUpload($0, plan: plan) }
+        refreshOverlay(for: recordID)
+        if case .replace(let key) = plan {
+            startUpload(recordID: recordID, payload: payload, destination: destination, fixedKey: key)
+        } else {
+            startUpload(recordID: recordID, payload: payload, destination: destination)
         }
     }
 
@@ -89,13 +113,19 @@ extension AppCoordinator {
     /// after the Upload tab was saved); callers read it once. With `fixedKey` the job PUTs that
     /// exact key with `Cache-Control: no-cache` and draws no counter (an editor replace, or a retry
     /// of one); otherwise the key is named from the template. With Clop on and running, Clop
-    /// optimises a copy first: a PNG on its image queue, a recording on its video queue. A
-    /// recording's file is then checked against the single-PUT limit, and one over it is never
-    /// enqueued (`refuseOversizedUpload`).
+    /// optimises a copy first: a PNG on its image queue, an MP4 on its video queue; a GIF is never
+    /// sent. A recording's file is then checked against the single-PUT limit, and one over it is
+    /// never enqueued (`refuseOversizedUpload`).
     func startUpload(recordID: UUID, payload: UploadPayload, destination: S3Destination, fixedKey: String? = nil) {
         // Look the record up before marking it uploading, so a missing record never leaves an
         // id in `uploadingIDs` (and the menu bar icon spinning) with no job to clear it.
         guard let record = history.record(id: recordID) else { return }
+        // A backstop: every caller a user drives has refused with its own notice already, and Retry
+        // Failed Uploads skips the record. Nothing changes and nothing posts.
+        if let refusal = Self.uploadRefusal(for: record, isTrimming: trimmingIDs.contains(recordID)) {
+            NSLog("%@", "Upload: refused for \(record.fileURL?.lastPathComponent ?? recordID.uuidString): \(refusal)")
+            return
+        }
         let lane = queue ?? makeLane(for: destination)
         queue = lane
         uploadingIDs.insert(recordID)
@@ -129,7 +159,12 @@ extension AppCoordinator {
             // The activity starts here, at the Clop request or at the enqueue when Clop is off.
             fileUploadIDs.insert(recordID)
         }
-        let optimises = settings.optimiseWithClop && clopIsRunning()
+        // A GIF uploads as made, so it never asks whether Clop runs (design, GIF, Clop).
+        if !kind.isSentToClop, settings.optimiseWithClop, !loggedGIFNotSentToClop {
+            loggedGIFNotSentToClop = true
+            NSLog("%@", "Clop: GIFs are not sent to Clop")
+        }
+        let optimises = kind.isSentToClop && settings.optimiseWithClop && clopIsRunning()
         guard optimises || isFile else {
             if case .data(let data) = payload {
                 sentByteCounts[recordID] = data.count
@@ -231,10 +266,10 @@ extension AppCoordinator {
             guard history.record(id: recordID) != nil, !deletingIDs.contains(recordID) else { return }
             if let folder {
                 let baseName = recordingBaseName(startedAt: record.timestamp)
+                let ext = record.mediaKind.fileExtension
                 do {
                     movedURL = try await Task.detached(priority: .utility) {
-                        try SaveLocation.moveInScoped(source, baseName: baseName, ext: MediaKind.video.fileExtension,
-                                                      folder: folder)
+                        try SaveLocation.moveInScoped(source, baseName: baseName, ext: ext, folder: folder)
                     }.value
                     move = .saveFolder
                 } catch {
@@ -302,10 +337,16 @@ extension AppCoordinator {
         return (payload, nil)
     }
 
-    /// Re-reads the file and uploads it again.
+    /// Re-reads the file and uploads it again. A record `uploadRefusal` refuses posts `Not uploaded`
+    /// with the reason before the destination is read, so it is never marked failed for want of one.
     func retryUpload(recordID: UUID) {
         // Ignore a second click while the record is already in flight; otherwise it would upload twice.
-        guard history.record(id: recordID) != nil, !uploadingIDs.contains(recordID), !deletingIDs.contains(recordID) else { return }
+        guard let record = history.record(id: recordID), !uploadingIDs.contains(recordID),
+              !deletingIDs.contains(recordID) else { return }
+        if let refusal = Self.uploadRefusal(for: record, isTrimming: trimmingIDs.contains(recordID)) {
+            notifier.notifyError(refusal, title: "Not uploaded")
+            return
+        }
         guard let destination = makeDestination() else {
             markFailed(recordID, message: UploadError.notConfigured.localizedDescription)
             return
@@ -313,10 +354,27 @@ extension AppCoordinator {
         retry(recordID: recordID, destination: destination)
     }
 
+    /// Why the record must not be uploaded, or nil: a Trim pass runs on it (`isTrimming`, design,
+    /// Write-time checks), or it is a recording marked `Sound not muted`, whose file still holds the
+    /// sound its user muted (design, Privacy rule).
+    nonisolated static func uploadRefusal(for record: CaptureRecord, isTrimming: Bool = false) -> String? {
+        if isTrimming { return EditorAvailability.trimmingRefusal }
+        return record.uploadBlockedReason
+    }
+
+    /// The failed records Retry Failed Uploads starts again: not one being deleted, and not one
+    /// `uploadRefusal` refuses (being trimmed, or marked), which is skipped without a notice.
+    nonisolated static func failedRecordsToRetry(_ records: [CaptureRecord], deletingIDs: Set<UUID>,
+                                                 trimmingIDs: Set<UUID> = []) -> [CaptureRecord] {
+        records.filter {
+            !deletingIDs.contains($0.id) && uploadRefusal(for: $0, isTrimming: trimmingIDs.contains($0.id)) == nil
+        }
+    }
+
     /// Retries every failed upload with one keychain read. Without a destination, posts one
     /// notification instead of one per record.
     func retryFailedUploads() {
-        let failed = history.failedRecords.filter { !deletingIDs.contains($0.id) }
+        let failed = Self.failedRecordsToRetry(history.failedRecords, deletingIDs: deletingIDs, trimmingIDs: trimmingIDs)
         guard !failed.isEmpty else { return }
         guard let destination = makeDestination() else {
             notifier.notifyError("Set up a destination in Settings > Upload, then retry.", title: "Upload not configured")
@@ -329,8 +387,15 @@ extension AppCoordinator {
 
     /// Starts the record's upload again from its file with `destination`. A record whose delete
     /// is in progress is never re-enqueued, so a retry cannot re-upload what Delete is removing.
-    /// An interrupted or failed replace re-PUTs its own key, so its URL stays.
+    /// An interrupted or failed replace re-PUTs its own key, so its URL stays. A record
+    /// `uploadRefusal` refuses posts `Not uploaded` with the reason instead.
     private func retry(recordID: UUID, destination: S3Destination) {
+        if let refusal = history.record(id: recordID).flatMap({
+            Self.uploadRefusal(for: $0, isTrimming: trimmingIDs.contains(recordID))
+        }) {
+            notifier.notifyError(refusal, title: "Not uploaded")
+            return
+        }
         guard !deletingIDs.contains(recordID), let record = history.record(id: recordID) else { return }
         let payload: UploadPayload
         do {
@@ -356,15 +421,15 @@ extension AppCoordinator {
 
     /// What an upload of the record sends. An image's PNG is read into memory: straight from the
     /// container for a temporary file, through the save folder's security scope otherwise. A video
-    /// is never read here: it streams from its file, once the file is found (holding the folder's
-    /// scope to look) and a save-folder file is inside the current folder. Throws when the record
-    /// has no file it can reach.
+    /// or a GIF is never read here: it streams from its file, once the file is found (holding the
+    /// folder's scope to look) and a save-folder file is inside the current folder. Throws when the
+    /// record has no file it can reach.
     func uploadPayload(for record: CaptureRecord) throws -> UploadPayload {
         switch record.mediaKind {
         case .image:
             guard let fileURL = record.fileURL else { throw UploadError.fileUnreadable("no local file") }
             return .data(record.fileIsTemporary ? try Data(contentsOf: fileURL) : try saveLocation.read(contentsOf: fileURL))
-        case .video:
+        case .video, .gif:
             return try UploadPayload.video(for: record, saveFolder: saveLocation.currentURL) { url, folder in
                 let accessing = folder?.startAccessingSecurityScopedResource() ?? false
                 defer { if accessing { folder?.stopAccessingSecurityScopedResource() } }
@@ -475,21 +540,27 @@ extension AppCoordinator {
             // A screenshot's URL always replaces the clipboard. A recording's does only while the
             // clipboard still holds what the save left there: an upload can take minutes, and the
             // user may have copied something since.
-            let replacesClipboard = !before.isVideo
+            let replacesClipboard = !before.isTimeBased
                 || RecordingSavePlan.replacesClipboard(savedChangeCount: videoClipboardCounts.removeValue(forKey: id),
                                                        currentChangeCount: NSPasteboard.general.changeCount)
+            // The first same-key replace of this launch posts the cache note in place of the usual
+            // notification, also with Show notification off, whether or not the URL was copied.
+            let postsCacheNote = EditorUploadPlan.shouldPostCacheNote(prior: before.priorUpload, uploadedKey: key,
+                                                                      at: location, alreadyPosted: postedCacheNote)
+            if postsCacheNote {
+                postedCacheNote = true
+            }
             if !replacesClipboard {
                 linkNotCopiedIDs.insert(id)
-                if settings.showNotification {
+                if postsCacheNote {
+                    notifier.notify(title: "Uploaded", body: EditorUploadPlan.cacheNote)
+                } else if settings.showNotification {
                     notifier.notifyUploaded(url: url, copied: false)
                 }
             } else {
                 linkNotCopiedIDs.remove(id)
                 Pasteboard.copy(url: url)
-                if EditorUploadPlan.shouldPostCacheNote(prior: before.priorUpload, uploadedKey: key, at: location,
-                                                        alreadyPosted: postedCacheNote) {
-                    // In place of the usual notification, and also with Show notification off.
-                    postedCacheNote = true
+                if postsCacheNote {
                     notifier.notify(title: "Uploaded, URL copied", body: EditorUploadPlan.cacheNote)
                 } else if settings.showNotification {
                     notifier.notifyUploaded(url: url)
@@ -498,17 +569,17 @@ extension AppCoordinator {
             refreshOverlay(for: id)
             Task { [weak self] in await self?.deleteSupersededObjects(of: id) }
         case .failed(let id, let message):
-            guard history.record(id: id)?.priorUpload != nil else {
+            guard let failing = history.record(id: id), failing.priorUpload != nil else {
                 markFailed(id, message: message)
                 return
             }
             // An upload of a record that has a link: the old object is untouched, so the record
-            // goes back to it, and keeps the edited file and the stale note.
+            // goes back to it, and keeps the edited or trimmed file and the stale note.
             NSLog("Upload failed, the earlier link is kept: \(message)")
             uploadingIDs.remove(id)
             history.update(id: id) { $0 = EditorUploadPlan.applyingFailure(to: $0, message: message) }
             refreshOverlay(for: id)
-            notifier.notifyError(EditorUploadPlan.failedReplaceMessage, title: "Not uploaded")
+            notifier.notifyError(EditorUploadPlan.failedReplaceMessage(for: failing.mediaKind), title: "Not uploaded")
         case .cancelled(let id, let reservedKey):
             // Requested by the delete flow, which removes the record next; no notification.
             uploadingIDs.remove(id)

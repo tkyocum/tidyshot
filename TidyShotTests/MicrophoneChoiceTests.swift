@@ -1,0 +1,331 @@
+import Foundation
+import Testing
+@testable import TidyShot
+
+/// The `Microphone` setting and its resolution at the start (design, Microphone, Setting,
+/// Permission and At the start), over a device list and an access the tests choose.
+struct MicrophoneChoiceTests {
+    let builtIn = MicrophoneDevice(uniqueID: "BuiltInMicrophoneDevice", name: "MacBook Pro Microphone")
+    let rode = MicrophoneDevice(uniqueID: "AppleUSBAudioEngine:RODE:AI-1:1", name: "RODE AI-1")
+    let brio = MicrophoneDevice(uniqueID: "AppleUSBAudioEngine:Logitech:Brio 500:2", name: "Brio 500")
+
+    var devices: [MicrophoneDevice] { [builtIn, rode] }
+    /// The RODE AI-1, stored and then unplugged.
+    var missingRode: MicrophoneChoice.Stored { .device(id: rode.uniqueID, name: "RODE AI-1") }
+
+    // MARK: Stored values
+
+    @Test func storedValuesParseFromTheTwoSettings() {
+        #expect(MicrophoneChoice.Stored(value: "", name: "") == .off)
+        #expect(MicrophoneChoice.Stored(value: "", name: "RODE AI-1") == .off)
+        #expect(MicrophoneChoice.Stored(value: "default", name: "") == .systemDefault)
+        #expect(MicrophoneChoice.Stored(value: rode.uniqueID, name: "RODE AI-1") == .device(id: rode.uniqueID, name: "RODE AI-1"))
+        #expect(MicrophoneChoice.Stored(value: rode.uniqueID, name: "") == .device(id: rode.uniqueID, name: ""))
+    }
+
+    // MARK: Resolve
+
+    @Test(arguments: [MicrophoneAccess.authorized, .denied, .restricted, .notDetermined])
+    func offRecordsNoMicrophoneAndPostsNothing(_ access: MicrophoneAccess) {
+        let resolution = MicrophoneChoice.resolve(stored: .off, devices: devices, defaultDevice: builtIn, access: access)
+        #expect(resolution == MicrophoneChoice.Resolution(device: nil, note: nil))
+    }
+
+    @Test func systemDefaultRecordsTheDefaultInput() {
+        let resolution = MicrophoneChoice.resolve(stored: .systemDefault, devices: devices, defaultDevice: builtIn,
+                                                  access: .authorized)
+        #expect(resolution == MicrophoneChoice.Resolution(device: builtIn, note: nil))
+    }
+
+    @Test func aPresentDeviceRecordsThatDevice() {
+        let resolution = MicrophoneChoice.resolve(stored: .device(id: rode.uniqueID, name: "RODE AI-1"), devices: devices,
+                                                  defaultDevice: builtIn, access: .authorized)
+        #expect(resolution == MicrophoneChoice.Resolution(device: rode, note: nil))
+    }
+
+    @Test func aMissingDeviceRecordsTheDefaultInputAndSaysSo() {
+        let resolution = MicrophoneChoice.resolve(stored: missingRode, devices: [builtIn], defaultDevice: builtIn,
+                                                  access: .authorized)
+        #expect(resolution.device == builtIn)
+        #expect(resolution.note == RecordingNotice(title: "Recorded with MacBook Pro Microphone",
+                                                   body: "RODE AI-1 is not connected."))
+        #expect(MicrophoneChoice.entries(stored: missingRode, devices: [builtIn]).last
+                == MicrophoneChoice.Entry(tag: rode.uniqueID, title: "RODE AI-1 (not connected)"))
+    }
+
+    @Test func aMissingDeviceWithNoStoredNameIsAnUnknownMicrophone() {
+        let stored = MicrophoneChoice.Stored.device(id: rode.uniqueID, name: "")
+        let resolution = MicrophoneChoice.resolve(stored: stored, devices: [builtIn], defaultDevice: builtIn,
+                                                  access: .authorized)
+        #expect(resolution.device == builtIn)
+        #expect(resolution.note == RecordingNotice(title: "Recorded with MacBook Pro Microphone",
+                                                   body: "Unknown microphone is not connected."))
+        #expect(MicrophoneChoice.entries(stored: stored, devices: [builtIn]).last
+                == MicrophoneChoice.Entry(tag: rode.uniqueID, title: "Unknown microphone (not connected)"))
+    }
+
+    @Test func theStoredDefaultInputCountsAsPresentWhenTheListLeavesItOut() {
+        let resolution = MicrophoneChoice.resolve(stored: .device(id: builtIn.uniqueID, name: "MacBook Pro Microphone"),
+                                                  devices: [rode], defaultDevice: builtIn, access: .authorized)
+        #expect(resolution == MicrophoneChoice.Resolution(device: builtIn, note: nil))
+    }
+
+    @Test func systemDefaultWithNoInputRecordsNoMicrophone() {
+        let resolution = MicrophoneChoice.resolve(stored: .systemDefault, devices: [], defaultDevice: nil,
+                                                  access: .authorized)
+        #expect(resolution == MicrophoneChoice.Resolution(
+            device: nil, note: RecordingNotice(title: "Recorded without the microphone", body: "No microphone is connected.")))
+    }
+
+    @Test func aMissingDeviceWithNoInputRecordsNoMicrophoneAndNamesIt() {
+        let resolution = MicrophoneChoice.resolve(stored: missingRode, devices: [], defaultDevice: nil, access: .authorized)
+        #expect(resolution == MicrophoneChoice.Resolution(
+            device: nil, note: RecordingNotice(title: "Recorded without the microphone", body: "RODE AI-1 is not connected.")))
+    }
+
+    @Test func authorizedPassesTheDevice() {
+        let resolution = MicrophoneChoice.resolve(stored: .device(id: brio.uniqueID, name: "Brio 500"),
+                                                  devices: [builtIn, brio], defaultDevice: builtIn, access: .authorized)
+        #expect(resolution.device?.uniqueID == brio.uniqueID)
+        #expect(resolution.note == nil)
+    }
+
+    /// The start path asks, then reads the access again, so a granted prompt reaches `resolve`
+    /// as `.authorized`.
+    @Test func notDeterminedThenGrantedPassesTheDevice() async {
+        let microphones = FakeMicrophoneDevices(devices: devices, defaultInput: builtIn, access: .notDetermined, grants: true)
+        let stored = MicrophoneChoice.Stored.device(id: rode.uniqueID, name: "RODE AI-1")
+        #expect(MicrophoneChoice.asksForAccess(stored, format: .mp4, access: microphones.access()))
+        _ = await microphones.requestAccess()
+        let resolution = MicrophoneChoice.resolve(stored: stored, devices: microphones.list(),
+                                                  defaultDevice: microphones.defaultDevice(), access: microphones.access())
+        #expect(resolution == MicrophoneChoice.Resolution(device: rode, note: nil))
+    }
+
+    @Test func aRefusedPromptPassesNoDeviceAndGivesTheAccessNote() async {
+        let microphones = FakeMicrophoneDevices(devices: devices, defaultInput: builtIn, access: .notDetermined, grants: false)
+        let stored = MicrophoneChoice.Stored.device(id: rode.uniqueID, name: "RODE AI-1")
+        _ = await microphones.requestAccess()
+        let resolution = MicrophoneChoice.resolve(stored: stored, devices: microphones.list(),
+                                                  defaultDevice: microphones.defaultDevice(), access: microphones.access())
+        #expect(resolution == MicrophoneChoice.Resolution(device: nil, note: accessNote))
+    }
+
+    /// The setting is kept: `resolve` gives a device and a note, never a new stored value.
+    @Test(arguments: [MicrophoneAccess.denied, .restricted, .notDetermined])
+    func accessNotAuthorizedPassesNoDeviceAndGivesTheAccessNote(_ access: MicrophoneAccess) {
+        for stored in [MicrophoneChoice.Stored.systemDefault, .device(id: rode.uniqueID, name: "RODE AI-1"), missingRode] {
+            let resolution = MicrophoneChoice.resolve(stored: stored, devices: devices, defaultDevice: builtIn, access: access)
+            #expect(resolution == MicrophoneChoice.Resolution(device: nil, note: accessNote))
+        }
+        // Not authorized and no input: the access note, not the missing input's.
+        let resolution = MicrophoneChoice.resolve(stored: missingRode, devices: [], defaultDevice: nil, access: access)
+        #expect(resolution.note == accessNote)
+    }
+
+    var accessNote: RecordingNotice {
+        RecordingNotice(title: "Recorded without the microphone", body: "Microphone access is off for TidyShot.")
+    }
+
+    // MARK: A GIF start
+
+    @Test func aGIFStartTreatsAnyStoredMicrophoneAsOff() {
+        for stored in [MicrophoneChoice.Stored.device(id: rode.uniqueID, name: "RODE AI-1"), missingRode, .systemDefault, .off] {
+            #expect(MicrophoneChoice.forRecording(stored, format: .gif) == .off)
+        }
+    }
+
+    @Test func anMP4StartKeepsTheStoredChoice() {
+        for stored in [MicrophoneChoice.Stored.device(id: rode.uniqueID, name: "RODE AI-1"), .systemDefault, .off] {
+            #expect(MicrophoneChoice.forRecording(stored, format: .mp4) == stored)
+        }
+    }
+
+    @Test(arguments: [MicrophoneAccess.denied, .authorized])
+    func aGIFStartWithAMissingDeviceRecordsNoMicrophoneAndPostsNothing(_ access: MicrophoneAccess) {
+        let stored = MicrophoneChoice.forRecording(missingRode, format: .gif)
+        #expect(MicrophoneChoice.resolve(stored: stored, devices: [builtIn], defaultDevice: builtIn, access: access)
+                == MicrophoneChoice.Resolution(device: nil, note: nil))
+        // No input at all.
+        #expect(MicrophoneChoice.resolve(stored: stored, devices: [], defaultDevice: nil, access: access)
+                == MicrophoneChoice.Resolution(device: nil, note: nil))
+    }
+
+    @Test func aGIFStartWithAPresentDeviceOrDefaultRecordsNoMicrophone() {
+        for stored in [MicrophoneChoice.Stored.device(id: rode.uniqueID, name: "RODE AI-1"), .systemDefault] {
+            for access in [MicrophoneAccess.denied, .authorized] {
+                #expect(MicrophoneChoice.resolve(stored: MicrophoneChoice.forRecording(stored, format: .gif),
+                                                 devices: devices, defaultDevice: builtIn, access: access)
+                        == MicrophoneChoice.Resolution(device: nil, note: nil))
+            }
+        }
+    }
+
+    @Test func onlyAnMP4WithAMicrophoneSetAsksWhileAccessIsNotDetermined() {
+        let rodeSet = MicrophoneChoice.Stored.device(id: rode.uniqueID, name: "RODE AI-1")
+        #expect(!MicrophoneChoice.asksForAccess(rodeSet, format: .gif, access: .notDetermined))
+        #expect(!MicrophoneChoice.asksForAccess(.systemDefault, format: .gif, access: .notDetermined))
+        #expect(!MicrophoneChoice.asksForAccess(.off, format: .mp4, access: .notDetermined))
+        #expect(MicrophoneChoice.asksForAccess(rodeSet, format: .mp4, access: .notDetermined))
+        #expect(MicrophoneChoice.asksForAccess(missingRode, format: .mp4, access: .notDetermined))
+        #expect(MicrophoneChoice.asksForAccess(.systemDefault, format: .mp4, access: .notDetermined))
+        for access in [MicrophoneAccess.authorized, .denied, .restricted] {
+            #expect(!MicrophoneChoice.asksForAccess(rodeSet, format: .mp4, access: access))
+        }
+    }
+
+    /// The hand-off reads `Format` again: a start that became a GIF since the choice was read takes
+    /// no microphone and posts no note.
+    @Test func aGIFRecordingDropsTheResolvedInputAndItsNote() {
+        let resolutions = [
+            MicrophoneChoice.Resolution(device: rode, note: nil),
+            MicrophoneChoice.Resolution(device: builtIn, note: RecordingNotice(title: "Recorded with MacBook Pro Microphone",
+                                                                               body: "RODE AI-1 is not connected.")),
+            MicrophoneChoice.Resolution(device: nil, note: accessNote),
+        ]
+        for resolution in resolutions {
+            #expect(MicrophoneChoice.forRecording(resolution, format: .gif) == MicrophoneChoice.Resolution(device: nil, note: nil))
+            #expect(MicrophoneChoice.forRecording(resolution, format: .mp4) == resolution)
+        }
+    }
+
+    // MARK: The start, under the capture lock
+
+    /// Off, as every GIF's start is (`aGIFStartTreatsAnyStoredMicrophoneAsOff`), reads neither the
+    /// access nor the inputs.
+    @Test func anOffStartReadsNothing() {
+        var reads: [String] = []
+        let resolution = MicrophoneChoice.resolveAtStart(.off,
+                                                         access: { reads.append("access"); return .authorized },
+                                                         devices: { reads.append("devices"); return devices },
+                                                         defaultDevice: { reads.append("default"); return builtIn })
+        #expect(resolution == MicrophoneChoice.Resolution(device: nil, note: nil))
+        #expect(reads.isEmpty)
+    }
+
+    /// A microphone reads the access first. Only with access are the inputs listed, so a start
+    /// without it runs no discovery session under the capture lock.
+    @Test(arguments: [MicrophoneAccess.authorized, .denied, .restricted, .notDetermined])
+    func aMicrophoneStartReadsTheAccessFirstAndListsTheInputsOnlyWithIt(_ access: MicrophoneAccess) {
+        var reads: [String] = []
+        let resolution = MicrophoneChoice.resolveAtStart(.device(id: rode.uniqueID, name: "RODE AI-1"),
+                                                         access: { reads.append("access"); return access },
+                                                         devices: { reads.append("devices"); return devices },
+                                                         defaultDevice: { reads.append("default"); return builtIn })
+        if access == .authorized {
+            #expect(reads == ["access", "devices", "default"])
+            #expect(resolution == MicrophoneChoice.Resolution(device: rode, note: nil))
+        } else {
+            #expect(reads == ["access"])
+            #expect(resolution == MicrophoneChoice.Resolution(device: nil, note: accessNote))
+        }
+    }
+
+    /// A refused prompt, and an input unplugged since it was chosen, each give `resolve`'s note.
+    @Test func aMicrophoneStartGivesTheNoteOfWhatItFound() async {
+        let refused = FakeMicrophoneDevices(devices: devices, defaultInput: builtIn, access: .notDetermined, grants: false)
+        _ = await refused.requestAccess()
+        let stored = MicrophoneChoice.Stored.device(id: rode.uniqueID, name: "RODE AI-1")
+        #expect(MicrophoneChoice.resolveAtStart(stored, access: { refused.access() }, devices: { refused.list() },
+                                                defaultDevice: { refused.defaultDevice() })
+                == MicrophoneChoice.Resolution(device: nil, note: accessNote))
+        let unplugged = FakeMicrophoneDevices(devices: [builtIn], defaultInput: builtIn, access: .authorized)
+        #expect(MicrophoneChoice.resolveAtStart(missingRode, access: { unplugged.access() }, devices: { unplugged.list() },
+                                                defaultDevice: { unplugged.defaultDevice() })
+                == MicrophoneChoice.Resolution(device: builtIn, note: RecordingNotice(
+                    title: "Recorded with MacBook Pro Microphone", body: "RODE AI-1 is not connected.")))
+    }
+
+    // MARK: The pop-up
+
+    @Test func theEntriesAreOffSystemDefaultThenEachInput() {
+        let expected = [
+            MicrophoneChoice.Entry(tag: "", title: "Off"),
+            MicrophoneChoice.Entry(tag: "default", title: "System Default"),
+            MicrophoneChoice.Entry(tag: builtIn.uniqueID, title: "MacBook Pro Microphone"),
+            MicrophoneChoice.Entry(tag: rode.uniqueID, title: "RODE AI-1"),
+        ]
+        #expect(MicrophoneChoice.entries(stored: .off, devices: devices) == expected)
+        #expect(MicrophoneChoice.entries(stored: .systemDefault, devices: devices) == expected)
+        // A present stored device is listed once, under its own name.
+        #expect(MicrophoneChoice.entries(stored: .device(id: rode.uniqueID, name: "Old name"), devices: devices) == expected)
+    }
+
+    @Test func aMissingStoredDeviceStaysTheSelectionAfterTheInputs() {
+        let entries = MicrophoneChoice.entries(stored: missingRode, devices: [builtIn])
+        #expect(entries == [
+            MicrophoneChoice.Entry(tag: "", title: "Off"),
+            MicrophoneChoice.Entry(tag: "default", title: "System Default"),
+            MicrophoneChoice.Entry(tag: builtIn.uniqueID, title: "MacBook Pro Microphone"),
+            MicrophoneChoice.Entry(tag: rode.uniqueID, title: "RODE AI-1 (not connected)"),
+        ])
+        // Plugging it in again restores it.
+        #expect(MicrophoneChoice.entries(stored: missingRode, devices: devices).last
+                == MicrophoneChoice.Entry(tag: rode.uniqueID, title: "RODE AI-1"))
+    }
+
+    // MARK: A pick in Settings
+
+    @Test func aStoredChoiceGivesBackTheTwoSettings() {
+        #expect(MicrophoneChoice.Stored.off.value == "")
+        #expect(MicrophoneChoice.Stored.off.name == "")
+        #expect(MicrophoneChoice.Stored.systemDefault.value == "default")
+        #expect(MicrophoneChoice.Stored.systemDefault.name == "")
+        #expect(missingRode.value == rode.uniqueID)
+        #expect(missingRode.name == "RODE AI-1")
+        for stored in [MicrophoneChoice.Stored.off, .systemDefault, missingRode, .device(id: brio.uniqueID, name: "")] {
+            #expect(MicrophoneChoice.Stored(value: stored.value, name: stored.name) == stored)
+        }
+    }
+
+    /// A pick is stored as it was made, whatever the access (Decided 2026-10-24, 7): never turned
+    /// back to Off. Only a microphone picked while access is not determined asks for it.
+    @Test(arguments: [MicrophoneAccess.authorized, .denied, .restricted, .notDetermined])
+    func aPickIsStoredWhateverTheAccess(_ access: MicrophoneAccess) {
+        for picked in [MicrophoneChoice.Stored.systemDefault, missingRode, .device(id: brio.uniqueID, name: "Brio 500")] {
+            #expect(MicrophoneChoice.pick(picked, access: access)
+                    == MicrophoneChoice.Pick(stored: picked, asksForAccess: access == .notDetermined))
+        }
+        #expect(MicrophoneChoice.pick(.off, access: access) == MicrophoneChoice.Pick(stored: .off, asksForAccess: false))
+    }
+
+    /// While access is off, the kept pick shows the row's note, and a recording goes without the
+    /// microphone and says so after Stop.
+    @Test(arguments: [MicrophoneAccess.denied, .restricted])
+    func aPickWhileAccessIsOffShowsTheNote(_ access: MicrophoneAccess) {
+        let pick = MicrophoneChoice.pick(.device(id: rode.uniqueID, name: "RODE AI-1"), access: access)
+        #expect(MicrophoneChoice.showsAccessNote(stored: pick.stored, access: access))
+        #expect(MicrophoneChoice.resolve(stored: pick.stored, devices: devices, defaultDevice: builtIn, access: access)
+                == MicrophoneChoice.Resolution(device: nil, note: accessNote))
+    }
+
+    /// A pick made while access is undecided asks for it. After the prompt, the kept pick records with
+    /// the microphone when the answer was Allow; after Don't Allow it shows the row's note, and a
+    /// recording goes without the microphone and says so. That the answer writes nothing is
+    /// `CaptureSettingsView.pickMicrophone`'s, which no test reaches: the Settings hand check pins it.
+    @Test(arguments: [true, false])
+    func aKeptPickShowsTheNoteOnlyAfterARefusal(_ grants: Bool) async {
+        let microphones = FakeMicrophoneDevices(devices: devices, defaultInput: builtIn, access: .notDetermined, grants: grants)
+        let picked = MicrophoneChoice.Stored.device(id: rode.uniqueID, name: "RODE AI-1")
+        let pick = MicrophoneChoice.pick(picked, access: microphones.access())
+        #expect(pick == MicrophoneChoice.Pick(stored: picked, asksForAccess: true))
+        _ = await microphones.requestAccess()
+        let access = microphones.access()
+        #expect(MicrophoneChoice.showsAccessNote(stored: pick.stored, access: access) == !grants)
+        #expect(MicrophoneChoice.resolve(stored: pick.stored, devices: devices, defaultDevice: builtIn, access: access)
+                == (grants ? MicrophoneChoice.Resolution(device: rode, note: nil)
+                           : MicrophoneChoice.Resolution(device: nil, note: accessNote)))
+    }
+
+    @Test func theAccessNoteShowsOnlyWithAMicrophoneSetAndAccessDeniedOrRestricted() {
+        for access in [MicrophoneAccess.authorized, .denied, .restricted, .notDetermined] {
+            #expect(!MicrophoneChoice.showsAccessNote(stored: .off, access: access))
+            let blocked = access == .denied || access == .restricted
+            #expect(MicrophoneChoice.showsAccessNote(stored: .systemDefault, access: access) == blocked)
+            #expect(MicrophoneChoice.showsAccessNote(stored: missingRode, access: access) == blocked)
+        }
+        #expect(MicrophoneChoice.accessOffText == "Microphone access is off for TidyShot.")
+        #expect(MicrophoneChoice.privacySettingsURL.absoluteString
+                == "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")
+    }
+}

@@ -39,8 +39,12 @@ final class AppCoordinator {
         environment: .live(cardWindowNumbers: { [weak self] in self?.overlay.windowNumbers ?? [] },
                            coverWindowNumbers: { [weak self] displayID in
                                self?.covers.windowNumbers[displayID].map { [$0] } ?? []
-                           }),
+                           },
+                           microphones: microphones),
         makeDriver: { [engine] in ScreenRecordingDriver(engine: engine) })
+    /// The audio inputs and the microphone access, for a recording's start (the prompt, then the
+    /// input under the capture lock) and its loss reason. Capture → Recording → `Microphone` reads its own.
+    @ObservationIgnored lazy var microphones: any MicrophoneDevices = LiveMicrophoneDevices()
     /// Hide desktop icons (spec 2.10): the wallpaper over the desktop's icons and widgets, while a
     /// capture runs or until turned off. A display it cannot cover is reported once per session;
     /// without Screen Recording, which is why nothing could be read, the permission window shows instead.
@@ -67,16 +71,21 @@ final class AppCoordinator {
     var lastCaptureURL: URL?
 
     // MARK: Recording state (AppCoordinator+Recording.swift)
-    /// From a recording's first frame until its file is handed to `saveRecording` or removed: the
-    /// status item shows `record.circle` and the menu offers Stop Recording.
+    /// From a recording's first frame until its file is handed on to its save (a GIF's conversion
+    /// first) or removed: the status item shows `record.circle` and the menu offers Stop Recording.
     var isRecording = false
     /// A recording's count-in flag: true from the selection's return (Record Fullscreen: from the
     /// free-space check) until `recorder.run` is called or the start gives up. It covers the
     /// count-in, the settle delay and the fresh content read, with the count-in on or off.
     /// `selfTimer.isRunning` cannot serve: it stays true until `run`'s capture closure returns.
     @ObservationIgnored var recordingCountIn = false
+    /// True while a record function waits on the system's microphone prompt, before the capture
+    /// lock: another start is ignored, and every other capture is refused as while one runs
+    /// (`capturesRefused`). The lock itself is free and `recordingPhase` does not change.
+    @ObservationIgnored var isAskingMicrophone = false
     /// Recordings between the recorder's `.keep` and `history.add` (in quit mode, until the
-    /// thumbnail is written), so the phase never reads `.idle` in between.
+    /// thumbnail is written), a GIF's conversion included, so the phase never reads `.idle` in
+    /// between.
     @ObservationIgnored var recordingSavesInFlight = 0
     /// Set by `finishRecordingForQuit` once the editors let the quit go ahead; never cleared, as the
     /// app then quits. A recording's hand-off gives up before `recorder.run`, and `saveRecording`
@@ -87,6 +96,9 @@ final class AppCoordinator {
     /// clipboard after the upload only while the count still matches. In memory only, so after a
     /// relaunch the clipboard counts as changed.
     @ObservationIgnored var videoClipboardCounts: [UUID: Int] = [:]
+    /// GIF conversions under way, by recording id: each one's task and its latest progress, for
+    /// the status menu and `stopMakingGIFs()`. An entry goes when its conversion has saved.
+    @ObservationIgnored var gifConversions: [UUID: (task: Task<Void, Never>, progress: GIFProgress)] = [:]
 
     // MARK: Retained capture and pins (AppCoordinator+Pins.swift)
     /// The capture just taken and its pixels, kept while its card shows, so Annotate opens the
@@ -150,6 +162,8 @@ final class AppCoordinator {
     @ObservationIgnored var warnedUploadNotConfigured = false
     /// Set when the first same-key replace of this launch posts `EditorUploadPlan.cacheNote`.
     @ObservationIgnored var postedCacheNote = false
+    /// Set when the first GIF upload of this launch, with Clop on, logs that GIFs are not sent to Clop.
+    @ObservationIgnored var loggedGIFNotSentToClop = false
     /// Records with an upload in flight; drives the menu bar icon.
     var uploadingIDs: Set<UUID> = []
     /// Recordings whose URL did not replace the clipboard when the upload finished, because the
@@ -160,6 +174,21 @@ final class AppCoordinator {
     /// Records whose delete is in progress (alert showing or requests running): a second click
     /// shows no second alert, and a retry does not re-enqueue them.
     @ObservationIgnored var deletingIDs: Set<UUID> = []
+
+    // MARK: Trim state (AppCoordinator+Trim.swift)
+    // +Upload and +Delete read trimmingIDs; +Delete closes trimWindows.
+    /// Open Trim windows, one per record.
+    @ObservationIgnored var trimWindows: [UUID: TrimWindowController] = [:]
+    /// Records whose recording is downloading for a Trim window, so a second `Trim…` does not
+    /// download it again.
+    @ObservationIgnored var openingTrimIDs: Set<UUID> = []
+    /// Each record's Trim pass, from the export through the put and its bookkeeping. `Stop` and
+    /// closing the Trim window cancel it before the put, and the window's clean-up waits for it.
+    @ObservationIgnored var trimPasses: [UUID: Task<Void, Never>] = [:]
+    /// Records whose Trim pass runs (design, Write-time checks): from Save or Save and Upload through
+    /// the put and its bookkeeping. While a record is here, Retry, `Upload Trimmed`, `startUpload` and
+    /// Delete refuse it, and Retry Failed Uploads skips it.
+    @ObservationIgnored var trimmingIDs: Set<UUID> = []
 
     // MARK: Drag-out state (AppCoordinator+DragOut.swift)
     // +RecordActions' Copy File writes dragCleanups and copyFileCounts; +Delete's prune clears copyFileCounts.
@@ -209,6 +238,8 @@ final class AppCoordinator {
         dragFiles = DragFileStore(temporaryDirectory: FileManager.default.temporaryDirectory)
         history.didPrune = { [weak self] records in self?.removeFiles(ofPruned: records) }
         overlay.onDidClose = { [weak self] id, reason in self?.overlayDidClose(id, reason: reason) }
+        // The shown cards' Trim items follow a save folder chosen at any panel.
+        saveLocation.didStoreFolder = { [weak self] in self?.refreshCardTrimStates() }
     }
 
     func start() {
@@ -216,6 +247,8 @@ final class AppCoordinator {
         dragFiles.sweep()
         // A quit or crash mid-request leaves a full-size capture in tmp/Clop.
         try? FileManager.default.removeItem(at: ClopApp.workDirectory)
+        // Trim's downloads and working copies: a quit does not wait for a pass, and a crash can leave one.
+        try? FileManager.default.removeItem(at: RecordingTrim.directory)
         notifier.setUp()
         history.load()
         // Records from before 2.13 have no size; those with a local file get it from the file.
@@ -379,21 +412,29 @@ final class AppCoordinator {
     /// A quit, a log out or a restart, after `reviewEditorsBeforeQuit` let it go ahead (design,
     /// Quit, log out and restart): a count-in is cancelled and records nothing, a recording stops
     /// as Stop does, with the stop wait and the end rule, and its save runs in quit mode, with an
-    /// open folder panel closed so the file goes to `pending/`. A Cancel's question is answered
-    /// Save (`recorder.quit()`), as it cannot show while the quit is held. Returns once nothing is
-    /// left (`recordingPhase` is `.idle`), the thumbnail of a save written.
+    /// open folder panel closed so the file goes to `pending/`. A GIF conversion under way stops
+    /// and one not yet begun is skipped, each saving its MP4 in quit mode, so a quit never waits
+    /// for a conversion. A Cancel's question is answered Save (`recorder.quit()`), as it cannot
+    /// show while the quit is held. Returns once nothing is left (`recordingPhase` is `.idle`), the
+    /// thumbnail of a save written, and the notices held during the count-in or the recording have
+    /// reached the notification centre, so the app does not end before them; a centre that does not
+    /// answer holds the quit for `quitNoticeWait` at most (R2 design, Decided 2026-10-24, 8).
     func finishRecordingForQuit() async {
         isQuitting = true
+        stopMakingGIFs()
         selfTimer.cancel()
         recorder.quit()
         saveLocation.cancelFolderChoice()
         while recordingPhase != .idle {
             try? await Task.sleep(for: Self.quitPollInterval)
         }
+        await notifier.waitForReleasedNotices(upTo: Self.quitNoticeWait)
     }
 
     /// How often `finishRecordingForQuit` checks the recording phase.
     private static let quitPollInterval = Duration.milliseconds(50)
+    /// The longest a quit waits for the released notices to reach the notification centre.
+    private static let quitNoticeWait = Duration.seconds(1)
 
     // MARK: Shared by +Capture and +Recording
 
@@ -414,21 +455,49 @@ final class AppCoordinator {
         }
     }
 
-    /// Runs `body` unless a capture already runs. With `coversDesktop` and Hide desktop icons while
-    /// capturing on, the desktop is covered before `body` reads the shareable content, so freeze
-    /// snapshots and window lists see the covers, and uncovered when it ends (spec 2.10). Capture
-    /// Scrolling and Capture Text pass false.
-    func withCaptureLock(coversDesktop: Bool, _ body: () async -> Void) async {
-        guard !isCapturing else { return }
+    /// One rule for every capture (R2 design, Decided 2026-10-24, 9): refused while another holds the
+    /// capture lock, and while a record start waits on the microphone prompt, so no capture can
+    /// contain the prompt and the start that asked finds the lock free once it is answered. The lock,
+    /// the status menu's capture items and the URL commands read it, through `capturesRefused`.
+    nonisolated static func refusesCapture(isCapturing: Bool, isAskingMicrophone: Bool) -> Bool {
+        isCapturing || isAskingMicrophone
+    }
+
+    /// `refusesCapture` for the capture lock and the microphone prompt now.
+    var capturesRefused: Bool {
+        Self.refusesCapture(isCapturing: isCapturing, isAskingMicrophone: isAskingMicrophone)
+    }
+
+    /// Why a capture is refused, for the URL handler's log: a capture holding the lock, or else the
+    /// microphone prompt. Nil when captures run.
+    nonisolated static func captureRefusal(isCapturing: Bool, isAskingMicrophone: Bool) -> CaptureRefusal? {
+        guard refusesCapture(isCapturing: isCapturing, isAskingMicrophone: isAskingMicrophone) else { return nil }
+        return isCapturing ? .captureRunning : .microphonePrompt
+    }
+
+    /// `captureRefusal` for the capture lock and the microphone prompt now.
+    var captureRefusal: CaptureRefusal? {
+        Self.captureRefusal(isCapturing: isCapturing, isAskingMicrophone: isAskingMicrophone)
+    }
+
+    /// Runs `body` unless captures are refused (`capturesRefused`): a capture already runs, or the
+    /// microphone prompt is open. With `coversDesktop` and Hide desktop icons while capturing on,
+    /// the desktop is covered before `body` reads the shareable content, so freeze snapshots and
+    /// window lists see the covers, and uncovered when it ends (spec 2.10). Capture Scrolling and
+    /// Capture Text pass false. Returns whether `body` ran.
+    @discardableResult
+    func withCaptureLock(coversDesktop: Bool, _ body: () async -> Void) async -> Bool {
+        guard !capturesRefused else { return false }
         isCapturing = true
         defer { isCapturing = false }
         guard coversDesktop, settings.hideDesktopIconsWhileCapturing else {
             await body()
-            return
+            return true
         }
         await covers.show(for: .capture)
         await body()
         covers.hide(for: .capture)
+        return true
     }
 }
 

@@ -9,18 +9,34 @@ import os
 /// system audio, to `tmp/Recording` from inside the sandboxed app, then logs what the file holds.
 /// Launch the Debug build with `-RecordingSpike YES`. Debug builds only.
 ///
+/// R2 adds the microphone: with `-RecordingSpikeMicrophone <uniqueID|default>` it logs the
+/// microphone access, asks for it when it is `notDetermined`, logs it again, and records with
+/// `captureMicrophone` from that input (`default` is the default input).
+///
 /// Lines go through `Logger` as public, because `NSLog`'s text shows as `<private>` in
 /// `log show`. Read them with
 /// `/usr/bin/log show --last 2m --style compact --predicate 'process == "TidyShot"' | grep "Recording spike"`.
 enum RecordingSpike {
     private enum SpikeError: LocalizedError {
         case noMainDisplay
+        case noMicrophone
 
-        var errorDescription: String? { "The main display is not in the shareable content." }
+        var errorDescription: String? {
+            switch self {
+            case .noMainDisplay: "The main display is not in the shareable content."
+            case .noMicrophone: "There is no default microphone."
+            }
+        }
     }
 
     static func run() async {
-        // Asking for permission would show the system prompt; the spike only reports.
+        let microphone = UserDefaults.standard.string(forKey: "RecordingSpikeMicrophone")
+        let microphones = LiveMicrophoneDevices()
+        if microphone != nil {
+            note("Recording spike event: microphone access \(microphones.access()) before asking")
+        }
+        // Asking for Screen Recording would show the system prompt; the spike only reports. It asks
+        // for the microphone only once it can record.
         guard ScreenCapturePermission.isGranted else {
             report("Recording spike: this build has no Screen Recording permission, nothing recorded")
             return
@@ -28,7 +44,11 @@ enum RecordingSpike {
         let url = Recording.fileURL(for: UUID())
         let line: String
         do {
-            line = try await record(to: url)
+            var microphoneID: String?
+            if let microphone {
+                microphoneID = try await chosenMicrophone(microphone, microphones: microphones)
+            }
+            line = try await record(to: url, microphoneID: microphoneID)
         } catch {
             line = "Recording spike: \(error.localizedDescription) (\(error))"
         }
@@ -36,7 +56,21 @@ enum RecordingSpike {
         keepAside(url)
     }
 
-    private static func record(to url: URL) async throws -> String {
+    /// The input to record from: `default` is the default input's `uniqueID`. Asks for access
+    /// when it is `notDetermined`, and logs it after.
+    private static func chosenMicrophone(_ argument: String, microphones: LiveMicrophoneDevices) async throws -> String {
+        if microphones.access() == .notDetermined {
+            let granted = await microphones.requestAccess()
+            note("Recording spike event: the microphone prompt answered \(granted ? "allow" : "deny")")
+        }
+        note("Recording spike event: microphone access \(microphones.access()) after asking")
+        guard argument == "default" else { return argument }
+        guard let device = microphones.defaultDevice() else { throw SpikeError.noMicrophone }
+        note("Recording spike event: the default microphone is \(device.name) (\(device.uniqueID))")
+        return device.uniqueID
+    }
+
+    private static func record(to url: URL, microphoneID: String?) async throws -> String {
         try Recording.makeDirectory()
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         let displayID = CGMainDisplayID()
@@ -56,6 +90,10 @@ enum RecordingSpike {
         configuration.showsCursor = true
         configuration.capturesAudio = true
         configuration.excludesCurrentProcessAudio = true
+        if let microphoneID {
+            configuration.captureMicrophone = true
+            configuration.microphoneCaptureDeviceID = microphoneID
+        }
 
         let pid = ProcessInfo.processInfo.processIdentifier
         let own = content.applications.filter { $0.processID == pid }
@@ -70,7 +108,7 @@ enum RecordingSpike {
         let output = SCRecordingOutput(configuration: outputConfiguration, delegate: delegate)
         let stream = SCStream(filter: filter, configuration: configuration, delegate: delegate)
         try stream.addRecordingOutput(output)
-        note("Recording spike event: starting \(configuration.width)×\(configuration.height) at \(configuration.sourceRect) on display \(displayID), scale \(scale)")
+        note("Recording spike event: starting \(configuration.width)×\(configuration.height) at \(configuration.sourceRect) on display \(displayID), scale \(scale), microphone \(microphoneID ?? "off")")
         try await stream.startCapture()
         try await Task.sleep(for: .seconds(3))
 

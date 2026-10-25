@@ -78,10 +78,59 @@ struct ShortcutsTests {
     /// Either record shortcut cancels a count-in and stops a recording, whichever started it. Idle,
     /// or while a recording is saved, it starts a new one.
     @Test func recordShortcutsStartCancelOrStopByPhase() {
-        #expect(AppCoordinator.recordingShortcutAction(for: .idle) == .start)
-        #expect(AppCoordinator.recordingShortcutAction(for: .countIn) == .cancelCountIn)
-        #expect(AppCoordinator.recordingShortcutAction(for: .recording) == .stop)
-        #expect(AppCoordinator.recordingShortcutAction(for: .saving) == .start)
+        #expect(AppCoordinator.recordingShortcutAction(for: .idle, isAskingMicrophone: false) == .start)
+        #expect(AppCoordinator.recordingShortcutAction(for: .countIn, isAskingMicrophone: false) == .cancelCountIn)
+        #expect(AppCoordinator.recordingShortcutAction(for: .recording, isAskingMicrophone: false) == .stop)
+        #expect(AppCoordinator.recordingShortcutAction(for: .saving, isAskingMicrophone: false) == .start)
+    }
+
+    /// While a start waits on the microphone prompt, another start is ignored (R2 design, At the
+    /// start). Nothing counts in or records then; were it so, the shortcut would still cancel or stop.
+    @Test func aStartWhileTheMicrophonePromptIsOpenIsIgnored() {
+        #expect(AppCoordinator.recordingShortcutAction(for: .idle, isAskingMicrophone: true) == .ignore)
+        #expect(AppCoordinator.recordingShortcutAction(for: .saving, isAskingMicrophone: true) == .ignore)
+        #expect(AppCoordinator.recordingShortcutAction(for: .countIn, isAskingMicrophone: true) == .cancelCountIn)
+        #expect(AppCoordinator.recordingShortcutAction(for: .recording, isAskingMicrophone: true) == .stop)
+        #expect(AppCoordinator.recordingShortcutAction(for: .idle, isAskingMicrophone: false) == .start)
+        #expect(AppCoordinator.recordingShortcutAction(for: .saving, isAskingMicrophone: false) == .start)
+    }
+
+    /// Before the capture lock (R2 design, At the start): a start with no access to ask for goes on,
+    /// also while another capture runs, whose lock then refuses it; one that would prompt while
+    /// another capture runs ends there, with no prompt; otherwise the prompt shows.
+    @Test func theMicrophonePromptShowsOnlyWithNoCaptureRunning() {
+        #expect(AppCoordinator.microphonePromptStep(asksForAccess: true, isCapturing: false) == .prompt)
+        #expect(AppCoordinator.microphonePromptStep(asksForAccess: true, isCapturing: true) == .end)
+        #expect(AppCoordinator.microphonePromptStep(asksForAccess: false, isCapturing: false) == .goOn)
+        #expect(AppCoordinator.microphonePromptStep(asksForAccess: false, isCapturing: true) == .goOn)
+    }
+
+    /// One rule for the capture lock, the status menu's capture items and the URL commands (R2
+    /// design, Decided 2026-10-24, 9): a capture is refused while another runs and while a record
+    /// start waits on the microphone prompt.
+    @Test func aCaptureIsRefusedWhileAnotherRunsOrTheMicrophonePromptIsOpen() {
+        #expect(!AppCoordinator.refusesCapture(isCapturing: false, isAskingMicrophone: false))
+        #expect(AppCoordinator.refusesCapture(isCapturing: true, isAskingMicrophone: false))
+        #expect(AppCoordinator.refusesCapture(isCapturing: false, isAskingMicrophone: true))
+        #expect(AppCoordinator.refusesCapture(isCapturing: true, isAskingMicrophone: true))
+    }
+
+    /// The URL handler's log gives the reason: a capture holding the lock wins over the prompt.
+    @Test func aRefusedCaptureNamesTheLockBeforeThePrompt() {
+        #expect(AppCoordinator.captureRefusal(isCapturing: false, isAskingMicrophone: false) == nil)
+        #expect(AppCoordinator.captureRefusal(isCapturing: true, isAskingMicrophone: false) == .captureRunning)
+        #expect(AppCoordinator.captureRefusal(isCapturing: false, isAskingMicrophone: true) == .microphonePrompt)
+        #expect(AppCoordinator.captureRefusal(isCapturing: true, isAskingMicrophone: true) == .captureRunning)
+    }
+
+    /// A record start the capture lock refuses posts only when it showed the microphone prompt,
+    /// which the user answered; one that showed none ends silently, as any capture the lock refuses.
+    @Test func aRefusedStartPostsOnlyAfterTheMicrophonePrompt() {
+        #expect(AppCoordinator.lockRefusalNotice(afterPrompt: true)
+                == RecordingNotice(title: "Screen recording",
+                                   body: "The recording did not start because another capture was running."))
+        #expect(AppCoordinator.lockRefusalNotice(afterPrompt: true)?.title == RecordingEnd.refusalTitle)
+        #expect(AppCoordinator.lockRefusalNotice(afterPrompt: false) == nil)
     }
 
     /// The Escape name serves scrolling and the self-timer now; the stored name is the old one,

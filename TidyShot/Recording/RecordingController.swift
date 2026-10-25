@@ -3,12 +3,19 @@ import CoreGraphics
 import Foundation
 
 /// One recording to run: the id that names the file, the stream's configuration, the display it
-/// is on, and `tmp/Recording/<id>.mp4`, whose folder already exists.
+/// is on, `tmp/Recording/<id>.mp4`, whose folder already exists, its mute log and lag, and for a
+/// GIF recording the GIF settings read at the start (plan Gap 1).
 struct RecordingRequest {
     let id: UUID
     let configuration: RecordingConfiguration
     let displayID: CGDirectDisplayID
     let outputURL: URL
+    /// `tmp/Mute/<id>.json`, written from the first mute toggle (design, Mute log).
+    let muteLogURL: URL
+    /// How far the sound sits behind the recording's clock, read at the start (design, Lag).
+    let lag: TimeInterval
+    /// Nil for an MP4 recording. A kept file carries it to the save, which makes the GIF.
+    var gif: GIFSettings? = nil
 }
 
 /// How a recording ended: a file to save, or nothing (the file is gone), each with the notice to
@@ -38,12 +45,19 @@ struct RecordingEnvironment {
     var endActivity: (any NSObjectProtocol) -> Void
     var inspect: (URL) async -> VideoFacts
     var poster: (URL) async -> CGImage?
-    var removeFile: (URL) -> Void
+    /// Removes the files in the order given, each only once the one before it is gone.
+    var removeFiles: ([URL]) -> Void
     /// Where sleep and the user switch are posted.
     var workspaceCenter: NotificationCenter
+    /// For the recorded input's `uniqueID`, after a stream or output error: the `Recording stopped`
+    /// body when the input is gone or access is off, or nil (plan Gap 7).
+    var microphoneLossReason: (String) -> String?
+    /// The recording's mute log writer for its log's URL, made at the first toggle (plan Gap 8).
+    var makeMuteLogWriter: (URL) -> MuteLogWriter
 
     static func live(cardWindowNumbers: @escaping () -> Set<CGWindowID>,
-                     coverWindowNumbers: @escaping (CGDirectDisplayID) -> Set<CGWindowID>) -> RecordingEnvironment {
+                     coverWindowNumbers: @escaping (CGDirectDisplayID) -> Set<CGWindowID>,
+                     microphones: any MicrophoneDevices) -> RecordingEnvironment {
         RecordingEnvironment(
             clock: SystemScrollClock(),
             awakeClock: SuspendingScrollClock(),
@@ -62,24 +76,21 @@ struct RecordingEnvironment {
             endActivity: { ProcessInfo.processInfo.endActivity($0) },
             inspect: { await VideoValidation.inspect($0) },
             poster: { await PosterFrame.image(of: $0) },
-            removeFile: { url in
-                Task.detached {
-                    do {
-                        try FileManager.default.removeItem(at: url)
-                    } catch CocoaError.fileNoSuchFile {
-                        // A start that failed early wrote nothing.
-                    } catch {
-                        RecordingLog.note("Recording: \(url.lastPathComponent) could not be removed: \(error.localizedDescription)")
-                    }
+            removeFiles: { Recording.removeFiles(at: $0) },
+            workspaceCenter: NSWorkspace.shared.notificationCenter,
+            microphoneLossReason: { id in
+                if !microphones.list().contains(where: { $0.uniqueID == id }) {
+                    return MicrophoneChoice.disconnectedText
                 }
+                return microphones.access() == .authorized ? nil : MicrophoneChoice.accessOffText
             },
-            workspaceCenter: NSWorkspace.shared.notificationCenter)
+            makeMuteLogWriter: { MuteLogWriter(url: $0) })
     }
 }
 
 /// Runs one recording (design, While recording, Stopping and End rule): the chrome, the stream,
-/// the elapsed time, the window poll, the disk check, sleep and the user switch, the stop wait
-/// and the end rule. The first end wins. The caller holds the capture lock around `run` and
+/// the elapsed time, the window poll, the disk check, sleep and the user switch, the mute state and
+/// its log, the stop wait and the end rule. The first end wins. The caller holds the capture lock around `run` and
 /// `close`, and saves a kept file.
 final class RecordingController {
     /// The reason when the output finishes the file without a stop.
@@ -126,6 +137,15 @@ final class RecordingController {
     private var activity: (any NSObjectProtocol)?
     private var observers: [any NSObjectProtocol] = []
 
+    /// Whether the sound is muted now; the chrome shows it (design, Mute, State).
+    private(set) var isMuted = false
+    /// The muted stretches so far, on the clock `elapsed` reads; the last is open while muted.
+    private var muteIntervals: [MuteInterval] = []
+    /// The last toggle's number, so a log write never replaces a later one.
+    private var muteSequence = 0
+    /// Made at the first toggle, so a recording never muted has no log.
+    private var muteLogWriter: MuteLogWriter?
+
     init(environment: RecordingEnvironment, makeDriver: @escaping () -> any RecordingStreamDriver) {
         self.environment = environment
         self.makeDriver = makeDriver
@@ -144,8 +164,11 @@ final class RecordingController {
         reset(for: request, chrome: chrome, onStarted: onStarted)
         observeWorkspace()
         // The chrome is on screen before the driver reads the shareable content, so the
-        // fallback exclusion can find it.
-        chrome.show(onStop: { [weak self] in self?.stop() }, onCancel: { [weak self] in self?.cancel() })
+        // fallback exclusion can find it. The mute button is live from here.
+        chrome.show(onStop: { [weak self] in self?.stop() }, onCancel: { [weak self] in self?.cancel() },
+                    onMute: { [weak self] in self?.toggleMute() },
+                    bar: RecordingPanelLayout.bar(showsMute: request.configuration.showsMuteButton,
+                                                  isGIF: request.gif != nil))
         let exclusions = RecordingExclusions(chromeWindows: chrome.windowNumbers,
                                              cardWindows: environment.cardWindowNumbers(),
                                              coverWindows: environment.coverWindowNumbers(request.displayID))
@@ -159,7 +182,8 @@ final class RecordingController {
             // Nothing is recording, so there is nothing to wait for. Later callbacks are ignored.
             RecordingLog.note("Recording: the stream did not start: \(error.localizedDescription)")
             end(.end(.failed(error.localizedDescription)))
-            environment.removeFile(request.outputURL)
+            await finishMuteLog()
+            discard(request)
             return .nothing(notice: RecordingEnd.startFailure(error.localizedDescription))
         }
         if cause == nil {
@@ -176,6 +200,25 @@ final class RecordingController {
     /// The panel's Cancel.
     func cancel() {
         end(.cancel)
+    }
+
+    /// The panel's mute button (design, Mute, State). A press before the first frame opens its
+    /// interval at 0; one once the recording is ending is ignored. Each toggle hands the intervals so
+    /// far, with the lag and a rising number, to the recording's writer, which the first toggle
+    /// makes, then shows the new state.
+    func toggleMute() {
+        guard isRunning, cause == nil, let request else { return }
+        if isMuted, let last = muteIntervals.indices.last {
+            muteIntervals[last].end = elapsed
+        } else {
+            muteIntervals.append(MuteInterval(start: elapsed, end: nil))
+        }
+        isMuted.toggle()
+        muteSequence += 1
+        let writer = muteLogWriter ?? environment.makeMuteLogWriter(request.muteLogURL)
+        muteLogWriter = writer
+        writer.yield(MuteLog(intervals: muteIntervals, lag: request.lag, sequence: muteSequence))
+        chrome?.setMuted(isMuted)
     }
 
     /// A quit (design, Quit, log out and restart) ends the recording as Stop does, and never waits
@@ -221,6 +264,10 @@ final class RecordingController {
         outputEnded = false
         waitIsOver = false
         stopReturned = false
+        isMuted = false
+        muteIntervals = []
+        muteSequence = 0
+        muteLogWriter = nil
     }
 
     private func observeWorkspace() {
@@ -252,16 +299,25 @@ final class RecordingController {
         case .outputFailed(let description):
             outputEnded = true
             stopWaitEnded()
-            end(.end(.failed(description)))
+            end(.end(.failed(failureReason(description))))
         case .streamStopped(let description):
             // It never ends the stop wait: the output may still be finishing the file, which
             // cannot be opened until the finish (290 ms after the stop, in the 5K probe). The
             // wait takes the output's finish or fail, or the timeout.
-            end(.end(.failed(description)))
+            end(.end(.failed(failureReason(description))))
         case .streamInactive, .streamActive:
             // The driver's log lines are their only trace: window loss is polled.
             break
         }
+    }
+
+    /// A stream or output error's reason: the error's description, unless the recorded input
+    /// went or its access was turned off, which the error does not say.
+    private func failureReason(_ description: String) -> String {
+        guard cause == nil, let id = request?.configuration.microphoneDeviceID,
+              let reason = environment.microphoneLossReason(id) else { return description }
+        RecordingLog.note("Recording: the microphone \(id) is lost: \(reason)")
+        return reason
     }
 
     /// The elapsed time, the window poll and, every 5 s, the disk check, on whole seconds from
@@ -307,12 +363,16 @@ final class RecordingController {
 
     // MARK: Ending
 
-    /// The first end wins; any later one is ignored. Stop is disabled and the stop wait's waiter
-    /// is armed here, before `run` calls the driver's stop.
+    /// The first end wins; any later one is ignored. Stop and the mute button are disabled, an open
+    /// muted stretch closes, and the stop wait's waiter is armed here, before `run` calls the
+    /// driver's stop.
     private func end(_ cause: EndCause) {
         guard isRunning, self.cause == nil else { return }
         self.cause = cause
         elapsedAtEnd = elapsed
+        if isMuted, let last = muteIntervals.indices.last {
+            muteIntervals[last].end = elapsedAtEnd
+        }
         waitIsOver = outputEnded
         ticking?.cancel()
         ticking = nil
@@ -329,14 +389,18 @@ final class RecordingController {
     }
 
     /// Stops the stream, waits, then applies the end rule. Nothing touches the file before the
-    /// wait ends. An end before the first frame removes the file whatever it holds.
+    /// wait ends, nor the file or the mute log before the log's last write has landed. An end before
+    /// the first frame removes the file whatever it holds. A removed file takes its log with it; a
+    /// kept one carries its closed muted stretches and the lag to the save, whose mute step removes
+    /// the log.
     private func finish(_ driver: any RecordingStreamDriver) async -> RecordingOutcome {
         guard let cause, let request else { return .nothing(notice: nil) }
         let url = request.outputURL
         let timedOut = await stopAndWait(driver)
+        await finishMuteLog()
 
         guard let startedAt else {
-            environment.removeFile(url)
+            discard(request)
             guard case .end(let kind) = cause else { return .nothing(notice: nil) }
             return .nothing(notice: kind.reason.map(RecordingEnd.startFailure))
         }
@@ -354,15 +418,31 @@ final class RecordingController {
         switch RecordingEnd.decide(kind, facts: facts, waitTimedOut: timedOut) {
         case .keep(let notice):
             let poster = await environment.poster(url)
-            let recording = Recording(id: request.id, fileURL: url, startedAt: startedAt,
+            var recording = Recording(id: request.id, fileURL: url, startedAt: startedAt,
                                       pixelWidth: facts.naturalSize.map { Int($0.width.rounded()) } ?? request.configuration.pixelWidth,
                                       pixelHeight: facts.naturalSize.map { Int($0.height.rounded()) } ?? request.configuration.pixelHeight,
-                                      duration: facts.duration, poster: poster, displayID: request.displayID)
+                                      duration: facts.duration, poster: poster, displayID: request.displayID,
+                                      gif: request.gif)
+            recording.muteIntervals = muteIntervals
+            recording.lag = request.lag
             return .keep(recording, notice: notice)
         case .remove(let notice):
-            environment.removeFile(url)
+            discard(request)
             return .nothing(notice: notice)
         }
+    }
+
+    /// Ends the mute log's stream and waits for its last write, once no toggle can come. Nothing
+    /// to wait for when the recording was never muted.
+    private func finishMuteLog() async {
+        await muteLogWriter?.finish()
+    }
+
+    /// Removes the recording's file, then its mute log when it was muted, in one ordered removal, so
+    /// the log never goes before the file (design, Mute log, Privacy rule). Call it once
+    /// `finishMuteLog` has returned, so no write lands after the removal.
+    private func discard(_ request: RecordingRequest) {
+        environment.removeFiles(muteLogWriter == nil ? [request.outputURL] : [request.outputURL, request.muteLogURL])
     }
 
     /// A Cancel discards under 5 s, and from 5 s asks: true for Discard. After a quit the answer is

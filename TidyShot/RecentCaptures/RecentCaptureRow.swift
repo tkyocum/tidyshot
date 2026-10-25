@@ -11,6 +11,13 @@ struct RecentCaptureActions {
     var copyImage: (UUID) -> Void
     /// A recording's file reference on the clipboard (`AppCoordinator.copyFile(recordID:)`).
     var copyFile: (UUID) -> Void
+    /// An MP4's `Trim…` (`AppCoordinator.trimCapture(recordID:)`).
+    var trim: (UUID) -> Void
+    /// `Upload Trimmed` for a trimmed MP4 whose link is stale (`AppCoordinator.uploadTrimmed(recordID:)`).
+    var uploadTrimmed: (UUID) -> Void
+    /// Clicking the row of a recording marked `Sound not muted`: its file in the default app
+    /// (`AppCoordinator.openCapture(recordID:)`).
+    var open: (UUID) -> Void
     /// The overlay's delete: one confirmation, then storage, file, thumbnail and record.
     var delete: (UUID) -> Void
 }
@@ -23,8 +30,10 @@ final class RecentCaptureRowState {
 
 /// One row of the Recent Captures submenu: thumbnail, name, relative time, and Annotate, Copy URL,
 /// Copy Image and Delete buttons. A recording's row has its poster with a badge, no Annotate, and
-/// Copy File in Copy Image's place. Every string and flag is worked out before the row is built,
-/// and the thumbnail loads in `.task`, so `body` does no work.
+/// Copy File in Copy Image's place; an MP4's adds `Trim…`, and `Upload Trimmed` while its link is
+/// stale. A recording marked `Sound not muted` has no Copy File, and a click opens it (plan, Gap
+/// 10). Every string and flag is worked out before the row is built, and the thumbnail loads in
+/// `.task`, so `body` does no work.
 struct RecentCaptureRow: View {
     static let size = CGSize(width: 360, height: 52)
     static let thumbnailSize = CGSize(width: 56, height: 42)
@@ -47,6 +56,12 @@ struct RecentCaptureRow: View {
     /// Annotate and Copy Image out and has Copy File.
     let showsImageActions: Bool
     let canCopyFile: Bool
+    /// From `RecentCaptureFormatting.rowClickOpens`: a recording marked `Sound not muted`, whose
+    /// click opens the file and whose row leaves Copy File out.
+    let clickOpens: Bool
+    /// `Trim…` and `Upload Trimmed`, and whether a Trim pass writes the file, which disables Delete
+    /// (`AppCoordinator.trimMenuState(for:)`).
+    let trimState: RecordingTrim.MenuState
     let state: RecentCaptureRowState
     let provider: ThumbnailProvider
     let actions: RecentCaptureActions
@@ -54,7 +69,7 @@ struct RecentCaptureRow: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            Button { actions.copyLinkOrFile(record.id) } label: {
+            Button { clickOpens ? actions.open(record.id) : actions.copyLinkOrFile(record.id) } label: {
                 HStack(spacing: 10) {
                     thumbnailView
                     VStack(alignment: .leading, spacing: 2) {
@@ -76,18 +91,26 @@ struct RecentCaptureRow: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("\(name), \(detail)")
-            .accessibilityHint(canCopyLink ? "Copies the link" : "Copies the file")
+            .accessibilityHint(clickOpens ? "Opens the recording" : canCopyLink ? "Copies the link" : "Copies the file")
             if showsImageActions {
                 iconButton("pencil.tip.crop.circle", label: "Annotate", enabled: canAnnotate) { actions.annotate(record.id) }
             }
             iconButton("link", label: "Copy URL", enabled: canCopyLink) { actions.copyLink(record.id) }
             if showsImageActions {
                 iconButton("photo.on.rectangle", label: "Copy Image", enabled: canCopyImage) { actions.copyImage(record.id) }
-            } else {
+            } else if !clickOpens {
                 iconButton("doc.on.doc", label: "Copy File", enabled: canCopyFile) { actions.copyFile(record.id) }
             }
+            if trimState.showsTrim {
+                iconButton("scissors", label: "Trim…", enabled: trimState.canTrim) { actions.trim(record.id) }
+            }
+            if trimState.showsUploadTrimmed {
+                iconButton("arrow.up.circle", label: "Upload Trimmed", enabled: trimState.canUploadTrimmed) {
+                    actions.uploadTrimmed(record.id)
+                }
+            }
             iconButton("trash", label: CaptureDeletion.actionTitle(confirmBeforeDeleting: AppSettings.shared.confirmBeforeDeleting),
-                       enabled: true) { actions.delete(record.id) }
+                       enabled: !trimState.isTrimming) { actions.delete(record.id) }
         }
         .padding(.horizontal, Self.horizontalPadding)
         .frame(width: Self.size.width, height: Self.size.height)
@@ -110,15 +133,15 @@ struct RecentCaptureRow: View {
                     .resizable()
                     .aspectRatio(contentMode: .fit)
             } else {
-                Image(systemName: record.isVideo ? "film" : "photo")
+                Image(systemName: record.isTimeBased ? "film" : "photo")
                     .foregroundStyle(.secondary)
             }
         }
         .frame(width: Self.thumbnailSize.width, height: Self.thumbnailSize.height)
         .background(Color.black.opacity(0.08), in: RoundedRectangle(cornerRadius: 4))
         .overlay(alignment: .bottomTrailing) {
-            if record.isVideo, thumbnail != nil {
-                VideoBadge(duration: record.durationSeconds, fontSize: 8)
+            if let badge = RecentCaptureFormatting.badge(for: record), thumbnail != nil {
+                VideoBadge(badge: badge, duration: record.durationSeconds, fontSize: 8)
                     .padding(2)
             }
         }

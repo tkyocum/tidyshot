@@ -135,6 +135,81 @@ struct RecordingConfigurationTests {
         #expect(changed.excludesCurrentProcessAudio)
     }
 
+    /// A GIF records an MP4 at 30 fps with no sound, whatever the options say; its size follows
+    /// `Resolution` as an MP4's does.
+    @Test func aGIFRecordingNeverCapturesAudioAndRecordsAt30FPS() {
+        let area = RecordingSource.area(CGRect(x: 100, y: 50, width: 800, height: 500), on: laptop)
+        var gif = options(fps: 60, audio: true)
+        gif.format = .gif
+        let config = RecordingConfiguration.make(area, options: gif)
+        #expect(RecordingConfiguration.gifFramesPerSecond == 30)
+        #expect(config.framesPerSecond == 30)
+        #expect(config.minimumFrameInterval == CMTime(value: 1, timescale: 30))
+        #expect(!config.capturesAudio)
+        #expect(config.pixelWidth == 1600)
+        #expect(config.pixelHeight == 1000)
+
+        var standard = gif
+        standard.retina = false
+        #expect(RecordingConfiguration.make(area, options: standard).pixelWidth == 800)
+
+        let mp4 = RecordingConfiguration.make(area, options: options(fps: 60, audio: true))
+        #expect(mp4.framesPerSecond == 60)
+        #expect(mp4.capturesAudio)
+    }
+
+    @Test func optionsDefaultToMP4AndTheGIFDefaults() {
+        let plain = options()
+        #expect(plain.format == .mp4)
+        #expect(plain.gif == GIFSettings(fps: 15, maxSide: 1280))
+        #expect(plain.microphoneID == nil)
+    }
+
+    /// The start resolves the microphone (only from an authorized choice) and passes its ID in
+    /// the options; `make` never reads AVFoundation.
+    @Test func aMicrophoneIDCapturesTheMicrophoneFromThatDevice() {
+        var withMicrophone = options(audio: true)
+        withMicrophone.microphoneID = "AppleUSBAudioEngine:RODE:AI-1:1"
+        let config = RecordingConfiguration.make(.display(laptop), options: withMicrophone)
+        #expect(config.captureMicrophone)
+        #expect(config.microphoneDeviceID == "AppleUSBAudioEngine:RODE:AI-1:1")
+        #expect(config.capturesAudio)
+    }
+
+    @Test func noMicrophoneIDCapturesNoMicrophone() {
+        let config = RecordingConfiguration.make(.display(laptop), options: options(audio: true))
+        #expect(!config.captureMicrophone)
+        #expect(config.microphoneDeviceID == nil)
+    }
+
+    @Test func aGIFRecordingNeverCapturesTheMicrophone() {
+        var gif = options(audio: true)
+        gif.format = .gif
+        gif.microphoneID = "BuiltInMicrophoneDevice"
+        let config = RecordingConfiguration.make(.display(laptop), options: gif)
+        #expect(!config.captureMicrophone)
+        #expect(config.microphoneDeviceID == nil)
+        #expect(!config.capturesAudio)
+    }
+
+    /// The control bar's mute button shows only when the recording has sound to mute (design,
+    /// Mute): system audio or the microphone, so never for a GIF.
+    @Test func theMuteButtonShowsOnlyForSystemAudioOrTheMicrophone() {
+        let area = RecordingSource.area(CGRect(x: 0, y: 0, width: 400, height: 300), on: laptop)
+        var microphone = options()
+        microphone.microphoneID = "BuiltInMicrophoneDevice"
+        var both = options(audio: true)
+        both.microphoneID = "BuiltInMicrophoneDevice"
+        var gif = both
+        gif.format = .gif
+
+        #expect(!RecordingConfiguration.make(area, options: options()).showsMuteButton)
+        #expect(RecordingConfiguration.make(area, options: options(audio: true)).showsMuteButton)
+        #expect(RecordingConfiguration.make(area, options: microphone).showsMuteButton)
+        #expect(RecordingConfiguration.make(area, options: both).showsMuteButton)
+        #expect(!RecordingConfiguration.make(area, options: gif).showsMuteButton)
+    }
+
     @Test func areaMinimumIs32PointsEachWay() {
         #expect(RecordingConfiguration.minimumAreaSide == 32)
         #expect(RecordingConfiguration.isLargeEnough(CGRect(x: 10, y: 10, width: 32, height: 32)))

@@ -409,15 +409,17 @@ hand pass is the net under the observation path and the callbacks wired in `init
 
 ## 6. What it does for R2, and the conventions R2 follows
 
-R2's settled answers: one MP4/GIF format setting; a GIF that is not blurry (ImageIO, then Clop, no
-audio, with a soft length warning); the microphone off by default with an input choice, silence when
-muted, mixed with system audio; an optional Trim on the card and in Recent Captures; no pause.
+R2's settled answers: one MP4/GIF format setting; a GIF that is not blurry (R2: TidyShot's own
+encoder with no Clop, no audio, with a soft length warning); the microphone off by default with an
+input choice, silence when muted, mixed with system audio; an optional Trim on the card and in Recent
+Captures; no pause.
 
 - **GIF.** `+Recording`: the encode in `saveRecording`, between the recorder's file and
-  `placeRecording`, with the GIF's media kind and poster. `+Upload`: `startUpload` already takes the
-  content type and extension from `record.mediaKind`, and `optimisedForUpload` picks Clop's path.
-  `+RecordActions`: the Save As panel's type, and what Copy Image and Copy File do for a GIF. The
-  settings and the warning are outside the coordinator.
+  `placeRecording`, with the GIF's media kind and poster (R2: the conversion runs in `endRecording`'s
+  `.keep` branch, `makeGIF`, and every path ends in one `saveRecording` call). `+Upload`: `startUpload`
+  already takes the content type and extension from `record.mediaKind`, and (R2) a GIF never goes to
+  Clop (`isSentToClop`). `+RecordActions`: the Save As panel's type, and what Copy Image and Copy File
+  do for a GIF. The settings and the warning are outside the coordinator.
 - **Microphone.** The permission check and its notice on `+Recording`'s start path
   (`recordingCanStart`, `recordingHandOff`). RecordingConfiguration, the driver, the settings, the
   entitlement and the usage string are outside the coordinator.
@@ -429,6 +431,23 @@ muted, mixed with system audio; an optional Trim on the card and in Recent Captu
   `deletingIDs`, `notifier`, `thumbnailProvider`; it will likely need `replaceThumbnail`
   (`+Editor`, private), a reviewed one-word change. `quitNeedsHold` changes only if Trim can hold
   unsaved work.
+  (R2, as planned: the in-progress marker `trimmingIDs` is read by `+Upload`'s gates, which refuse
+  Retry, Retry Failed Uploads and `startUpload` while a record is being trimmed, and by `+Delete`'s
+  `deleteCapture`, which refuses before its alert. The two members widened are `replaceThumbnail`
+  (`+Editor`) and `downloadSource` (`+RecordActions`), each by dropping `private`. The new entry points
+  for code outside the family are `trimCapture(recordID:)`, `uploadTrimmed(recordID:)` and
+  `trimMenuState(for:)`. All of it is built: the marker, its gates, `trimMenuState(for:)`, the two
+  widenings, and since H2's part 2 the window, the pass and the wiring, with `showCardPoster(_:for:)`
+  (`+Overlay`) the one other member `+Trim` reaches across the family; see the R2 design's built notes.
+  The surface check's list of widened members takes both names, and Trim's.)
+- **Mute.** (R2.) `+Recording`: the mute ladder at the end of a recording (`muteAndSave`, between the
+  recorder's file and `saveRecording`, inside `recordingSavesInFlight`) and in `recoverRecordings`,
+  both through `RecordingMute.resolve`. `saveRecording` takes the ladder's `unmutedIntervals`, which
+  make its target `pending/` before any folder is chosen. The `Sound not muted` gates are
+  `CaptureRecord.uploadBlockedReason`, read by `+Upload` (`retry`, `retryFailedUploads`,
+  `startUpload`), `+RecordActions` (`copyFile`, `copyLinkOrFile`'s file branch, `saveAs`) and
+  `+DragOut` (`prepareDragFile`). Its state is the controller's, and `muteLag(for:)` is a private
+  member of `+Recording`.
 - **Parallel work.** GIF (`+Recording`, `+Upload`), the microphone (`+Recording`) and Trim
   (`+Trim`, `+Overlay`, `+Delete`) can be built on separate branches that rarely touch the same file.
 

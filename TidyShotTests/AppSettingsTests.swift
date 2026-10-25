@@ -361,6 +361,18 @@ struct AppSettingsTests {
                 == RecordingOptions(framesPerSecond: 60, retina: false, systemAudio: true, showsCursor: false))
     }
 
+    /// A recording reads the format and the GIF settings with the rest, at its start.
+    @Test func recordingOptionsCarryTheFormatAndTheGIFSettings() {
+        let settings = AppSettings(defaults: freshDefaults())
+        #expect(settings.recordingOptions.format == .mp4)
+        #expect(settings.recordingOptions.gif == GIFSettings(fps: 15, maxSide: 1280))
+        settings.recordingFormat = .gif
+        settings.gifFrameRate = 20
+        settings.gifMaxSide = 0
+        #expect(settings.recordingOptions.format == .gif)
+        #expect(settings.recordingOptions.gif == GIFSettings(fps: 20, maxSide: 0))
+    }
+
     /// A stored frame rate the picker does not offer reads as 30.
     @Test func aStoredFrameRateOtherThan30Or60ReadsAs30() {
         let defaults = freshDefaults()
@@ -370,6 +382,85 @@ struct AppSettingsTests {
         }
         defaults.set(60, forKey: "recordingFrameRate")
         #expect(AppSettings(defaults: defaults).recordingFrameRate == 60)
+    }
+
+    /// Recording R2: MP4, a 15 fps GIF capped at 1280 px, and no microphone.
+    @Test func r2RecordingSettingsDefaultAsTheDesignSays() {
+        let settings = AppSettings(defaults: freshDefaults())
+        #expect(settings.recordingFormat == .mp4)
+        #expect(settings.gifFrameRate == 15)
+        #expect(settings.gifMaxSide == 1280)
+        #expect(settings.recordingMicrophone == "")
+        #expect(settings.recordingMicrophoneName == "")
+        #expect(AppSettings.gifFrameRates == [10, 15, 20])
+        #expect(AppSettings.gifMaxSides == [800, 1280, 0])
+        #expect(settings.gifSettings == GIFSettings(fps: 15, maxSide: 1280))
+    }
+
+    @Test func r2RecordingSettingsPersistUnderTheirKeys() {
+        let defaults = freshDefaults()
+        let first = AppSettings(defaults: defaults)
+        first.recordingFormat = .gif
+        first.gifFrameRate = 20
+        first.gifMaxSide = 0
+        first.recordingMicrophone = "AppleUSBAudioEngine:RODE:AI-1:1"
+        first.recordingMicrophoneName = "RODE AI-1"
+        #expect(defaults.string(forKey: "recordingFormat") == "gif")
+        #expect(defaults.object(forKey: "gifFrameRate") as? Int == 20)
+        #expect(defaults.object(forKey: "gifMaxSide") as? Int == 0)
+        #expect(defaults.string(forKey: "recordingMicrophone") == "AppleUSBAudioEngine:RODE:AI-1:1")
+        #expect(defaults.string(forKey: "recordingMicrophoneName") == "RODE AI-1")
+
+        let second = AppSettings(defaults: defaults)
+        #expect(second.recordingFormat == .gif)
+        #expect(second.gifFrameRate == 20)
+        #expect(second.gifMaxSide == 0)
+        #expect(second.recordingMicrophone == "AppleUSBAudioEngine:RODE:AI-1:1")
+        #expect(second.recordingMicrophoneName == "RODE AI-1")
+        #expect(second.gifSettings == GIFSettings(fps: 20, maxSide: 0))
+
+        second.recordingFormat = .mp4
+        second.gifFrameRate = 10
+        second.gifMaxSide = 800
+        second.recordingMicrophone = "default"
+        second.recordingMicrophoneName = ""
+        let third = AppSettings(defaults: defaults)
+        #expect(third.recordingFormat == .mp4)
+        #expect(third.gifSettings == GIFSettings(fps: 10, maxSide: 800))
+        #expect(third.recordingMicrophone == "default")
+        #expect(third.recordingMicrophoneName == "")
+    }
+
+    /// A stored value the pickers do not offer reads as the default. `Full size` is 0, so a value
+    /// that is not a number must not read as it.
+    @Test func r2StoredValuesOutsideTheChoicesReadAsTheDefaults() {
+        let defaults = freshDefaults()
+        defaults.set(12, forKey: "gifFrameRate")
+        defaults.set(640, forKey: "gifMaxSide")
+        defaults.set("webm", forKey: "recordingFormat")
+        let settings = AppSettings(defaults: defaults)
+        #expect(settings.gifFrameRate == 15)
+        #expect(settings.gifMaxSide == 1280)
+        #expect(settings.recordingFormat == .mp4)
+
+        for stored in [0, -15, 30] {
+            defaults.set(stored, forKey: "gifFrameRate")
+            #expect(AppSettings(defaults: defaults).gifFrameRate == 15)
+        }
+        for stored: Any in [-1, 4096, "Full size", true] {
+            defaults.set(stored, forKey: "gifMaxSide")
+            #expect(AppSettings(defaults: defaults).gifMaxSide == 1280)
+        }
+        defaults.set("GIF", forKey: "recordingFormat")
+        #expect(AppSettings(defaults: defaults).recordingFormat == .mp4)
+    }
+
+    /// `Full size` keeps R1's 4096 px cap.
+    @Test func fullSizeGIFsKeepTheRecordingCap() {
+        #expect(GIFSettings(fps: 15, maxSide: 0).effectiveMaxSide == RecordingConfiguration.maximumSide)
+        #expect(GIFSettings(fps: 15, maxSide: 0).effectiveMaxSide == 4096)
+        #expect(GIFSettings(fps: 15, maxSide: 1280).effectiveMaxSide == 1280)
+        #expect(GIFSettings(fps: 10, maxSide: 800).effectiveMaxSide == 800)
     }
 
     @Test func urlCommandsAreOnAndSilentCapturesOffByDefault() {

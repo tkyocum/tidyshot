@@ -58,6 +58,21 @@ struct UploadPayloadTests {
         #expect(checked.first?.1 == saveFolder)
     }
 
+    /// A GIF streams from its file like a movie (`uploadPayload(for:)` sends `.gif` here), so it is
+    /// never read into memory: from `pending/` with no scope, and from the save folder with it.
+    @Test func gifIsAFile() throws {
+        let pendingGIF = container.appending(path: "Library/Application Support/TidyShot/pending/A.gif")
+        let savedGIF = saveFolder.appending(path: "Recording 2026-10-22 at 10.00.00.gif")
+        func gif(at fileURL: URL, temporary: Bool) -> CaptureRecord {
+            CaptureRecord(fileURL: fileURL, fileIsTemporary: temporary, pixelWidth: 1280, pixelHeight: 832,
+                          appName: nil, uploadState: .none, mediaKind: .gif, durationSeconds: 3)
+        }
+        #expect(try UploadPayload.video(for: gif(at: pendingGIF, temporary: true), saveFolder: saveFolder) { _, _ in true }
+                == .file(pendingGIF, scope: nil))
+        #expect(try UploadPayload.video(for: gif(at: savedGIF, temporary: false), saveFolder: saveFolder) { _, _ in true }
+                == .file(savedGIF, scope: saveFolder))
+    }
+
     @Test func missingFileThrows() {
         #expect(throws: UploadError.fileUnreadable(savedFile.lastPathComponent)) {
             try UploadPayload.video(for: video(at: savedFile, temporary: false), saveFolder: saveFolder) { _, _ in false }

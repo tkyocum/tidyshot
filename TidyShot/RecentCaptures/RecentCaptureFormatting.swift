@@ -12,8 +12,10 @@ nonisolated enum RecentCaptureFormatting {
     /// "2 minutes ago · 5 KB": the relative time and the record's size (`sizeText`), then the upload
     /// state while it is not settled: "2 minutes ago · 5 KB · Uploading", "yesterday · 5 KB · Upload
     /// failed", or "2 minutes ago · 5 KB · Optimizing…" while a recording waits for Clop
-    /// (`isOptimizing`, from `AppCoordinator.optimizingVideoIDs`). The parts are joined by a middle
-    /// dot with a space either side, and an unknown or zero size leaves its part out.
+    /// (`isOptimizing`, from `AppCoordinator.optimizingVideoIDs`). A trimmed MP4 whose link still
+    /// shows the full recording ends with `Link not updated`, and a recording whose muting failed
+    /// with `Sound not muted`, whatever its upload state. The parts are joined by a middle dot with a
+    /// space either side, and an unknown or zero size leaves its part out.
     static func detail(for record: CaptureRecord, now: Date, locale: Locale = .current,
                        isOptimizing: Bool = false) -> String {
         let parts = detailParts(for: record, now: now, locale: locale, isOptimizing: isOptimizing)
@@ -36,10 +38,15 @@ nonisolated enum RecentCaptureFormatting {
         formatter.locale = locale
         formatter.unitsStyle = .full
         formatter.dateTimeStyle = .named
-        let state: String? = switch record.uploadState {
-        case .uploading: isOptimizing ? "Optimizing…" : "Uploading"
-        case .failed: "Upload failed"
-        case .none, .uploaded: nil
+        let state: String? = if isSoundNotMuted(record) {
+            CaptureRecord.soundNotMutedTitle
+        } else {
+            switch record.uploadState {
+            case .uploading: isOptimizing ? "Optimizing…" : "Uploading"
+            case .failed: "Upload failed"
+            case .uploaded: linkIsNotUpdated(record) ? linkNotUpdatedText : nil
+            case .none: nil
+            }
         }
         return (formatter.localizedString(for: record.timestamp, relativeTo: now), sizeText(record.byteCount), state)
     }
@@ -55,6 +62,34 @@ nonisolated enum RecentCaptureFormatting {
         return formatter.string(fromByteCount: Int64(byteCount))
     }
 
+    static let linkNotUpdatedText = "Link not updated"
+
+    /// An uploaded MP4 whose trim the link does not show yet (`uploadIsStale`; design, Stale link).
+    /// An edited image's stale link is the editor's to show, and a GIF is never trimmed.
+    static func linkIsNotUpdated(_ record: CaptureRecord) -> Bool {
+        record.mediaKind == .video && record.uploadIsStale && record.uploadedURL != nil
+    }
+
+    /// A recording whose muting failed (`unmutedIntervals`, `uploadBlockedReason`): its file still
+    /// holds the muted sound, so it offers only Open, Trim… and Delete (design, Privacy rule).
+    static func isSoundNotMuted(_ record: CaptureRecord) -> Bool {
+        record.uploadBlockedReason != nil
+    }
+
+    /// The badge on a recording's poster, with its duration: `play.fill` for an MP4, `GIF` for a GIF.
+    enum RecordingBadge: Equatable, Sendable {
+        case play, gif
+    }
+
+    /// Nil for an image, which has no badge.
+    static func badge(for record: CaptureRecord) -> RecordingBadge? {
+        switch record.mediaKind {
+        case .image: nil
+        case .video: .play
+        case .gif: .gif
+        }
+    }
+
     /// Copy URL needs a link: an uploaded object, or the earlier link of an editor upload that is
     /// running or was interrupted (`CaptureRecord.linkURL`).
     static func canCopyLink(_ record: CaptureRecord) -> Bool {
@@ -64,12 +99,20 @@ nonisolated enum RecentCaptureFormatting {
     /// Annotate, Pin and Copy Image are left out for a recording, not disabled; Copy File takes
     /// Copy Image's place (design, Videos in the rest of the app).
     static func showsImageActions(_ record: CaptureRecord) -> Bool {
-        !record.isVideo
+        !record.isTimeBased
     }
 
-    /// Copy File needs a recording with a local file, in the save folder or `pending/`.
+    /// Copy File needs a recording with a local file, in the save folder or `pending/`, and is left
+    /// out for one marked `Sound not muted`.
     static func canCopyFile(_ record: CaptureRecord) -> Bool {
-        record.isVideo && record.hasLocalFile
+        record.isTimeBased && record.hasLocalFile && !isSoundNotMuted(record)
+    }
+
+    /// A click on the row opens the file (`AppCoordinator.openCapture(recordID:)`) for a recording
+    /// marked `Sound not muted`, whose row leaves Copy File out; any other row copies its link or
+    /// file (plan, Gap 10).
+    static func rowClickOpens(_ record: CaptureRecord) -> Bool {
+        isSoundNotMuted(record)
     }
 
     /// Copy Image needs an image with a local file, or an uploaded object whose bucket is known
