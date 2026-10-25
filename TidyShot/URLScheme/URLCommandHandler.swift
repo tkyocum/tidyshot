@@ -3,7 +3,8 @@ import Foundation
 /// What URL commands run: the app's existing capture functions. `AppCoordinator` conforms; the
 /// tests use a recorder.
 protocol URLCommandTarget: AnyObject {
-    var isCapturing: Bool { get }
+    /// True while a capture would be refused: another runs, or the microphone prompt is open.
+    var capturesRefused: Bool { get }
     func captureArea(intent: CaptureIntent) async
     func captureArea(at area: ScreenRect, intent: CaptureIntent) async
     func captureWindow(intent: CaptureIntent) async
@@ -115,7 +116,8 @@ final class URLCommandHandler {
         }
         guard let target else { return false }
         // Never queued behind a running capture, and never a Start or Done for a scrolling session.
-        if command.kind.isCapture, busy || target.isCapturing {
+        // Dropped the same way while the microphone prompt is open.
+        if command.kind.isCapture, busy || target.capturesRefused {
             let reason = busy ? "a queued capture command ran first" : "a capture is running"
             NSLog("%@", "URL command from \(sender ?? "an unknown app") dropped, \(reason): \(url.absoluteString)")
             return false

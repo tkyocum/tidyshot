@@ -22,7 +22,7 @@ final class URLTargetRecorder: URLCommandTarget {
         case toggleDesktopIcons
     }
 
-    var isCapturing = false
+    var capturesRefused = false
     private(set) var calls: [Call] = []
 
     func captureArea(intent: CaptureIntent) async { calls.append(.area(intent)) }
@@ -189,10 +189,11 @@ struct URLCommandHandlerTests {
         ])
     }
 
-    /// Never queued behind a running capture; a scrolling session is never advanced by a URL.
+    /// Never queued behind a running capture, nor while the microphone prompt is open (both set
+    /// `capturesRefused`); a scrolling session is never advanced by a URL.
     @Test func captureCommandsAreDroppedWhileACaptureRuns() async throws {
         settings.urlCommandsAllowSilent = true
-        target.isCapturing = true
+        target.capturesRefused = true
         let handler = await makeHandler()
         for string in ["capture-area", "capture-fullscreen", "capture-scrolling", "all-in-one", "self-timer",
                        "capture-text", "capture-text?x=0&y=0&width=10&height=10"] {

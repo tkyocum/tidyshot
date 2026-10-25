@@ -37,6 +37,15 @@ extension AppCoordinator {
         return isCapturing ? .end : .prompt
     }
 
+    /// What a record start the capture lock refused posts (R2 design, Decided 2026-10-24, 9): after
+    /// the microphone prompt, which the user answered, `RecordingEnd.busyAfterPrompt`; otherwise
+    /// nothing, as any capture the lock refuses ends silently.
+    nonisolated static func lockRefusalNotice(afterPrompt: Bool) -> RecordingNotice? {
+        afterPrompt ? RecordingEnd.busyAfterPrompt : nil
+    }
+
+    /// The stored microphone a start reads before the capture lock, and whether it showed the prompt.
+    private typealias MicrophoneAsk = (choice: MicrophoneChoice.Stored, prompted: Bool)
     /// The input a recording takes, resolved under the capture lock, and its mute lag.
     private typealias MicrophoneStart = (resolution: MicrophoneChoice.Resolution, lag: TimeInterval)
     /// What `recorder.run` gave, with the microphone note to post after Stop.
@@ -49,11 +58,11 @@ extension AppCoordinator {
     /// before the lock, and the input is resolved under it before the selection (R2 design, At the
     /// start).
     func recordScreen() async {
-        guard recordShortcutStarts(), let choice = await recordingMicrophoneChoice() else { return }
+        guard recordShortcutStarts(), let ask = await recordingMicrophoneChoice() else { return }
         let intent = CaptureIntent.standard
         var ended: RecordingEnded?
-        await withCaptureLock(coversDesktop: true) {
-            guard let microphone = recordingCanStart(microphone: choice) else { return }
+        let tookLock = await withCaptureLock(coversDesktop: true) {
+            guard let microphone = recordingCanStart(microphone: ask.choice) else { return }
             guard let content = await loadContent(failureTitle: RecordingEnd.failedTitle) else { return }
             guard let selection = await selector.select(mode: .recording, content: content) else { return }
             let target: CaptureTarget
@@ -73,6 +82,9 @@ extension AppCoordinator {
             }
             ended = await record(target, microphone: microphone)
         }
+        if !tookLock {
+            lockRefusedStart(afterPrompt: ask.prompted)
+        }
         await endRecording(ended, intent: intent)
     }
 
@@ -80,11 +92,11 @@ extension AppCoordinator {
     /// microphone as Record Screen. There is no selection overlay to dismiss and no activation to
     /// give up; the count-in is centred on the display with no frame.
     func recordFullscreen() async {
-        guard recordShortcutStarts(), let choice = await recordingMicrophoneChoice() else { return }
+        guard recordShortcutStarts(), let ask = await recordingMicrophoneChoice() else { return }
         let intent = CaptureIntent.standard
         var ended: RecordingEnded?
-        await withCaptureLock(coversDesktop: true) {
-            guard let microphone = recordingCanStart(microphone: choice) else { return }
+        let tookLock = await withCaptureLock(coversDesktop: true) {
+            guard let microphone = recordingCanStart(microphone: ask.choice) else { return }
             recordingCountIn = true
             guard let content = await loadContent(failureTitle: RecordingEnd.failedTitle),
                   let display = Self.display(under: NSEvent.mouseLocation, in: content.displays) else {
@@ -93,7 +105,19 @@ extension AppCoordinator {
             }
             ended = await record(.display(display), microphone: microphone)
         }
+        if !tookLock {
+            lockRefusedStart(afterPrompt: ask.prompted)
+        }
         await endRecording(ended, intent: intent)
+    }
+
+    /// A start the capture lock refused (R2 design, Decided 2026-10-24, 9). One that showed the
+    /// microphone prompt posts and logs why it did not start, as the user answered it; captures are
+    /// refused while the prompt is up, so this is a backstop. One that showed none ends silently.
+    private func lockRefusedStart(afterPrompt prompted: Bool) {
+        guard let notice = Self.lockRefusalNotice(afterPrompt: prompted) else { return }
+        RecordingLog.note("Recording: not started after the microphone prompt, another capture was running")
+        notifier.notifyError(notice.body, title: notice.title)
     }
 
     /// The status menu's Stop Recording, as the panel's Stop. Nothing happens when no recording runs.
@@ -122,21 +146,23 @@ extension AppCoordinator {
     /// The stored microphone a recording starts with, read once (R2 design, At the start): Off for
     /// a GIF, which never prompts. While access is not yet decided, the system prompt shows here,
     /// before the capture lock, so it never shows during a count-in or a recording. Meanwhile
-    /// another start is ignored (`isAskingMicrophone`), and nothing else is held. Whatever the
-    /// answer, the start goes on: the access is read again under the lock. Nil, so nothing starts,
-    /// when the prompt would show while another capture holds the lock, which would refuse the start,
-    /// and the prompt would land in its screenshot (`microphonePromptStep`); and when the app began
-    /// quitting while the prompt was up.
-    private func recordingMicrophoneChoice() async -> MicrophoneChoice.Stored? {
+    /// another start is ignored and every other capture refused (`isAskingMicrophone`), so none can
+    /// contain the prompt and the lock is free once it is answered (Decided 2026-10-24, 9). Whatever
+    /// the answer, the start goes on: the access is read again under the lock. Nil, so nothing
+    /// starts, when the prompt would show while another capture holds the lock, which would refuse
+    /// the start, and the prompt would land in its screenshot (`microphonePromptStep`); and when the
+    /// app began quitting while the prompt was up. `prompted` says whether the prompt showed.
+    private func recordingMicrophoneChoice() async -> MicrophoneAsk? {
         let format = settings.recordingFormat
         let stored = MicrophoneChoice.Stored(value: settings.recordingMicrophone, name: settings.recordingMicrophoneName)
         let choice = MicrophoneChoice.forRecording(stored, format: format)
         // Off, and so every GIF, reads no access.
         let asks = choice != .off && MicrophoneChoice.asksForAccess(stored, format: format, access: microphones.access())
         // A screenshot's selection or self-timer, or a scrolling capture, with a prompt to show: the
-        // start ends here, as `withCaptureLock` ends any start while another capture runs.
+        // start ends here, as `withCaptureLock` ends any start while another capture runs. The real
+        // lock, not `capturesRefused`: no other start can be at its prompt (`recordShortcutStarts`).
         switch Self.microphonePromptStep(asksForAccess: asks, isCapturing: isCapturing) {
-        case .goOn: return choice
+        case .goOn: return (choice, false)
         case .end: return nil
         case .prompt: break
         }
@@ -144,7 +170,7 @@ extension AppCoordinator {
         let granted = await microphones.requestAccess()
         isAskingMicrophone = false
         RecordingLog.note("Recording: microphone access \(granted ? "allowed" : "refused") at the prompt")
-        return isQuitting ? nil : choice
+        return isQuitting ? nil : (choice, true)
     }
 
     /// Makes `tmp/Recording`, then reads its free space. A folder that cannot be made fails the

@@ -105,6 +105,26 @@ struct ShortcutsTests {
         #expect(AppCoordinator.microphonePromptStep(asksForAccess: false, isCapturing: true) == .goOn)
     }
 
+    /// One rule for the capture lock, the status menu's capture items and the URL commands (R2
+    /// design, Decided 2026-10-24, 9): a capture is refused while another runs and while a record
+    /// start waits on the microphone prompt.
+    @Test func aCaptureIsRefusedWhileAnotherRunsOrTheMicrophonePromptIsOpen() {
+        #expect(!AppCoordinator.refusesCapture(isCapturing: false, isAskingMicrophone: false))
+        #expect(AppCoordinator.refusesCapture(isCapturing: true, isAskingMicrophone: false))
+        #expect(AppCoordinator.refusesCapture(isCapturing: false, isAskingMicrophone: true))
+        #expect(AppCoordinator.refusesCapture(isCapturing: true, isAskingMicrophone: true))
+    }
+
+    /// A record start the capture lock refuses posts only when it showed the microphone prompt,
+    /// which the user answered; one that showed none ends silently, as any capture the lock refuses.
+    @Test func aRefusedStartPostsOnlyAfterTheMicrophonePrompt() {
+        #expect(AppCoordinator.lockRefusalNotice(afterPrompt: true)
+                == RecordingNotice(title: "Screen recording",
+                                   body: "The recording did not start because another capture was running."))
+        #expect(AppCoordinator.lockRefusalNotice(afterPrompt: true)?.title == RecordingEnd.refusalTitle)
+        #expect(AppCoordinator.lockRefusalNotice(afterPrompt: false) == nil)
+    }
+
     /// The Escape name serves scrolling and the self-timer now; the stored name is the old one,
     /// so nothing in UserDefaults moves.
     @Test func cancelCaptureKeepsTheStoredNameOfTheScrollingEscape() {

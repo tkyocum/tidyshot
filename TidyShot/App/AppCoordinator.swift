@@ -80,8 +80,8 @@ final class AppCoordinator {
     /// `selfTimer.isRunning` cannot serve: it stays true until `run`'s capture closure returns.
     @ObservationIgnored var recordingCountIn = false
     /// True while a record function waits on the system's microphone prompt, before the capture
-    /// lock: another start is ignored. Nothing else is held: the lock is free and `recordingPhase`
-    /// does not change.
+    /// lock: another start is ignored, and every other capture is refused as while one runs
+    /// (`capturesRefused`). The lock itself is free and `recordingPhase` does not change.
     @ObservationIgnored var isAskingMicrophone = false
     /// Recordings between the recorder's `.keep` and `history.add` (in quit mode, until the
     /// thumbnail is written), a GIF's conversion included, so the phase never reads `.idle` in
@@ -450,21 +450,37 @@ final class AppCoordinator {
         }
     }
 
-    /// Runs `body` unless a capture already runs. With `coversDesktop` and Hide desktop icons while
-    /// capturing on, the desktop is covered before `body` reads the shareable content, so freeze
-    /// snapshots and window lists see the covers, and uncovered when it ends (spec 2.10). Capture
-    /// Scrolling and Capture Text pass false.
-    func withCaptureLock(coversDesktop: Bool, _ body: () async -> Void) async {
-        guard !isCapturing else { return }
+    /// One rule for every capture (R2 design, Decided 2026-10-24, 9): refused while another holds the
+    /// capture lock, and while a record start waits on the microphone prompt, so no capture can
+    /// contain the prompt and the start that asked finds the lock free once it is answered. The lock,
+    /// the status menu's capture items and the URL commands read it, through `capturesRefused`.
+    nonisolated static func refusesCapture(isCapturing: Bool, isAskingMicrophone: Bool) -> Bool {
+        isCapturing || isAskingMicrophone
+    }
+
+    /// `refusesCapture` for the capture lock and the microphone prompt now.
+    var capturesRefused: Bool {
+        Self.refusesCapture(isCapturing: isCapturing, isAskingMicrophone: isAskingMicrophone)
+    }
+
+    /// Runs `body` unless captures are refused (`capturesRefused`): a capture already runs, or the
+    /// microphone prompt is open. With `coversDesktop` and Hide desktop icons while capturing on,
+    /// the desktop is covered before `body` reads the shareable content, so freeze snapshots and
+    /// window lists see the covers, and uncovered when it ends (spec 2.10). Capture Scrolling and
+    /// Capture Text pass false. Returns whether `body` ran.
+    @discardableResult
+    func withCaptureLock(coversDesktop: Bool, _ body: () async -> Void) async -> Bool {
+        guard !capturesRefused else { return false }
         isCapturing = true
         defer { isCapturing = false }
         guard coversDesktop, settings.hideDesktopIconsWhileCapturing else {
             await body()
-            return
+            return true
         }
         await covers.show(for: .capture)
         await body()
         covers.hide(for: .capture)
+        return true
     }
 }
 
