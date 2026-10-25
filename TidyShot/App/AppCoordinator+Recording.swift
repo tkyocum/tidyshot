@@ -182,13 +182,22 @@ extension AppCoordinator {
     /// `.saving` with nothing between. Nil when nothing started, also when a quit came during the
     /// hand-off: `isQuitting` is read just before `recorder.run`, with no suspension between.
     /// Otherwise the outcome comes back with the microphone note, which posts after Stop.
+    /// Notifications wait while `recordingPhase` is `.recording`, from `recorder.run`'s call to its
+    /// return, and post as it returns, before this recording's own (Decided 2026-10-24, 8). `run`
+    /// returns on every end (Stop, Cancel, a failure, the stream's end, a quit, a start that fails
+    /// inside it) and never throws, so the hold never outlives it.
     private func record(_ target: CaptureTarget, microphone: MicrophoneStart) async -> RecordingEnded? {
         recordingCountIn = true
         let start = await recordingHandOff(target, microphone: microphone)
         recordingCountIn = false
         guard let start, !isQuitting else { return nil }
+        notifier.holdNotices()
         let outcome = await recorder.run(start.request, chrome: start.chrome) { [weak self] in
             self?.isRecording = true
+        }
+        let released = notifier.releaseHeldNotices()
+        if released > 0 {
+            RecordingLog.note("Recording: posted \(released) notification\(released == 1 ? "" : "s") held during the recording")
         }
         if case .keep = outcome {
             recordingSavesInFlight += 1

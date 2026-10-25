@@ -4,12 +4,14 @@ import UserNotifications
 /// Posts "saved", "uploaded" and "failed" notifications. Clicking a saved notification, or an
 /// error given a file, reveals the file in Finder; clicking an uploaded notification, or a plain
 /// one given a URL, opens the URL; clicking the `Uploaded` of a link that was not copied copies it.
+/// While a recording runs every notification waits, and posts once it stops (`holdNotices()`).
 final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     /// Read from the nonisolated delegate callbacks, so they must not be MainActor-isolated.
     nonisolated private static let pathKey = "path"
     nonisolated private static let urlKey = "url"
     nonisolated private static let copyURLKey = "copyURL"
     private let center = UNUserNotificationCenter.current()
+    private var hold = NoticeHold<UNMutableNotificationContent>()
 
     func setUp() {
         center.delegate = self
@@ -74,7 +76,28 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         post(content)
     }
 
+    /// While a recording runs (R2 design, Decided 2026-10-24, 8): every notification asked for from
+    /// here waits until `releaseHeldNotices()`. The coordinator holds from `recorder.run`'s call.
+    func holdNotices() {
+        hold.hold()
+    }
+
+    /// Ends the hold: what waited posts now, in the order it was asked for. Returns how many posted.
+    @discardableResult
+    func releaseHeldNotices() -> Int {
+        let released = hold.release()
+        released.forEach(add)
+        return released.count
+    }
+
+    /// Every notification comes through here: at once, or held while a recording runs.
     private func post(_ content: UNMutableNotificationContent) {
+        if let content = hold.post(content) {
+            add(content)
+        }
+    }
+
+    private func add(_ content: UNMutableNotificationContent) {
         let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
         center.add(request) { error in
             if let error { NSLog("Notification failed: \(error.localizedDescription)") }
