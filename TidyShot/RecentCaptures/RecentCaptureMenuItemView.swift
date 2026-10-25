@@ -25,6 +25,8 @@ final class RecentCaptureMenuItemView: NSView {
         let name = RecentCaptureFormatting.name(for: record)
         let detail = RecentCaptureFormatting.detail(for: record, now: now, isOptimizing: isOptimizing)
         let row = RecentCaptureRow(record: record, name: name, detail: detail,
+                                   detailWithoutSize: RecentCaptureFormatting.detailWithoutSize(
+                                       for: record, now: now, isOptimizing: isOptimizing),
                                    canCopyLink: RecentCaptureFormatting.canCopyLink(record),
                                    canCopyImage: RecentCaptureFormatting.canCopyImage(record),
                                    canAnnotate: RecentCaptureFormatting.canAnnotate(record, retainedID: retainedID,

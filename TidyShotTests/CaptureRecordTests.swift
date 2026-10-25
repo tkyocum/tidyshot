@@ -353,6 +353,43 @@ struct CaptureRecordTests {
         #expect(record.isVideo)
     }
 
+    // MARK: Size (spec 2.13)
+
+    @Test func byteCountRoundTrips() throws {
+        let video = CaptureRecord(timestamp: Date(timeIntervalSince1970: 1_792_411_200), fileURL: dir.appending(path: "pending/v.mp4"),
+                                  fileIsTemporary: true, pixelWidth: 1600, pixelHeight: 1000, appName: nil,
+                                  mediaKind: .video, durationSeconds: 42.25, byteCount: 3_400_000_000)
+        let image = CaptureRecord(timestamp: Date(timeIntervalSince1970: 1_792_411_100), fileURL: dir.appending(path: "Shot.png"),
+                                  pixelWidth: 20, pixelHeight: 10, appName: nil, byteCount: 5_120)
+        let first = store()
+        first.add(video)
+        first.add(image)
+
+        let reloaded = store()
+        reloaded.load()
+        #expect(reloaded.record(id: video.id) == video)
+        #expect(reloaded.record(id: video.id)?.byteCount == 3_400_000_000)
+        #expect(reloaded.record(id: image.id)?.byteCount == 5_120)
+    }
+
+    /// Files from before 2.13 have no `byteCount`; their records decode with no size, and a record
+    /// with no size writes no key.
+    @Test func historyWithoutByteCountDecodesAsNil() throws {
+        try Data(phase2JSON.utf8).write(to: dir.appending(path: "history.json"))
+        let history = store()
+        history.load()
+        let record = try #require(history.record(id: UUID(uuidString: "0B2E8A4C-1C3D-4E5F-8A9B-0C1D2E3F4A5B")!))
+        #expect(record.byteCount == nil)
+
+        try Data(phase3JSON.utf8).write(to: dir.appending(path: "history.json"))
+        let phase3 = store()
+        phase3.load()
+        #expect(phase3.record(id: UUID(uuidString: "5D1C2B3A-4E5F-4A6B-8C7D-9E0F1A2B3C4D")!)?.byteCount == nil)
+
+        let encoded = try JSONEncoder().encode(record)
+        #expect(!String(decoding: encoded, as: UTF8.self).contains("byteCount"))
+    }
+
     @Test func mediaKindTypes() {
         #expect(MediaKind.image.fileExtension == "png")
         #expect(MediaKind.video.fileExtension == "mp4")

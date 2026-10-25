@@ -389,4 +389,18 @@ struct AppSettingsTests {
         #expect(defaults.object(forKey: "urlCommandsEnabled") as? Bool == false)
         #expect(defaults.object(forKey: "urlCommandsAllowSilent") as? Bool == true)
     }
+
+    /// General's Ask before deleting (spec 2.13): on by default, stored under `confirmBeforeDeleting`.
+    @Test func confirmBeforeDeletingDefaultsToTrueAndPersists() {
+        let defaults = freshDefaults()
+        let first = AppSettings(defaults: defaults)
+        #expect(first.confirmBeforeDeleting)
+
+        first.confirmBeforeDeleting = false
+        #expect(defaults.object(forKey: "confirmBeforeDeleting") as? Bool == false)
+        #expect(!AppSettings(defaults: defaults).confirmBeforeDeleting)
+
+        first.confirmBeforeDeleting = true
+        #expect(AppSettings(defaults: defaults).confirmBeforeDeleting)
+    }
 }

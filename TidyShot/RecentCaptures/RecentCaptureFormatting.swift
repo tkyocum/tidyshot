@@ -9,21 +9,50 @@ nonisolated enum RecentCaptureFormatting {
         record.uploadedURL?.lastPathComponent ?? record.fileURL?.lastPathComponent ?? record.appName ?? "Capture"
     }
 
-    /// "2 minutes ago", with the upload state while it is not settled: "2 minutes ago · Uploading",
-    /// "yesterday · Upload failed", or "2 minutes ago · Optimizing…" while a recording waits for
-    /// Clop (`isOptimizing`, from `AppCoordinator.optimizingVideoIDs`).
+    /// "2 minutes ago · 5 KB": the relative time and the record's size (`sizeText`), then the upload
+    /// state while it is not settled: "2 minutes ago · 5 KB · Uploading", "yesterday · 5 KB · Upload
+    /// failed", or "2 minutes ago · 5 KB · Optimizing…" while a recording waits for Clop
+    /// (`isOptimizing`, from `AppCoordinator.optimizingVideoIDs`). The parts are joined by a middle
+    /// dot with a space either side, and an unknown or zero size leaves its part out.
     static func detail(for record: CaptureRecord, now: Date, locale: Locale = .current,
                        isOptimizing: Bool = false) -> String {
+        let parts = detailParts(for: record, now: now, locale: locale, isOptimizing: isOptimizing)
+        return [parts.time, parts.size, parts.state].compactMap { $0 }.joined(separator: " · ")
+    }
+
+    /// The detail with the size left out: "2 minutes ago · Upload failed". The row shows it when the
+    /// whole detail would not fit, so the size gives way before the upload state is cut off. Nil
+    /// when there is no size to leave out.
+    static func detailWithoutSize(for record: CaptureRecord, now: Date, locale: Locale = .current,
+                                  isOptimizing: Bool = false) -> String? {
+        let parts = detailParts(for: record, now: now, locale: locale, isOptimizing: isOptimizing)
+        guard parts.size != nil else { return nil }
+        return [parts.time, parts.state].compactMap { $0 }.joined(separator: " · ")
+    }
+
+    private static func detailParts(for record: CaptureRecord, now: Date, locale: Locale,
+                                    isOptimizing: Bool) -> (time: String, size: String?, state: String?) {
         let formatter = RelativeDateTimeFormatter()
         formatter.locale = locale
         formatter.unitsStyle = .full
         formatter.dateTimeStyle = .named
-        let time = formatter.localizedString(for: record.timestamp, relativeTo: now)
-        switch record.uploadState {
-        case .uploading: return isOptimizing ? "\(time) · Optimizing…" : "\(time) · Uploading"
-        case .failed: return "\(time) · Upload failed"
-        case .none, .uploaded: return time
+        let state: String? = switch record.uploadState {
+        case .uploading: isOptimizing ? "Optimizing…" : "Uploading"
+        case .failed: "Upload failed"
+        case .none, .uploaded: nil
         }
+        return (formatter.localizedString(for: record.timestamp, relativeTo: now), sizeText(record.byteCount), state)
+    }
+
+    /// "999 bytes", "5 KB", "1.2 MB": `ByteCountFormatter`'s `.file` style, the decimal units Finder
+    /// shows. Nil for an unknown or zero size. `ByteCountFormatter` has no locale of its own and
+    /// writes in the current one; the format-style API that takes a locale writes `kB` and rounds
+    /// 999 bytes up to `1 kB`, unlike Finder.
+    static func sizeText(_ byteCount: Int?) -> String? {
+        guard let byteCount, byteCount > 0 else { return nil }
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        return formatter.string(fromByteCount: Int64(byteCount))
     }
 
     /// Copy URL needs a link: an uploaded object, or the earlier link of an editor upload that is

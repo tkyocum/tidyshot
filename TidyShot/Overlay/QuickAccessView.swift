@@ -104,7 +104,7 @@ struct QuickAccessView: View {
         }
         Divider()
         Button("Close") { model.onClose() }
-        Button("Delete…") { model.onDelete() }
+        Button(CaptureDeletion.actionTitle(confirmBeforeDeleting: AppSettings.shared.confirmBeforeDeleting)) { model.onDelete() }
     }
 
     /// Copy URL or Retry when they apply, then Save As… in every state.

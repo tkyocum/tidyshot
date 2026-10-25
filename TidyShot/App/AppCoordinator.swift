@@ -136,6 +136,10 @@ final class AppCoordinator {
     /// Clop's accepted movie per record, in `tmp/Clop`. The coordinator owns it: the job uploads it
     /// (the queue's own retries re-send it), and it is removed when the upload ends.
     @ObservationIgnored var clopResults: [UUID: URL] = [:]
+    /// Per record, the size of what its enqueued job sends (Clop's result when it was accepted),
+    /// set at the enqueue and taken when the upload ends; `.uploaded` stores it on the record
+    /// (spec 2.13). No entry when the size could not be read.
+    @ObservationIgnored var sentByteCounts: [UUID: Int] = [:]
     /// Records with a `.file` upload waiting for Clop, queued or in flight. The `Uploading a
     /// recording` activity is held while there is one, so idle sleep and App Nap do not stop it.
     @ObservationIgnored var fileUploadIDs: Set<UUID> = [] {
@@ -214,6 +218,8 @@ final class AppCoordinator {
         try? FileManager.default.removeItem(at: ClopApp.workDirectory)
         notifier.setUp()
         history.load()
+        // Records from before 2.13 have no size; those with a local file get it from the file.
+        Task { await backfillByteCounts() }
         // A recording a crash, a kill or a failed rename left in tmp/Recording is checked, not swept.
         // The scan lists the folder first, long before a recording started now could write there.
         Task { await recoverRecordings() }
@@ -227,6 +233,19 @@ final class AppCoordinator {
         }
         // A URL that launched the app arrived before this point and waits in the handler.
         Task { await urlCommands.ready() }
+    }
+
+    /// Spec 2.13, Old records: each record with no `byteCount` and a local file TidyShot can reach
+    /// gets the file's size, `pending/` directly and the save folder under its scope, in one pass
+    /// off the main actor that never reads a file. The records are written once, after the pass; a
+    /// size set meanwhile by a save, an edit or an upload is kept (`FileSizes.fill`).
+    private func backfillByteCounts() async {
+        let items = FileSizes.backfillItems(for: history.records, pendingFolder: pendingFiles.directory,
+                                            saveFolder: saveLocation.currentURL)
+        guard !items.isEmpty else { return }
+        let measured = await Task.detached(priority: .utility) { FileSizes.measure(items) }.value
+        guard !measured.isEmpty else { return }
+        history.updateAll { FileSizes.fill(&$0, from: measured) }
     }
 
     func showPermissionWindow() {

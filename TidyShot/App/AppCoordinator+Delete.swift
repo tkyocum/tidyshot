@@ -3,8 +3,9 @@ import AppKit
 // The one delete path, and the teardown that pruning shares with it. Its state is declared in AppCoordinator.swift.
 extension AppCoordinator {
     /// The one delete path, shared by the overlay and Recent Captures. One confirmation, Delete or
-    /// Cancel. Delete stops an in-flight upload, removes its objects, each from the bucket the
-    /// record names for it (`CaptureDeletion.objects(for:)`), then the local file, the thumbnail
+    /// Cancel, unless General's `Ask before deleting` is off (`CaptureDeletion.asksFirst`). Delete
+    /// stops an in-flight upload, removes its objects, each from the bucket the record names for it
+    /// (`CaptureDeletion.objects(for:)`), then the local file, the thumbnail
     /// and the record. When the storage `DELETE` fails (or there are no credentials to sign it),
     /// or the file in the save folder cannot be removed, a second alert offers to remove the record
     /// from history anyway, so a capture whose object or file cannot be deleted is never stuck. A local file that is already gone is not an
@@ -20,7 +21,9 @@ extension AppCoordinator {
             deletingIDs.remove(recordID)
             pushEditorState(for: recordID)
         }
-        guard confirmDelete(of: record) else { return }
+        if CaptureDeletion.asksFirst(confirmBeforeDeleting: settings.confirmBeforeDeleting) {
+            guard confirmDelete(of: record) else { return }
+        }
 
         // After this the record holds any key the cancelled job had reserved (`pendingObjectKey`),
         // or its uploaded key if the upload finished first.

@@ -10,10 +10,20 @@ struct RecentCaptureFormattingTests {
                                   bucket: "snap", usePathStyle: false)
 
     func record(_ state: CaptureRecord.UploadState, file: URL? = URL(fileURLWithPath: "/Users/tim/Desktop/Shot.png"),
-                secondsAgo: TimeInterval = 120, location: ObjectLocation? = nil, appName: String? = nil) -> CaptureRecord {
+                secondsAgo: TimeInterval = 120, location: ObjectLocation? = nil, appName: String? = nil,
+                byteCount: Int? = nil) -> CaptureRecord {
         CaptureRecord(timestamp: now.addingTimeInterval(-secondsAgo), fileURL: file, pixelWidth: 10, pixelHeight: 10,
-                      appName: appName, uploadState: state, objectLocation: location)
+                      appName: appName, uploadState: state, objectLocation: location, byteCount: byteCount)
     }
+
+    /// `ByteCountFormatter` has no locale of its own and writes in the current one, so the tests that
+    /// compare its text with literals run only where that is US English (Tim's Mac). The others
+    /// compare the row's text with `sizeText` itself.
+    nonisolated static let currentIsUSEnglish = Locale.current.language.languageCode == .english
+        && Locale.current.region == .unitedStates
+
+    /// The size text for 5,000 bytes in the current locale (`5 KB` in US English).
+    var fiveKB: String { RecentCaptureFormatting.sizeText(5_000) ?? "missing" }
 
     @Test func nameIsTheObjectOrTheFileName() {
         let url = URL(string: "https://snap.tky.io/shots/2026/10/aB3dE9.png")!
@@ -135,5 +145,81 @@ struct RecentCaptureFormattingTests {
         #expect(!RecentCaptureFormatting.canCopyFile(video(.uploaded(url: url, key: "aB3dE9.mp4"), file: nil,
                                                            location: location)))
         #expect(!RecentCaptureFormatting.canCopyFile(record(.none)))
+    }
+
+    // MARK: Size (spec 2.13)
+
+    @Test func detailIsTheTimeAndTheSize() {
+        #expect(RecentCaptureFormatting.detail(for: record(.none, byteCount: 5_000), now: now, locale: english)
+                == "2 minutes ago · \(fiveKB)")
+        let url = URL(string: "https://snap.tky.io/aB3dE9.png")!
+        #expect(RecentCaptureFormatting.detail(for: record(.uploaded(url: url, key: "aB3dE9.png"), file: nil, byteCount: 5_000),
+                                               now: now, locale: english) == "2 minutes ago · \(fiveKB)")
+    }
+
+    /// The upload state follows the size: `3 hours ago · 5 KB · Uploading`.
+    @Test func detailIsTheTimeTheSizeAndEachUploadState() {
+        #expect(RecentCaptureFormatting.detail(for: record(.uploading(fraction: 0.5), byteCount: 5_000), now: now, locale: english)
+                == "2 minutes ago · \(fiveKB) · Uploading")
+        #expect(RecentCaptureFormatting.detail(for: record(.failed(message: "offline"), secondsAgo: 86_400, byteCount: 5_000),
+                                               now: now, locale: english) == "yesterday · \(fiveKB) · Upload failed")
+        var recording = video(.uploading(fraction: 0))
+        recording.byteCount = 5_000
+        #expect(RecentCaptureFormatting.detail(for: recording, now: now, locale: english, isOptimizing: true)
+                == "2 minutes ago · \(fiveKB) · Optimizing…")
+        #expect(RecentCaptureFormatting.detail(for: recording, now: now, locale: english, isOptimizing: false)
+                == "2 minutes ago · \(fiveKB) · Uploading")
+    }
+
+    /// An unknown size (a record from before 2.13 with no local file) and a zero one show no size part.
+    @Test func detailHasNoSizeWhenNilOrZero() {
+        for byteCount in [nil, 0] as [Int?] {
+            #expect(RecentCaptureFormatting.detail(for: record(.none, byteCount: byteCount), now: now, locale: english)
+                    == "2 minutes ago")
+            #expect(RecentCaptureFormatting.detail(for: record(.uploading(fraction: 0.5), byteCount: byteCount), now: now,
+                                                   locale: english) == "2 minutes ago · Uploading")
+            #expect(RecentCaptureFormatting.detail(for: record(.failed(message: "offline"), byteCount: byteCount), now: now,
+                                                   locale: english) == "2 minutes ago · Upload failed")
+        }
+        #expect(RecentCaptureFormatting.sizeText(nil) == nil)
+        #expect(RecentCaptureFormatting.sizeText(0) == nil)
+    }
+
+    /// The parts are joined by a middle dot (U+00B7) with one space either side.
+    @Test func partsAreSeparatedByAMiddleDot() {
+        let detail = RecentCaptureFormatting.detail(for: record(.uploading(fraction: 0.5), byteCount: 5_000), now: now, locale: english)
+        let parts = detail.components(separatedBy: " \u{00B7} ")
+        #expect(parts == ["2 minutes ago", fiveKB, "Uploading"])
+        #expect(detail.unicodeScalars.filter { $0 == "\u{00B7}" }.count == 2)
+    }
+
+    /// What the row falls back to when the whole detail would not fit: the time and the state, in
+    /// that order, with the size left out. Nil when there is no size to leave out.
+    @Test func detailWithoutSizeKeepsTheTimeAndTheState() {
+        #expect(RecentCaptureFormatting.detailWithoutSize(for: record(.uploading(fraction: 0.5), byteCount: 120_000),
+                                                          now: now, locale: english) == "2 minutes ago · Uploading")
+        #expect(RecentCaptureFormatting.detailWithoutSize(for: record(.failed(message: "offline"), byteCount: 120_000),
+                                                          now: now, locale: english) == "2 minutes ago · Upload failed")
+        var recording = video(.uploading(fraction: 0))
+        recording.byteCount = 1_200_000
+        #expect(RecentCaptureFormatting.detailWithoutSize(for: recording, now: now, locale: english, isOptimizing: true)
+                == "2 minutes ago · Optimizing…")
+        #expect(RecentCaptureFormatting.detailWithoutSize(for: record(.none, byteCount: 5_000), now: now, locale: english)
+                == "2 minutes ago")
+        for byteCount in [nil, 0] as [Int?] {
+            #expect(RecentCaptureFormatting.detailWithoutSize(for: record(.failed(message: "offline"), byteCount: byteCount),
+                                                              now: now, locale: english) == nil)
+        }
+    }
+
+    /// `ByteCountFormatter`'s `.file` style: decimal units, as Finder shows them.
+    @Test(.enabled(if: currentIsUSEnglish, "ByteCountFormatter writes in the current locale"))
+    func sizeTextInUSEnglish() {
+        #expect(RecentCaptureFormatting.sizeText(999) == "999 bytes")
+        #expect(RecentCaptureFormatting.sizeText(5_000) == "5 KB")
+        #expect(RecentCaptureFormatting.sizeText(1_200_000) == "1.2 MB")
+        #expect(RecentCaptureFormatting.sizeText(3_400_000_000) == "3.4 GB")
+        #expect(RecentCaptureFormatting.detail(for: record(.none, secondsAgo: 3 * 3_600, byteCount: 5_000), now: now, locale: english)
+                == "3 hours ago · 5 KB")
     }
 }

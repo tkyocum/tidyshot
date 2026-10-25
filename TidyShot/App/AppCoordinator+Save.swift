@@ -168,9 +168,10 @@ extension AppCoordinator {
             state = .none
         }
         // The source app is no longer recorded (Phase 3.1 removed its token); older records keep theirs.
+        // The size is the PNG's, as written.
         let record = CaptureRecord(id: id, fileURL: fileURL, fileIsTemporary: action == .uploadOnly,
                                    pixelWidth: image.image.width, pixelHeight: image.image.height,
-                                   appName: nil, uploadState: state)
+                                   appName: nil, uploadState: state, byteCount: png.count)
         // Save mode, or upload mode with no destination (as in Phase 2): the file was saved.
         let notification: SaveNotification = destination == nil && action != .uploadOnly
             ? .saved(title: "Screenshot saved") : .none

@@ -87,13 +87,19 @@ nonisolated struct CaptureRecord: Codable, Identifiable, Equatable, Sendable {
     let mediaKind: MediaKind
     /// A recording's length, read from the finished file. Nil for screenshots.
     let durationSeconds: Double?
+    /// The size in bytes of what the record's link or file points at, for Recent Captures (spec
+    /// 2.13): the bytes written at save, the new file after an editor Save, and the bytes sent once
+    /// an upload succeeds (Clop's result when it was accepted). A failed upload, or the removal of
+    /// the local file alone, leaves it. Nil for a record from before 2.13 until the launch backfill
+    /// (`FileSizes`) finds its file, and for good when it has none.
+    var byteCount: Int?
 
     init(id: UUID = UUID(), timestamp: Date = Date(), fileURL: URL?, fileIsTemporary: Bool = false,
          thumbnailFileName: String? = nil, pixelWidth: Int, pixelHeight: Int, appName: String?,
          uploadState: UploadState = .none, objectLocation: ObjectLocation? = nil, pendingObjectKey: String? = nil,
          editedAt: Date? = nil, uploadIsStale: Bool = false,
          supersededObjects: [ObjectRef] = [], priorUpload: PriorUpload? = nil,
-         mediaKind: MediaKind = .image, durationSeconds: Double? = nil) {
+         mediaKind: MediaKind = .image, durationSeconds: Double? = nil, byteCount: Int? = nil) {
         self.id = id
         self.timestamp = timestamp
         self.fileURL = fileURL
@@ -111,6 +117,7 @@ nonisolated struct CaptureRecord: Codable, Identifiable, Equatable, Sendable {
         self.priorUpload = priorUpload
         self.mediaKind = mediaKind
         self.durationSeconds = durationSeconds
+        self.byteCount = byteCount
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -118,14 +125,15 @@ nonisolated struct CaptureRecord: Codable, Identifiable, Equatable, Sendable {
         case objectLocation, pendingObjectKey, editedAt, uploadIsStale
         case supersededObjects, priorUpload
         case mediaKind, durationSeconds
+        case byteCount
     }
 
     /// Phase 2 history files have no `fileIsTemporary`, `thumbnailFileName`, `objectLocation` or
     /// `pendingObjectKey`, and always have a `fileURL`; Phase 3 files have no `editedAt` or
     /// `uploadIsStale`. They decode with the defaults. Files from before Phase 4 have no
     /// supersededObjects or priorUpload either; they decode as [] and nil. Files from before
-    /// recording R1 have no `mediaKind` or `durationSeconds`; they decode as `.image` and nil.
-    /// Encoding is synthesised.
+    /// recording R1 have no `mediaKind` or `durationSeconds`; they decode as `.image` and nil. Files
+    /// from before 2.13 have no `byteCount`; it decodes as nil. Encoding is synthesised.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(UUID.self, forKey: .id)
@@ -145,6 +153,7 @@ nonisolated struct CaptureRecord: Codable, Identifiable, Equatable, Sendable {
         priorUpload = try container.decodeIfPresent(PriorUpload.self, forKey: .priorUpload)
         mediaKind = try container.decodeIfPresent(MediaKind.self, forKey: .mediaKind) ?? .image
         durationSeconds = try container.decodeIfPresent(Double.self, forKey: .durationSeconds)
+        byteCount = try container.decodeIfPresent(Int.self, forKey: .byteCount)
     }
 
     var uploadedURL: URL? {

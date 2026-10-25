@@ -37,6 +37,8 @@ struct RecentCaptureRow: View {
     let record: CaptureRecord
     let name: String
     let detail: String
+    /// From `RecentCaptureFormatting.detailWithoutSize`; nil when the record has no size.
+    let detailWithoutSize: String?
     let canCopyLink: Bool
     let canCopyImage: Bool
     /// From `RecentCaptureFormatting.canAnnotate`; false when `EditorInput.source` is `.unavailable`.
@@ -59,10 +61,14 @@ struct RecentCaptureRow: View {
                         Text(name)
                             .lineLimit(1)
                             .truncationMode(.middle)
-                        Text(detail)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
+                        // The size gives way first: a detail too wide for the row drops it rather
+                        // than cut off "Uploading", "Upload failed" or "Optimizing…".
+                        ViewThatFits(in: .horizontal) {
+                            detailText(detail)
+                            if let detailWithoutSize {
+                                detailText(detailWithoutSize)
+                            }
+                        }
                     }
                     Spacer(minLength: 0)
                 }
@@ -80,7 +86,8 @@ struct RecentCaptureRow: View {
             } else {
                 iconButton("doc.on.doc", label: "Copy File", enabled: canCopyFile) { actions.copyFile(record.id) }
             }
-            iconButton("trash", label: "Delete…", enabled: true) { actions.delete(record.id) }
+            iconButton("trash", label: CaptureDeletion.actionTitle(confirmBeforeDeleting: AppSettings.shared.confirmBeforeDeleting),
+                       enabled: true) { actions.delete(record.id) }
         }
         .padding(.horizontal, Self.horizontalPadding)
         .frame(width: Self.size.width, height: Self.size.height)
@@ -116,6 +123,13 @@ struct RecentCaptureRow: View {
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 4))
+    }
+
+    private func detailText(_ text: String) -> some View {
+        Text(text)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
     }
 
     private func iconButton(_ symbol: String, label: String, enabled: Bool, action: @escaping () -> Void) -> some View {
