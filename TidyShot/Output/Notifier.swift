@@ -4,7 +4,8 @@ import UserNotifications
 /// Posts "saved", "uploaded" and "failed" notifications. Clicking a saved notification, or an
 /// error given a file, reveals the file in Finder; clicking an uploaded notification, or a plain
 /// one given a URL, opens the URL; clicking the `Uploaded` of a link that was not copied copies it.
-/// While a recording runs every notification waits, and posts once it stops (`holdNotices()`).
+/// From a recording's count-in until it stops every notification waits, and posts then
+/// (`holdNotices()`).
 final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     /// Read from the nonisolated delegate callbacks, so they must not be MainActor-isolated.
     nonisolated private static let pathKey = "path"
@@ -12,6 +13,8 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     nonisolated private static let copyURLKey = "copyURL"
     private let center = UNUserNotificationCenter.current()
     private var hold = NoticeHold<UNMutableNotificationContent>()
+    /// Notices `releaseHeldNotices()` handed to the notification centre that it has not yet taken.
+    private var releasedInFlight = 0
 
     func setUp() {
         center.delegate = self
@@ -76,31 +79,55 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         post(content)
     }
 
-    /// While a recording runs (R2 design, Decided 2026-10-24, 8): every notification asked for from
-    /// here waits until `releaseHeldNotices()`. The coordinator holds from `recorder.run`'s call.
+    /// While a recording counts in or runs (R2 design, Decided 2026-10-24, 8): every notification
+    /// asked for from here waits until `releaseHeldNotices()`. The coordinator holds from the
+    /// hand-off's start under the capture lock. A hold already on keeps what waits.
     func holdNotices() {
         hold.hold()
     }
 
     /// Ends the hold: what waited posts now, in the order it was asked for. Returns how many posted.
+    /// Nothing waits for them to reach the notification centre, except a quit
+    /// (`waitForReleasedNotices(upTo:)`).
     @discardableResult
     func releaseHeldNotices() -> Int {
         let released = hold.release()
-        released.forEach(add)
+        for content in released {
+            releasedInFlight += 1
+            add(content) {
+                Task { @MainActor in self.releasedInFlight -= 1 }
+            }
+        }
         return released.count
     }
 
-    /// Every notification comes through here: at once, or held while a recording runs.
+    /// Returns once the notification centre has taken every notice `releaseHeldNotices()` posted, or
+    /// once `limit` has passed, so a stuck notification daemon cannot hold a quit; at once when none
+    /// is on its way. A quit waits here, so the app does not end before the centre has them.
+    func waitForReleasedNotices(upTo limit: Duration) async {
+        let deadline = ContinuousClock.now + limit
+        while releasedInFlight > 0, ContinuousClock.now < deadline {
+            try? await Task.sleep(for: Self.releaseCheckInterval)
+        }
+    }
+
+    /// How often `waitForReleasedNotices(upTo:)` checks.
+    private static let releaseCheckInterval = Duration.milliseconds(10)
+
+    /// Every notification comes through here: at once, or held while a recording counts in or runs.
     private func post(_ content: UNMutableNotificationContent) {
         if let content = hold.post(content) {
             add(content)
         }
     }
 
-    private func add(_ content: UNMutableNotificationContent) {
+    /// Hands `content` to the notification centre now, so notices reach it in the order asked for.
+    /// `added` runs once the centre has taken it, or failed to.
+    private func add(_ content: UNMutableNotificationContent, added: (@Sendable () -> Void)? = nil) {
         let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
         center.add(request) { error in
             if let error { NSLog("Notification failed: \(error.localizedDescription)") }
+            added?()
         }
     }
 

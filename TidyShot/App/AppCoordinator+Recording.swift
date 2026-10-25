@@ -97,10 +97,13 @@ extension AppCoordinator {
         var ended: RecordingEnded?
         let tookLock = await withCaptureLock(coversDesktop: true) {
             guard let microphone = recordingCanStart(microphone: ask.choice) else { return }
+            // The hand-off starts here: the count-in phase, and the notice hold `record` keeps on.
             recordingCountIn = true
+            notifier.holdNotices()
             guard let content = await loadContent(failureTitle: RecordingEnd.failedTitle),
                   let display = Self.display(under: NSEvent.mouseLocation, in: content.displays) else {
                 recordingCountIn = false
+                endNoticeHold()
                 return
             }
             ended = await record(.display(display), microphone: microphone)
@@ -208,28 +211,42 @@ extension AppCoordinator {
     /// `.saving` with nothing between. Nil when nothing started, also when a quit came during the
     /// hand-off: `isQuitting` is read just before `recorder.run`, with no suspension between.
     /// Otherwise the outcome comes back with the microphone note, which posts after Stop.
-    /// Notifications wait while `recordingPhase` is `.recording`, from `recorder.run`'s call to its
-    /// return, and post as it returns, before this recording's own (Decided 2026-10-24, 8). `run`
-    /// returns on every end (Stop, Cancel, a failure, the stream's end, a quit, a start that fails
-    /// inside it) and never throws, so the hold never outlives it.
+    /// Notifications wait while `recordingPhase` is `.countIn` or `.recording`: from the hand-off's
+    /// start (here, or before Record Fullscreen's display read) until the start gives up or
+    /// `recorder.run` returns, and post then, before this recording's own (Decided 2026-10-24, 8, as
+    /// built, so a banner from the count-in is not filmed). `run` returns on every end (Stop,
+    /// Cancel, a failure, the stream's end, a quit, a start that fails inside it) and never throws,
+    /// and each exit before it ends the hold too, so the hold never outlives the start. It stays
+    /// inside the capture lock, so it never nests.
     private func record(_ target: CaptureTarget, microphone: MicrophoneStart) async -> RecordingEnded? {
         recordingCountIn = true
+        // Record Fullscreen's hold is on already, and keeps what waits.
+        notifier.holdNotices()
         let start = await recordingHandOff(target, microphone: microphone)
         recordingCountIn = false
-        guard let start, !isQuitting else { return nil }
-        notifier.holdNotices()
+        guard let start, !isQuitting else {
+            endNoticeHold()
+            return nil
+        }
         let outcome = await recorder.run(start.request, chrome: start.chrome) { [weak self] in
             self?.isRecording = true
         }
-        let released = notifier.releaseHeldNotices()
-        if released > 0 {
-            RecordingLog.note("Recording: posted \(released) notification\(released == 1 ? "" : "s") held during the recording")
-        }
+        endNoticeHold()
         if case .keep = outcome {
             recordingSavesInFlight += 1
         }
         recorder.close()
         return (outcome, start.microphoneNote)
+    }
+
+    /// Ends the notice hold (Decided 2026-10-24, 8): what waited posts now, in the order asked for,
+    /// logged with its count when there was any. Nothing between the phase leaving `.countIn` or
+    /// `.recording` and this call suspends, so a quit that sees `.idle` finds them released.
+    private func endNoticeHold() {
+        let released = notifier.releaseHeldNotices()
+        if released > 0 {
+            RecordingLog.note("Recording: posted \(released) notification\(released == 1 ? "" : "s") held during the recording")
+        }
     }
 
     /// The hand-off (recording design, Starting), in order, with the count-in on or off:

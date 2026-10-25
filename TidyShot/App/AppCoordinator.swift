@@ -416,7 +416,9 @@ final class AppCoordinator {
     /// and one not yet begun is skipped, each saving its MP4 in quit mode, so a quit never waits
     /// for a conversion. A Cancel's question is answered Save (`recorder.quit()`), as it cannot
     /// show while the quit is held. Returns once nothing is left (`recordingPhase` is `.idle`), the
-    /// thumbnail of a save written.
+    /// thumbnail of a save written, and the notices held during the count-in or the recording have
+    /// reached the notification centre, so the app does not end before them; a centre that does not
+    /// answer holds the quit for `quitNoticeWait` at most (R2 design, Decided 2026-10-24, 8).
     func finishRecordingForQuit() async {
         isQuitting = true
         stopMakingGIFs()
@@ -426,10 +428,13 @@ final class AppCoordinator {
         while recordingPhase != .idle {
             try? await Task.sleep(for: Self.quitPollInterval)
         }
+        await notifier.waitForReleasedNotices(upTo: Self.quitNoticeWait)
     }
 
     /// How often `finishRecordingForQuit` checks the recording phase.
     private static let quitPollInterval = Duration.milliseconds(50)
+    /// The longest a quit waits for the released notices to reach the notification centre.
+    private static let quitNoticeWait = Duration.seconds(1)
 
     // MARK: Shared by +Capture and +Recording
 
