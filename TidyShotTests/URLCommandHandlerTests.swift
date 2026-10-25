@@ -22,7 +22,7 @@ final class URLTargetRecorder: URLCommandTarget {
         case toggleDesktopIcons
     }
 
-    var capturesRefused = false
+    var captureRefusal: CaptureRefusal?
     private(set) var calls: [Call] = []
 
     func captureArea(intent: CaptureIntent) async { calls.append(.area(intent)) }
@@ -189,11 +189,12 @@ struct URLCommandHandlerTests {
         ])
     }
 
-    /// Never queued behind a running capture, nor while the microphone prompt is open (both set
-    /// `capturesRefused`); a scrolling session is never advanced by a URL.
-    @Test func captureCommandsAreDroppedWhileACaptureRuns() async throws {
+    /// Never queued behind a running capture, nor while the microphone prompt is open (either sets
+    /// `captureRefusal`); a scrolling session is never advanced by a URL.
+    @Test(arguments: [CaptureRefusal.captureRunning, .microphonePrompt])
+    func captureCommandsAreDroppedWhileACaptureRuns(refusal: CaptureRefusal) async throws {
         settings.urlCommandsAllowSilent = true
-        target.capturesRefused = true
+        target.captureRefusal = refusal
         let handler = await makeHandler()
         for string in ["capture-area", "capture-fullscreen", "capture-scrolling", "all-in-one", "self-timer",
                        "capture-text", "capture-text?x=0&y=0&width=10&height=10"] {
@@ -206,6 +207,16 @@ struct URLCommandHandlerTests {
             try await send(handler, "tidyshot://\(string)")
         }
         #expect(target.calls == [.restore, .desktopIconsHidden(true), .desktopIconsHidden(false), .toggleDesktopIcons])
+    }
+
+    /// The dropped command's log line says why (R2 design, Decided 2026-10-24, 9): a burst's later
+    /// capture command, a running capture, or the microphone prompt alone; nil when nothing drops it.
+    @Test func theLogSaysWhyACaptureCommandWasDropped() {
+        #expect(URLCommandHandler.dropReason(busy: false, refusal: nil) == nil)
+        #expect(URLCommandHandler.dropReason(busy: false, refusal: .captureRunning) == "a capture is running")
+        #expect(URLCommandHandler.dropReason(busy: false, refusal: .microphonePrompt) == "the microphone prompt is open")
+        #expect(URLCommandHandler.dropReason(busy: true, refusal: nil) == "a queued capture command ran first")
+        #expect(URLCommandHandler.dropReason(busy: true, refusal: .microphonePrompt) == "a queued capture command ran first")
     }
 
     @Test func urlsWaitUntilTheAppHasStartedThenRunInOrder() async throws {

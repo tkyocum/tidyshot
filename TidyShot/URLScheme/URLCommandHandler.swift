@@ -1,10 +1,18 @@
 import Foundation
 
+/// Why a capture would be refused now (R2 design, Decided 2026-10-24, 9), for the URL handler's log.
+nonisolated enum CaptureRefusal: Equatable, Sendable {
+    /// Another capture holds the capture lock.
+    case captureRunning
+    /// A record start waits on the microphone prompt, and no capture holds the lock.
+    case microphonePrompt
+}
+
 /// What URL commands run: the app's existing capture functions. `AppCoordinator` conforms; the
 /// tests use a recorder.
 protocol URLCommandTarget: AnyObject {
-    /// True while a capture would be refused: another runs, or the microphone prompt is open.
-    var capturesRefused: Bool { get }
+    /// Why a capture would be refused now, or nil when it would run.
+    var captureRefusal: CaptureRefusal? { get }
     func captureArea(intent: CaptureIntent) async
     func captureArea(at area: ScreenRect, intent: CaptureIntent) async
     func captureWindow(intent: CaptureIntent) async
@@ -88,6 +96,18 @@ final class URLCommandHandler {
         }
     }
 
+    /// Why a capture command is dropped, for its log line, or nil when it runs: `busy` (a queued
+    /// capture command ran first), then the target's refusal (a running capture, or the microphone
+    /// prompt alone).
+    static func dropReason(busy: Bool, refusal: CaptureRefusal?) -> String? {
+        if busy { return "a queued capture command ran first" }
+        switch refusal {
+        case .captureRunning: return "a capture is running"
+        case .microphonePrompt: return "the microphone prompt is open"
+        case nil: return nil
+        }
+    }
+
     /// The sender as messages show it (`URLCommand.displayed`), or nil when unknown or empty.
     static func senderName(_ sender: String?) -> String? {
         guard let sender else { return nil }
@@ -117,8 +137,7 @@ final class URLCommandHandler {
         guard let target else { return false }
         // Never queued behind a running capture, and never a Start or Done for a scrolling session.
         // Dropped the same way while the microphone prompt is open.
-        if command.kind.isCapture, busy || target.capturesRefused {
-            let reason = busy ? "a queued capture command ran first" : "a capture is running"
+        if command.kind.isCapture, let reason = Self.dropReason(busy: busy, refusal: target.captureRefusal) {
             NSLog("%@", "URL command from \(sender ?? "an unknown app") dropped, \(reason): \(url.absoluteString)")
             return false
         }

@@ -468,6 +468,13 @@ final class AppCoordinator {
         Self.refusesCapture(isCapturing: isCapturing, isAskingMicrophone: isAskingMicrophone)
     }
 
+    /// Why `capturesRefused` is set, for the URL handler's log: a capture holding the lock, or else
+    /// the microphone prompt. Nil when captures run.
+    var captureRefusal: CaptureRefusal? {
+        guard capturesRefused else { return nil }
+        return isCapturing ? .captureRunning : .microphonePrompt
+    }
+
     /// Runs `body` unless captures are refused (`capturesRefused`): a capture already runs, or the
     /// microphone prompt is open. With `coversDesktop` and Hide desktop icons while capturing on,
     /// the desktop is covered before `body` reads the shareable content, so freeze snapshots and
