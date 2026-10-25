@@ -468,11 +468,16 @@ final class AppCoordinator {
         Self.refusesCapture(isCapturing: isCapturing, isAskingMicrophone: isAskingMicrophone)
     }
 
-    /// Why `capturesRefused` is set, for the URL handler's log: a capture holding the lock, or else
-    /// the microphone prompt. Nil when captures run.
-    var captureRefusal: CaptureRefusal? {
-        guard capturesRefused else { return nil }
+    /// Why a capture is refused, for the URL handler's log: a capture holding the lock, or else the
+    /// microphone prompt. Nil when captures run.
+    nonisolated static func captureRefusal(isCapturing: Bool, isAskingMicrophone: Bool) -> CaptureRefusal? {
+        guard refusesCapture(isCapturing: isCapturing, isAskingMicrophone: isAskingMicrophone) else { return nil }
         return isCapturing ? .captureRunning : .microphonePrompt
+    }
+
+    /// `captureRefusal` for the capture lock and the microphone prompt now.
+    var captureRefusal: CaptureRefusal? {
+        Self.captureRefusal(isCapturing: isCapturing, isAskingMicrophone: isAskingMicrophone)
     }
 
     /// Runs `body` unless captures are refused (`capturesRefused`): a capture already runs, or the

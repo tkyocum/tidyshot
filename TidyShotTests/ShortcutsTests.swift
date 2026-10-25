@@ -115,6 +115,14 @@ struct ShortcutsTests {
         #expect(AppCoordinator.refusesCapture(isCapturing: true, isAskingMicrophone: true))
     }
 
+    /// The URL handler's log gives the reason: a capture holding the lock wins over the prompt.
+    @Test func aRefusedCaptureNamesTheLockBeforeThePrompt() {
+        #expect(AppCoordinator.captureRefusal(isCapturing: false, isAskingMicrophone: false) == nil)
+        #expect(AppCoordinator.captureRefusal(isCapturing: true, isAskingMicrophone: false) == .captureRunning)
+        #expect(AppCoordinator.captureRefusal(isCapturing: false, isAskingMicrophone: true) == .microphonePrompt)
+        #expect(AppCoordinator.captureRefusal(isCapturing: true, isAskingMicrophone: true) == .captureRunning)
+    }
+
     /// A record start the capture lock refuses posts only when it showed the microphone prompt,
     /// which the user answered; one that showed none ends silently, as any capture the lock refuses.
     @Test func aRefusedStartPostsOnlyAfterTheMicrophonePrompt() {
