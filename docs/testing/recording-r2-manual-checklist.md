@@ -5,9 +5,9 @@ Run after any change to `TidyShot/Recording/` (`GIF/`, `GIFMaker`, `GIFConversio
 `RecordingTrim`, `TrackPass`, the controller, the chrome and the panel), `AppCoordinator`
 (`+Recording`'s start with its microphone prompt, `makeGIF`, `muteAndSave`, `recoverRecordings` and
 `saveRecording`, `+Upload`'s `startUpload`, `retry` and the `uploadRefusal` gates, `+RecordActions`,
-`+DragOut`, `+Delete`, `+Overlay`, `+Trim`, and the root's capture lock), `StatusMenuController`,
-`Notifier` (its hold), `URLCommandHandler`'s busy check, `SaveLocation.store` (its `didStoreFolder`
-call), the Recording section of Settings > Capture, the card, Recent Captures,
+`+DragOut`, `+Delete`, `+Overlay`, `+Trim`, and the root's capture lock and quit wait),
+`StatusMenuController`, `Notifier` (its hold), `URLCommandHandler`'s busy check, `SaveLocation.store`
+(its `didStoreFolder` call), the Recording section of Settings > Capture, the card, Recent Captures,
 `ThumbnailProvider`, or the `Recording`, `MuteLog` and `CaptureRecord` fields. Automated tests cover the
 pure decisions (the GIF palette, differ, LZW writer, sink and encoder against ImageIO's decoder, the
 conversion steps and their one `saveRecording` call, the progress menu, the settings layout, the panel's
@@ -17,11 +17,11 @@ refusals for a marked or trimming record, Trim's range, source, sheet and write 
 put's target and stale flag, `Upload Trimmed`'s refusals, the Trim window's first size and frame and its
 sheet's answer, its clean-up, the drag copy after a trim, the save folder's hook, the launch check's
 list-then-scan order, the microphone prompt's step, the rule that refuses a capture while the prompt is
-open and the notice of a start refused after it, the notice hold, and the card, row and menu rules for a
-GIF, a stale link and a marked record). Everything here needs a real screen, Screen Recording, a microphone, real
-windows, a player, the network, Clop or eyes. The R1 checklist (`recording-r1-manual-checklist.md`)
-still covers starting, stopping, sleep, quitting and the upload paths for an MP4; run it too after a
-change to those.
+open, the notice of a start refused after it and a dropped URL command's log reason, the notice hold, and
+the card, row and menu rules for a GIF, a stale link and a marked record). Everything here needs a real
+screen, Screen Recording, a microphone, real windows, a player, the network, Clop or eyes. The R1
+checklist (`recording-r1-manual-checklist.md`) still covers starting, stopping, sleep, quitting and the
+upload paths for an MP4; run it too after a change to those.
 
 Several steps are probes: they run a small program next to the app, or read the app's log, and ask
 you to write down what the system did. Those results settle the R2 design's "Still to probe" list and
@@ -342,15 +342,15 @@ selection overlay or the count-in, and the stream's `Recording: starting …` li
   TidyShot.` posts only after Stop and after the save's own notification, and no prompt or banner is in the
   video. After Deny the input stays chosen in Settings, with the access note. Write down what the first
   prompt looked like: ______
-- [ ] With the prompt up: a second Record press does nothing and logs `Recording: start ignored, the microphone
-  prompt is open`; Quit quits without starting a recording. Captures are blocked while it is up (call I,
-  settled: the design's Decided 2026-10-24, 9): each capture shortcut (⌃⇧1 to ⌃⇧7, and the self-timer's
-  if one is set) does nothing, no selection overlay or countdown shows, and no capture appears; the status menu's
-  capture items, Record Screen and Record Fullscreen among them, are shown disabled; `open
-  "tidyshot://capture-area"` (URL commands on) does nothing, and the log has `URL command from … dropped, a
-  capture is running: tidyshot://capture-area`. Answer the prompt: the recording starts as usual (the
-  selection overlay or the count-in), and every capture works again once it ends. Write down anything that
-  did start: ______
+- [ ] With the prompt up: a second Record press does nothing and logs `Recording: start ignored, the
+  microphone prompt is open`; Quit quits without starting a recording. Captures are blocked while it is up
+  (call I, settled: the design's Decided 2026-10-24, 9): each capture shortcut (⌃⇧1 to ⌃⇧7, and the
+  self-timer's if one is set) does nothing, no selection overlay or countdown shows, and no capture
+  appears; the status menu's capture items, Record Screen and Record Fullscreen among them, are shown
+  disabled; `open "tidyshot://capture-area"` (URL commands on) does nothing, and the log has `URL command
+  from … dropped, the microphone prompt is open: tidyshot://capture-area` (not `a capture is running`).
+  Answer the prompt: the recording starts as usual (the selection overlay or the count-in), and every
+  capture works again once it ends. Write down anything that did start: ______
 - [ ] A start refused by the capture lock after its prompt posts `Screen recording` / `The recording did not
   start because another capture was running.` and logs `Recording: not started after the microphone prompt,
   another capture was running`. It cannot be forced by hand: captures are refused while the prompt is up, so
@@ -378,21 +378,35 @@ selection overlay or the count-in, and the stream's `Recording: starting …` li
 
 ## Notices during a recording
 Call E, settled (the design's Decided 2026-10-24, 8): every TidyShot notification asked for while a
-recording runs waits, and posts as soon as it stops, before that recording's own notices after Stop.
+recording counts in or runs waits, and posts as soon as it stops or its start gives up, before that
+recording's own notices after Stop. The count-in is inside the window as the build's reading of Tim's
+answer, so a banner from the count-in, which stays up about 5 s, is not filmed.
 - [ ] A GIF save that ends during a second recording, with Show notification on. Record a GIF of 30 s or
   more and Stop; while `Making GIF…` shows, switch `Format` to MP4 and start Record Fullscreen with `Record
   system audio` on, and keep it running until the menu's GIF items are gone (the GIF is saved). No banner
   shows while it records. Stop: the GIF's `Recording saved` (or `GIF not made`) posts at once, then the
-  second recording's own notices after its save. The log has `Recording: posted <n> notification(s) held
-  during the recording`. Play the second recording: no banner is in its picture, and no notification sound
-  in its audio. Write down the order the banners came in: ______
+  second recording's own notices after its save. The log has `Recording: posted 1 notification held
+  during the recording` (`posted <n> notifications` for more). Play the second recording: no banner is in
+  its picture, and no notification sound in its audio. Write down the order the banners came in: ______
+- [ ] The same with the GIF saved during the second recording's count-in (`Count down before recording`
+  on): start the second recording when `Making GIF…` nears 100 %. No banner shows during the count-in or
+  the recording, the GIF's notice posts at Stop, and the recording's first seconds have no banner in their
+  picture and no notification sound. Again with the count-in cancelled (the record shortcut during it):
+  the held notice posts as it is cancelled, and the log has the `posted` line.
 - [ ] The same with an upload that finishes during a recording: an MP4 recording with `Upload and copy URL`,
   then a second recording started while its card says `Uploading`. `Uploaded, URL copied` posts after the
   second recording's Stop, not during it.
 - [ ] A notice outside a recording still posts at once: a screenshot's `Screenshot saved` (Show
   notification on), and a recording's `Recording saved` after its save when no other recording runs.
 - [ ] Quit during the second recording of the first check: the held GIF notice posts as the recording
-  ends, and the second recording's own notices do not (quit mode).
+  ends, before TidyShot quits, and the second recording's own notices do not (quit mode).
+- [ ] A quick quit, where nothing else holds the quit. Start the second recording while the first's GIF
+  converts, timed as in the count-in check so the GIF is saved during the count-in, then quit within 0.5 s
+  of the recording's start (or during the count-in). The recording is too short to keep, so the quit waits
+  on no save and TidyShot quits at once, yet the GIF's `Recording saved` still posts (look in Notification
+  Centre if its banner has gone), and the log has the `posted` line. A quit that comes while the GIF still
+  converts stops it and saves the MP4 in quit mode, with no notice: try again. Write down whether it posted:
+  ______
 
 ## Trim
 The export is built to the amended design (a start between keyframes re-encodes with TidyShot's own pass,
@@ -628,8 +642,8 @@ Four more where the build made a call the design did not settle. Tim confirmed a
 
 Six more, calls E to J, which the build left open. Tim answered all six on 2026-10-24 (design, Decided
 2026-10-24, 8 to 11, and the line after them); E, I and J are built, F, G and H kept as built:
-- [x] E. A post-Stop notice during a later recording: every notification waits while a recording runs and
-  posts after its Stop. Built (Notices during a recording, above). (Tim, 2026-10-24)
+- [x] E. A post-Stop notice during a later recording: every notification waits while a recording counts in
+  or runs and posts after its Stop. Built (Notices during a recording, above). (Tim, 2026-10-24)
 - [x] F. A close during a passthrough's put lets the pass finish, its upload included. Kept as built (Trim).
   (Tim, 2026-10-24)
 - [x] G. A re-encode holds its last frame to the range's end. Kept as built. (Tim, 2026-10-24)
@@ -638,8 +652,8 @@ Six more, calls E to J, which the build left open. Tim answered all six on 2026-
 - [x] I. Captures are blocked while the microphone prompt is open, and a start the lock still refuses after it
   posts `Screen recording` / `The recording did not start because another capture was running.` Built
   (Microphone). (Tim, 2026-10-24)
-- [x] J. The card shows the row's placeholder when the trimmed file's first frame cannot be read. Built (Trim).
-  (Tim, 2026-10-24)
+- [x] J. The card shows the row's placeholder when the trimmed file's first frame cannot be read. Built
+  (Trim). (Tim, 2026-10-24)
 
 ## Regression
 - [ ] ⌃⇧1 to ⌃⇧7 behave as in the 6a, 6b and 7b checklists after a GIF and after an MP4 recording.

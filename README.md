@@ -235,8 +235,9 @@ it, which is their purpose. A window recording shows only that window, at the si
 recording started; a window resized later is scaled to fit and never stretched. Minimising or hiding
 it, or moving it to another Space, keeps the recording going; closing it ends the recording and keeps
 what was recorded. TidyShot's notifications are not TidyShot windows, so none shows while a recording
-runs: one that comes up then (an earlier recording's save or GIF, an upload, a copy) waits, and they all
-show as soon as you stop, in the order they came, before that recording's own.
+counts down or runs: one that comes up then (an earlier recording's save or GIF, an upload, a copy)
+waits, and they all show as soon as you stop or the countdown is cancelled, in the order they came,
+before that recording's own.
 
 **Settings.** Settings > Capture > Recording has *Format* (MP4, or GIF; MP4), for GIF only *GIF frame
 rate* (10, 15 or 20 fps; 15) and *GIF size* (800 px, 1280 px or Full size; 1280 px, which is the long
@@ -270,9 +271,9 @@ at the prompt, stays chosen. An MP4 recording takes the chosen input, mixed with
 recording's one audio track; a GIF has no sound and ignores it. When access is still undecided, macOS
 asks as you start, before the area selection or the countdown. Until you answer, no capture starts:
 the record and capture shortcuts do nothing, the menu's capture items are disabled, and capture URLs are
-dropped, so nothing can capture the prompt. A chosen input that is unplugged gives way to the default input; with access off, or
-no input at all, the recording goes on without the microphone. Either way a note says so after you stop,
-after the save's own notification, never during the recording.
+dropped, so nothing can capture the prompt. A chosen input that is unplugged gives way to the default
+input; with access off, or no input at all, the recording goes on without the microphone. Either way a
+note says so after you stop, after the save's own notification, never during the recording.
 
 The mute button is shown when a recording has sound (system audio, the microphone or both). Muted
 stretches are silent in the saved and uploaded file: after you stop, TidyShot rewrites the audio,
@@ -394,9 +395,9 @@ captures nothing, and commands never take a file path.
 Errors (an unknown command or action, a bad rectangle, a missing display, a parameter given twice)
 appear as notifications titled *TidyShot URL command*. A capture command that arrives while a
 capture runs, or while macOS asks for microphone access for a recording, is ignored (restore and the
-desktop-icon commands still run), and of several URLs that
-wait for TidyShot to launch only the first capture command runs. If `open tidyshot://…` starts an
-old build, more than one TidyShot.app is registered: list them with
+desktop-icon commands still run), and of several URLs that wait for TidyShot to launch only the
+first capture command runs. If `open tidyshot://…` starts an old build, more than one TidyShot.app
+is registered: list them with
 `/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -dump | grep -i tidyshot`
 and remove the stale ones with `lsregister -u <path>`.
 
