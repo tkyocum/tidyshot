@@ -68,6 +68,12 @@ run unattended, because the Debug build has no Screen Recording grant and a gran
   the mute button, a GIF's card and row) because the Debug build had no grant. They are the GIF,
   Settings and Mute sections below, and, now that H1's start and H2 are built, the Microphone and Trim
   sections.
+  Tim's smoke pass on the Release build at 3e57e1d (2026-10-24) passed: PR 23's `Ask before deleting`
+  and the row sizes; the microphone (the first prompt, a screenshot shortcut ignored while it was up,
+  the RODE AI-1 recorded with speech, a muted stretch silent); GIF recordings and trimming in ordinary
+  use; and a 60 s re-encode in the app in under 10 s. Not run: the rest of the checklist, among them
+  Probe 5's measurements, the still-screen tail, Save and Upload of a trim, the held notice, GIFs in
+  browsers (H4) and H3.
 
 No section is held any more. Run everything now.
 
@@ -570,6 +576,8 @@ passthrough's; whether `Trimming…`'s bar moves; for the re-encode, that both `
 frames (nothing stored before the start), that its size is the original's, that text is as sharp as in
 the original, and that its sound starts at the chosen point; for the passthrough, the audio sample frames
 before the start that the probe's `audio:` line reports (at most 2,048; more goes back to Tim).
+Result (2026-10-24, partial): a 60 s re-encode in the app took under 10 s (Tim's smoke pass); the rest
+of this probe has not run.
 2560: ______ 4096: ______ (Measured so far on fixtures and the recordings at hand: the design's Probes,
 `Trim export, as built`. The earlier probe of `HighestQuality`, which tripped the gate, is `Trim
 re-encode, as probed`.)
