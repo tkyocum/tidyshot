@@ -61,3 +61,13 @@ GIF:
   - `gifspike probe <in.mp4>...`: prints size, duration and video sample count.
   - `measure.sh <work folder>` and `ablate.sh <work folder>`: reproduce the tables in `RESULTS.md`. The folder holds `window.mp4`, `p-area.mp4`, `p-4096.mp4` and the built `gifspike`; they write `final/` and `abl/` in it.
   - `xdecode.py <out.gif>...`: decodes each GIF with the `ffmpeg` and `magick` binaries and compares the middle frame with the `.exp.rgba` that `encode` wrote.
+
+## R3 probes (2026-10-24)
+
+Results go in the R3 design (`docs/superpowers/specs/2026-10-24-tidyshot-screen-recording-r3-design.md`, Probes). None has been run yet. Build with `-o` outside the repository. Probes that open the camera build with the Info.plist section: `-Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker r3-camera-info.plist`.
+
+- `r3-clicks.swift <mode> [args]`: click highlights. `monitor [seconds]` prints every mouse down, up and drag the global monitor sees, with its Cocoa and CG points, the screen and the frontmost app; `ring [seconds]` adds a click-through overlay that draws the rings; `tap [seconds]` is a listen-only event tap, which can raise an Input Monitoring prompt. These record nothing. `builtin <out.mp4> [seconds] [window <id>]` records with `showMouseClicks` and toggles it through `updateConfiguration`; `record-ring <out.mp4> [seconds]` records the main display with only the ring overlay of the probe's windows let through. These two record the screen. Builds without the plist.
+- `r3-bubble-filter.swift [seconds]`: whether an excepted window of an excluded app shows in a display stream, after a move, a resize, `orderOut` and back, and when made after the start. Records frames, no file. Opens no camera and builds without the plist. Before it runs, its content reads switch to `onScreenWindowsOnly: true` and an `SCRecordingOutput` variant is added (R3 design, B1).
+- `r3-camera-list.swift [seconds]`: lists cameras with their formats, the default and preferred cameras and the access status, and watches connects, disconnects and preferred-camera changes. Opens no camera. Builds with the plist.
+- `r3-bubble-camera.swift [name-substring] [720|1080] [seconds]`: the bubble with a live camera, printing its start time, frame rate, frame age, CPU and the session's notifications. Opens the camera. Builds with the plist. Before it runs, its drag changes to the clamped manual drag (R3 design, C2).
+- `r3-camera-info.plist`: the Info.plist section for the camera probes (`NSCameraUsageDescription`, `NSCameraUseContinuityCameraDeviceType` and a bundle id).
