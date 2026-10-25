@@ -5,8 +5,9 @@ Run after any change to `TidyShot/Recording/` (`GIF/`, `GIFMaker`, `GIFConversio
 `RecordingTrim`, `TrackPass`, the controller, the chrome and the panel), `AppCoordinator`
 (`+Recording`'s start with its microphone prompt, `makeGIF`, `muteAndSave`, `recoverRecordings` and
 `saveRecording`, `+Upload`'s `startUpload`, `retry` and the `uploadRefusal` gates, `+RecordActions`,
-`+DragOut`, `+Delete`, `+Overlay`, `+Trim`), `StatusMenuController`, `SaveLocation.store` (its
-`didStoreFolder` call), the Recording section of Settings > Capture, the card, Recent Captures,
+`+DragOut`, `+Delete`, `+Overlay`, `+Trim`, and the root's capture lock), `StatusMenuController`,
+`Notifier` (its hold), `URLCommandHandler`'s busy check, `SaveLocation.store` (its `didStoreFolder`
+call), the Recording section of Settings > Capture, the card, Recent Captures,
 `ThumbnailProvider`, or the `Recording`, `MuteLog` and `CaptureRecord` fields. Automated tests cover the
 pure decisions (the GIF palette, differ, LZW writer, sink and encoder against ImageIO's decoder, the
 conversion steps and their one `saveRecording` call, the progress menu, the settings layout, the panel's
@@ -15,8 +16,9 @@ with injected steps, the mute log's writer, recovery's rules, the save plan for 
 refusals for a marked or trimming record, Trim's range, source, sheet and write plans, its export, its
 put's target and stale flag, `Upload Trimmed`'s refusals, the Trim window's first size and frame and its
 sheet's answer, its clean-up, the drag copy after a trim, the save folder's hook, the launch check's
-list-then-scan order, the microphone prompt's step, and the card, row and menu rules for a GIF, a stale
-link and a marked record). Everything here needs a real screen, Screen Recording, a microphone, real
+list-then-scan order, the microphone prompt's step, the rule that refuses a capture while the prompt is
+open and the notice of a start refused after it, the notice hold, and the card, row and menu rules for a
+GIF, a stale link and a marked record). Everything here needs a real screen, Screen Recording, a microphone, real
 windows, a player, the network, Clop or eyes. The R1 checklist (`recording-r1-manual-checklist.md`)
 still covers starting, stopping, sleep, quitting and the upload paths for an MP4; run it too after a
 change to those.
@@ -341,10 +343,18 @@ selection overlay or the count-in, and the stream's `Recording: starting …` li
   video. After Deny the input stays chosen in Settings, with the access note. Write down what the first
   prompt looked like: ______
 - [ ] With the prompt up: a second Record press does nothing and logs `Recording: start ignored, the microphone
-  prompt is open`; a screenshot shortcut works; Quit quits without starting a recording. Open for Tim (the
-  design's Left as they are, A screenshot during the microphone prompt): whether that screenshot shows the
-  prompt, and that answering the prompt while it is still selecting starts no recording and posts nothing.
-  Write down what happened: ______
+  prompt is open`; Quit quits without starting a recording. Captures are blocked while it is up (call I,
+  settled: the design's Decided 2026-10-24, 9): each capture shortcut (⌃⇧1 to ⌃⇧7, and the self-timer's
+  if one is set) does nothing, no selection overlay or countdown shows, and no capture appears; the status menu's
+  capture items, Record Screen and Record Fullscreen among them, are shown disabled; `open
+  "tidyshot://capture-area"` (URL commands on) does nothing, and the log has `URL command from … dropped, a
+  capture is running: tidyshot://capture-area`. Answer the prompt: the recording starts as usual (the
+  selection overlay or the count-in), and every capture works again once it ends. Write down anything that
+  did start: ______
+- [ ] A start refused by the capture lock after its prompt posts `Screen recording` / `The recording did not
+  start because another capture was running.` and logs `Recording: not started after the microphone prompt,
+  another capture was running`. It cannot be forced by hand: captures are refused while the prompt is up, so
+  the lock is free when it is answered (`ShortcutsTests` pins the notice and the rule).
 - [ ] With access undecided (`tccutil reset Microphone io.tky.tidyshot`) and another capture under way (a
   screenshot's area selection, its self-timer countdown, a scrolling capture): a Record press shows no
   prompt, starts nothing and logs nothing; the capture goes on. Once it is done, a Record press prompts.
@@ -365,6 +375,24 @@ selection overlay or the count-in, and the stream's `Recording: starting …` li
 - [ ] With the iPhone input (TKY Microphone), a USB input and AirPods (Bluetooth, the high-latency case): the
   logged lag (`Recording: mute lag <s> s (<name>)`), and a word started within 0.2 s of each mute and unmute
   click is silent. Write down each input's logged lag: ______ (see Probe 6)
+
+## Notices during a recording
+Call E, settled (the design's Decided 2026-10-24, 8): every TidyShot notification asked for while a
+recording runs waits, and posts as soon as it stops, before that recording's own notices after Stop.
+- [ ] A GIF save that ends during a second recording, with Show notification on. Record a GIF of 30 s or
+  more and Stop; while `Making GIF…` shows, switch `Format` to MP4 and start Record Fullscreen with `Record
+  system audio` on, and keep it running until the menu's GIF items are gone (the GIF is saved). No banner
+  shows while it records. Stop: the GIF's `Recording saved` (or `GIF not made`) posts at once, then the
+  second recording's own notices after its save. The log has `Recording: posted <n> notification(s) held
+  during the recording`. Play the second recording: no banner is in its picture, and no notification sound
+  in its audio. Write down the order the banners came in: ______
+- [ ] The same with an upload that finishes during a recording: an MP4 recording with `Upload and copy URL`,
+  then a second recording started while its card says `Uploading`. `Uploaded, URL copied` posts after the
+  second recording's Stop, not during it.
+- [ ] A notice outside a recording still posts at once: a screenshot's `Screenshot saved` (Show
+  notification on), and a recording's `Recording saved` after its save when no other recording runs.
+- [ ] Quit during the second recording of the first check: the held GIF notice posts as the recording
+  ends, and the second recording's own notices do not (quit mode).
 
 ## Trim
 The export is built to the amended design (a start between keyframes re-encodes with TidyShot's own pass,
@@ -393,6 +421,10 @@ a start on one passes through), and the window, the pass and the wiring landed w
   trimmed` with the reason.
 - [ ] After a Save: the card's poster, the row's thumbnail, the duration badge and the row's size are the
   trimmed recording's (the size against `ls -l`).
+- [ ] When the trimmed file's first frame cannot be read, the card showing the recording swaps its poster for
+  the row's placeholder (`film`, no badge), not the untrimmed first frame (call J, settled: the design's
+  Decided 2026-10-24, 11). This cannot be forced by hand: the poster is read just after the put, from the
+  file the pass has just written and measured, and no Debug argument fakes it. Nothing to run.
 - [ ] Save, Save and Upload (the link plays the trimmed video), an upload-only record that needs the download
   (the sheet offers `Save and Upload` only), and both Cancels (the bar's and the sheet's).
 - [ ] A start between keyframes: `Trimming…` shows with a moving bar and `Stop`; the result plays from the
@@ -439,7 +471,7 @@ a start on one passes through), and the window, the pass and the wiring landed w
   video and audio durations: ______
 - [ ] Close the Trim window during a passthrough's Save and Upload put (a trim that only moves the end, of a
   long recording in the folder on the other volume): the pass runs to its end and the trimmed file uploads.
-  Write down whether a close should cancel the upload half instead: ______ (design, Left as they are)
+  Call F, settled: Tim kept this as built (the design's Decided 2026-10-24, 10).
 - [ ] Rarer paths, if they can be made: `Stop` during a marked record's mute step (before the re-encode's bar
   moves) writes nothing and keeps the mark; a prune of the record during a re-encode (retention at its limit)
   writes nothing back; a put that fails on a record with a link (the save folder's volume ejected during the
@@ -593,6 +625,21 @@ Four more where the build made a call the design did not settle. Tim confirmed a
 - [x] D. A recording that ends with nothing kept (`.nothing`) no longer posts `Recording failed` while TidyShot quits;
   R1 posted it. In quit mode no notice posts at all (`RecordingNoticeOrder.afterStop(… quitMode:)`).
   confirm (Tim, 2026-10-24)
+
+Six more, calls E to J, which the build left open. Tim answered all six on 2026-10-24 (design, Decided
+2026-10-24, 8 to 11, and the line after them); E, I and J are built, F, G and H kept as built:
+- [x] E. A post-Stop notice during a later recording: every notification waits while a recording runs and
+  posts after its Stop. Built (Notices during a recording, above). (Tim, 2026-10-24)
+- [x] F. A close during a passthrough's put lets the pass finish, its upload included. Kept as built (Trim).
+  (Tim, 2026-10-24)
+- [x] G. A re-encode holds its last frame to the range's end. Kept as built. (Tim, 2026-10-24)
+- [x] H. A range with no frame to show posts `Not trimmed` / `The recording could not be read.` Kept as built
+  (Trim, the still-screen check). (Tim, 2026-10-24)
+- [x] I. Captures are blocked while the microphone prompt is open, and a start the lock still refuses after it
+  posts `Screen recording` / `The recording did not start because another capture was running.` Built
+  (Microphone). (Tim, 2026-10-24)
+- [x] J. The card shows the row's placeholder when the trimmed file's first frame cannot be read. Built (Trim).
+  (Tim, 2026-10-24)
 
 ## Regression
 - [ ] ⌃⇧1 to ⌃⇧7 behave as in the 6a, 6b and 7b checklists after a GIF and after an MP4 recording.

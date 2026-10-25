@@ -234,7 +234,9 @@ when opened during the recording. The desktop covers of *Hide desktop icons whil
 it, which is their purpose. A window recording shows only that window, at the size it had when the
 recording started; a window resized later is scaled to fit and never stretched. Minimising or hiding
 it, or moving it to another Space, keeps the recording going; closing it ends the recording and keeps
-what was recorded.
+what was recorded. TidyShot's notifications are not TidyShot windows, so none shows while a recording
+runs: one that comes up then (an earlier recording's save or GIF, an upload, a copy) waits, and they all
+show as soon as you stop, in the order they came, before that recording's own.
 
 **Settings.** Settings > Capture > Recording has *Format* (MP4, or GIF; MP4), for GIF only *GIF frame
 rate* (10, 15 or 20 fps; 15) and *GIF size* (800 px, 1280 px or Full size; 1280 px, which is the long
@@ -266,8 +268,9 @@ follows inputs as they are plugged in, an input that is gone stays chosen and re
 and *Privacy Settings…* appears when macOS access is off. An input chosen while access is off, or refused
 at the prompt, stays chosen. An MP4 recording takes the chosen input, mixed with system audio in the
 recording's one audio track; a GIF has no sound and ignores it. When access is still undecided, macOS
-asks as you start, before the area selection or the countdown, and another record shortcut does nothing
-until you answer. A chosen input that is unplugged gives way to the default input; with access off, or
+asks as you start, before the area selection or the countdown. Until you answer, no capture starts:
+the record and capture shortcuts do nothing, the menu's capture items are disabled, and capture URLs are
+dropped, so nothing can capture the prompt. A chosen input that is unplugged gives way to the default input; with access off, or
 no input at all, the recording goes on without the microphone. Either way a note says so after you stop,
 after the save's own notification, never during the recording.
 
@@ -390,7 +393,8 @@ captures nothing, and commands never take a file path.
 
 Errors (an unknown command or action, a bad rectangle, a missing display, a parameter given twice)
 appear as notifications titled *TidyShot URL command*. A capture command that arrives while a
-capture runs is ignored (restore and the desktop-icon commands still run), and of several URLs that
+capture runs, or while macOS asks for microphone access for a recording, is ignored (restore and the
+desktop-icon commands still run), and of several URLs that
 wait for TidyShot to launch only the first capture command runs. If `open tidyshot://…` starts an
 old build, more than one TidyShot.app is registered: list them with
 `/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -dump | grep -i tidyshot`
