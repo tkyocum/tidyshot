@@ -5,10 +5,10 @@
 **Goal:** Two Settings toggles, both off by default, each with a button on the recording bar to turn it on or off mid-recording. Click highlights draw a short ring at each left and right click (yellow for left, blue for right and control-click), and a drag keeps its ring until the button comes up. The webcam bubble shows the chosen camera in a round window that the recording films. It can be dragged anywhere in the recorded area, it comes in Small, Medium or Large, and its last place and size are remembered. Neither feature appears in a window recording, and the camera prompt is never filmed.
 
 **Architecture:** `docs/superpowers/specs/2026-10-24-tidyshot-screen-recording-r3-design.md` is the full specification: behaviour, types, strings, constants, settings keys and tests. R1's design (`2026-10-21-tidyshot-screen-recording-design.md`) and R2's (`2026-10-23-tidyshot-screen-recording-r2-design.md`) hold wherever R3's does not change them. When this plan and the R3 design disagree, the design wins; stop and ask if it is unclear.
-- **Pure decisions.** `ClickHighlightRule`, `ClickRingTiming`, `BubblePlacement`, `CameraRunState`, `CameraChoice`, `BubbleButtonState`, `CameraNote`, `RecordingSettingsLayout`, `RecordingPanelLayout.Bar`, `RecordingExclusions`' filter sets, `RecordingExtrasPlace`, `RecordingNoticeOrder`, the prompt steps and `GIFPaletteBuilder.build(reserving:)` decide everything that can be decided without a screen, a camera or a mouse event, and are tested that way.
+- **Pure decisions.** `ClickHighlightRule`, `ClickRingTiming`, `BubblePlacement`, `CameraRunState`, `CameraChoice`, `BubbleButtonState`, `CameraNote`, `CameraLossTracker`, `RecordingSettingsLayout`, `RecordingPanelLayout.Bar`, `RecordingExclusions`' filter sets, `RecordingExtrasPlace`, `RecordingNoticeOrder`, the prompt steps and `GIFPaletteBuilder.build(reserving:)` decide everything that can be decided without a screen, a camera or a mouse event, and are tested that way.
 - **Thin shells.** `ClickRingOverlay`, `ClickMonitor`, `WebcamBubblePanel` and `CameraSession` are AppKit and AVFoundation shells over the pure parts. `ClickHighlighter` joins the monitor, the rule and the overlay behind two protocols, so it is tested with fakes.
 - **One owner.** `RecordingExtras` owns, for one area or fullscreen recording, the bubble, the camera session, the ring overlay and the click monitors. `record()` makes it and closes it in a `defer`. `RecordingScreenChrome` holds it, so the bar's buttons reach it, and its `close` closes it too. Window recordings get none.
-- **The controller** owns the two bar states as it owns mute. It learns from the driver which of the two windows the filter films, and reports what the notes after Stop need in `extrasSummary`.
+- **`RecordingController`** (in this plan, "the controller") owns the two bar states as it owns mute. It learns from the driver which of the two windows the filter films, and reports what the notes after Stop need in `extrasSummary`.
 - **The coordinator split** (`2026-10-23-coordinator-split-design.md`, section 6) places R3's coordinator code: the prompt state and the capture refusal rule in `AppCoordinator.swift`; the camera prompt, the camera resolve, `RecordingExtras` and the notes in `AppCoordinator+Recording.swift`.
 
 **Tech Stack:** Swift 6 language mode with default `MainActor` isolation and `NonisolatedNonsendingByDefault`, AppKit (`NSPanel`, `NSEvent` global and local monitors), Core Animation (`CAShapeLayer`, `CABasicAnimation`, `CATransaction`), AVFoundation (`AVCaptureSession`, `AVCaptureDeviceInput`, `AVCaptureVideoPreviewLayer`, `AVCaptureDevice.DiscoverySession`, `systemPreferredCamera`), ScreenCaptureKit (`SCContentFilter(display:excludingApplications:exceptingWindows:)`), SwiftUI Settings, Swift Testing, XcodeGen 2.46.
@@ -17,12 +17,12 @@ Work happens on the branch `recording-r3`, cut from `main` at 8e31c09 (R2 merged
 
 ## Probes Tim runs
 
-Every probe is Tim's: each needs his screen, his clicks, his cameras or a permission. Nobody else runs them. The controller asks Tim to run each one as soon as the task it waits on has landed, and writes his results into the design's Probes section with the date and the Mac. Build lines are the design's (Probes): `xcrun swiftc -O -target arm64-apple-macos26.0 -o /tmp/<name> <name>.swift`, with `-Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker r3-camera-info.plist` for `r3-camera-list.swift` and `r3-bubble-camera.swift`.
+Every probe is Tim's: each needs his screen, his clicks, his cameras or a permission. Nobody else runs them. The session running this plan (not `RecordingController`) asks Tim to run each one as soon as the task it waits on has landed, and writes his results into the design's Probes section with the date and the Mac. Build lines are the design's (Probes): `xcrun swiftc -O -target arm64-apple-macos26.0 -o /tmp/<name> <name>.swift`, with `-Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker r3-camera-info.plist` for `r3-camera-list.swift` and `r3-bubble-camera.swift`.
 
 | Probe | What Tim runs | Records or opens | Ready after | Settles |
 |---|---|---|---|---|
 | P1 | `r3-clicks.swift monitor 60`, then `ring 60` | nothing | now | G1 |
-| P2 | `r3-clicks.swift builtin /tmp/r3-builtin.mp4 12`, then `window <id>` | the screen | now | nothing (informational) |
+| P2 | `r3-clicks.swift builtin /tmp/r3-builtin.mp4 12`, then `window <id>` | the screen | now | nothing (informational; see Gates) |
 | P3, recording | `r3-clicks.swift record-ring /tmp/r3-ring.mp4 60`, clicking about every 5 s with drags and right-clicks | the screen | now | G2 (the `overlay windows in shareable content N of M` line) |
 | P3, GIF | Task 3's harness on `/tmp/r3-ring.mp4` at 15 and 10 fps, 1280 px, with and without the reserved colours | nothing (reads the MP4) | Task 3 | the reserved colours; 40 pt at 0.5 px per point |
 | P4 | the Debug build with `-ClickMonitorSpike YES` | nothing | Task 1 | G1 |
@@ -31,16 +31,17 @@ Every probe is Tim's: each needs his screen, his clicks, his cameras or a permis
 | C2 | `r3-bubble-camera.swift brio 720 120`, `iphone 720 120`, then each at `1080` | the camera | Task 1 | G4, G5 |
 | C3 | the Debug build with `Show webcam bubble` on, after Tim runs `tccutil reset Camera io.tky.tidyshot` | the camera prompt | Task 7 | a hand check |
 
-P3's GIF half reads a file Tim recorded and records nothing, so the controller may run Task 3's harness on it once the file exists.
+P3's GIF half reads a file Tim recorded and records nothing, so the session may run Task 3's harness on it once the file exists.
 
 ## Gates
 
 A gate that trips holds only the steps named here. The rest of its task and the later tasks go on, held steps stay unchecked until the design is amended and Tim says to go on, and the branch is not offered for merge while a step is held.
-- **G1, the click monitor** (P1, P4). It trips if the global monitor misses clicks TidyShot must see, or raises a prompt in the sandbox. It holds Task 10's "Install the monitors" step and Task 12's step that reaches the highlighter from the bar. `ClickHighlightRule`, `ClickRingTiming`, the overlay, `ClickHighlighter` with its fakes, and the bar button land. The design goes back to Tim (an event tap needs Input Monitoring; `showMouseClicks` cannot give two colours).
+- **G1, the click monitor** (P1, P4). It trips if the global monitor misses clicks TidyShot must see, or raises a prompt in the sandbox. It holds Task 10's "Install the monitors" step (the `ClickMonitor` class) and Task 12's step that reaches the highlighter from the bar. `ClickHighlightRule`, `ClickRingTiming`, the overlay, the `ClickEventSource` protocol, `ClickHighlighter` with its fakes, and the bar button land. `RecordingExtras` takes its click source from `record()` (Task 12), so it compiles without `ClickMonitor`; while G1 holds, `record()` passes the stand-in Task 12 names. The design goes back to Tim (an event tap needs Input Monitoring; `showMouseClicks` cannot give two colours).
 - **G2, windows made at the start** (P3's log line, B1's `orderOut` case). It trips if a fully transparent, empty window is not listed in shareable content, or a window ordered out and back is not filmed again. It holds Task 12's "Wire the start" step and the bubble and ring hand checks. Task 8's filter code and its pure sets land unchanged: the filter is the same for the fallback the design names (`updateContentFilter` when a bar button turns a feature on), which waits on B1's output variant. If neither holds, the bar buttons go and the design goes back to Tim.
 - **G3, the camera picker** (C1). It holds nothing. If C1 lists the Brio or the iPhone under another device type, or `systemPreferredCamera` gives a Desk View camera or nil while cameras are listed, Task 6's `LiveCameraDevices.deviceTypes` and `preferred()` change to match before Task 12, and the change is listed for Tim.
 - **G4, the camera's loss** (C2). It holds nothing. Task 11 treats every error, interruption and stop notification as a loss, except stops TidyShot asked for, and Task 13 uses the design's note. If C2 shows a notification that never fires, one that fires with no loss, or a session that does not recover on its own, the handling and the note's wording go to Tim.
 - **G5, the budget** (C2 and the hand checks). It holds nothing. A number over the design's budget goes to Tim; the sizes and the format do not change.
+- **P2** holds nothing. If it answers all four of its questions yes (design, Probes), the result goes to Tim before Task 14, because it reopens the design's call 2.
 - Task 14 runs after every held step has landed, or records in the Built notes any that Tim chooses to ship without.
 
 ## Global Constraints
@@ -72,15 +73,15 @@ A gate that trips holds only the steps named here. The rest of its task and the 
 
 ## Gaps this plan fills
 
-The design leaves these open. Each is this plan's call. Task 14 records them in the design's Built notes, and the PR flags them.
+Each is this plan's call. Most fill what the design leaves open. Gaps 1, 2 and 5 change signatures the design gave, and Task 12's `show(at:)` and `place(at:)` replace its `show(in:)` and `place(in:)`; the design was amended to match in the commit `docs: R3 plan review fixes`, so the rule that the design wins still holds. Task 14 records every gap in the design's Built notes, and the PR flags them.
 1. **The resolve takes no toggle.** `CameraChoice.resolveAtStart(stored:access:devices:preferred:)` leaves out the design's `bubble:` argument. It resolves the camera for every start, toggle on or off, so the bar can turn the bubble on, and `CameraNote` decides whether the start's note posts.
 2. **The window drop takes the source.** `CameraChoice.forRecording(_:source:)` takes the hand-off's `RecordingSource` in place of the target, as `CaptureTarget` holds ScreenCaptureKit objects tests cannot make. `.window` drops the camera and its note.
-3. **One R3 snapshot per recording.** `record()` reads `settings.recordingOptions` for `RecordingExtras` before the hand-off, because the bubble shows from the count-in. The hand-off still reads `settings.recordingOptions` after the count-in, as R2 does, then copies the two toggles and the size from `extras.options` and sets `cameraID` and `cameraName` from the window-filtered `CameraStart`, so the bubble on screen and the run agree. Without extras the five fields stay at their defaults.
+3. **One R3 snapshot per recording.** `record()` reads `settings.recordingOptions` for `RecordingExtras` before the hand-off, because the bubble shows from the count-in. The hand-off still reads `settings.recordingOptions` after the count-in, as R2 does, then copies the two toggles and the size from `extras.options` and sets `cameraID` and `cameraName` from the window-filtered `CameraStart`, so the bubble on screen and the run agree. Without extras (a window recording) the hand-off sets the two toggles false and the size to `.medium`, and leaves `cameraID` and `cameraName` nil, so the options say neither feature ran.
 4. **Filmed features.** `FilmedFeature` (`.bubble`, `.highlights`) names the two windows. The chrome gives `filmedWindowNumbers: [FilmedFeature: CGWindowID]` and takes `setFilmed(_ features: Set<FilmedFeature>)`. The controller maps the driver's set of window numbers to features; a feature with no window number counts as missed.
 5. **Who installs the monitors.** `RecordingChrome.setHighlights(_ on: Bool, monitoring: Bool)`: `on` is the button, `monitoring` installs or removes the monitors. The controller passes `monitoring: on && firstFrame != nil`, and again `true` at `.recordingStarted`, so the rule "monitors only from the first frame" is the controller's and is tested there.
 6. **What the notes need.** The controller's `extrasSummary` (`bubbleWanted`, `highlightsAtStart`, `highlightsUsed`, `missed`) is read in `record()` after `recorder.run` returns. `Recording.highlightedClicks` carries `highlightsUsed` to the GIF conversion.
 7. **The recording's clock for R3.** `RecordingExtras` takes `elapsed: () -> TimeInterval`, which reads the controller's new `elapsedTime`, for the camera's log lines and the loss note's `<m:ss>`. The controller logs the two toggles itself.
-8. **Settings prompts.** `requestAccessFromSettings(_:)` asks only when `settingsPromptStep` says `.ask`: `recordingPhase` is `.idle`, `isCapturing` is false and no other prompt is open. Otherwise it logs `Recording: <microphone|camera> prompt from Settings deferred, a capture is running` and returns.
+8. **Settings prompts.** `requestAccessFromSettings(_:)` asks only when `settingsPromptStep` says `.ask`: `recordingPhase` is `.idle`, `isCapturing` is false and no other prompt is open. Otherwise it logs and returns. With a prompt open the line is `Recording: <microphone|camera> prompt from Settings deferred, the <microphone|camera> prompt is open`, naming the open one; else it is `Recording: <microphone|camera> prompt from Settings deferred, a capture is running`.
 9. **Prompt order and logs.** `startPrompts(microphone:camera:)` gives the prompts a start shows, microphone first. Each answer logs `Recording: <microphone|camera> access allowed|refused at the prompt`, or `… at the Settings prompt` from Settings. A start the lock then refuses logs `Recording: not started after the <microphone|camera> prompt, another capture was running`, naming the last prompt shown.
 10. **The local monitor.** A local mouse-down draws only on the bubble. Local drags and ups pass from any TidyShot window, so a held ring is still matched by button and never stays on screen.
 11. **A second down.** A down for a button whose ring is still held ends that ring first.
@@ -120,7 +121,7 @@ The design leaves these open. Each is this plan's call. Task 14 records them in 
 - [ ] Check: both probes compile with the README's lines and `-o` outside the repository (compile only; do not run them). Run the full suite. Build Release; `strings .build-rel/Build/Products/Release/TidyShot.app/Contents/MacOS/TidyShot | grep -c ClickMonitorSpike` prints 0.
 - [ ] Commit: `chore: R3 probe changes and the click monitor spike`.
 
-Then the controller asks Tim to run P1, P2, P3's recording, P4, B1 (both forms), C1 and C2.
+Then the session asks Tim to run P1, P2, P3's recording, P4, B1 (both forms), C1 and C2.
 
 ### Task 2: The click rule and the ring's timing
 
@@ -194,7 +195,7 @@ Then the controller asks Tim to run P1, P2, P3's recording, P4, B1 (both forms),
   - `GIFMakerTests`: a GIF made from `VideoFixtures.makeMP4` with `reserving: ClickRingColour.reservedGIFColours` has yellow, blue and black as the first three entries of its global table, read with `GIFBlocks.parse`; R2's `GIFMakerTests` pass unchanged with no `reserving`.
 - [ ] Implement the builder change and `make(reserving:)`. `GIFConversion` is unchanged: `makeGIF`'s `make` closure passes `reserving: recording.highlightedClicks ? ClickRingColour.reservedGIFColours : []`.
 - [ ] Run the full suite.
-- [ ] Write P3's GIF harness (design, P3) in a work folder outside the repository, not committed: a `main.swift` that calls `GIFMaker.make(from:to:fps:maxSide:reserving:freeBytes:progress:)` on a given MP4 at a given fps, 1280 px, with or without the reserved colours, compiled with `TidyShot/Recording/GIFMaker.swift`, `TidyShot/Recording/GIF/*.swift` and stubs for what they reference elsewhere, as R2's trim harness was. Note its build line for the design's P3 entry. Once Tim has recorded `/tmp/r3-ring.mp4`, the controller may run it (it records nothing) and gives Tim the GIFs to judge.
+- [ ] Write P3's GIF harness (design, P3) in a work folder outside the repository, not committed: a `main.swift` that calls `GIFMaker.make(from:to:fps:maxSide:reserving:freeBytes:progress:)` on a given MP4 at a given fps, 1280 px, with or without the reserved colours, compiled with `TidyShot/Recording/GIFMaker.swift`, `TidyShot/Recording/GIF/*.swift` and stubs for what they reference elsewhere, as R2's trim harness was. Note its build line for the design's P3 entry. Once Tim has recorded `/tmp/r3-ring.mp4`, the session may run it (it records nothing) and gives Tim the GIFs to judge.
 - [ ] Commit: `feat: reserve the click ring colours in GIF palettes`.
 
 ### Task 4: Bubble placement and the camera's run state
@@ -272,7 +273,7 @@ Then the controller asks Tim to run P1, P2, P3's recording, P4, B1 (both forms),
 ### Task 6: Cameras and the camera choice
 
 **Files:**
-- Create in `TidyShot/Recording/Bubble/`: `CameraDevices.swift`; `CameraChoice.swift` (`CameraChoice`, `CameraStart`, `BubbleButtonState`, `CameraLoss`, `CameraNote`).
+- Create in `TidyShot/Recording/Bubble/`: `CameraDevices.swift`; `CameraChoice.swift` (`CameraChoice`, `CameraStart`, `BubbleButtonState`, `CameraLoss`, `CameraLossTracker`, `CameraNote`).
 - Modify tests support: `TidyShotTests/Support/RecordingFakes.swift` gains `FakeCameraDevices`.
 - Tests: create `TidyShotTests/CameraChoiceTests.swift`, `CameraNoteTests.swift` and `BubbleButtonStateTests.swift`.
 
@@ -300,6 +301,12 @@ Then the controller asks Tim to run P1, P2, P3's recording, P4, B1 (both forms),
 - `nonisolated struct CameraStart: Equatable, Sendable { var camera: CameraDevice?; var access: CameraAccess; var note: RecordingNotice? }`.
 - `nonisolated struct BubbleButtonState: Equatable, Sendable { var isEnabled: Bool; var disabledToolTip: String? }` and `static func make(camera: CameraDevice?, access: CameraAccess, filmed: Bool) -> BubbleButtonState`, checked in this order: `.notDetermined` gives `Turn on Show webcam bubble in Settings to allow the camera.` (`allowInSettingsText`); `.denied` or `.restricted` gives `accessOffText`; no camera gives `noCameraText`; not filmed gives `Not available for this recording` (`notAvailableText`, which the highlights button uses too).
 - `nonisolated enum CameraLoss: Equatable, Sendable { case couldNotStart; case stopped(at: TimeInterval, backAt: TimeInterval?) }`.
+- `nonisolated struct CameraLossTracker: Equatable, Sendable`, the first-loss bookkeeping `RecordingExtras` keeps (Task 12):
+  - `private(set) var loss: CameraLoss?` and `private(set) var isClosed = false`;
+  - `mutating func couldNotStart()`: `.couldNotStart` when `loss` is nil;
+  - `mutating func lost(at: TimeInterval)`: `.stopped` at that time with no `backAt`, when `loss` is nil, so a `.couldNotStart` or an earlier loss is kept;
+  - `mutating func back(at: TimeInterval)`: sets `backAt` when `loss` is `.stopped` with no `backAt`, so only the first return counts;
+  - `mutating func close()`: sets `isClosed`; after it every call changes nothing.
 - `nonisolated enum CameraNote`:
   - `static let lostTitle = "Camera lost"` and `static func lostBody(at: TimeInterval, backAt: TimeInterval?) -> String`: `The camera stopped at <m:ss>.` then ` It came back at <m:ss>.` or ` The bubble had no picture from there.`;
   - `static func afterStop(start: RecordingNotice?, wanted: Bool, missed: Bool, loss: CameraLoss?) -> RecordingNotice?`: nil unless `wanted`; then the start's note, else `recordedWithoutTitle` / `notFilmedText` when `missed`, else the loss's note (`recordedWithoutTitle` / `couldNotStartText`, or `lostTitle` / `lostBody`).
@@ -316,7 +323,8 @@ Then the controller asks Tim to run P1, P2, P3's recording, P4, B1 (both forms),
   - `LiveCameraDevices.deviceTypes` is the three types, with no `.deskViewCamera` (a constant; nothing opens a camera);
   - `forRecording` keeps the camera and the note for `.area` and `.display`, and drops both for `.window`. There is no format argument, so a GIF start resolves as an MP4 one (design: a GIF keeps the choice);
   - `pick` and `refreshedName` for a listed, a renamed and a missing camera; `Stored(value:name:)` for `default`, empty and an id;
-  - `lostBody(at: 12, backAt: 20)` is `The camera stopped at 0:12. It came back at 0:20.`, and with no return `The camera stopped at 0:12. The bubble had no picture from there.`.
+  - `lostBody(at: 12, backAt: 20)` is `The camera stopped at 0:12. It came back at 0:20.`, and with no return `The camera stopped at 0:12. The bubble had no picture from there.`;
+  - `CameraLossTracker`, in `CameraNoteTests`: a loss at 12 then a return at 20 gives `.stopped(at: 12, backAt: 20)`; a second loss and a second return change nothing; a `.couldNotStart` is kept over a later loss; a return with no loss changes nothing; after `close()` a loss, a return or a `couldNotStart` changes nothing.
 - [ ] Implement both files and the fake.
 - [ ] Run the full suite.
 - [ ] Commit: `feat: camera list and the camera choice`.
@@ -362,7 +370,7 @@ Then the controller asks Tim to run P1, P2, P3's recording, P4, B1 (both forms),
   - `lockRefusedStart(afterPrompt: PermissionPrompt?)` logs the line naming the prompt (Gap 9) and posts `lockRefusalNotice(afterPrompt: prompted != nil)`.
   - Under the lock, beside `MicrophoneChoice.resolveAtStart`, `recordingCanStart` runs `CameraChoice.resolveAtStart(stored: CameraChoice.Stored(value: settings.recordingCamera, name: settings.recordingCameraName), access: { cameras.access() }, devices: { cameras.list() }, preferred: { cameras.preferred() })` for every start. Nothing there awaits.
   - The hand-off takes `let camera = CameraChoice.forRecording(inputs.camera, source: source)` and returns it. Task 12 sets the options' camera fields from it, and Task 13 posts its note.
-- [ ] Implement `requestAccessFromSettings(_:)` (design, Asking from Settings; Gap 8): with `.wait`, log the deferred line and return; with `.ask`, set `askingPermission`, await `cameras.requestAccess()` or `microphones.requestAccess()`, clear it and log the answer.
+- [ ] Implement `requestAccessFromSettings(_:)` (design, Asking from Settings; Gap 8): with `.wait`, log the deferred line (the open prompt's wording when `askingPermission` is set, else the capture's) and return; with `.ask`, set `askingPermission`, await `cameras.requestAccess()` or `microphones.requestAccess()`, clear it and log the answer.
 - [ ] Change `CaptureSettingsView` (design, Settings and Denied):
   - `cameraDevices` and `cameraAccess` state, read from a `LiveCameraDevices` when the tab appears and on its `changeNotifications`, the access again when the Settings window becomes key, beside the microphone's;
   - `Picker("Camera", …)` between `Show webcam bubble` and `Bubble size`, over `CameraChoice.entries`, disabled unless `cameraRowsEnabled`. A pick writes `recordingCamera` and `recordingCameraName` through `CameraChoice.pick`; `refreshedName` rewrites the name when the list shows another;
@@ -373,7 +381,7 @@ Then the controller asks Tim to run P1, P2, P3's recording, P4, B1 (both forms),
 - [ ] Build Release and check it:
   - `codesign -d --entitlements - .build-rel/Build/Products/Release/TidyShot.app 2>&1 | grep -c "device.camera"` prints 1, and the same with `device.audio-input` prints 1;
   - `/usr/libexec/PlistBuddy -c "Print :NSCameraUsageDescription" .build-rel/Build/Products/Release/TidyShot.app/Contents/Info.plist` prints the string, `Print :NSCameraUseContinuityCameraDeviceType` prints `true`, and `Print :NSCameraReactionEffectGesturesEnabledDefault` prints `false`.
-- [ ] Hand checks (Tim's, for the checklist): C3, the first camera prompt from Record Screen and Record Fullscreen, before the selection or the count-in and after the microphone prompt when both are due; a GIF start asks for the camera and not the microphone; Deny keeps the toggle on; while the prompt is up a second Record press does nothing (logged) and a screenshot shortcut is refused; the prompt from Settings; the toggle turned on in Settings during a recording shows no prompt, logs the deferred line, and the next start asks; the microphone pick during a recording, the same.
+- [ ] Hand checks (Tim's, for the checklist): C3, the first camera prompt from Record Screen and Record Fullscreen, before the selection or the count-in and after the microphone prompt when both are due; a GIF start asks for the camera and not the microphone; Deny keeps the toggle on; while the prompt is up a second Record press does nothing (logged) and a screenshot shortcut is refused; the prompt from Settings; the toggle turned on in Settings during a recording shows no prompt, logs `… deferred, a capture is running`, and the next start asks; the toggle turned on in Settings while the microphone prompt from Settings is open shows no second prompt and logs `Recording: camera prompt from Settings deferred, the microphone prompt is open`; the microphone pick during a recording, the same as the toggle.
 - [ ] Commit: `feat: camera permission and the shared prompt rule`.
 
 ### Task 8: What the filter films
@@ -425,10 +433,12 @@ Then the controller asks Tim to run P1, P2, P3's recording, P4, B1 (both forms),
 
 **Produces:**
 - `RecordingPanelLayout` (design, Bar, Widths):
-  - `nonisolated struct Bar: Equatable, Sendable { var showsTag: Bool; var showsMute: Bool; var showsOverlayButtons: Bool }`, with `static let plain`, `mute` and `gif` for R2's three bars, so their callers compile;
+  - `nonisolated struct Bar: Equatable, Sendable { var showsTag: Bool; var showsMute: Bool; var showsOverlayButtons: Bool }`, with `static let plain`, `mute` and `gif` for R2's three bars, which a window recording still has and R2's tests use. They are only three of the bars: an area or fullscreen bar is one of them with `showsOverlayButtons` true, and equals none of them;
   - `static func bar(showsMute: Bool, isGIF: Bool, showsOverlayButtons: Bool = false) -> Bar`: a GIF has the tag and never the mute button;
   - `static func size(of bar: Bar) -> CGSize`: width `172 + 36 × slots`, where the tag or the mute button is one slot and the two R3 buttons two, height 44. That gives 172 and 208 for a window recording, 244 for an area or fullscreen MP4 with no sound, and 280 with sound or for a GIF;
+  - `tagFrame(of:)` reads `showsTag` and `muteFrame(of:)` reads `showsMute`, in place of R2's `bar == .gif` and `bar == .mute`;
   - `highlightsFrame(of:)` and `bubbleFrame(of:)`, nil without the overlay buttons. Left to right: the tag, the time, highlights, bubble, mute, Stop, Cancel. `timeFrame` ends `spacing` before the first button.
+- `RecordingPanelModel.format` is `.gif` when `bar.showsTag`, else `.mp4`, in place of R2's `bar == .gif`. With R2's comparison every area and fullscreen GIF bar would read as `.mp4`, and the time would turn orange at 300 s instead of the GIF's 30 s (design, Notices and R2, GIF).
 - `nonisolated struct BarToggle: Equatable, Sendable { var isOn: Bool; var isEnabled: Bool; var disabledToolTip: String? }` in `RecordingChrome.swift`.
 - `RecordingChrome`:
   - `show(onStop:onCancel:onMute:onHighlights:onBubble:bar:highlights: BarToggle, bubble: BarToggle)`;
@@ -450,9 +460,9 @@ Then the controller asks Tim to run P1, P2, P3's recording, P4, B1 (both forms),
 
 **Steps:**
 - [ ] Write the tests and see them fail:
-  - `RecordingPanelLayoutTests` (design, Tests): the 172, 208, 244 and 280 bars, each with `9:59:59`, clip no subview and overlap nowhere; the left-to-right order; a window recording's bars have no R3 frames; R2's tests pass on `.plain`, `.mute` and `.gif`; the model's symbols, tool tips and labels for on, off and disabled.
+  - `RecordingPanelLayoutTests` (design, Tests): the 172, 208, 244 and 280 bars, each with `9:59:59`, clip no subview and overlap nowhere; the left-to-right order; a window recording's bars have no R3 frames; R2's tests pass on `.plain`, `.mute` and `.gif`; `tagFrame` is set for both GIF bars and `muteFrame` for both mute bars, with and without the overlay buttons; `RecordingPanelModel.format` is `.gif` for the GIF bar with the overlay buttons as well as for `.gif`, and `.mp4` for the four others, and `RecordingClock.isPastSoftLimit(30, format: model.format)` holds for the GIF bar with the overlay buttons; the model's symbols, tool tips and labels for on, off and disabled.
   - `RecordingControllerTests` (design, Tests): `toggleHighlights` and `toggleBubble` flip and reach the fake chrome; a bubble press before `.recordingStarted` applies at once, and a highlights press gives `monitoring off`, then `monitoring on` at `.recordingStarted`; a press after Stop is ignored; both reset at the next run; `showsBubble` starts false with the toggle on and no camera; a missed feature's press is ignored; `extrasSummary` and the kept recording's `highlightedClicks` follow the presses; `close` reaches the chrome once on every end; a request without `extras` shows R2's bars.
-- [ ] Implement the layout, the model and the view: the two buttons at their frames with their symbols, tool tips and accessibility labels, disabled by `!stopEnabled || !toggle.isEnabled`. `RecordingScreenChrome.show` stores the toggles and the closures; `close` clears both closures.
+- [ ] Implement the layout, the model and the view: `size`, `tagFrame`, `muteFrame` and `format` read the bar's fields, and afterwards `git grep -n -e "bar == \." -e "bar != \." -- TidyShot` prints nothing; the two buttons at their frames with their symbols, tool tips and accessibility labels, disabled by `!stopEnabled || !toggle.isEnabled`. `RecordingScreenChrome.show` stores the toggles and the closures; `close` clears both closures.
 - [ ] Implement the controller's state, presses and summary.
 - [ ] Run the full suite.
 - [ ] Commit: `feat: highlight and bubble buttons on the recording bar`.
@@ -475,6 +485,7 @@ Then the controller asks Tim to run P1, P2, P3's recording, P4, B1 (both forms),
 - `final class ClickHighlighter`:
   - `init(rule: ClickHighlightRule, source: any ClickEventSource, drawing: any ClickRingDrawing)`;
   - `private(set) var isMonitoring`;
+  - `func setRule(_ rule: ClickHighlightRule)`: replaces the rule while not monitoring, and is ignored while monitoring, so `RecordingExtras.place(at:)` can give it the fresh recorded rect before the first frame;
   - `start()` installs once; `stop()` removes the monitors and applies `rule.endAll()`; `close()` stops and calls `removeAllRings()`.
 - `final class ClickRingOverlay: NSPanel, ClickRingDrawing` (design, The overlay, The ring, Animation):
   - `init(screenFrame: CGRect)` and `func setScreenFrame(_:)`;
@@ -485,10 +496,10 @@ Then the controller asks Tim to run P1, P2, P3's recording, P4, B1 (both forms),
 
 **Steps:**
 - [ ] Write the tests and see them fail:
-  - `ClickHighlighterTests`, over a fake source and a fake drawing: `start` installs once; events reach the drawing as the rule's changes; a down outside the recorded rect draws nothing; `stop` removes the monitors and ends each held ring; an event after `stop` draws nothing; `close` removes every ring.
+  - `ClickHighlighterTests`, over a fake source and a fake drawing: `start` installs once; events reach the drawing as the rule's changes; a down outside the recorded rect draws nothing; `setRule` before `start` moves where a down draws, and `setRule` while monitoring changes nothing; `stop` removes the monitors and ends each held ring; an event after `stop` draws nothing; `close` removes every ring.
   - `ClickRingOverlayTests`: `makeRingLayer`'s bounds, stroke widths, colours and alpha for both colours, and its `contentsScale` at 2; a `.begin` adds a layer at the point with a scale animation from 0.5 to 1 over 0.15 s; `.end` adds a fade from 1 to 1.3 and from opacity 1 to 0 over 0.35 s; the panel's level, collection behaviour, `ignoresMouseEvents` and `hasShadow`.
 - [ ] Implement `ClickRingOverlay`, `ClickHighlighter` and the protocols.
-- [ ] Install the monitors (held by G1): `ClickMonitor` as above. No event tap, and no Accessibility or Input Monitoring call.
+- [ ] Install the monitors (held by G1): the `ClickMonitor` class as above. No event tap, and no Accessibility or Input Monitoring call. Nothing else in Tasks 10 to 13 names `ClickMonitor` but `record()`'s click source (Task 12), so the rest compiles while this step is held.
 - [ ] Run the full suite.
 - [ ] Hand checks (Tim's, for the checklist; they run once Task 12 wires the overlay): rings on clicks only inside the recorded rect on both displays, over menus, the menu bar and a fullscreen app; a held ring follows the pointer during a drag without trailing; a drag out of the area waits at the edge and its release ends it; a control-click is blue; a click on the bubble draws its ring in place; no ring during the selection or the count-in.
 - [ ] Commit: `feat: click ring overlay and monitor`.
@@ -516,15 +527,15 @@ Then the controller asks Tim to run P1, P2, P3's recording, P4, B1 (both forms),
 - `nonisolated final class CameraSession: @unchecked Sendable` (design, The camera session):
   - `static let queueLabel = "io.tky.tidyshot.camera"`;
   - `let session: AVCaptureSession`, for the preview layer; it is configured, started and stopped only on the queue;
-  - `init(deviceID: String, preview: AVCaptureVideoPreviewLayer, report: @escaping @MainActor @Sendable (CameraSessionReport) -> Void)`;
+  - `init(deviceID: String, preview: AVCaptureVideoPreviewLayer, report: @escaping @MainActor @Sendable (CameraSessionReport) -> Void)`. `RecordingExtras` makes the preview layer with no session and calls this init on the main actor. The init creates the `AVCaptureSession` and sets `preview.session = session` there, before any work goes to the queue; from then on the queue touches the session and never the layer;
   - `func run(_ on: Bool)`: records the request in its `CameraRunState` and returns at once; the queue builds the session on the first on (and on a rebuild), starts it, and stops it again when `stopsAfterStart` says so;
-  - `func close()`: `run(false)`, then the queue removes its observers.
+  - `func close()`: the queue removes its observers, then `run(false)`, both on the queue in that order. A report already on its way to the main actor can still arrive after `close`; `RecordingExtras` drops it (Task 12).
 - `nonisolated enum CameraSessionReport: Equatable, Sendable { case started, couldNotStart(String), lost(String), back }`. `lost` carries the notification's name.
 - `nonisolated enum CameraFormat { struct Candidate: Equatable, Sendable { var width: Int; var height: Int; var maxFrameRate: Double }; static func pick(_ candidates: [Candidate]) -> Int? }` (Gap 15).
 
 **The session on its queue:**
 - The device is `AVCaptureDevice(uniqueID:)` with its input. The session uses `sessionPreset = .hd1280x720` when `canSetSessionPreset` allows it, else the format `CameraFormat.pick` gives. The frame rate is fixed at 30 fps: `activeVideoMinFrameDuration` and `activeVideoMaxFrameDuration` set to 1/30 s under `lockForConfiguration`. There is no audio input and no file output.
-- Inside the configuration, before `commitConfiguration`, the preview's connection gets `automaticallyAdjustsVideoMirroring = false` and `isVideoMirrored = true` where `isVideoMirroringSupported`.
+- After `commitConfiguration` and before `startRunning`, on every build and rebuild, the queue sets `automaticallyAdjustsVideoMirroring = false` and `isVideoMirrored = true` on each of `session.connections` where `isVideoMirroringSupported`. The preview layer is the session's only output, so these are its connections, which exist once the input is committed; the queue reaches them through the session, not the layer. The mirroring is set before the first frame, so no frame shows unmirrored.
 - After `startRunning` it logs `Recording: camera <name>, <width>×<height> at <fps> fps, started in <ms> ms` and reports `.started`. No device, a failed input or a session that does not run reports `.couldNotStart`.
 - It observes `AVCaptureSession.runtimeErrorNotification`, `wasInterruptedNotification`, `interruptionEndedNotification`, `didStartRunningNotification` and `didStopRunningNotification` for its session, and `AVCaptureDevice.wasDisconnectedNotification` and `wasConnectedNotification` for its `uniqueID`. Each goes to the queue, through `CameraRunState.handle`, and `.lost` or `.back` hops to the main actor. `.rebuild` rebuilds the input while the bubble is meant to be on. Every error, interruption and stop is a loss until C2 says otherwise (G4).
 
@@ -553,33 +564,33 @@ Then the controller asks Tim to run P1, P2, P3's recording, P4, B1 (both forms),
   - `var bubbleRect: CGRect` (AppKit: the area, or the visible frame for fullscreen), `var screenFrame: CGRect` (AppKit: the display's whole frame, the overlay's frame), `var ringArea: CGRect?` (CG: the area within the display, nil for fullscreen), `var displayFrame: CGRect` (CG);
   - `static func make(cgArea: CGRect?, cgDisplayFrame: CGRect, screenFrame: CGRect, visibleFrame: CGRect, primaryHeight: CGFloat) -> RecordingExtrasPlace`.
 - `final class RecordingExtras` (design, Who owns the bubble, Filming, Webcam bubble):
-  - `init(options: RecordingOptions, camera: CameraStart, insets: BubbleInsets, elapsed: @escaping () -> TimeInterval, storeInsets: @escaping (BubbleInsets) -> Void, storeSize: @escaping (BubbleSize) -> Void)`;
+  - `init(options: RecordingOptions, camera: CameraStart, insets: BubbleInsets, clickSource: @escaping (_ isFilmedWindow: @escaping (NSWindow) -> Bool) -> any ClickEventSource, elapsed: @escaping () -> TimeInterval, storeInsets: @escaping (BubbleInsets) -> Void, storeSize: @escaping (BubbleSize) -> Void)`. `clickSource` makes the highlighter's source in `show(at:)`, given a test for the bubble's window;
   - `let options: RecordingOptions` and `let camera: CameraStart`;
   - `var onBubbleInteraction: () -> Void`;
   - `func show(at place: RecordingExtrasPlace)`, `func place(at place: RecordingExtrasPlace)`;
   - `var windowNumbers: [FilmedFeature: CGWindowID]`;
   - `func setFilmed(_ features: Set<FilmedFeature>)`, `func setBubble(_ on: Bool)`, `func setHighlights(monitoring: Bool)`;
-  - `private(set) var cameraLoss: CameraLoss?`;
+  - `var cameraLoss: CameraLoss?`, read from its `CameraLossTracker` (Task 6);
   - `func close()`, idempotent.
 - `RecordingScreenChrome.init(placement: RecordingChromePlacement, extras: RecordingExtras? = nil)`.
 
 **Steps:**
 - [ ] Write `RecordingExtrasPlaceTests` and see them fail: an area on the primary display gives the area in AppKit points for the bubble and in CG for the rings; fullscreen gives the visible frame for the bubble and no ring area; an area on a second display left of and below the primary converts with the primary's height; an area that crosses the display's edge is cut to it.
 - [ ] Implement `RecordingExtrasPlace` and `RecordingExtras`:
-  - `show(at:)`, once per recording: makes the `ClickRingOverlay` at `screenFrame` and the `WebcamBubblePanel` at `BubblePlacement.frame(recorded: bubbleRect, size: options.bubbleSize, insets:)`, and orders both front. With `options.webcamBubble`, a camera and `.authorized` access, it makes the `AVCaptureVideoPreviewLayer` and the `CameraSession`, shows the picture and runs the camera. Otherwise the bubble is on screen, invisible and click-through, and makes no session. The `ClickHighlighter` is made over `ClickHighlightRule(displayFrame:area:)` and a `ClickMonitor` whose filmed window is the bubble, and is not started.
-  - `place(at:)`: reclamps the bubble (`.reclamp`, not stored), moves the overlay, and makes the rule from the fresh place.
+  - `show(at:)`, once per recording: makes the `ClickRingOverlay` at `screenFrame` and the `WebcamBubblePanel` at `BubblePlacement.frame(recorded: bubbleRect, size: options.bubbleSize, insets:)`, and orders both front. With `options.webcamBubble`, a camera and `.authorized` access, it makes the `AVCaptureVideoPreviewLayer` and the `CameraSession`, shows the picture and runs the camera. Otherwise the bubble is on screen, invisible and click-through, and makes no session. The `ClickHighlighter` is made over `ClickHighlightRule(displayFrame:area:)` and `clickSource { $0 === bubble }`, and is not started.
+  - `place(at:)`: reclamps the bubble (`.reclamp`, not stored), moves the overlay to the fresh `screenFrame`, and gives the highlighter `ClickHighlightRule(displayFrame:area:)` from the fresh place through `setRule` (Task 10). The monitors are not installed yet at that point, since `place(at:)` runs before the driver starts.
   - `windowNumbers`: each window's number while it is visible and above 0.
   - `setFilmed`: a missing bubble hides its picture and stops the camera for good; missing highlights are never started.
   - `setBubble(_:)`, while the bubble is filmed and usable: on makes the session if needed, shows the picture and runs the camera; off hides the picture at once, then stops the camera, and the window stays on screen for the filter.
   - `setHighlights(monitoring:)` (its reach from the bar is held by G1): starts or stops the highlighter while highlights are filmed.
   - The panel's callbacks: a drag's end stores `storedInsets(after: .dragEnded, …)`; a size step stores the size through `storeSize`, logs `Recording: bubble size <small|medium|large>` and stores `storedInsets(after: .sizeStepped, …)`; every one calls `onBubbleInteraction`.
-  - The session's reports: `.couldNotStart` sets `cameraLoss` to `.couldNotStart` when it is nil and shows the loss picture; `.lost(name)` shows the loss picture, logs `Recording: camera lost at <m:ss>: <name>` and sets `cameraLoss` to `.stopped(at: elapsed(), backAt: nil)` when it is nil; `.back` shows the picture, logs `Recording: camera back at <m:ss>` and sets the first loss's `backAt` when it is nil. The bubble's place never changes on a loss.
-  - `close()`: once, on the main actor. It orders both windows out at once, closes the highlighter (monitors and every ring layer), closes the camera session (its observers, then the stop on its queue), then closes both windows.
+  - The session's reports: `.couldNotStart` calls the tracker's `couldNotStart()` and shows the loss picture; `.lost(name)` shows the loss picture, logs `Recording: camera lost at <m:ss>: <name>` and calls `lost(at: elapsed())`; `.back` shows the picture, logs `Recording: camera back at <m:ss>` and calls `back(at: elapsed())`. The tracker keeps the first loss only (Task 6). The bubble's place never changes on a loss. A report that arrives after `close()` is dropped: no picture change, no log line, and `cameraLoss` stays as `record()` reads it.
+  - `close()`: once, on the main actor. It closes the tracker, orders both windows out at once, closes the highlighter (monitors and every ring layer), closes the camera session (its observers, then the stop on its queue, as Task 11 says), then closes both windows.
 - [ ] Change `RecordingScreenChrome`: it holds `extras`. `filmedWindowNumbers` is `extras?.windowNumbers ?? [:]`. `setHighlights`, `setBubble` and `setFilmed` change the model as in Task 9 and then call the extras. `show` sets `extras?.onBubbleInteraction` to order the bar's panel front, and orders it front after the bubble. `close` calls `extras?.close()` first.
 - [ ] Wire the start (held by G2; design, When they are made and Who owns the bubble; Gap 3):
-  - `record(_:inputs:)` makes `RecordingExtras` for an `.area` or `.display` target only, with `settings.recordingOptions`, `inputs.camera`, `settings.bubbleInsets`, `elapsed: { [weak self] in self?.recorder.elapsedTime ?? 0 }`, `storeInsets` writing `recordingBubbleInsetRight` and `recordingBubbleInsetBottom`, and `storeSize` writing `recordingBubbleSize`. It closes it in a `defer`, so every exit tears it down.
-  - `recordingHandOff(_:inputs:extras:)`: right after its `guard !isQuitting`, before the count-in or the settle delay, `extras?.show(at:)` with the place from the target (the area's CG rect, or none for fullscreen; the display's CG frame; its screen's frame and `visibleFrame(forDisplayID:cgFrame:)`). After the content read, `extras?.place(at:)` with the fresh area ∩ display.
-  - The options' two toggles and size come from `extras.options`, and `cameraID` and `cameraName` from the window-filtered `CameraStart` (Gap 3). Without extras the five fields keep their defaults.
+  - `record(_:inputs:)` makes `RecordingExtras` for an `.area` or `.display` target only, with `settings.recordingOptions`, `inputs.camera`, `settings.bubbleInsets`, `clickSource: { ClickMonitor(isFilmedWindow: $0) }`, `elapsed: { [weak self] in self?.recorder.elapsedTime ?? 0 }`, `storeInsets` writing `recordingBubbleInsetRight` and `recordingBubbleInsetBottom`, and `storeSize` writing `recordingBubbleSize`. It closes it in a `defer`, so every exit tears it down. While G1 holds Task 10's monitor step, `clickSource` is `{ _ in InertClickSource() }` instead: a private `ClickEventSource` in `RecordingExtras.swift` whose `install` and `remove` do nothing, removed when the held step lands.
+  - `recordingHandOff(_:inputs:extras:)`: right after its `guard !isQuitting`, before the count-in or the settle delay, `extras?.show(at:)` with the place from the target (the area's CG rect, or none for fullscreen; the display's CG frame from the target's `SCDisplay`; its screen's frame and `visibleFrame(forDisplayID:cgFrame:)`). When `CaptureEngine.screen(forDisplayID:)` finds no screen (the display went before the count-in), both AppKit frames fall back to the display's CG frame converted with the primary's height, as `visibleFrame(forDisplayID:cgFrame:)` already does, and the extras still show. The start does not give up there: the content read finds the display gone, the hand-off gives nil as R2's does, and the `defer` closes the extras. After the content read, `extras?.place(at:)` with the fresh area ∩ display.
+  - The options' two toggles and size come from `extras.options`, and `cameraID` and `cameraName` from the window-filtered `CameraStart` (Gap 3). Without extras the hand-off sets the two toggles false and the size to `.medium`, and the camera fields stay nil.
   - The request's `extras` is `RecordingExtrasStart(highlights: options.clickHighlights, bubbleToggle: options.webcamBubble, bubble: BubbleButtonState.make(camera: camera.camera, access: camera.access, filmed: true))`, nil without extras. The chrome is `RecordingScreenChrome(placement:extras:)`.
 - [ ] Run the full suite.
 - [ ] Hand checks (Tim's, for the checklist; design, Hand checks): the bubble during the count-in and dragged there, and none during the selection; every give-up exit with the bubble on (Cancel in the count-in, the record shortcut in the count-in, quit in the count-in, the display unplugged in the count-in, a failed content read) leaves no bubble and the camera's light off; under the bar after a drag and a double-click on it; its place remembered across recordings and displays, and the size setting following a double-click; both bar buttons on and off mid-recording, in the first second and while ending; a window recording with both toggles on shows neither and has the 172 or 208 pt bar; no ring or bubble after Stop; quit with the bubble on; `kill -9` with the bubble on, then relaunch; the log's `filming 2 own windows (bubble, highlights)`.
@@ -623,7 +634,7 @@ Then the controller asks Tim to run P1, P2, P3's recording, P4, B1 (both forms),
 - [ ] Grep the finished code for every string the design gives (Settings rows and captions, tool tips, accessibility labels, notes, log lines, Info.plist strings), and fix any drift.
 - [ ] Run the coordinator split's surface check (its plan's Task 7 command) with `requestAccessFromSettings` added to the entry points; it prints nothing.
 - [ ] Write the checklist in the form of `recording-r2-manual-checklist.md`: setup, a Release build, the grants Tim gives (Screen Recording, Camera), the defaults to delete (`recordingClickHighlights`, `recordingWebcamBubble`, `recordingCamera`, `recordingCameraName`, `recordingBubbleSize`, `recordingBubbleInsetRight`, `recordingBubbleInsetBottom`), and `tccutil reset Camera io.tky.tidyshot` as Tim's step. It covers every probe still open with its command and a blank for the result, every hand check in the design and in Tasks 7 and 10 to 13, the budget (CPU in Activity Monitor and `footprint TidyShot` before and during a minute with the bubble at Medium and steady clicking), lip sync with a clap (`mute-offset-onsets.py` for the sound's onset), and every gap above to confirm or overrule. Log lines are read with `/usr/bin/log show --last 10m --style compact --predicate 'process == "TidyShot"' | grep "Recording:"`.
-- [ ] Write the README text and the Built notes: what was built differently, the seventeen gaps, the probe results, any held step Tim chose to ship without, and the items still open, which the PR lists.
+- [ ] Write the README text and the Built notes: what was built differently, the seventeen gaps, the probe results (P2's with what Tim said, when it answered all four yes), any held step Tim chose to ship without, and the items still open, which the PR lists.
 - [ ] Run the full suite and the Release build once. `codesign -d --entitlements - .build-rel/Build/Products/Release/TidyShot.app` lists exactly R2's entitlements plus `com.apple.security.device.camera`; `strings` on the binary finds no `ClickMonitorSpike`.
 - [ ] Commit: `docs: recording R3 checklist, README and design close-out`.
 
