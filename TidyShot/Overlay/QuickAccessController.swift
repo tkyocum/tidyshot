@@ -183,9 +183,9 @@ final class QuickAccessController {
         model.trimState = trimState
     }
 
-    /// Shows a new thumbnail on the card showing `recordID`: a trimmed recording's poster. Does
-    /// nothing when no card shows the record.
-    func setThumbnail(_ thumbnail: NSImage, for recordID: UUID) {
+    /// Shows a new thumbnail on the card showing `recordID`: a trimmed recording's poster, or nil for
+    /// the placeholder, as a row with no thumbnail shows. Does nothing when no card shows the record.
+    func setThumbnail(_ thumbnail: NSImage?, for recordID: UUID) {
         cards.first { $0.id == recordID }?.model.thumbnail = thumbnail
     }
 

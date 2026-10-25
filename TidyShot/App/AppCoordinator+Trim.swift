@@ -318,11 +318,12 @@ extension AppCoordinator {
             let poster = await Self.posterFrame(of: fileURL, scope: scope)
             // A later trim, a delete or a prune got there first.
             guard let self, self.history.record(id: id)?.editedAt == editedAt else { return }
-            guard let poster else {
+            if let poster {
+                self.replaceThumbnail(for: id, from: poster, editedAt: editedAt)
+            } else {
                 self.dropThumbnail(of: id)
-                return
             }
-            self.replaceThumbnail(for: id, from: poster, editedAt: editedAt)
+            // With no poster the card shows the row's placeholder, not the untrimmed first frame.
             self.showCardPoster(poster, for: id)
         }
     }
@@ -330,7 +331,7 @@ extension AppCoordinator {
     /// A trimmed recording whose poster could not be read keeps no thumbnail, rather than the
     /// untrimmed recording's first frame: the record names none, the provider drops what it cached,
     /// and the old file goes. The row then shows the placeholder, as `ThumbnailProvider` never makes a
-    /// recording's thumbnail from its file.
+    /// recording's thumbnail from its file, and so does a card showing it (Decided 2026-10-24, 11).
     private func dropThumbnail(of id: UUID) {
         let previous = history.record(id: id)?.thumbnailFileName
         history.update(id: id) { $0.thumbnailFileName = nil }

@@ -44,9 +44,10 @@ extension AppCoordinator {
     }
 
     /// A trimmed recording's new poster on the card that shows it, as a recording's card shows one
-    /// (scale 1). Does nothing when no card shows the record.
-    func showCardPoster(_ poster: CGImage, for id: UUID) {
-        overlay.setThumbnail(Self.cardThumbnail(of: poster, scale: 1), for: id)
+    /// (scale 1); with none, the placeholder the row shows (Decided 2026-10-24, 11). Does nothing
+    /// when no card shows the record.
+    func showCardPoster(_ poster: CGImage?, for id: UUID) {
+        overlay.setThumbnail(poster.map { Self.cardThumbnail(of: $0, scale: 1) }, for: id)
     }
 
     /// The screen for the card stack under `settings.overlayDisplay`; nil without screens.
