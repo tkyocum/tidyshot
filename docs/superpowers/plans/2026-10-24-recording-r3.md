@@ -26,7 +26,7 @@ Every probe is Tim's: each needs his screen, his clicks, his cameras or a permis
 | P3, recording | `r3-clicks.swift record-ring /tmp/r3-ring.mp4 60`, clicking about every 5 s with drags and right-clicks | the screen | now | G2 (the `overlay windows in shareable content N of M` line) |
 | P3, GIF | Task 3's harness on `/tmp/r3-ring.mp4` at 15 and 10 fps, 1280 px, with and without the reserved colours | nothing (reads the MP4) | Task 3 | the reserved colours; 40 pt at 0.5 px per point |
 | P4 | the Debug build with `-ClickMonitorSpike YES` | nothing | Task 1 | G1 |
-| B1 | `r3-bubble-filter.swift 20`, then `r3-bubble-filter.swift 20 output /tmp/r3-filter.mp4` | screen frames, then a file | Task 1 | G2 |
+| B1 | `r3-bubble-filter.swift`, then `r3-bubble-filter.swift output /tmp/r3-filter.mp4` | screen frames, then a file | Task 1 | G2 |
 | C1 | `r3-camera-list.swift 30`, plugging the Brio in and out and bringing the iPhone near | nothing | now | G3 |
 | C2 | `r3-bubble-camera.swift brio 720 120`, `iphone 720 120`, then each at `1080` | the camera | Task 1 | G4, G5 |
 | C3 | the Debug build with `Show webcam bubble` on, after Tim runs `tccutil reset Camera io.tky.tidyshot` | the camera prompt | Task 7 | a hand check |

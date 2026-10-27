@@ -9,7 +9,7 @@
 // time, in ms: the capture-to-app part of the latency), and this process's CPU % from getrusage.
 // Build with the same Info.plist section as r3-camera-list.swift.
 import AppKit
-import AVFoundation
+@preconcurrency import AVFoundation
 setbuf(stdout, nil)
 
 let args = CommandLine.arguments
@@ -22,21 +22,25 @@ final class BubbleView: NSView {
     var onDoubleClick: () -> Void = {}
     private var pointerStart = NSPoint.zero
     private var originStart = NSPoint.zero
+    private var dragArea: NSRect?
     // The panel is never key and the app is not active, so the first click must count.
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     override var mouseDownCanMoveWindow: Bool { false }
     override func mouseDown(with e: NSEvent) {
-        if e.clickCount == 2 { onDoubleClick(); return }
+        if e.clickCount == 2 { onDoubleClick() }
         guard let window else { return }
+        // Anchor after any size step, so a drag that follows a double-click does not jump.
         pointerStart = NSEvent.mouseLocation
         originStart = window.frame.origin
+        dragArea = window.screen?.visibleFrame
     }
     override func mouseDragged(with e: NSEvent) {
         guard let window else { return }
         let p = NSEvent.mouseLocation
         var origin = NSPoint(x: originStart.x + p.x - pointerStart.x, y: originStart.y + p.y - pointerStart.y)
-        // Keep the whole bubble inside the screen under the pointer, by its visibleFrame.
-        if let area = (NSScreen.screens.first { $0.frame.contains(p) } ?? window.screen)?.visibleFrame {
+        // Keep the whole bubble inside the visibleFrame of the screen the drag started on, as the
+        // design clamps to one recorded rect.
+        if let area = dragArea {
             let size = window.frame.size
             origin.x = min(max(origin.x, area.minX), max(area.minX, area.maxX - size.width))
             origin.y = min(max(origin.y, area.minY), max(area.minY, area.maxY - size.height))

@@ -2,7 +2,7 @@
 // and does the exception follow the window when it moves, resizes, is ordered out and back in, or
 // is created after the start? Records the screen (SCStream frames; a file only with `output`). Needs
 // Screen Recording.
-// Usage: r3-bubble-filter [seconds] [output <file.mp4>]
+// Usage: r3-bubble-filter [output <file.mp4>]  (the checks set the run length; an existing file is replaced)
 // Prints one line per check: what the pixel at each spot shows. With `output`, the stream also gets
 // an SCRecordingOutput (H.264 .mp4, as TidyShot's), and after updateContentFilter the probe prints
 // recordedDuration once a second for 3 s; at the end, the file's duration and video sample count, so
@@ -24,7 +24,7 @@ final class OutputDelegate: NSObject, SCRecordingOutputDelegate, @unchecked Send
     var finished: Bool { lock.lock(); defer { lock.unlock() }; return done }
     func recordingOutputDidStartRecording(_ o: SCRecordingOutput) { print("output started") }
     func recordingOutputDidFinishRecording(_ o: SCRecordingOutput) { print("output finished"); lock.lock(); done = true; lock.unlock() }
-    func recordingOutput(_ o: SCRecordingOutput, didFailWithError e: any Error) { print("output failed", e) }
+    func recordingOutput(_ o: SCRecordingOutput, didFailWithError e: any Error) { print("output FAILED:", e); lock.lock(); done = true; lock.unlock() }
 }
 
 func panel(_ rect: NSRect, _ color: NSColor) -> NSPanel {
