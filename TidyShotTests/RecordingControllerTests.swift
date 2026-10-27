@@ -1108,6 +1108,21 @@ struct RecordingControllerTests {
         controller.close()
     }
 
+    /// The next recording's camera starts before its `run`, so a loss in its count-in reads 0, not
+    /// the last recording's age.
+    @Test func elapsedTimeIsZeroAfterClose() async throws {
+        let driver = FakeRecordingDriver(log: world.log)
+        let chrome = FakeRecordingChrome(log: world.log)
+        let (controller, run) = await begin(extrasRequest, driver: driver, chrome: chrome)
+        driver.send(.recordingStarted)
+        await world.advance(by: .seconds(3))
+        chrome.pressStop()
+        _ = await run.value
+        controller.close()
+        await world.advance(by: .seconds(5))
+        #expect(controller.elapsedTime == 0)
+    }
+
     // MARK: One controller, two runs
 
     /// Runs a recording on `first` whose stop never returns, so its wait times out, then starts

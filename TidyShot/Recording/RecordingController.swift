@@ -300,10 +300,12 @@ final class RecordingController {
     }
 
     /// Closes the chrome, ends the activity and stops observing sleep and the user switch. Call
-    /// it once `run` has returned, where the capture lock is released.
+    /// it once `run` has returned, where the capture lock is released. The clock goes back to 0,
+    /// so the next recording's camera, which starts before its `run`, never reads this one's age.
     func close() {
         ticking?.cancel()
         ticking = nil
+        firstFrame = nil
         chrome?.close()
         chrome = nil
         if let activity {
@@ -458,8 +460,8 @@ final class RecordingController {
         return (environment.clock.now - firstFrame) / .seconds(1)
     }
 
-    /// Seconds since the first frame, 0 before it, for R3's log lines and the camera's loss note
-    /// (plan Gap 7).
+    /// Seconds since the first frame, 0 before it and after `close()`, for R3's log lines and the
+    /// camera's loss note (plan Gap 7).
     var elapsedTime: TimeInterval {
         elapsed
     }
