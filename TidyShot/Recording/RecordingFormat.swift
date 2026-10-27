@@ -28,15 +28,26 @@ nonisolated struct RecordingSettingsLayout: Equatable, Sendable {
     let audioRowsEnabled: Bool
     /// `gifCaption`, under the audio rows.
     let showsGIFCaption: Bool
+    /// `Camera` and `Bubble size`: enabled with `Show webcam bubble`, for either format.
+    let cameraRowsEnabled: Bool
+    /// `bubbleGIFCaption`, under `Bubble size`: a GIF with the bubble on.
+    let showsBubbleGIFCaption: Bool
+    /// `overlayCaption`, last: either toggle on.
+    let showsOverlayCaption: Bool
 
     static let gifCaption = "GIFs have no sound. Sound settings apply to MP4 recordings."
     static let fullSizeCaption = "Full size GIFs can be very large."
+    static let bubbleGIFCaption = "A webcam bubble makes GIFs larger, because its picture changes in every frame."
+    static let overlayCaption = "Click highlights and the webcam bubble apply to area and fullscreen recordings."
 
-    init(format: RecordingFormat) {
+    init(format: RecordingFormat, clickHighlights: Bool = false, webcamBubble: Bool = false) {
         let isGIF = format == .gif
         showsFrameRate = !isGIF
         showsGIFRows = isGIF
         audioRowsEnabled = !isGIF
         showsGIFCaption = isGIF
+        cameraRowsEnabled = webcamBubble
+        showsBubbleGIFCaption = isGIF && webcamBubble
+        showsOverlayCaption = clickHighlights || webcamBubble
     }
 }

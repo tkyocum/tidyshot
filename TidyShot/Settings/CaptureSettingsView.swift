@@ -19,7 +19,9 @@ struct CaptureSettingsView: View {
 
     /// Which Recording rows show and which are enabled, for the chosen format.
     private var recordingLayout: RecordingSettingsLayout {
-        RecordingSettingsLayout(format: settings.recordingFormat)
+        RecordingSettingsLayout(format: settings.recordingFormat,
+                                clickHighlights: settings.recordingClickHighlights,
+                                webcamBubble: settings.recordingWebcamBubble)
     }
 
     /// The same `AVCaptureDevice` reads the recorder's `microphones` makes; it holds no state.
@@ -119,6 +121,25 @@ struct CaptureSettingsView: View {
                 }
                 Toggle("Show cursor in recordings", isOn: $settings.recordingShowsCursor)
                 Toggle("Count down before recording", isOn: $settings.recordingCountdown)
+                Toggle("Highlight clicks", isOn: $settings.recordingClickHighlights)
+                Toggle("Show webcam bubble", isOn: $settings.recordingWebcamBubble)
+                Picker("Bubble size", selection: $settings.recordingBubbleSize) {
+                    ForEach(BubbleSize.allCases, id: \.self) { size in
+                        Text(size.title).tag(size)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .disabled(!recordingLayout.cameraRowsEnabled)
+                if recordingLayout.showsBubbleGIFCaption {
+                    Text(RecordingSettingsLayout.bubbleGIFCaption)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if recordingLayout.showsOverlayCaption {
+                    Text(RecordingSettingsLayout.overlayCaption)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .formStyle(.grouped)
