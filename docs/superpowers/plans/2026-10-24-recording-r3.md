@@ -87,7 +87,7 @@ Each is this plan's call. Most fill what the design leaves open. Gaps 1, 2 and 5
 11. **A second down.** A down for a button whose ring is still held ends that ring first.
 12. **The preferred camera.** `LiveCameraDevices.preferred()` is `systemPreferredCamera` when its device type is one of the three listed, else the first listed camera, else nil (G3 checks it).
 13. **The recorded rects.** `RecordingExtrasPlace` holds the bubble's rect (AppKit), the ring area (CG, nil for fullscreen), the display's CG frame and its screen's AppKit frame, made by one pure function.
-14. **When the place is stored.** `BubblePlacement.storedInsets(after:frame:recorded:)` gives insets only after `.dragEnded` and `.sizeStepped`, never after `.start` or `.reclamp`.
+14. **When the place is stored.** `BubblePlacement.storedInsets(after:frame:recorded:)` gives insets only after `.dragEnded`, never after `.start`, `.reclamp` or `.sizeStepped` (amended 2026-10-27 with the design: a size step writes the size only).
 15. **The camera format.** When `.hd1280x720` cannot be set, `CameraFormat.pick` takes the format closest to 1280×720 in pixel count among those that reach 30 fps, the smaller on a tie; with none it keeps the active format and sets no frame duration.
 16. **The ring's colours** live in `ClickRingColour`, with `reservedGIFColours` (yellow, blue, black) for the palette, and `GIFMaker.make` gains `reserving:`.
 17. **The P4 spike** is `ClickMonitorSpike`, Debug only, launched with `-ClickMonitorSpike YES`.
@@ -217,20 +217,21 @@ Then the session asks Tim to run P1, P2, P3's recording, P4, B1 (both forms), C1
   - `static func drag(startFrame: CGRect, from start: CGPoint, to current: CGPoint, in recorded: CGRect) -> CGRect`: moved by `current − start`, then clamped;
   - `static func step(_ frame: CGRect, to size: BubbleSize, in recorded: CGRect) -> CGRect`: the new diameter about the same centre, then clamped;
   - `static func insets(of frame: CGRect, in recorded: CGRect) -> BubbleInsets`: `recorded.maxX − frame.maxX` and `frame.minY − recorded.minY`;
-  - `enum Move: Equatable { case start, reclamp, dragEnded, sizeStepped }` and `static func storedInsets(after move: Move, frame: CGRect, recorded: CGRect) -> BubbleInsets?`: `insets(of:in:)` after `.dragEnded` and `.sizeStepped`, nil after `.start` and `.reclamp` (Gap 14).
+  - `enum Move: Equatable { case start, reclamp, dragEnded, sizeStepped }` and `static func storedInsets(after move: Move, frame: CGRect, recorded: CGRect) -> BubbleInsets?`: `insets(of:in:)` after `.dragEnded`, nil after `.start`, `.reclamp` and `.sizeStepped` (Gap 14).
 - `struct CameraRunState: Equatable` (design, The camera session):
   - `enum Event: Equatable { case runtimeError, wasInterrupted, interruptionEnded, didStopRunning, didStartRunning, deviceDisconnected, deviceConnected }`;
   - `enum Change: Equatable { case none, lost, back, rebuild }`;
-  - `private(set) var wantsOn = false`, `generation = 0`, `isLost = false`, `rebuildPending = false`;
+  - `private(set) var wantsOn = false`, `generation = 0`, `isLost = false`, `rebuildPending = false`, `askedStops = 0`;
   - `mutating func request(_ on: Bool) -> (generation: Int, rebuild: Bool)`: sets `wantsOn`, bumps `generation`; turning on clears `isLost` and returns `rebuild: true` once when a reconnect waited (`rebuildPending`);
   - `func stopsAfterStart(generation: Int) -> Bool`: true when `generation` is not the latest or `wantsOn` is false;
-  - `mutating func handle(_ event: Event) -> Change`: the four loss events give `.lost` once while `wantsOn` and not lost; `interruptionEnded` and `didStartRunning` give `.back` while `wantsOn` and lost; `deviceConnected` gives `.rebuild` while `wantsOn`, else sets `rebuildPending`; everything else `.none`.
+  - `mutating func willStop()`: the queue calls it right before every `stopRunning` on a session that is running (the bar's off, `close`, an overtaken start), and never for a session that did not start, so a failed start leaves no count behind;
+  - `mutating func handle(_ event: Event) -> Change`: `didStopRunning` first uses up one `askedStops` when there is one and gives `.none`; the four loss events give `.lost` once while `wantsOn` and not lost; `interruptionEnded` and `didStartRunning` give `.back` while `wantsOn` and lost; `deviceConnected` gives `.rebuild` while `wantsOn`, else sets `rebuildPending`; everything else `.none`.
 
 **Steps:**
 - [ ] Write the design's `BubblePlacementTests` and `CameraRunStateTests` and see them fail. Use a recorded rect (0, 0, 1000, 800): the default frames are (864, 16, 120, 120), (804, 16, 180, 180) and (724, 16, 260, 260); a 100 × 100 rect centres a Medium bubble at (−40, −40); a drag of +500 pt from (804, 16) stops at x 820; the default Small bubble stepped to Medium keeps its centre (924, 76) and is then clamped to (820, 0, 180, 180). Add:
   - `BubbleSize(stored:)` for each raw value, `"huge"` and `""`; `BubbleInsets.reading` for −4, `.nan`, `.infinity` and 24;
-  - `storedInsets` is nil after `.start` and `.reclamp` and the frame's insets after the other two;
-  - `CameraRunState`: a `didStopRunning` after `request(false)` is `.none`; an off, on, off sequence while a start is in flight makes `stopsAfterStart` true for the first generation; a reconnect while off returns `rebuild: true` at the next `request(true)` and only then.
+  - `storedInsets` is nil after `.start`, `.reclamp` and `.sizeStepped`, and the frame's insets after `.dragEnded`; a Small, Medium, Large, Small walk of steps against an edge leaves the stored insets unchanged;
+  - `CameraRunState`: a `didStopRunning` after `request(false)` is `.none`; two overtaken starts (on, off, on, off, on with `willStop()` for each stopped running start) whose two stop notifications arrive after the latest on give `.none` twice, and a third, unasked stop gives `.lost`; a start that failed and was never stopped leaves `askedStops` at 0; an off, on, off sequence while a start is in flight makes `stopsAfterStart` true for the first generation; a reconnect while off returns `rebuild: true` at the next `request(true)` and only then.
 - [ ] Implement both files.
 - [ ] Run the full suite.
 - [ ] Commit: `feat: bubble placement and the camera run state`.
@@ -528,7 +529,7 @@ Then the session asks Tim to run P1, P2, P3's recording, P4, B1 (both forms), C1
   - `static let queueLabel = "io.tky.tidyshot.camera"`;
   - `let session: AVCaptureSession`, for the preview layer; it is configured, started and stopped only on the queue;
   - `init(deviceID: String, preview: AVCaptureVideoPreviewLayer, report: @escaping @MainActor @Sendable (CameraSessionReport) -> Void)`. `RecordingExtras` makes the preview layer with no session and calls this init on the main actor. The init creates the `AVCaptureSession` and sets `preview.session = session` there, before any work goes to the queue; from then on the queue touches the session and never the layer;
-  - `func run(_ on: Bool)`: records the request in its `CameraRunState` and returns at once; the queue builds the session on the first on (and on a rebuild), starts it, and stops it again when `stopsAfterStart` says so;
+  - `func run(_ on: Bool)`: records the request in its `CameraRunState` and returns at once; the queue builds the session on the first on (and on a rebuild), starts it, and stops it again when `stopsAfterStart` says so, calling `willStop()` before every `stopRunning` on a running session;
   - `func close()`: the queue removes its observers, then `run(false)`, both on the queue in that order. A report already on its way to the main actor can still arrive after `close`; `RecordingExtras` drops it (Task 12).
 - `nonisolated enum CameraSessionReport: Equatable, Sendable { case started, couldNotStart(String), lost(String), back }`. `lost` carries the notification's name.
 - `nonisolated enum CameraFormat { struct Candidate: Equatable, Sendable { var width: Int; var height: Int; var maxFrameRate: Double }; static func pick(_ candidates: [Candidate]) -> Int? }` (Gap 15).
@@ -583,7 +584,7 @@ Then the session asks Tim to run P1, P2, P3's recording, P4, B1 (both forms), C1
   - `setFilmed`: a missing bubble hides its picture and stops the camera for good; missing highlights are never started.
   - `setBubble(_:)`, while the bubble is filmed and usable: on makes the session if needed, shows the picture and runs the camera; off hides the picture at once, then stops the camera, and the window stays on screen for the filter.
   - `setHighlights(monitoring:)` (its reach from the bar is held by G1): starts or stops the highlighter while highlights are filmed.
-  - The panel's callbacks: a drag's end stores `storedInsets(after: .dragEnded, …)`; a size step stores the size through `storeSize`, logs `Recording: bubble size <small|medium|large>` and stores `storedInsets(after: .sizeStepped, …)`; every one calls `onBubbleInteraction`.
+  - The panel's callbacks: a drag's end stores `storedInsets(after: .dragEnded, …)`; a size step stores the size through `storeSize`, logs `Recording: bubble size <small|medium|large>` and stores no insets; every one calls `onBubbleInteraction`.
   - The session's reports: `.couldNotStart` calls the tracker's `couldNotStart()` and shows the loss picture; `.lost(name)` shows the loss picture, logs `Recording: camera lost at <m:ss>: <name>` and calls `lost(at: elapsed())`; `.back` shows the picture, logs `Recording: camera back at <m:ss>` and calls `back(at: elapsed())`. The tracker keeps the first loss only (Task 6). The bubble's place never changes on a loss. A report that arrives after `close()` is dropped: no picture change, no log line, and `cameraLoss` stays as `record()` reads it.
   - `close()`: once, on the main actor. It closes the tracker, orders both windows out at once, closes the highlighter (monitors and every ring layer), closes the camera session (its observers, then the stop on its queue, as Task 11 says), then closes both windows.
 - [ ] Change `RecordingScreenChrome`: it holds `extras`. `filmedWindowNumbers` is `extras?.windowNumbers ?? [:]`. `setHighlights`, `setBubble` and `setFilmed` change the model as in Task 9 and then call the extras. `show` sets `extras?.onBubbleInteraction` to order the bar's panel front, and orders it front after the bubble. `close` calls `extras?.close()` first.
