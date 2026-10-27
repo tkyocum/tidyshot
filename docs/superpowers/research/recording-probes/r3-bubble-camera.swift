@@ -1,6 +1,7 @@
 // R3 probe: the webcam bubble. Opens the camera (needs camera access) and shows it in a round,
 // borderless, non-activating panel that floats over other apps and fullscreen Spaces, can be
-// dragged, and steps Small/Medium/Large on double-click. Usage:
+// dragged (the clamped drag TidyShot uses: mouseDown and mouseDragged move the window, kept inside its
+// screen's visibleFrame), and steps Small/Medium/Large on double-click. Usage:
 //   r3-bubble-camera [name-substring] [720|1080] [seconds]
 // Prints: the chosen device and format; every activeFormat or frame-duration change (KVO);
 // session runtime errors, interruptions, stops and device disconnects with timestamps; and every
@@ -19,9 +20,28 @@ let sizes: [CGFloat] = [120, 180, 260]   // Small, Medium, Large in points (gues
 
 final class BubbleView: NSView {
     var onDoubleClick: () -> Void = {}
-    override var mouseDownCanMoveWindow: Bool { true }
+    private var pointerStart = NSPoint.zero
+    private var originStart = NSPoint.zero
+    // The panel is never key and the app is not active, so the first click must count.
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override var mouseDownCanMoveWindow: Bool { false }
     override func mouseDown(with e: NSEvent) {
-        if e.clickCount == 2 { onDoubleClick() } else { window?.performDrag(with: e) }
+        if e.clickCount == 2 { onDoubleClick(); return }
+        guard let window else { return }
+        pointerStart = NSEvent.mouseLocation
+        originStart = window.frame.origin
+    }
+    override func mouseDragged(with e: NSEvent) {
+        guard let window else { return }
+        let p = NSEvent.mouseLocation
+        var origin = NSPoint(x: originStart.x + p.x - pointerStart.x, y: originStart.y + p.y - pointerStart.y)
+        // Keep the whole bubble inside the screen under the pointer, by its visibleFrame.
+        if let area = (NSScreen.screens.first { $0.frame.contains(p) } ?? window.screen)?.visibleFrame {
+            let size = window.frame.size
+            origin.x = min(max(origin.x, area.minX), max(area.minX, area.maxX - size.width))
+            origin.y = min(max(origin.y, area.minY), max(area.minY, area.maxY - size.height))
+        }
+        window.setFrameOrigin(origin)
     }
     override func layout() {
         super.layout()

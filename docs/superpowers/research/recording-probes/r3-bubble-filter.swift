@@ -1,10 +1,31 @@
 // R3 probe: does an excepted window of an excluded app (TidyShot's own) show in a display stream,
 // and does the exception follow the window when it moves, resizes, is ordered out and back in, or
-// is created after the start? Records the screen (SCStream frames, no file). Needs Screen Recording.
-// Usage: r3-bubble-filter [seconds]   Prints one line per check: what the pixel at each spot shows.
+// is created after the start? Records the screen (SCStream frames; a file only with `output`). Needs
+// Screen Recording.
+// Usage: r3-bubble-filter [seconds] [output <file.mp4>]
+// Prints one line per check: what the pixel at each spot shows. With `output`, the stream also gets
+// an SCRecordingOutput (H.264 .mp4, as TidyShot's), and after updateContentFilter the probe prints
+// recordedDuration once a second for 3 s; at the end, the file's duration and video sample count, so
+// an output that stopped writing shows. Without `output` it behaves as before.
 import AppKit
+import AVFoundation
 import ScreenCaptureKit
 setbuf(stdout, nil)
+
+let outputURL: URL? = {
+    let a = CommandLine.arguments
+    guard let i = a.firstIndex(of: "output"), i + 1 < a.count else { return nil }
+    return URL(fileURLWithPath: a[i + 1])
+}()
+
+final class OutputDelegate: NSObject, SCRecordingOutputDelegate, @unchecked Sendable {
+    private let lock = NSLock()
+    private var done = false
+    var finished: Bool { lock.lock(); defer { lock.unlock() }; return done }
+    func recordingOutputDidStartRecording(_ o: SCRecordingOutput) { print("output started") }
+    func recordingOutputDidFinishRecording(_ o: SCRecordingOutput) { print("output finished"); lock.lock(); done = true; lock.unlock() }
+    func recordingOutput(_ o: SCRecordingOutput, didFailWithError e: any Error) { print("output failed", e) }
+}
 
 func panel(_ rect: NSRect, _ color: NSColor) -> NSPanel {
     let p = NSPanel(contentRect: rect, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
@@ -40,7 +61,7 @@ final class Sampler: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Send
     let bubble = panel(NSRect(x: 300, y: 300, width: 200, height: 200), .systemRed)     // excepted
     let decoy = panel(NSRect(x: 600, y: 300, width: 200, height: 200), .systemGreen)    // excluded
     try await Task.sleep(for: .milliseconds(300))
-    let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
+    let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
     let own = content.applications.filter { $0.processID == getpid() }
     let display = content.displays.first { $0.displayID == (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as! CGDirectDisplayID) }!
     let sc = content.windows.first { $0.windowID == CGWindowID(bubble.windowNumber) }
@@ -53,6 +74,16 @@ final class Sampler: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Send
     let s = Sampler()
     let stream = SCStream(filter: filter, configuration: cfg, delegate: s)
     try stream.addStreamOutput(s, type: .screen, sampleHandlerQueue: .global())
+    var recording: SCRecordingOutput?
+    let outputDelegate = OutputDelegate()
+    if let outputURL {
+        try? FileManager.default.removeItem(at: outputURL)
+        let oc = SCRecordingOutputConfiguration()
+        oc.outputURL = outputURL; oc.outputFileType = .mp4; oc.videoCodecType = .h264
+        let o = SCRecordingOutput(configuration: oc, delegate: outputDelegate)
+        try stream.addRecordingOutput(o)
+        recording = o
+    }
     try await stream.startCapture()
     func check(_ label: String) async throws {
         try await Task.sleep(for: .milliseconds(500))
@@ -66,14 +97,35 @@ final class Sampler: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Send
     let late = panel(NSRect(x: 300, y: 600, width: 150, height: 150), .systemBlue)
     try await Task.sleep(for: .milliseconds(500))
     print("late panel spot:", s.colour(at: topLeft(late.frame)), "(expect hidden before update)")
-    let c2 = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
+    let c2 = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
     let ex = c2.windows.filter { [bubble.windowNumber, late.windowNumber].contains(Int($0.windowID)) }
     let t0 = Date()
     try await stream.updateContentFilter(SCContentFilter(display: display, excludingApplications: own, exceptingWindows: ex))
     print("updateContentFilter took \(Int(Date().timeIntervalSince(t0) * 1000)) ms")
     try await Task.sleep(for: .milliseconds(500))
     print("late panel after update:", s.colour(at: topLeft(late.frame)))
+    if let recording {
+        for i in 1...3 {
+            try await Task.sleep(for: .seconds(1))
+            print("recordedDuration \(i) s after update:", recording.recordedDuration.seconds)
+        }
+    }
     try await stream.stopCapture()
+    if let outputURL, recording != nil {
+        var waited = 0
+        while !outputDelegate.finished && waited < 150 { try await Task.sleep(for: .milliseconds(100)); waited += 1 }
+        if !outputDelegate.finished { print("no finish callback in 15 s") }
+        let asset = AVURLAsset(url: outputURL)
+        let duration = try await asset.load(.duration).seconds
+        var samples = 0
+        if let track = try await asset.loadTracks(withMediaType: .video).first {
+            let reader = try AVAssetReader(asset: asset)
+            let out = AVAssetReaderTrackOutput(track: track, outputSettings: nil)
+            reader.add(out); reader.startReading()
+            while out.copyNextSampleBuffer() != nil { samples += 1 }
+        }
+        print("file duration \(duration) s, video samples \(samples)")
+    }
     exit(0)
 }
 
