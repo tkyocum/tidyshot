@@ -405,6 +405,34 @@ final class FakeMicrophoneDevices: MicrophoneDevices {
     }
 }
 
+/// Cameras, a preferred camera and an access the tests set. `requestAccess` answers with
+/// `grants`, and the access is then what the prompt answered.
+final class FakeCameraDevices: CameraDevices {
+    var devices: [CameraDevice]
+    var preferredCamera: CameraDevice?
+    var currentAccess: CameraAccess
+    var grants: Bool
+    private(set) var requestCount = 0
+
+    init(devices: [CameraDevice] = [], preferredCamera: CameraDevice? = nil,
+         access: CameraAccess = .authorized, grants: Bool = true) {
+        self.devices = devices
+        self.preferredCamera = preferredCamera
+        self.currentAccess = access
+        self.grants = grants
+    }
+
+    func list() -> [CameraDevice] { devices }
+    func preferred() -> CameraDevice? { preferredCamera }
+    func access() -> CameraAccess { currentAccess }
+
+    func requestAccess() async -> Bool {
+        requestCount += 1
+        currentAccess = grants ? .authorized : .denied
+        return grants
+    }
+}
+
 extension VideoFacts {
     /// A playable 1600×1000 file with one video track.
     static func playable(seconds: TimeInterval) -> VideoFacts {
