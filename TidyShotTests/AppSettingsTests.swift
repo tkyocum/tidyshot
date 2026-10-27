@@ -514,9 +514,15 @@ struct AppSettingsTests {
         #expect(settings.recordingBubbleInsetBottom == 16)
         #expect(settings.bubbleInsets == BubbleInsets.standard)
 
+        // A string, as `defaults write -string` stores it, is not a number, so it must not read
+        // as 0, as `double(forKey:)` would.
+        defaults.set("nope", forKey: "recordingBubbleInsetRight")
+        defaults.set("24", forKey: "recordingBubbleInsetBottom")
+        #expect(AppSettings(defaults: defaults).bubbleInsets == BubbleInsets.standard)
+
         defaults.set(0, forKey: "recordingBubbleInsetRight")
-        defaults.set(24, forKey: "recordingBubbleInsetBottom")
-        #expect(AppSettings(defaults: defaults).bubbleInsets == BubbleInsets(right: 0, bottom: 24))
+        defaults.set(Float(24.5), forKey: "recordingBubbleInsetBottom")
+        #expect(AppSettings(defaults: defaults).bubbleInsets == BubbleInsets(right: 0, bottom: 24.5))
     }
 
     /// `Full size` keeps R1's 4096 px cap.

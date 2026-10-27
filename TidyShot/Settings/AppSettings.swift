@@ -381,8 +381,12 @@ final class AppSettings {
         recordingCamera = defaults.string(forKey: Keys.recordingCamera) ?? "default"
         recordingCameraName = defaults.string(forKey: Keys.recordingCameraName) ?? ""
         recordingBubbleSize = BubbleSize(stored: defaults.string(forKey: Keys.recordingBubbleSize) ?? "")
-        recordingBubbleInsetRight = Double(BubbleInsets.reading(defaults.double(forKey: Keys.recordingBubbleInsetRight)))
-        recordingBubbleInsetBottom = Double(BubbleInsets.reading(defaults.double(forKey: Keys.recordingBubbleInsetBottom)))
+        // A value that is not a number must read as 16, not as 0, as `double(forKey:)` would.
+        let storedInset = { (key: String) in
+            Double(BubbleInsets.reading((defaults.object(forKey: key) as? NSNumber)?.doubleValue ?? .nan))
+        }
+        recordingBubbleInsetRight = storedInset(Keys.recordingBubbleInsetRight)
+        recordingBubbleInsetBottom = storedInset(Keys.recordingBubbleInsetBottom)
         // Not registered: a missing value, or one that does not decode (a fill or aspect from a
         // newer build), means the default style.
         backgroundStyle = defaults.data(forKey: Keys.backgroundStyle)
