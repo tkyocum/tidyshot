@@ -105,12 +105,15 @@ nonisolated final class CameraSession: @unchecked Sendable {
     // MARK: On the queue
 
     /// Builds the session on the first start and on a rebuild, starts it, and stops it again when
-    /// a later request overtook this one.
+    /// a later request overtook this one. A rebuild drops the device first, so one an overtaken
+    /// start carries still reaches the next start, which then never runs on a replugged camera's
+    /// dead input.
     private func start(generation: Int, rebuild: Bool) {
+        if rebuild { device = nil }
         guard !isClosed, !stopsAfterStart(generation) else { return }
-        if rebuild || device == nil {
+        if device == nil {
             stopIfRunning()
-            guard build() else { return }
+            guard build(generation: generation) else { return }
         }
         guard let device, !session.isRunning else { return }
 
@@ -123,7 +126,7 @@ nonisolated final class CameraSession: @unchecked Sendable {
         let took = Int(((ContinuousClock.now - began) / .milliseconds(1)).rounded())
         if locked { device.unlockForConfiguration() }
 
-        guard session.isRunning else { return couldNotStart("the session did not run") }
+        guard session.isRunning else { return couldNotStart("the session did not run", generation: generation) }
         if stopsAfterStart(generation) {
             stopIfRunning()
             return
@@ -137,24 +140,24 @@ nonisolated final class CameraSession: @unchecked Sendable {
     }
 
     /// The device's input in the session, at 720p where the preset allows it.
-    private func build() -> Bool {
+    private func build(generation: Int) -> Bool {
         device = nil
         session.beginConfiguration()
         defer { session.commitConfiguration() }
         for input in session.inputs { session.removeInput(input) }
         guard let found = AVCaptureDevice(uniqueID: deviceID) else {
-            couldNotStart("no camera with its ID")
+            couldNotStart("no camera with its ID", generation: generation)
             return false
         }
         let input: AVCaptureDeviceInput
         do {
             input = try AVCaptureDeviceInput(device: found)
         } catch {
-            couldNotStart(error.localizedDescription)
+            couldNotStart(error.localizedDescription, generation: generation)
             return false
         }
         guard session.canAddInput(input) else {
-            couldNotStart("the session took no input")
+            couldNotStart("the session took no input", generation: generation)
             return false
         }
         session.addInput(input)
@@ -203,10 +206,15 @@ nonisolated final class CameraSession: @unchecked Sendable {
     }
 
     /// A start that failed counts as a loss, so the runtime error it may post is not a second one
-    /// and a later start brings the picture back.
-    private func couldNotStart(_ reason: String) {
-        _ = state.withLock { $0.handle(.runtimeError) }
-        send(.couldNotStart(reason))
+    /// and a later start brings the picture back. One a later request overtook fails quietly: no
+    /// loss and no report for a start nobody wants.
+    private func couldNotStart(_ reason: String, generation: Int) {
+        let wanted = state.withLock { state in
+            guard !state.stopsAfterStart(generation: generation) else { return false }
+            _ = state.handle(.runtimeError)
+            return true
+        }
+        if wanted { send(.couldNotStart(reason)) }
     }
 
     private func stopsAfterStart(_ generation: Int) -> Bool {

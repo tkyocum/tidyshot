@@ -60,4 +60,18 @@ struct RecordingExtrasPlaceTests {
         #expect(place.ringArea == CGRect(x: 2400, y: 1300, width: 160, height: 140))
         #expect(place.bubbleRect == CGRect(x: 2400, y: 0, width: 160, height: 140))
     }
+
+    /// The display's frame changed during the count-in and no longer holds the area: the bubble
+    /// goes in the visible frame, so its clamp never sees an infinite rect, and no down draws.
+    @Test(arguments: [CGRect(x: 3000, y: 200, width: 400, height: 300),
+                      CGRect(x: 2560, y: 200, width: 400, height: 300)])
+    func anAreaOffTheDisplayPutsTheBubbleInTheVisibleFrame(_ area: CGRect) {
+        let place = RecordingExtrasPlace.make(cgArea: area, cgDisplayFrame: primary, screenFrame: primary,
+                                              visibleFrame: primaryVisible, primaryHeight: 1440)
+        #expect(place.bubbleRect == primaryVisible)
+        let frame = BubblePlacement.frame(recorded: place.bubbleRect, size: .medium,
+                                          insets: .standard)
+        #expect(frame.minX.isFinite && frame.minY.isFinite)
+        #expect(place.ringArea?.isEmpty == true)
+    }
 }

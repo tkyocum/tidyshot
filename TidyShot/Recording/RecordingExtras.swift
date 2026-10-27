@@ -15,12 +15,14 @@ nonisolated struct RecordingExtrasPlace: Equatable, Sendable {
     var displayFrame: CGRect
 
     /// An area is cut to the display, and converted to AppKit with the primary display's height,
-    /// as `Geometry.appKitRect` converts; fullscreen puts the bubble in the visible frame.
+    /// as `Geometry.appKitRect` converts; fullscreen puts the bubble in the visible frame. So does
+    /// an area the display no longer holds (its frame changed during the count-in), whose cut is
+    /// null or empty, so the bubble's clamp never sees an infinite rect.
     static func make(cgArea: CGRect?, cgDisplayFrame: CGRect, screenFrame: CGRect, visibleFrame: CGRect,
                      primaryHeight: CGFloat) -> RecordingExtrasPlace {
         let area = cgArea?.intersection(cgDisplayFrame)
-        let bubbleRect = area.map {
-            CGRect(x: $0.minX, y: primaryHeight - $0.maxY, width: $0.width, height: $0.height)
+        let bubbleRect = area.flatMap {
+            $0.isEmpty ? nil : CGRect(x: $0.minX, y: primaryHeight - $0.maxY, width: $0.width, height: $0.height)
         } ?? visibleFrame
         return RecordingExtrasPlace(bubbleRect: bubbleRect, screenFrame: screenFrame, ringArea: area,
                                     displayFrame: cgDisplayFrame)

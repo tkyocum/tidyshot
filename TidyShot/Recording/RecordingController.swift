@@ -357,7 +357,10 @@ final class RecordingController {
         chrome.setFilmed(Set(filmed))
         extrasSummary.missed = Set(FilmedFeature.allCases).subtracting(filmed)
         if extrasSummary.missed.contains(.highlights) {
+            // The first frame may have come first and installed the monitors, but no ring is
+            // filmed, so a GIF reserves no colours for them.
             highlightsClicks = false
+            extrasSummary.highlightsUsed = false
         }
         if extrasSummary.missed.contains(.bubble) {
             showsBubble = false

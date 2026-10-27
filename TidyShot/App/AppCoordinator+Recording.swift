@@ -580,7 +580,9 @@ extension AppCoordinator {
     private func endRecording(_ ended: RecordingEnded?, intent: CaptureIntent) async {
         guard let ended else { return }
         isRecording = false
-        let (microphoneNote, cameraNote, highlightsNote) = (ended.microphoneNote, ended.cameraNote, ended.highlightsNote)
+        let microphoneNote = ended.microphoneNote
+        let cameraNote = ended.cameraNote
+        let highlightsNote = ended.highlightsNote
         switch ended.outcome {
         case .keep(let recording, let notice):
             if let gif = recording.gif {
@@ -702,13 +704,13 @@ extension AppCoordinator {
     /// (`Recording stopped`) post last, in `RecordingNoticeOrder`'s order, `Recording stopped`
     /// revealing the file, in place of `Recording saved`; `microphoneNote`, then `cameraNote` and
     /// `highlightsNote` (R3), post after them both, after `Recording saved` too, and replace
-    /// neither. Quit mode (`mode`, or `isQuitting` once
-    /// set) never asks for a folder and has no Clop, upload, card or notification; it returns once
-    /// the thumbnail is written. `intent.then` and `intent.copyOnly` are ignored. `unmutedIntervals`
-    /// (the mute ladder's `.notMuted` segments) keep the file in `pending/` with no folder asked for,
-    /// no upload and nothing on the clipboard, mark the record, and post `Sound not muted` (design,
-    /// Privacy rule). Returns the record, or nil when the file stayed in `tmp/Recording`, where the
-    /// notice names `recording.recoveryURL`, the file the launch check recovers.
+    /// neither. Quit mode (`mode`, or `isQuitting` once set) never asks for a folder and has no
+    /// Clop, upload, card or notification; it returns once the thumbnail is written. `intent.then`
+    /// and `intent.copyOnly` are ignored. `unmutedIntervals` (the mute ladder's `.notMuted`
+    /// segments) keep the file in `pending/` with no folder asked for, no upload and nothing on the
+    /// clipboard, mark the record, and post `Sound not muted` (design, Privacy rule). Returns the
+    /// record, or nil when the file stayed in `tmp/Recording`, where the notice names
+    /// `recording.recoveryURL`, the file the launch check recovers.
     @discardableResult
     func saveRecording(_ recording: Recording, intent: CaptureIntent = .standard, stopNotice: RecordingNotice? = nil,
                        mode: RecordingSaveMode = .normal, saveNotice: RecordingNotice? = nil,

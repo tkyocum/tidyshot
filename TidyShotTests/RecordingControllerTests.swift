@@ -975,6 +975,29 @@ struct RecordingControllerTests {
         controller.close()
     }
 
+    /// The first frame can come while `start` is still awaited: highlights the filter turns out
+    /// not to film reserve no GIF colours, though the monitors went on at the first frame.
+    @Test func highlightsMissedAfterTheFirstFrameAreNotUsed() async throws {
+        let driver = FakeRecordingDriver(log: world.log)
+        driver.holdsStart = true
+        driver.filmed = [51]
+        let chrome = FakeRecordingChrome(log: world.log)
+        let (controller, run) = await begin(extrasRequest, driver: driver, chrome: chrome)
+        #expect(driver.isHoldingStart)
+        driver.send(.recordingStarted)
+        #expect(controller.extrasSummary.highlightsUsed)
+
+        driver.releaseStart()
+        await world.advance(by: .seconds(1))
+        #expect(!controller.highlightsClicks)
+        #expect(controller.extrasSummary == RecordingExtrasSummary(bubbleWanted: true, highlightsAtStart: true,
+                                                                   highlightsUsed: false, missed: [.highlights]))
+        chrome.pressStop()
+        let recording = try #require(await run.value.kept)
+        #expect(!recording.highlightedClicks)
+        controller.close()
+    }
+
     nonisolated enum HighlightsPresses: CaseIterable, Sendable {
         /// Off at the start, never pressed.
         case never
