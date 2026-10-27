@@ -123,13 +123,8 @@ nonisolated enum CameraChoice {
         if let camera = devices().first(where: { $0.uniqueID == id }) {
             return CameraStart(camera: camera, access: access, note: nil)
         }
-        let fallback = preferred()
-        // The preferred camera counts as present even if the discovery session leaves it out.
-        if let fallback, fallback.uniqueID == id {
-            return CameraStart(camera: fallback, access: access, note: nil)
-        }
         let missing = notConnectedText(name)
-        guard let fallback else {
+        guard let fallback = preferred() else {
             return CameraStart(camera: nil, access: access, note: RecordingNotice(title: recordedWithoutTitle, body: missing))
         }
         return CameraStart(camera: fallback, access: access,

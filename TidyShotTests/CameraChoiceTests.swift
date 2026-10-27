@@ -79,12 +79,6 @@ struct CameraChoiceTests {
                 == CameraChoice.Entry(tag: brio.uniqueID, title: "Unknown camera (not connected)"))
     }
 
-    /// The preferred camera counts as present when the discovery session leaves it out.
-    @Test func theStoredPreferredCameraCountsAsPresentWhenTheListLeavesItOut() {
-        #expect(resolve(missingBrio, devices: [builtIn], preferred: brio)
-                == CameraStart(camera: brio, access: .authorized, note: nil))
-    }
-
     @Test func systemDefaultWithNoCameraTakesNone() {
         #expect(resolve(.systemDefault, devices: [], preferred: nil)
                 == CameraStart(camera: nil, access: .authorized,
