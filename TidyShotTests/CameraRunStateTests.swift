@@ -14,6 +14,7 @@ struct CameraRunStateTests {
         #expect(state.generation == 0)
         #expect(!state.isLost)
         #expect(!state.rebuildPending)
+        #expect(!state.stopAsked)
     }
 
     @Test func eachRequestBumpsTheGeneration() {
@@ -29,14 +30,14 @@ struct CameraRunStateTests {
     @Test func aStartThatReturnsUnchallengedKeepsRunning() {
         var state = CameraRunState()
         let start = state.request(true)
-        #expect(!state.stopsAfterStart(generation: start.generation))
+        #expect(state.stopsAfterStart(generation: start.generation) == false)
     }
 
     @Test func aStopRequestedWhileAStartIsInFlightStopsItWhenItReturns() {
         var state = CameraRunState()
         let start = state.request(true)
         _ = state.request(false)
-        #expect(state.stopsAfterStart(generation: start.generation))
+        #expect(state.stopsAfterStart(generation: start.generation) == true)
     }
 
     @Test func offOnOffWhileAStartIsInFlightStopsTheFirstStart() {
@@ -45,8 +46,8 @@ struct CameraRunStateTests {
         _ = state.request(false)
         let second = state.request(true)
         _ = state.request(false)
-        #expect(state.stopsAfterStart(generation: first.generation))
-        #expect(state.stopsAfterStart(generation: second.generation))
+        #expect(state.stopsAfterStart(generation: first.generation) == true)
+        #expect(state.stopsAfterStart(generation: second.generation) == true)
     }
 
     /// An older start stops; the latest one, still wanted, keeps running.
@@ -55,8 +56,54 @@ struct CameraRunStateTests {
         let first = state.request(true)
         _ = state.request(false)
         let second = state.request(true)
-        #expect(state.stopsAfterStart(generation: first.generation))
-        #expect(!state.stopsAfterStart(generation: second.generation))
+        #expect(state.stopsAfterStart(generation: first.generation) == true)
+        #expect(state.stopsAfterStart(generation: second.generation) == false)
+    }
+
+    /// The stop after an overtaken start is TidyShot's own, so its notification is no loss,
+    /// although the bubble is meant to be on again by then, and the latest start brings nothing back.
+    @Test func theStopAfterAnOvertakenStartIsNotALoss() {
+        var state = CameraRunState()
+        let first = state.request(true)
+        _ = state.request(false)
+        _ = state.request(true)
+        _ = state.request(false)
+        let latest = state.request(true)
+        #expect(state.stopsAfterStart(generation: first.generation) == true)
+        #expect(state.handle(.didStopRunning) == .none)
+        #expect(!state.isLost)
+        #expect(state.stopsAfterStart(generation: latest.generation) == false)
+        #expect(state.handle(.didStartRunning) == .none)
+    }
+
+    /// The bubble turned on again after the stop was decided but before its notification came.
+    @Test func aStopDecidedWhileOffIsNotALossOnceOnAgain() {
+        var state = CameraRunState()
+        let start = state.request(true)
+        _ = state.request(false)
+        #expect(state.stopsAfterStart(generation: start.generation) == true)
+        _ = state.request(true)
+        #expect(state.handle(.didStopRunning) == .none)
+        #expect(!state.isLost)
+    }
+
+    /// One asked-for stop excuses one notification; the next stop while on is a loss.
+    @Test func anAskedForStopExcusesOneNotification() {
+        var state = CameraRunState()
+        let first = state.request(true)
+        _ = state.request(false)
+        _ = state.request(true)
+        _ = state.stopsAfterStart(generation: first.generation)
+        _ = state.handle(.didStopRunning)
+        #expect(state.handle(.didStopRunning) == .lost)
+    }
+
+    /// A start that keeps running asks for no stop, so a stop after it is a loss.
+    @Test func aKeptStartAsksForNoStop() {
+        var state = CameraRunState()
+        let start = state.request(true)
+        #expect(state.stopsAfterStart(generation: start.generation) == false)
+        #expect(state.handle(.didStopRunning) == .lost)
     }
 
     // MARK: Losses
