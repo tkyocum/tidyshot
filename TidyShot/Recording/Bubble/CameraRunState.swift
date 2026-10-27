@@ -28,9 +28,9 @@ nonisolated struct CameraRunState: Equatable, Sendable {
     private(set) var isLost = false
     /// The camera came back while the bubble was off; the next on rebuilds the session.
     private(set) var rebuildPending = false
-    /// A stop `stopsAfterStart` asked for whose notification has not come yet. The bubble may be
-    /// meant to be on again by then, so the request alone cannot excuse it.
-    private(set) var stopAsked = false
+    /// Stops TidyShot asked of a running session whose notifications have not come yet. The
+    /// bubble may be meant to be on again by then, so the request alone cannot excuse them.
+    private(set) var askedStops = 0
 
     /// Records a request before the queue acts on it. Turning on clears a loss and takes a
     /// waiting rebuild, once.
@@ -47,19 +47,23 @@ nonisolated struct CameraRunState: Equatable, Sendable {
     }
 
     /// After `startRunning` returns: stop again if a later request overtook this start or the
-    /// latest request was off. A stop it asks for is recorded, so its notification is no loss.
-    mutating func stopsAfterStart(generation: Int) -> Bool {
-        let stops = generation != self.generation || !wantsOn
-        if stops { stopAsked = true }
-        return stops
+    /// latest request was off.
+    func stopsAfterStart(generation: Int) -> Bool {
+        generation != self.generation || !wantsOn
     }
 
-    /// A stop TidyShot asked for is no loss: it comes after `stopsAfterStart` said stop, or while
-    /// the bubble is meant to be off.
+    /// Called right before every `stopRunning` on a running session (the bar's off, `close`, an
+    /// overtaken start), never for one that did not start, which posts no stop.
+    mutating func willStop() {
+        askedStops += 1
+    }
+
+    /// A stop TidyShot asked for is no loss: each stop notification first uses up one asked stop,
+    /// and one while the bubble is meant to be off is ignored too.
     mutating func handle(_ event: Event) -> Change {
         switch event {
-        case .didStopRunning where stopAsked:
-            stopAsked = false
+        case .didStopRunning where askedStops > 0:
+            askedStops -= 1
             return .none
         case .runtimeError, .wasInterrupted, .didStopRunning, .deviceDisconnected:
             guard wantsOn, !isLost else { return .none }
