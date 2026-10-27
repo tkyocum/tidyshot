@@ -16,6 +16,25 @@ struct RecordingRequest {
     let lag: TimeInterval
     /// Nil for an MP4 recording. A kept file carries it to the save, which makes the GIF.
     var gif: GIFSettings? = nil
+    /// The R3 features at the start; nil for a window recording, which has neither.
+    var extras: RecordingExtrasStart? = nil
+}
+
+/// The R3 features at a recording's start: the two toggles, and the bubble button's state from the
+/// camera's resolve.
+nonisolated struct RecordingExtrasStart: Equatable, Sendable {
+    var highlights: Bool
+    var bubbleToggle: Bool
+    var bubble: BubbleButtonState
+}
+
+/// What the notes after Stop need from a run (plan Gap 6): whether the bubble was wanted, whether
+/// highlights were on at the start or at any point, and the features the filter could not film.
+nonisolated struct RecordingExtrasSummary: Equatable, Sendable {
+    var bubbleWanted = false
+    var highlightsAtStart = false
+    var highlightsUsed = false
+    var missed: Set<FilmedFeature> = []
 }
 
 /// How a recording ended: a file to save, or nothing (the file is gone), each with the notice to
@@ -146,6 +165,9 @@ final class RecordingController {
     /// Made at the first toggle, so a recording never muted has no log.
     private var muteLogWriter: MuteLogWriter?
 
+    /// The R3 features' run, for the notes after Stop; reset at each run.
+    private(set) var extrasSummary = RecordingExtrasSummary()
+
     init(environment: RecordingEnvironment, makeDriver: @escaping () -> any RecordingStreamDriver) {
         self.environment = environment
         self.makeDriver = makeDriver
@@ -169,14 +191,21 @@ final class RecordingController {
                     onMute: { [weak self] in self?.toggleMute() },
                     bar: RecordingPanelLayout.bar(showsMute: request.configuration.showsMuteButton,
                                                   isGIF: request.gif != nil))
+        // The bubble and the ring overlay are filmed only with R3's extras.
+        let filmedNumbers = request.extras == nil ? [:] : chrome.filmedWindowNumbers
         let exclusions = RecordingExclusions(chromeWindows: chrome.windowNumbers,
                                              cardWindows: environment.cardWindowNumbers(),
-                                             coverWindows: environment.coverWindowNumbers(request.displayID))
+                                             coverWindows: environment.coverWindowNumbers(request.displayID),
+                                             filmedWindows: Set(filmedNumbers.values))
         let driver = makeDriver()
         do {
-            try await driver.start(request.configuration, outputURL: request.outputURL, exclusions: exclusions) { [weak self] event in
+            let filmedWindows = try await driver.start(request.configuration, outputURL: request.outputURL,
+                                                       exclusions: exclusions) { [weak self] event in
                 guard let self, runNumber == run else { return }
                 handle(event)
+            }
+            if request.extras != nil {
+                noteFilmed(filmedWindows, numbers: filmedNumbers, chrome: chrome)
             }
         } catch {
             // Nothing is recording, so there is nothing to wait for. Later callbacks are ignored.
@@ -268,6 +297,21 @@ final class RecordingController {
         muteIntervals = []
         muteSequence = 0
         muteLogWriter = nil
+        extrasSummary = RecordingExtrasSummary()
+    }
+
+    /// Tells the chrome which features the filter films (R3 design, Lookup misses): a feature is
+    /// filmed when its window number is among `windows`, and missed otherwise, a feature with no
+    /// window number among them.
+    private func noteFilmed(_ windows: Set<CGWindowID>, numbers: [FilmedFeature: CGWindowID],
+                            chrome: any RecordingChrome) {
+        let filmed = FilmedFeature.allCases.filter { numbers[$0].map(windows.contains) ?? false }
+        for feature in FilmedFeature.allCases where !filmed.contains(feature) {
+            RecordingLog.note("Recording: \(feature.rawValue) window not in shareable content, not filmed")
+        }
+        RecordingLog.note("Recording: filming \(filmed.count) own windows (\(filmed.map(\.rawValue).joined(separator: ", ")))")
+        chrome.setFilmed(Set(filmed))
+        extrasSummary.missed = Set(FilmedFeature.allCases).subtracting(filmed)
     }
 
     private func observeWorkspace() {

@@ -25,7 +25,8 @@ struct RecordingControllerTests {
     }
 
     func request(_ source: RecordingSource, gif: GIFSettings? = nil, microphoneID: String? = nil,
-                 systemAudio: Bool = false, lag: TimeInterval = RecordingMute.defaultLag) -> RecordingRequest {
+                 systemAudio: Bool = false, lag: TimeInterval = RecordingMute.defaultLag,
+                 extras: RecordingExtrasStart? = nil) -> RecordingRequest {
         let id = UUID()
         var options = options
         options.format = gif == nil ? .mp4 : .gif
@@ -34,7 +35,16 @@ struct RecordingControllerTests {
         return RecordingRequest(id: id, configuration: .make(source, options: options), displayID: display.id,
                                 outputURL: URL(filePath: "/private/tmp/RecordingControllerTests/Recording/\(id.uuidString).mp4"),
                                 muteLogURL: URL(filePath: "/private/tmp/RecordingControllerTests/Mute/\(id.uuidString).json"),
-                                lag: lag, gif: gif)
+                                lag: lag, gif: gif, extras: extras)
+    }
+
+    /// Both R3 features on at the start, with a usable camera.
+    let bothOn = RecordingExtrasStart(highlights: true, bubbleToggle: true,
+                                      bubble: BubbleButtonState(isEnabled: true, disabledToolTip: nil))
+
+    /// An area recording with the R3 features.
+    var extrasRequest: RecordingRequest {
+        request(.area(CGRect(x: 100, y: 100, width: 800, height: 500), on: display), extras: bothOn)
     }
 
     /// Runs `request` on a new controller with `driver` and `chrome`, and lets the start run.
@@ -653,6 +663,116 @@ struct RecordingControllerTests {
         chrome.pressStop()
         _ = await run.value
         #expect(!controller.isRunning)
+        controller.close()
+    }
+
+    // MARK: What the filter films (R3 design, Lookup misses; plan Gap 4)
+
+    @Test func aRequestWithExtrasGivesTheDriverTheFilmedWindows() async throws {
+        world.coverWindows = [1: [90]]
+        let driver = FakeRecordingDriver(log: world.log)
+        let chrome = FakeRecordingChrome(log: world.log)
+        let (controller, run) = await begin(extrasRequest, driver: driver, chrome: chrome)
+
+        #expect(driver.exclusions == RecordingExclusions(chromeWindows: [41, 42], cardWindows: [7], coverWindows: [90],
+                                                         filmedWindows: [51, 52]))
+        chrome.pressStop()
+        _ = await run.value
+        controller.close()
+    }
+
+    @Test func aRequestWithoutExtrasFilmsNoOwnWindowAndNeverSetsFilmed() async throws {
+        let driver = FakeRecordingDriver(log: world.log)
+        let chrome = FakeRecordingChrome(log: world.log)
+        let (controller, run) = await begin(areaRequest, driver: driver, chrome: chrome)
+
+        #expect(driver.exclusions?.filmedWindows == [])
+        driver.send(.recordingStarted)
+        chrome.pressStop()
+        _ = await run.value
+        #expect(chrome.filmedShown.isEmpty)
+        #expect(controller.extrasSummary.missed.isEmpty)
+        controller.close()
+    }
+
+    @Test(arguments: [
+        (Set<CGWindowID>([51, 52]), Set<FilmedFeature>([.bubble, .highlights])),
+        (Set<CGWindowID>([51]), Set<FilmedFeature>([.bubble])),
+        (Set<CGWindowID>([52]), Set<FilmedFeature>([.highlights])),
+        (Set<CGWindowID>(), Set<FilmedFeature>()),
+    ])
+    func theDriversSetReachesTheChromeAsFeatures(found: Set<CGWindowID>, filmed: Set<FilmedFeature>) async throws {
+        let driver = FakeRecordingDriver(log: world.log)
+        driver.filmed = found
+        let chrome = FakeRecordingChrome(log: world.log)
+        let (controller, run) = await begin(extrasRequest, driver: driver, chrome: chrome)
+
+        #expect(chrome.filmedShown == [filmed])
+        #expect(controller.extrasSummary.missed == Set(FilmedFeature.allCases).subtracting(filmed))
+        chrome.pressStop()
+        _ = await run.value
+        controller.close()
+    }
+
+    @Test func theFallbackFilmsEveryFilmedWindow() async throws {
+        let driver = FakeRecordingDriver(log: world.log)
+        let chrome = FakeRecordingChrome(log: world.log)
+        let (controller, run) = await begin(extrasRequest, driver: driver, chrome: chrome)
+
+        // A nil `filmed` returns all of the exclusions' filmed windows, as the fallback filter does.
+        #expect(chrome.filmedShown == [[.bubble, .highlights]])
+        #expect(controller.extrasSummary.missed.isEmpty)
+        chrome.pressStop()
+        _ = await run.value
+        controller.close()
+    }
+
+    @Test func aFeatureWithNoWindowNumberIsMissed() async throws {
+        let driver = FakeRecordingDriver(log: world.log)
+        let chrome = FakeRecordingChrome(log: world.log)
+        chrome.filmedWindowNumbers = [.highlights: 52]
+        let (controller, run) = await begin(extrasRequest, driver: driver, chrome: chrome)
+
+        #expect(driver.exclusions?.filmedWindows == [52])
+        #expect(chrome.filmedShown == [[.highlights]])
+        #expect(controller.extrasSummary.missed == [.bubble])
+        chrome.pressStop()
+        _ = await run.value
+        controller.close()
+    }
+
+    @Test func aStartThatThrowsNeitherSetsFilmedNorMissesAnything() async throws {
+        let driver = FakeRecordingDriver(log: world.log)
+        driver.startError = RecordingStartError.displayGone
+        driver.filmed = []
+        let chrome = FakeRecordingChrome(log: world.log)
+        let (controller, run) = await begin(extrasRequest, driver: driver, chrome: chrome)
+
+        _ = await run.value
+        #expect(chrome.filmedShown.isEmpty)
+        #expect(controller.extrasSummary.missed.isEmpty)
+        controller.close()
+    }
+
+    @Test func theSummaryResetsAtTheNextRun() async throws {
+        let first = FakeRecordingDriver(log: world.log)
+        first.filmed = []
+        let second = FakeRecordingDriver(log: world.log)
+        var drivers = [first, second]
+        let controller = RecordingController(environment: world.environment, makeDriver: { drivers.removeFirst() })
+        let chrome = FakeRecordingChrome(log: world.log)
+
+        let run = Task { await controller.run(extrasRequest, chrome: chrome, onStarted: {}) }
+        await world.advance(by: .zero)
+        #expect(controller.extrasSummary.missed == [.bubble, .highlights])
+        chrome.pressStop()
+        _ = await run.value
+
+        let again = Task { await controller.run(areaRequest, chrome: chrome, onStarted: {}) }
+        await world.advance(by: .zero)
+        #expect(controller.extrasSummary == RecordingExtrasSummary())
+        chrome.pressStop()
+        _ = await again.value
         controller.close()
     }
 

@@ -5,6 +5,9 @@ import AppKit
 protocol RecordingChrome: AnyObject {
     /// The panel and the frame, for the filter's fallback exclusion. Valid once shown.
     var windowNumbers: Set<CGWindowID> { get }
+    /// The bubble's and the ring overlay's window numbers, for the filter to film. A feature with
+    /// no window is missing (plan Gap 4).
+    var filmedWindowNumbers: [FilmedFeature: CGWindowID] { get }
     /// Orders the frame and the panel front, laid out as `bar`, with Stop enabled, the time at
     /// `0:00` and the sound not muted. `onMute` is the mute button's, which only the mute bar has.
     func show(onStop: @escaping () -> Void, onCancel: @escaping () -> Void, onMute: @escaping () -> Void,
@@ -14,6 +17,9 @@ protocol RecordingChrome: AnyObject {
     func setStopEnabled(_ enabled: Bool)
     /// The mute button's state.
     func setMuted(_ muted: Bool)
+    /// The features whose windows the filter films. A missing one is not shown (R3 design, Lookup
+    /// misses).
+    func setFilmed(_ features: Set<FilmedFeature>)
     /// `Discard this recording?` with `<m:ss> of recording will be deleted.`. True for Discard,
     /// false for Save.
     func askToDiscard(elapsed: TimeInterval) async -> Bool
@@ -94,6 +100,11 @@ final class RecordingScreenChrome: RecordingChrome {
     func setMuted(_ muted: Bool) {
         model.isMuted = muted
     }
+
+    /// None yet: the bubble and the ring overlay come with `RecordingExtras`.
+    var filmedWindowNumbers: [FilmedFeature: CGWindowID] { [:] }
+
+    func setFilmed(_ features: Set<FilmedFeature>) {}
 
     /// Runs as `confirmRemoveFromHistory` does: in a block the run loop performs only in its
     /// default mode, so `runModal()` never starts inside a menu's tracking loop, with TidyShot

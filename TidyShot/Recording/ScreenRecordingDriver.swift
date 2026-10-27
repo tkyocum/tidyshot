@@ -17,12 +17,42 @@ nonisolated enum RecordingStreamEvent: Equatable, Sendable {
     case streamActive
 }
 
+/// The two TidyShot windows an area or fullscreen recording films (R3 design, Filming the bubble
+/// and the rings; plan Gap 4).
+nonisolated enum FilmedFeature: String, CaseIterable, Hashable, Sendable {
+    case bubble
+    case highlights
+}
+
 /// The TidyShot windows a recording must leave out (the panel and the area frame, and the Quick
-/// Access cards) and the covers it keeps in, by window number.
+/// Access cards) and the ones it keeps in (the covers, and the bubble and the ring overlay), by
+/// window number.
 struct RecordingExclusions: Equatable {
     var chromeWindows: Set<CGWindowID>
     var cardWindows: Set<CGWindowID>
     var coverWindows: Set<CGWindowID>
+    /// The bubble and the ring overlay; none without R3's extras.
+    var filmedWindows: Set<CGWindowID> = []
+
+    /// The windows an area or fullscreen filter shows although TidyShot is left out. A window
+    /// recording films its one window and excepts none.
+    func exceptedWindowNumbers(for plan: RecordingFilterPlan) -> Set<CGWindowID> {
+        switch plan {
+        case .area, .display: coverWindows.union(filmedWindows)
+        case .window: []
+        }
+    }
+
+    /// The windows the fallback filter leaves out by number. Everything else of TidyShot's shows,
+    /// the covers and the filmed windows among it.
+    var fallbackExcludedWindowNumbers: Set<CGWindowID> {
+        chromeWindows.union(cardWindows)
+    }
+
+    /// The filmed windows among those the lookup found.
+    func filmed(found: Set<CGWindowID>) -> Set<CGWindowID> {
+        filmedWindows.intersection(found)
+    }
 }
 
 /// Why a stream could not start. The window and display cases are the driver's own content read,
@@ -45,9 +75,11 @@ nonisolated enum RecordingStartError: LocalizedError {
 /// One driver serves one recording: `start` once, then `stop`.
 protocol RecordingStreamDriver: AnyObject {
     /// Makes the filter from fresh shareable content and starts writing `outputURL`. `events` is
-    /// called on the main actor, from the start until the driver is released.
+    /// called on the main actor, from the start until the driver is released. Returns the filmed
+    /// windows the filter holds.
+    @discardableResult
     func start(_ configuration: RecordingConfiguration, outputURL: URL, exclusions: RecordingExclusions,
-               events: @escaping (RecordingStreamEvent) -> Void) async throws
+               events: @escaping (RecordingStreamEvent) -> Void) async throws -> Set<CGWindowID>
     /// `stopCapture()`. The file is complete only at `recordingFinished`, which can arrive before
     /// or after this returns.
     func stop() async throws
@@ -65,8 +97,8 @@ nonisolated enum RecordingLog {
 }
 
 /// The real driver (design, Stream and Excluded windows). Area and fullscreen recordings leave
-/// out every TidyShot window, including windows opened later, except the desktop covers; a window
-/// recording shows only the window.
+/// out every TidyShot window, including windows opened later, except the desktop covers, the bubble
+/// and the ring overlay; a window recording shows only the window.
 final class ScreenRecordingDriver: RecordingStreamDriver {
     private let engine: CaptureEngine
     private var stream: SCStream?
@@ -78,11 +110,12 @@ final class ScreenRecordingDriver: RecordingStreamDriver {
         self.engine = engine
     }
 
+    @discardableResult
     func start(_ configuration: RecordingConfiguration, outputURL: URL, exclusions: RecordingExclusions,
-               events: @escaping (RecordingStreamEvent) -> Void) async throws {
+               events: @escaping (RecordingStreamEvent) -> Void) async throws -> Set<CGWindowID> {
         self.events = events
         let content = try await engine.shareableContent()
-        let filter = try await makeFilter(configuration.filter, content: content, exclusions: exclusions)
+        let (filter, filmed) = try await makeFilter(configuration.filter, content: content, exclusions: exclusions)
 
         let delegate = RecordingStreamDelegate { [weak self] event in self?.events?(event) }
         let output = SCRecordingOutput(configuration: Self.outputConfiguration(outputURL), delegate: delegate)
@@ -95,6 +128,7 @@ final class ScreenRecordingDriver: RecordingStreamDriver {
         RecordingLog.note("Recording: starting \(configuration.pixelWidth)×\(configuration.pixelHeight) at \(configuration.framesPerSecond) fps, \(configuration.filter), microphone \(configuration.microphoneDeviceID ?? "off")")
         try await stream.startCapture()
         self.stream = stream
+        return filmed
     }
 
     func stop() async throws {
@@ -130,18 +164,19 @@ final class ScreenRecordingDriver: RecordingStreamDriver {
         return stream
     }
 
-    /// The filter from fresh shareable content. A window or display that went since the hand-off
-    /// throws. The covers are found by number; one that cannot be found shows its icons, and the
-    /// start goes ahead.
+    /// The filter from fresh shareable content, and the filmed windows it holds. A window or
+    /// display that went since the hand-off throws. The covers, the bubble and the ring overlay are
+    /// found by number in one lookup; a cover that cannot be found shows its icons, a filmed window
+    /// that cannot be found is not filmed, and the start goes ahead.
     private func makeFilter(_ plan: RecordingFilterPlan, content: SCShareableContent,
-                            exclusions: RecordingExclusions) async throws -> SCContentFilter {
+                            exclusions: RecordingExclusions) async throws -> (SCContentFilter, Set<CGWindowID>) {
         let displayID: CGDirectDisplayID
         switch plan {
         case .window(let windowID):
             guard let window = content.windows.first(where: { $0.windowID == windowID }) else {
                 throw RecordingStartError.windowGone
             }
-            return SCContentFilter(desktopIndependentWindow: window)
+            return (SCContentFilter(desktopIndependentWindow: window), [])
         case .area(let id, _), .display(let id):
             displayID = id
         }
@@ -153,22 +188,24 @@ final class ScreenRecordingDriver: RecordingStreamDriver {
         guard !own.isEmpty else {
             return try await fallbackFilter(display: display, exclusions: exclusions)
         }
-        let covers = exclusions.coverWindows.isEmpty
-            ? [] : await OverlayWindowLookup.windows(numbers: exclusions.coverWindows, engine: engine)
-        return SCContentFilter(display: display, excludingApplications: own, exceptingWindows: covers)
+        let excepted = exclusions.exceptedWindowNumbers(for: plan)
+        let found = excepted.isEmpty ? [] : await OverlayWindowLookup.windows(numbers: excepted, engine: engine)
+        return (SCContentFilter(display: display, excludingApplications: own, exceptingWindows: found),
+                exclusions.filmed(found: Set(found.map(\.windowID))))
     }
 
     /// TidyShot is missing from the shareable applications: the chrome and the cards are left out
-    /// by number, as `ScrollFrameSource` does, and the covers show anyway. The chrome must be
-    /// found; a card that is not found shows.
-    private func fallbackFilter(display: SCDisplay, exclusions: RecordingExclusions) async throws -> SCContentFilter {
+    /// by number, as `ScrollFrameSource` does, and the covers, the bubble and the ring overlay show
+    /// anyway, so every filmed window is filmed. The chrome must be found; a card that is not found
+    /// shows.
+    private func fallbackFilter(display: SCDisplay,
+                                exclusions: RecordingExclusions) async throws -> (SCContentFilter, Set<CGWindowID>) {
         RecordingLog.note("Recording: TidyShot is not in the shareable applications; its windows are left out by number, so windows opened later will show")
-        let found = await OverlayWindowLookup.windows(numbers: exclusions.chromeWindows.union(exclusions.cardWindows),
-                                                      engine: engine)
+        let found = await OverlayWindowLookup.windows(numbers: exclusions.fallbackExcludedWindowNumbers, engine: engine)
         guard exclusions.chromeWindows.isSubset(of: Set(found.map(\.windowID))) else {
             throw RecordingStartError.cannotHideOwnWindows
         }
-        return SCContentFilter(display: display, excludingWindows: found)
+        return (SCContentFilter(display: display, excludingWindows: found), exclusions.filmedWindows)
     }
 }
 

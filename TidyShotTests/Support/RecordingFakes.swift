@@ -42,6 +42,8 @@ final class FakeRecordingDriver: RecordingStreamDriver {
     /// When true, `stop` suspends after any finish it sends first, until `releaseStop()`, like a
     /// `stopCapture()` that does not return.
     var holdsStop = false
+    /// What `start` returns as the filmed windows; nil returns all of `exclusions.filmedWindows`.
+    var filmed: Set<CGWindowID>?
     private(set) var startCount = 0
     private(set) var stopCount = 0
     private(set) var configuration: RecordingConfiguration?
@@ -56,7 +58,7 @@ final class FakeRecordingDriver: RecordingStreamDriver {
     }
 
     func start(_ configuration: RecordingConfiguration, outputURL: URL, exclusions: RecordingExclusions,
-               events: @escaping (RecordingStreamEvent) -> Void) async throws {
+               events: @escaping (RecordingStreamEvent) -> Void) async throws -> Set<CGWindowID> {
         startCount += 1
         self.configuration = configuration
         self.outputURL = outputURL
@@ -65,6 +67,7 @@ final class FakeRecordingDriver: RecordingStreamDriver {
         log.append("start")
         if holdsStart { await withCheckedContinuation { startGate = $0 } }
         if let startError { throw startError }
+        return filmed ?? exclusions.filmedWindows
     }
 
     func stop() async throws {
@@ -111,6 +114,7 @@ final class FakeRecordingDriver: RecordingStreamDriver {
 final class FakeRecordingChrome: RecordingChrome {
     let log: RecordingTestLog
     var windowNumbers: Set<CGWindowID> = [41, 42]
+    var filmedWindowNumbers: [FilmedFeature: CGWindowID] = [.bubble: 51, .highlights: 52]
     /// What `askToDiscard` answers: true for Discard, false for Save.
     var discards = true
     /// When true, `askToDiscard` waits until `answerDiscardWithSave()`, like the real alert while
@@ -122,6 +126,8 @@ final class FakeRecordingChrome: RecordingChrome {
     private(set) var elapsedShown: [TimeInterval] = []
     /// Each `setMuted`, in order.
     private(set) var mutedShown: [Bool] = []
+    /// Each `setFilmed`, in order.
+    private(set) var filmedShown: [Set<FilmedFeature>] = []
     private var onStop: (() -> Void)?
     private var onCancel: (() -> Void)?
     private var onMute: (() -> Void)?
@@ -151,6 +157,10 @@ final class FakeRecordingChrome: RecordingChrome {
 
     func setMuted(_ muted: Bool) {
         mutedShown.append(muted)
+    }
+
+    func setFilmed(_ features: Set<FilmedFeature>) {
+        filmedShown.append(features)
     }
 
     func askToDiscard(elapsed: TimeInterval) async -> Bool {
