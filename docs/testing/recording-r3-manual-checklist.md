@@ -173,7 +173,7 @@ both? Is a click on the second display's menu bar seen? ______
 **P2, `showMouseClicks` (informational).**
 ```bash
 $W/r3-clicks builtin /tmp/r3-builtin.mp4 12
-$W/r3-clicks window <id>        # <id> is a window number the probe prints
+$W/r3-clicks builtin /tmp/r3-builtin-window.mp4 12 window <id>   # <id> from CGWindowListCopyWindowInfo
 ```
 Does the system's own circle (a) tell a right click from a left, (b) hold through a drag, (c) toggle through
 `updateConfiguration` with an `SCRecordingOutput` attached, (d) show in a window recording? If all four are yes
