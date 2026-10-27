@@ -1,6 +1,6 @@
 # TidyShot screen recording R3: design (2026-10-24)
 
-R3 adds click highlights and a webcam bubble to the screen recording built in R1 and R2. R1's design is `docs/superpowers/specs/2026-10-21-tidyshot-screen-recording-design.md` and R2's is `docs/superpowers/specs/2026-10-23-tidyshot-screen-recording-r2-design.md`; everything there still holds unless this document changes it. R2's decisions stand (R2, Decided 2026-10-23 and Decided 2026-10-24, 1 to 11). The research behind this design was done in `.superpowers/sdd/r3/`, which is local scratch and not in the repository; this document restates everything it uses from it. The probe sources are in `docs/superpowers/research/recording-probes/` (listed in its README under R3), and none has been run yet (Probes). There is no keystroke overlay in R3.
+R3 adds click highlights and a webcam bubble to the screen recording built in R1 and R2. R1's design is `docs/superpowers/specs/2026-10-21-tidyshot-screen-recording-design.md` and R2's is `docs/superpowers/specs/2026-10-23-tidyshot-screen-recording-r2-design.md`; everything there still holds unless this document changes it. R2's decisions stand (R2, Decided 2026-10-23 and Decided 2026-10-24, 1 to 11). The research behind this design was done in `.superpowers/sdd/r3/`, which is local scratch and not in the repository; this document restates everything it uses from it. The probe sources are in `docs/superpowers/research/recording-probes/` (listed in its README under R3); the results of Tim's runs on 2026-10-27, and what is still open, are in Probes. What was built, and where it differs from this text, is in the R3 built notes at the end. There is no keystroke overlay in R3.
 
 **Tim's decisions (2026-10-24).**
 - **Features.** Click highlights and a webcam bubble. No keystroke overlay.
@@ -11,7 +11,7 @@ R3 adds click highlights and a webcam bubble to the screen recording built in R1
 
 Every choice below that these answers do not settle is marked **(the design's call)**, and the list at the end collects them so Tim can overrule any one. Sizes of strokes, log wording and type names are implementation details and are not marked.
 
-## Probes (sources in `docs/superpowers/research/recording-probes/`, none run yet)
+## Probes (sources in `docs/superpowers/research/recording-probes/`; run on 2026-10-27 except P2, C3 and the items under Not run or not recorded)
 
 Each probe is Tim's to run, because each needs his screen, his clicks, his cameras or a permission. P2, P3 and B1 record the screen. C2 opens the camera. C3 records the screen and opens the camera. P1, P4 and C1 record nothing and open no camera; C1 needs his cameras plugged in. The build order in Gates says which tasks wait on which. Build `r3-camera-list.swift` and `r3-bubble-camera.swift` with `xcrun swiftc -O -target arm64-apple-macos26.0 -o /tmp/<name> <name>.swift -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker r3-camera-info.plist` (the plist sets `NSCameraUsageDescription`, `NSCameraUseContinuityCameraDeviceType` and a bundle id). `r3-clicks.swift` and `r3-bubble-filter.swift` open no camera and build without the plist. Results go in this section as R2's did, with the date and the Mac.
 
@@ -40,6 +40,14 @@ Each probe is Tim's to run, because each needs his screen, his clicks, his camer
   - **No loss notification.** Neither run printed an interruption, runtime error, stop or disconnect, and the frame rate never dropped. So the unplug, lock and out-of-range steps either were not done or did not interrupt the session. **G4 stays open:** the loss rules and the note stay as designed, and the checklist keeps the Brio unplug and the iPhone lock as hand checks in the app.
   - **G5, for Tim.** The probe adds an `AVCaptureVideoDataOutput` to measure frame age, which TidyShot's bubble does not have, so the probe's CPU is an upper bound. TidyShot's own figure comes from the hand check (Activity Monitor, a minute at Medium). If the iPhone stays over 5 % there, the budget or the format is Tim's call, as G5 says.
   - **Lip sync.** The iPhone's picture is about 35 ms later than the Brio's (60 ms against 25 ms frame age). R2 measured the iPhone's microphone 0.13 s late and USB microphones 0.02 s late, so iPhone picture with RODE sound puts the face about 40 ms behind the voice. That is about one frame at 30 fps, below what viewers notice, so R3 adds no correction. The clap check measures it.
+- **Not run or not recorded** (carried to `docs/testing/recording-r3-manual-checklist.md`, each with its command and a blank):
+  - **P2** was not run, so its four questions are unanswered. It was informational: R3 does not use `showMouseClicks`, and call 2 stands. A run that answers all four yes would reopen it.
+  - **C3**, the first camera prompt from the sandboxed app, is a hand check and has not run.
+  - **P1 and the two-display cases.** One display was attached, so the 5K display, a click on the other display and the Cocoa-to-CG flip across displays are untested outside `ClickHighlightRuleTests`.
+  - **G4.** No C2 run saw a loss notification (the Brio unplug, the iPhone lock, another app taking the camera), so the rules and the loss note stay as designed and the app's hand checks are the first test of them.
+  - **G5, TidyShot's own numbers.** C2's CPU is the probe's upper bound. The app's CPU, `footprint` and the iPhone over 5 % at times are the hand check's.
+  - **P3's quick click in a TidyShot GIF.** The probe's ring fades faster than `ClickRingTiming`, so the 7 and 5 frame counts for a 0.5 s ring (15 and 10 fps) are checked on a GIF the app makes.
+  - **C2's window behaviour** (the bubble over a fullscreen Space, its transparent corners, the clamped drag and the first click of a drag) was not reported; the hand checks cover it in the app.
 
 **Gates.** The pure code (Tests) and the Settings rows build on no probe; the `Camera` row builds with the three device types below, and G3 only confirms them. These parts wait:
 - **G1, click highlights' monitor** waits on P1 and P4. If the global monitor misses clicks TidyShot must see, or needs a prompt in the sandbox, the design goes back to Tim (an event tap needs Input Monitoring, which ad-hoc rebuilds may lose; `showMouseClicks` cannot give two colours).
@@ -246,3 +254,70 @@ Each suite pins pure decisions; the windows, the monitors and the camera are han
 25. Settings' camera prompt, and R2's microphone pick, are deferred while a capture or a recording runs, and block captures while open (Permission, Asking from Settings).
 26. A held ring waits at the rect's nearest edge point while the pointer is outside, and its up ends it wherever it lands (Where rings draw).
 27. The budget: under 5 % CPU and 60 MB for the bubble, under 1 % CPU and 5 MB for the rings (Budget).
+
+## R3 built notes (2026-10-27)
+
+Built on `recording-r3`, cut from `main` at 8e31c09 (R2 merged). The design and plan (534a8a1, 05ca5af, e8cdc72, 048698e), then one commit or two per task: Task 1 6d2795c and 137fee2; Task 2 6a0a671; Task 3 4b99bb6; Task 4 6631471, 5263c78, a69105d and 18b5038 (after the rulings in 2a1016e); Task 5 70734d3; Task 6 adb368b and 78f81d3; Task 7 2cf6c53; Task 8 4882e52; Task 9 9c1d564; Task 10 ba7539f; Task 11 21ce8af and a80a1b9; Task 12 d81a823 and 310ad44; Task 13 5fc2063; then this close-out. The probe results are in Probes (docs commits 36d1978, c2fd0ba, 4a9631a, 1c28752, cc2fb81, c863363). Nothing is pushed.
+
+- **Gates.** G1, G2 and G3 passed, so every step was built and none is held: `ClickMonitor` (G1), the start's wiring and the bar's reach to the highlighter (G1, G2). G4 and G5 hold nothing and are still open (Probes, Not run or not recorded). No held step was shipped without.
+- **Suite and build.** `Test run with 1875 tests in 166 suites passed` (the baseline's 1633 in 153, plus 242 tests in 13 suites). The Release build succeeds. `codesign -d --entitlements -` lists R2's entitlements plus `com.apple.security.device.camera`, and `strings` on the Release binary finds no `ClickMonitorSpike`.
+- **G1's rule, kept.** `ClickMonitor` and the code it calls never call `AXIsProcessTrusted`, `AXIsProcessTrustedWithOptions`, `CGPreflightListenEventAccess` or `CGRequestListenEventAccess`, not even to log (P4b). `ClickMonitorSpike` (Debug only, `-ClickMonitorSpike YES`) is the one file that does, because it is the probe. The whole-branch review checks the rule.
+
+### The seventeen gaps the plan filled
+
+Each stands as built; the checklist asks Tim to confirm or overrule each.
+1. `CameraChoice.resolveAtStart(stored:access:devices:preferred:)` takes no toggle and runs at every start. `CameraNote` decides whether the start's note posts.
+2. `CameraChoice.forRecording(_:source:)` takes the hand-off's `RecordingSource`; `.window` drops the camera and its note.
+3. One R3 snapshot per recording: `record()` reads `settings.recordingOptions` for `RecordingExtras` before the hand-off. The hand-off copies the two toggles and the size from `extras.options` and sets `cameraID` and `cameraName` from the window-filtered `CameraStart`; without extras it sets the toggles false and the size `.medium`.
+4. `FilmedFeature` (`.bubble`, `.highlights`) names the two windows. The chrome gives `filmedWindowNumbers` and takes `setFilmed(_:)`; a feature with no window number counts as missed.
+5. `RecordingChrome.setHighlights(_:monitoring:)`: the controller passes `monitoring: on && firstFrame != nil`, and `true` at `.recordingStarted`.
+6. The controller's `extrasSummary` (`bubbleWanted`, `highlightsAtStart`, `highlightsUsed`, `missed`) is read in `record()` after `recorder.run` returns; `Recording.highlightedClicks` carries `highlightsUsed` to the GIF conversion.
+7. `RecordingExtras` takes `elapsed: () -> TimeInterval`, the controller's `elapsedTime`, for the camera's log lines and the loss note.
+8. `requestAccessFromSettings(_:)` asks only when `settingsPromptStep` says `.ask`; otherwise it logs `Recording: <microphone|camera> prompt from Settings deferred, a capture is running` or `…, the <name> prompt is open`.
+9. `startPrompts(microphone:camera:)` gives the prompts, microphone first. Each answer logs `Recording: <microphone|camera> access allowed|refused at the prompt` (`… at the Settings prompt` from Settings); a start the lock refuses logs `Recording: not started after the <name> prompt, another capture was running`.
+10. The local monitor draws a down only on the bubble; local drags and ups pass from any TidyShot window, so a held ring is matched by button and never stays.
+11. A down for a button whose ring is still held ends that ring first.
+12. `LiveCameraDevices.preferred()` is `systemPreferredCamera` when its device type is one of the three listed, else the first listed camera, else nil.
+13. `RecordingExtrasPlace` holds the bubble's rect (AppKit), the ring area (CG, nil for fullscreen), the display's CG frame and its screen's AppKit frame, made by one pure function.
+14. `BubblePlacement.storedInsets(after:frame:recorded:)` gives insets after `.dragEnded` only (amended 2026-10-27: a size step writes the size only).
+15. When `.hd1280x720` cannot be set, `CameraFormat.pick` takes the format closest to 1280×720 in pixels among those that reach 30 fps, the smaller on a tie; with none it keeps the active format and sets no frame duration.
+16. `ClickRingColour` holds the ring's colours and `reservedGIFColours` (yellow, blue, black); `GIFMaker.make` gains `reserving:`.
+17. The P4 spike is `ClickMonitorSpike`, Debug only.
+
+### What was built differently from this design, task by task
+
+- **Rule and timing (Task 2).** A second down for a held button always ends the old ring; if the new down lands outside the recorded rect only the end is given and no ring begins. A drag's clamp is inclusive of the rect's maximum edges, where `CGRect.contains` for a down excludes them. `ClickRing` and `ClickRingChange` (`begin`, `move`, `end`) are the rule's outputs, and `ClickHighlightRule` also holds the highlights note (`notFilmedNotice`, `noteAfterStop`).
+- **GIF palette (Task 3).** The reserved colours come first, in order, and the variance split fills `255 − reserved.count` entries; a mean equal to a reserved colour is dropped. With no pixels and colours reserved the palette is the reserved colours alone. P3's GIF harness is in the session's scratch folder and is not committed.
+- **Placement and run state (Task 4).** Size steps write only the size, never the insets (ruling 2a1016e, overruling the plan's Gap 14 as first written), so a walk of steps against an edge leaves the stored place alone, although the bubble ends elsewhere on screen. `CameraRunState` counts asked stops: `willStop()` is called right before each `stopRunning` on a running session, and each stop notification uses up one count before it can be a loss. `stopsAfterStart(generation:)` records nothing. A stop on a session that never started posts nothing and is never counted.
+- **Settings (Task 5).** `AppSettings.bubbleInsets` reads the two insets through `BubbleInsets.reading`; the settings keep the raw size string, and an unknown one reads as Medium.
+- **Camera choice (Task 6).** A stored camera the list leaves out always gives the preferred camera with the `Recorded with` note, even when `preferred()` has the same `uniqueID` (no microphone-style "counts as present" rule). `.external` also lists the LG UltraFine Display Camera and the OBS Virtual Camera on Tim's Mac, so both show in the pop-up.
+- **Permission (Task 7).** The generated `Info.plist` and `.entitlements` are gitignored, so only `project.yml` carries the camera entitlement and the three keys. `PermissionPrompt` and `SettingsPromptStep` are top-level enums beside `PermissionPromptStep`. A start with the toggle off still reads the camera's access (it never prompts).
+- **Filter (Task 8).** `makeFilter` returns the filter and the filmed windows it found. With nothing filmed, the second log line reads `Recording: filming 0 own windows ()`.
+- **Bar (Task 9).** `RecordingScreenChrome.setFilmed` gives a missing feature `Not available for this recording` only when the button was enabled; a button already disabled (no camera, no access) keeps its own tool tip. `RecordingPanelLayout.size(of:)` counts the tag and the mute button as separate slots, which no built bar has together.
+- **Overlay and monitor (Task 10).** The ring is a 40 pt circle, so its 6 pt dark edge reaches 3 pt past the 40 pt box. The grow eases out and the fade is linear; the design gave no timing function. `ClickMonitor.localEventPasses` holds Gap 10's rule as a pure function.
+- **Bubble and session (Task 11).**
+  - `CameraRunState` sits in a `Mutex`, so `run(_:)` records a request on the caller's thread and a later request is visible to `stopsAfterStart` while `startRunning` blocks the queue.
+  - A failed start counts as a loss in the run state, so a later reconnect that starts reports the picture back.
+  - A rebuild stops a running session first (a counted stop).
+  - The format, the 30 fps duration and the mirroring are applied before every start, not only at a build.
+  - The frame-rate log line never traps on an invalid duration (`CameraFormat.loggedRate`, a80a1b9).
+  - After a loss the preview is hidden and the symbol shows on the grey, so a frozen last frame cannot cover it.
+  - The mouse handlers are on the panel, reached through the responder chain from the view; C2's probe had them on the view, so the first click of a drag is a hand check.
+- **Extras and the start (Task 12).**
+  - The preview layer exists whenever the camera is usable, so a bar press can turn the bubble on mid-recording; the session itself is made at the first on.
+  - A `.started` report after a loss counts as the camera's return, because turning the bubble off and on clears the run state's loss.
+  - A session that fails to start logs `Recording: camera could not be started: <reason>`, a line the design's list does not have.
+  - `show(at:)` gets the uncut area, and `place(at:)` the cut one.
+  - `RecordingController.close()` sets the first frame to nil, so the recording clock reads 0 after close and a later count-in's camera loss is not timed by the last recording (310ad44).
+- **Notes after Stop (Task 13).** Both notes reach every path of `endRecording`: nothing kept, a plain MP4 save, the muted MP4's three outcomes and the GIF's save, including the MP4 fallback. A GIF still has no microphone note.
+
+### Probe results
+
+In Probes above: P1, P3 (both halves), P4 and P4b, B1, C1 and C2 (Brio and iPhone), with the 2026-10-27 date and the Mac. G1 and G2 passed with them. P2 and C3 were not run.
+
+### Still open (the PR lists these)
+
+- Every hand check in `docs/testing/recording-r3-manual-checklist.md`: none has run. The Release build has no Screen Recording or Camera grant, and a grant is Tim's to give.
+- Probes P2 and C3, and G4 (which notifications a lost camera posts) and G5 (TidyShot's CPU and memory against the budget). An unexpected loss notification, or a number over budget, goes back to Tim.
+- Calls 1 to 27 above and the seventeen gaps: the checklist asks Tim to confirm or overrule each.
+- The two-display cases (P1's 5K display, a drag across displays).

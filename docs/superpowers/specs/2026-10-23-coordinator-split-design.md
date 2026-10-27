@@ -448,6 +448,16 @@ Captures; no pause.
   `startUpload`), `+RecordActions` (`copyFile`, `copyLinkOrFile`'s file branch, `saveAs`) and
   `+DragOut` (`prepareDragFile`). Its state is the controller's, and `muteLag(for:)` is a private
   member of `+Recording`.
+- **R3 (click highlights, webcam bubble).** `AppCoordinator.swift`: the prompt state `askingPermission:
+  PermissionPrompt?` (which replaces R2's `isAskingMicrophone`) and the `PermissionPrompt` enum beside
+  `refusesCapture`, and `cameras` among the collaborators beside `microphones`. `+Recording`: the camera
+  prompt (`startPrompts`, `recordingPrompts`, `permissionPromptStep`), the camera resolve under the
+  lock (`CameraChoice.resolveAtStart`, in `recordingCanStart`, and `forRecording` at the hand-off),
+  `RecordingExtras` (made in `record`, closed in its `defer`, shown and placed in `recordingHandOff`),
+  and the camera and highlights notes after Stop (`endRecording` and its callees). The one new entry
+  point for code outside the family is `requestAccessFromSettings(_:)`, used by `CaptureSettingsView`
+  (the microphone pick and the bubble toggle); the surface check's list of entry points takes it. No
+  member was widened from `private`.
 - **Parallel work.** GIF (`+Recording`, `+Upload`), the microphone (`+Recording`) and Trim
   (`+Trim`, `+Overlay`, `+Delete`) can be built on separate branches that rarely touch the same file.
 
