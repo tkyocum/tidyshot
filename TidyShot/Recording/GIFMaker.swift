@@ -29,9 +29,9 @@ nonisolated enum GIFMaker {
     /// Writes `gif` from `mp4` at `fps`, the longer side at most `maxSide` (never upscaled).
     /// `freeBytes` is the GIF's volume, read again every 32 MB written. `progress` goes from 0 to 1,
     /// at most 10 times a second, never decreasing, and once at 1. Any throw, a cancel included,
-    /// closes and removes `gif`.
+    /// closes and removes `gif`. `reserving` leads the palette, exactly (`GIFPaletteBuilder.build`).
     @concurrent
-    static func make(from mp4: URL, to gif: URL, fps: Int, maxSide: Int,
+    static func make(from mp4: URL, to gif: URL, fps: Int, maxSide: Int, reserving: [GIFColour] = [],
                      freeBytes: @escaping @Sendable () -> Int64?,
                      progress: @escaping @Sendable (Double) -> Void) async throws -> GIFResult {
         let reporter = ProgressReporter(progress)
@@ -40,7 +40,8 @@ nonisolated enum GIFMaker {
             let frameCount = outputFrameCount(duration: source.duration, fps: fps)
             let size = outputSize(width: source.width, height: source.height, maxSide: maxSide)
             let canvas = try Canvas(width: size.width, height: size.height)
-            let palette = try await makePalette(source, frameCount: frameCount, fps: fps, canvas: canvas, reporter: reporter)
+            let palette = try await makePalette(source, frameCount: frameCount, fps: fps, reserving: reserving,
+                                                canvas: canvas, reporter: reporter)
             let summary = try await encode(source, to: gif, frameCount: frameCount, fps: fps, palette: palette,
                                            canvas: canvas, freeBytes: freeBytes, reporter: reporter)
             reporter.report(1)
@@ -81,8 +82,8 @@ nonisolated enum GIFMaker {
 
     /// Pass 1: the sampled output frames, each scaled and added once per source frame. It reports
     /// up to the last sample; the palette share itself is reported once the GIF's file is open.
-    private static func makePalette(_ source: Source, frameCount: Int, fps: Int, canvas: Canvas,
-                                    reporter: ProgressReporter) async throws -> GIFPalette {
+    private static func makePalette(_ source: Source, frameCount: Int, fps: Int, reserving: [GIFColour],
+                                    canvas: Canvas, reporter: ProgressReporter) async throws -> GIFPalette {
         var builder = GIFPaletteBuilder()
         var frames = try await FrameReader(source)
         let samples = paletteSampleIndices(frameCount: frameCount)
@@ -101,7 +102,7 @@ nonisolated enum GIFMaker {
             }
         }
         frames.cancel()
-        return builder.build()
+        return builder.build(reserving: reserving)
     }
 
     /// Pass 2: every output frame in order. One that shows the same source frame as the one before

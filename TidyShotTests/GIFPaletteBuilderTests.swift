@@ -78,6 +78,49 @@ struct GIFPaletteBuilderTests {
         #expect(Set(palette.colours).count == 255)
     }
 
+    // MARK: Reserved colours (R3)
+
+    let yellow = GIFColour(r: 255, g: 204, b: 0)
+    let blue = GIFColour(r: 10, g: 133, b: 255)
+    let black = GIFColour(r: 0, g: 0, b: 0)
+
+    /// A 16 × 16 gradient of 256 colours, red and green in steps of 17 over a mid blue, each in a
+    /// bin of its own and none a reserved colour.
+    var gradientColours: [GIFColour] {
+        (0..<256).map { GIFColour(r: UInt8($0 % 16 * 17), g: UInt8($0 / 16 * 17), b: 128) }
+    }
+
+    @Test func reservedColoursComeFirstExactlyAndTheSplitFillsTheRest() {
+        var builder = GIFPaletteBuilder()
+        build(rgba(gradientColours), into: &builder)
+        let palette = builder.build(reserving: ClickRingColour.reservedGIFColours)
+
+        #expect(Array(palette.colours.prefix(3)) == [yellow, blue, black])
+        #expect(palette.colours.count == 255)
+        #expect(Set(palette.colours).count == 255)
+        // No sampled pixel was yellow or blue, and each still maps to its own entry.
+        #expect(palette.nearest(yellow) == 0)
+        #expect(palette.nearest(blue) == 1)
+    }
+
+    @Test func aReservedColourInTheFrameGetsNoSecondEntry() {
+        var builder = GIFPaletteBuilder()
+        build(rgba([yellow], times: 64), into: &builder)
+        let palette = builder.build(reserving: ClickRingColour.reservedGIFColours)
+        #expect(palette == GIFPalette(colours: [yellow, blue, black]))
+    }
+
+    @Test func reservedColoursAloneWhenThereAreNoPixels() {
+        let palette = GIFPaletteBuilder().build(reserving: ClickRingColour.reservedGIFColours)
+        #expect(palette == GIFPalette(colours: [yellow, blue, black]))
+    }
+
+    @Test func noReservedColoursIsR2sPalette() {
+        var builder = GIFPaletteBuilder()
+        build(rgba(gradientColours) + rgba(gridColours, times: 2), into: &builder)
+        #expect(builder.build(reserving: []) == builder.build())
+    }
+
     @Test func noPixelsGiveOneBlackEntry() {
         let palette = GIFPaletteBuilder().build()
         #expect(palette == GIFPalette(colours: [GIFColour(r: 0, g: 0, b: 0)]))

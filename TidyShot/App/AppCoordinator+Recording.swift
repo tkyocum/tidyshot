@@ -504,10 +504,12 @@ extension AppCoordinator {
     /// may start; the conversion's task is kept in `gifConversions` until it has saved.
     private func makeGIF(from recording: Recording, settings gif: GIFSettings, intent: CaptureIntent,
                          stopNotice: RecordingNotice?) async {
+        let reserved = recording.highlightedClicks ? ClickRingColour.reservedGIFColours : []
         let conversion = GIFConversion(
             freeBytes: { RecordingLimits.freeBytes(at: Recording.directory) },
             make: { mp4, gifURL, settings, progress in
                 try await GIFMaker.make(from: mp4, to: gifURL, fps: settings.fps, maxSide: settings.effectiveMaxSide,
+                                        reserving: reserved,
                                         freeBytes: { RecordingLimits.freeBytes(at: Recording.directory) },
                                         progress: progress)
             },
