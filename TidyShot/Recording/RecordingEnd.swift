@@ -45,7 +45,7 @@ nonisolated enum RecordingEnd {
     static let failedTitle = "Recording failed"
     /// The title of every refusal to start (disk, area size, a window or display that went).
     static let refusalTitle = "Screen recording"
-    /// A start the capture lock refused after its microphone prompt was answered (R2 design,
+    /// A start the capture lock refused after its microphone or camera prompt was answered (R2 design,
     /// Decided 2026-10-24, 9).
     static let busyAfterPrompt = RecordingNotice(title: refusalTitle,
                                                  body: "The recording did not start because another capture was running.")

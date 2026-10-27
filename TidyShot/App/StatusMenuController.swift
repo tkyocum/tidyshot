@@ -144,7 +144,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     /// "Capture Area  ⌃⇧4": the shortcut is part of the title, as the SwiftUI menu showed it, and
     /// is not a key equivalent, which would fire the capture a second time through the global
     /// hotkey that the menu buffers while it is open. Disabled while a capture would be refused:
-    /// another runs, or the microphone prompt is open.
+    /// another runs, or the microphone or the camera prompt is open.
     private func captureItem(_ title: String, _ name: KeyboardShortcuts.Name, _ action: Selector) -> NSMenuItem {
         let menuItem = item(self.title(title, shortcut: name), action)
         menuItem.isEnabled = !coordinator.capturesRefused

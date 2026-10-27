@@ -4,8 +4,9 @@ import Foundation
 nonisolated enum CaptureRefusal: Equatable, Sendable {
     /// Another capture holds the capture lock.
     case captureRunning
-    /// A record start waits on the microphone prompt, and no capture holds the lock.
-    case microphonePrompt
+    /// A record start or Settings waits on the microphone or the camera prompt, and no capture
+    /// holds the lock.
+    case permissionPrompt(PermissionPrompt)
 }
 
 /// What URL commands run: the app's existing capture functions. `AppCoordinator` conforms; the
@@ -98,12 +99,12 @@ final class URLCommandHandler {
 
     /// Why a capture command is dropped, for its log line, or nil when it runs: `busy` (a queued
     /// capture command ran first), then the target's refusal (a running capture, or the microphone
-    /// prompt alone).
+    /// or the camera prompt alone).
     static func dropReason(busy: Bool, refusal: CaptureRefusal?) -> String? {
         if busy { return "a queued capture command ran first" }
         switch refusal {
         case .captureRunning: return "a capture is running"
-        case .microphonePrompt: return "the microphone prompt is open"
+        case .permissionPrompt(let prompt): return "the \(prompt.name) prompt is open"
         case nil: return nil
         }
     }
@@ -136,7 +137,7 @@ final class URLCommandHandler {
         }
         guard let target else { return false }
         // Never queued behind a running capture, and never a Start or Done for a scrolling session.
-        // Dropped the same way while the microphone prompt is open.
+        // Dropped the same way while the microphone or the camera prompt is open.
         if command.kind.isCapture, let reason = Self.dropReason(busy: busy, refusal: target.captureRefusal) {
             NSLog("%@", "URL command from \(sender ?? "an unknown app") dropped, \(reason): \(url.absoluteString)")
             return false

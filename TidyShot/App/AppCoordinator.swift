@@ -45,6 +45,9 @@ final class AppCoordinator {
     /// The audio inputs and the microphone access, for a recording's start (the prompt, then the
     /// input under the capture lock) and its loss reason. Capture → Recording → `Microphone` reads its own.
     @ObservationIgnored lazy var microphones: any MicrophoneDevices = LiveMicrophoneDevices()
+    /// The cameras and the camera access, for a recording's start (the prompt, then the camera under
+    /// the capture lock) and Settings' prompt. Capture → Recording → `Camera` reads its own.
+    @ObservationIgnored lazy var cameras: any CameraDevices = LiveCameraDevices()
     /// Hide desktop icons (spec 2.10): the wallpaper over the desktop's icons and widgets, while a
     /// capture runs or until turned off. A display it cannot cover is reported once per session;
     /// without Screen Recording, which is why nothing could be read, the permission window shows instead.
@@ -79,10 +82,11 @@ final class AppCoordinator {
     /// count-in, the settle delay and the fresh content read, with the count-in on or off.
     /// `selfTimer.isRunning` cannot serve: it stays true until `run`'s capture closure returns.
     @ObservationIgnored var recordingCountIn = false
-    /// True while a record function waits on the system's microphone prompt, before the capture
-    /// lock: another start is ignored, and every other capture is refused as while one runs
-    /// (`capturesRefused`). The lock itself is free and `recordingPhase` does not change.
-    @ObservationIgnored var isAskingMicrophone = false
+    /// The system prompt a record function waits on, before the capture lock, or Settings asked
+    /// for (`requestAccessFromSettings`): another start is ignored, and every other capture is
+    /// refused as while one runs (`capturesRefused`). The lock itself is free and `recordingPhase`
+    /// does not change.
+    @ObservationIgnored var askingPermission: PermissionPrompt?
     /// Recordings between the recorder's `.keep` and `history.add` (in quit mode, until the
     /// thumbnail is written), a GIF's conversion included, so the phase never reads `.idle` in
     /// between.
@@ -455,33 +459,34 @@ final class AppCoordinator {
         }
     }
 
-    /// One rule for every capture (R2 design, Decided 2026-10-24, 9): refused while another holds the
-    /// capture lock, and while a record start waits on the microphone prompt, so no capture can
-    /// contain the prompt and the start that asked finds the lock free once it is answered. The lock,
-    /// the status menu's capture items and the URL commands read it, through `capturesRefused`.
-    nonisolated static func refusesCapture(isCapturing: Bool, isAskingMicrophone: Bool) -> Bool {
-        isCapturing || isAskingMicrophone
+    /// One rule for every capture (R2 design, Decided 2026-10-24, 9; R3 design, Permission): refused
+    /// while another holds the capture lock, and while a record start or Settings waits on the
+    /// microphone or the camera prompt, so no capture can contain the prompt and the start that asked
+    /// finds the lock free once it is answered. The lock, the status menu's capture items and the URL
+    /// commands read it, through `capturesRefused`.
+    nonisolated static func refusesCapture(isCapturing: Bool, askingPermission: PermissionPrompt?) -> Bool {
+        isCapturing || askingPermission != nil
     }
 
-    /// `refusesCapture` for the capture lock and the microphone prompt now.
+    /// `refusesCapture` for the capture lock and the open prompt now.
     var capturesRefused: Bool {
-        Self.refusesCapture(isCapturing: isCapturing, isAskingMicrophone: isAskingMicrophone)
+        Self.refusesCapture(isCapturing: isCapturing, askingPermission: askingPermission)
     }
 
     /// Why a capture is refused, for the URL handler's log: a capture holding the lock, or else the
-    /// microphone prompt. Nil when captures run.
-    nonisolated static func captureRefusal(isCapturing: Bool, isAskingMicrophone: Bool) -> CaptureRefusal? {
-        guard refusesCapture(isCapturing: isCapturing, isAskingMicrophone: isAskingMicrophone) else { return nil }
-        return isCapturing ? .captureRunning : .microphonePrompt
+    /// open prompt. Nil when captures run.
+    nonisolated static func captureRefusal(isCapturing: Bool, askingPermission: PermissionPrompt?) -> CaptureRefusal? {
+        if isCapturing { return .captureRunning }
+        return askingPermission.map { .permissionPrompt($0) }
     }
 
-    /// `captureRefusal` for the capture lock and the microphone prompt now.
+    /// `captureRefusal` for the capture lock and the open prompt now.
     var captureRefusal: CaptureRefusal? {
-        Self.captureRefusal(isCapturing: isCapturing, isAskingMicrophone: isAskingMicrophone)
+        Self.captureRefusal(isCapturing: isCapturing, askingPermission: askingPermission)
     }
 
     /// Runs `body` unless captures are refused (`capturesRefused`): a capture already runs, or the
-    /// microphone prompt is open. With `coversDesktop` and Hide desktop icons while capturing on,
+    /// microphone or the camera prompt is open. With `coversDesktop` and Hide desktop icons while capturing on,
     /// the desktop is covered before `body` reads the shareable content, so freeze snapshots and
     /// window lists see the covers, and uncovered when it ends (spec 2.10). Capture Scrolling and
     /// Capture Text pass false. Returns whether `body` ran.
@@ -503,3 +508,18 @@ final class AppCoordinator {
 
 /// The URL scheme's routes are AppCoordinator's capture, overlay and desktop-icon functions (in +Capture, +Overlay and this file), with their own signatures.
 extension AppCoordinator: URLCommandTarget {}
+
+/// The system prompt a record start or Settings waits on (`AppCoordinator.askingPermission`), while
+/// every capture is refused (`AppCoordinator.refusesCapture`).
+nonisolated enum PermissionPrompt: Equatable, Sendable {
+    case microphone
+    case camera
+
+    /// The prompt as log lines name it: `the <name> prompt is open`.
+    var name: String {
+        switch self {
+        case .microphone: "microphone"
+        case .camera: "camera"
+        }
+    }
+}
