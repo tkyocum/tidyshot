@@ -128,9 +128,13 @@ final class FakeRecordingChrome: RecordingChrome {
     private(set) var mutedShown: [Bool] = []
     /// Each `setFilmed`, in order.
     private(set) var filmedShown: [Set<FilmedFeature>] = []
+    /// The two R3 buttons each `show` laid out.
+    private(set) var shownToggles: [(highlights: BarToggle, bubble: BarToggle)] = []
     private var onStop: (() -> Void)?
     private var onCancel: (() -> Void)?
     private var onMute: (() -> Void)?
+    private var onHighlights: (() -> Void)?
+    private var onBubble: (() -> Void)?
     private var askGate: CheckedContinuation<Bool, Never>?
 
     init(log: RecordingTestLog) {
@@ -138,11 +142,15 @@ final class FakeRecordingChrome: RecordingChrome {
     }
 
     func show(onStop: @escaping () -> Void, onCancel: @escaping () -> Void, onMute: @escaping () -> Void,
-              bar: RecordingPanelLayout.Bar) {
+              onHighlights: @escaping () -> Void, onBubble: @escaping () -> Void,
+              bar: RecordingPanelLayout.Bar, highlights: BarToggle, bubble: BarToggle) {
         self.onStop = onStop
         self.onCancel = onCancel
         self.onMute = onMute
+        self.onHighlights = onHighlights
+        self.onBubble = onBubble
         shownBars.append(bar)
+        shownToggles.append((highlights, bubble))
         calls.append("show")
         log.append("show")
     }
@@ -161,6 +169,14 @@ final class FakeRecordingChrome: RecordingChrome {
 
     func setFilmed(_ features: Set<FilmedFeature>) {
         filmedShown.append(features)
+    }
+
+    func setHighlights(_ on: Bool, monitoring: Bool) {
+        calls.append("highlights \(on ? "on" : "off") monitoring \(monitoring ? "on" : "off")")
+    }
+
+    func setBubble(_ on: Bool) {
+        calls.append("bubble \(on ? "on" : "off")")
     }
 
     func askToDiscard(elapsed: TimeInterval) async -> Bool {
@@ -198,6 +214,15 @@ final class FakeRecordingChrome: RecordingChrome {
     /// press once the recording is ending all the same.
     func pressMute() {
         onMute?()
+    }
+
+    /// The bar's highlights and bubble buttons, which the real bar disables with Stop.
+    func pressHighlights() {
+        onHighlights?()
+    }
+
+    func pressBubble() {
+        onBubble?()
     }
 }
 

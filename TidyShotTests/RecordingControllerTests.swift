@@ -776,6 +776,338 @@ struct RecordingControllerTests {
         controller.close()
     }
 
+    // MARK: The bar's two buttons (R3 design, Bar)
+
+    /// An area recording with `extras`.
+    func extrasRequest(_ extras: RecordingExtrasStart, gif: GIFSettings? = nil) -> RecordingRequest {
+        request(.area(CGRect(x: 100, y: 100, width: 800, height: 500), on: display), gif: gif, extras: extras)
+    }
+
+    /// Both R3 toggles off, with a usable camera.
+    let bothOff = RecordingExtrasStart(highlights: false, bubbleToggle: false,
+                                       bubble: BubbleButtonState(isEnabled: true, disabledToolTip: nil))
+
+    /// The chrome's highlights and bubble calls, in order.
+    func toggleCalls(_ chrome: FakeRecordingChrome) -> [String] {
+        chrome.calls.filter { $0.hasPrefix("highlights") || $0.hasPrefix("bubble") }
+    }
+
+    @Test func theTogglesFlipAndReachTheChrome() async throws {
+        let driver = FakeRecordingDriver(log: world.log)
+        let chrome = FakeRecordingChrome(log: world.log)
+        let (controller, run) = await begin(extrasRequest, driver: driver, chrome: chrome)
+        let on = BarToggle(isOn: true, isEnabled: true, disabledToolTip: nil)
+        #expect(chrome.shownToggles.map(\.highlights) == [on])
+        #expect(chrome.shownToggles.map(\.bubble) == [on])
+        #expect(controller.highlightsClicks)
+        #expect(controller.showsBubble)
+        driver.send(.recordingStarted)
+        await world.advance(by: .seconds(2))
+
+        chrome.pressHighlights()
+        #expect(!controller.highlightsClicks)
+        chrome.pressBubble()
+        #expect(!controller.showsBubble)
+        controller.toggleHighlights()
+        #expect(controller.highlightsClicks)
+        controller.toggleBubble()
+        #expect(controller.showsBubble)
+        #expect(toggleCalls(chrome) == ["highlights on monitoring on", "highlights off monitoring off", "bubble off",
+                                        "highlights on monitoring on", "bubble on"])
+        chrome.pressStop()
+        _ = await run.value
+        controller.close()
+    }
+
+    /// The bubble has been on screen since the count-in, so its press applies at once; the monitors
+    /// wait for the first frame (plan Gap 5).
+    @Test func aBubblePressBeforeTheFirstFrameAppliesAtOnceAndAHighlightsPressAtIt() async throws {
+        let driver = FakeRecordingDriver(log: world.log)
+        driver.holdsStart = true
+        let chrome = FakeRecordingChrome(log: world.log)
+        let (controller, run) = await begin(extrasRequest(bothOff), driver: driver, chrome: chrome)
+        #expect(driver.isHoldingStart)
+        #expect(!controller.highlightsClicks)
+        #expect(!controller.showsBubble)
+
+        chrome.pressBubble()
+        chrome.pressHighlights()
+        #expect(toggleCalls(chrome) == ["bubble on", "highlights on monitoring off"])
+        #expect(controller.extrasSummary.bubbleWanted)
+        #expect(!controller.extrasSummary.highlightsUsed)
+        driver.releaseStart()
+        await world.advance(by: .seconds(1))
+        #expect(toggleCalls(chrome) == ["bubble on", "highlights on monitoring off"])
+        driver.send(.recordingStarted)
+        #expect(toggleCalls(chrome) == ["bubble on", "highlights on monitoring off", "highlights on monitoring on"])
+        #expect(controller.extrasSummary.highlightsUsed)
+        chrome.pressStop()
+        _ = await run.value
+        controller.close()
+    }
+
+    @Test func aBarPressOnceTheRecordingIsEndingIsIgnored() async throws {
+        let driver = FakeRecordingDriver(log: world.log)
+        driver.finishTiming = .never
+        let chrome = FakeRecordingChrome(log: world.log)
+        let (controller, run) = await begin(extrasRequest, driver: driver, chrome: chrome)
+        driver.send(.recordingStarted)
+        await world.advance(by: .seconds(2))
+        chrome.pressStop()
+        await world.advance(by: .seconds(1))
+        // In the stop wait.
+        #expect(controller.isRunning)
+        chrome.pressHighlights()
+        chrome.pressBubble()
+        controller.toggleHighlights()
+        controller.toggleBubble()
+        #expect(controller.highlightsClicks)
+        #expect(controller.showsBubble)
+
+        driver.send(.recordingFinished)
+        _ = await run.value
+        // A press after the run is ignored too.
+        controller.toggleHighlights()
+        controller.toggleBubble()
+        #expect(controller.highlightsClicks)
+        #expect(controller.showsBubble)
+        #expect(toggleCalls(chrome) == ["highlights on monitoring on"])
+        controller.close()
+    }
+
+    @Test func bothResetAtTheNextRun() async throws {
+        let drivers = [FakeRecordingDriver(log: world.log), FakeRecordingDriver(log: world.log),
+                       FakeRecordingDriver(log: world.log)]
+        var unused = drivers
+        let controller = RecordingController(environment: world.environment, makeDriver: { unused.removeFirst() })
+        let first = FakeRecordingChrome(log: world.log)
+        let firstRun = Task { await controller.run(extrasRequest, chrome: first, onStarted: {}) }
+        await world.advance(by: .zero)
+        drivers[0].send(.recordingStarted)
+        first.pressHighlights()
+        first.pressBubble()
+        #expect(!controller.highlightsClicks)
+        #expect(!controller.showsBubble)
+        first.pressStop()
+        _ = await firstRun.value
+        controller.close()
+
+        let second = FakeRecordingChrome(log: world.log)
+        let secondRun = Task { await controller.run(extrasRequest, chrome: second, onStarted: {}) }
+        await world.advance(by: .zero)
+        #expect(controller.highlightsClicks)
+        #expect(controller.showsBubble)
+        #expect(second.shownToggles.map(\.highlights.isOn) == [true])
+        #expect(second.shownToggles.map(\.bubble.isOn) == [true])
+        second.pressStop()
+        _ = await secondRun.value
+        controller.close()
+
+        // A window recording has neither.
+        let third = FakeRecordingChrome(log: world.log)
+        let thirdRun = Task { await controller.run(areaRequest, chrome: third, onStarted: {}) }
+        await world.advance(by: .zero)
+        #expect(!controller.highlightsClicks)
+        #expect(!controller.showsBubble)
+        third.pressStop()
+        _ = await thirdRun.value
+        controller.close()
+    }
+
+    @Test func theBubbleStartsOffAndDisabledWithTheToggleOnAndNoCamera() async throws {
+        let noCamera = BubbleButtonState(isEnabled: false, disabledToolTip: CameraChoice.noCameraText)
+        let extras = RecordingExtrasStart(highlights: false, bubbleToggle: true, bubble: noCamera)
+        let driver = FakeRecordingDriver(log: world.log)
+        let chrome = FakeRecordingChrome(log: world.log)
+        let (controller, run) = await begin(extrasRequest(extras), driver: driver, chrome: chrome)
+
+        #expect(!controller.showsBubble)
+        #expect(chrome.shownToggles.map(\.bubble) == [BarToggle(isOn: false, isEnabled: false,
+                                                                disabledToolTip: CameraChoice.noCameraText)])
+        driver.send(.recordingStarted)
+        chrome.pressBubble()
+        #expect(!controller.showsBubble)
+        #expect(toggleCalls(chrome).isEmpty)
+        // The toggle was on, so the camera's note may post.
+        #expect(controller.extrasSummary.bubbleWanted)
+        chrome.pressStop()
+        _ = await run.value
+        controller.close()
+    }
+
+    /// A feature the filter does not film is off, and its button does nothing.
+    @Test func aMissedFeaturesPressIsIgnored() async throws {
+        let driver = FakeRecordingDriver(log: world.log)
+        driver.filmed = []
+        let chrome = FakeRecordingChrome(log: world.log)
+        let (controller, run) = await begin(extrasRequest, driver: driver, chrome: chrome)
+        #expect(!controller.highlightsClicks)
+        #expect(!controller.showsBubble)
+
+        driver.send(.recordingStarted)
+        chrome.pressHighlights()
+        chrome.pressBubble()
+        #expect(!controller.highlightsClicks)
+        #expect(!controller.showsBubble)
+        #expect(toggleCalls(chrome).isEmpty)
+        #expect(controller.extrasSummary == RecordingExtrasSummary(bubbleWanted: true, highlightsAtStart: true,
+                                                                   highlightsUsed: false, missed: [.bubble, .highlights]))
+        chrome.pressStop()
+        let recording = try #require(await run.value.kept)
+        #expect(!recording.highlightedClicks)
+        controller.close()
+    }
+
+    /// Only the missed feature's button stops working.
+    @Test func aMissedBubbleLeavesTheHighlightsButton() async throws {
+        let driver = FakeRecordingDriver(log: world.log)
+        driver.filmed = [52]
+        let chrome = FakeRecordingChrome(log: world.log)
+        let (controller, run) = await begin(extrasRequest, driver: driver, chrome: chrome)
+        driver.send(.recordingStarted)
+        chrome.pressBubble()
+        chrome.pressHighlights()
+        #expect(!controller.showsBubble)
+        #expect(!controller.highlightsClicks)
+        #expect(toggleCalls(chrome) == ["highlights on monitoring on", "highlights off monitoring off"])
+        chrome.pressStop()
+        _ = await run.value
+        controller.close()
+    }
+
+    nonisolated enum HighlightsPresses: CaseIterable, Sendable {
+        /// Off at the start, never pressed.
+        case never
+        /// On at the start.
+        case onAtTheStart
+        /// Off at the start, on after the first frame.
+        case onMidRecording
+        /// Off at the start, on and off again before the first frame.
+        case onAndOffBeforeTheFirstFrame
+    }
+
+    /// `highlightsUsed` is whether rings could have been drawn: highlights on at some point from
+    /// the first frame. The kept recording carries it to the GIF's palette.
+    @Test(arguments: HighlightsPresses.allCases)
+    func theSummaryAndTheKeptRecordingFollowThePresses(_ presses: HighlightsPresses) async throws {
+        let extras = RecordingExtrasStart(highlights: presses == .onAtTheStart, bubbleToggle: false,
+                                          bubble: BubbleButtonState(isEnabled: true, disabledToolTip: nil))
+        let driver = FakeRecordingDriver(log: world.log)
+        let chrome = FakeRecordingChrome(log: world.log)
+        let (controller, run) = await begin(extrasRequest(extras), driver: driver, chrome: chrome)
+        if presses == .onAndOffBeforeTheFirstFrame {
+            chrome.pressHighlights()
+            chrome.pressHighlights()
+        }
+        driver.send(.recordingStarted)
+        await world.advance(by: .seconds(2))
+        if presses == .onMidRecording {
+            chrome.pressHighlights()
+        }
+        await world.advance(by: .seconds(1))
+        chrome.pressStop()
+
+        let recording = try #require(await run.value.kept)
+        let used = presses == .onAtTheStart || presses == .onMidRecording
+        #expect(controller.extrasSummary.highlightsAtStart == (presses == .onAtTheStart))
+        #expect(controller.extrasSummary.highlightsUsed == used)
+        #expect(recording.highlightedClicks == used)
+        #expect(!controller.extrasSummary.bubbleWanted)
+        controller.close()
+    }
+
+    /// A bubble press on marks it wanted, for the camera's note, even if it goes off again.
+    @Test func aBubblePressOnMarksTheBubbleWanted() async throws {
+        let driver = FakeRecordingDriver(log: world.log)
+        let chrome = FakeRecordingChrome(log: world.log)
+        let (controller, run) = await begin(extrasRequest(bothOff), driver: driver, chrome: chrome)
+        driver.send(.recordingStarted)
+        #expect(!controller.extrasSummary.bubbleWanted)
+        chrome.pressBubble()
+        chrome.pressBubble()
+        #expect(controller.extrasSummary.bubbleWanted)
+        #expect(!controller.showsBubble)
+        chrome.pressStop()
+        _ = await run.value
+        controller.close()
+    }
+
+    nonisolated enum BarExit: CaseIterable, Sendable {
+        case stop, cancel, sleep, outputError, startFailure, stopBeforeTheFirstFrame
+    }
+
+    @Test(arguments: BarExit.allCases)
+    func closeReachesTheChromeOnceOnEveryEnd(_ exit: BarExit) async throws {
+        let driver = FakeRecordingDriver(log: world.log)
+        if exit == .startFailure {
+            driver.startError = RecordingStartError.displayGone
+        }
+        let chrome = FakeRecordingChrome(log: world.log)
+        let (controller, run) = await begin(extrasRequest, driver: driver, chrome: chrome)
+        if exit != .startFailure && exit != .stopBeforeTheFirstFrame {
+            driver.send(.recordingStarted)
+            await world.advance(by: .seconds(2))
+        }
+        switch exit {
+        case .stop, .stopBeforeTheFirstFrame: chrome.pressStop()
+        case .cancel: chrome.pressCancel()
+        case .sleep: world.center.post(name: NSWorkspace.willSleepNotification, object: nil)
+        case .outputError: driver.send(.outputFailed("The file could not be written."))
+        case .startFailure: break
+        }
+        _ = await run.value
+        #expect(!chrome.calls.contains("close"))
+        controller.close()
+        #expect(chrome.calls.filter { $0 == "close" }.count == 1)
+    }
+
+    /// Without extras the bar is R2's, and neither button does anything.
+    @Test func aRequestWithoutExtrasShowsR2sBars() async throws {
+        let area = RecordingSource.area(CGRect(x: 100, y: 100, width: 800, height: 500), on: display)
+        let gif = GIFSettings(fps: 15, maxSide: 1280)
+        let cases: [(RecordingRequest, RecordingPanelLayout.Bar)] = [
+            (request(area), .plain),
+            (request(area, systemAudio: true), .mute),
+            (request(area, gif: gif), .gif),
+            (extrasRequest, RecordingPanelLayout.Bar(showsTag: false, showsMute: false, showsOverlayButtons: true)),
+            (request(area, systemAudio: true, extras: bothOn),
+             RecordingPanelLayout.Bar(showsTag: false, showsMute: true, showsOverlayButtons: true)),
+            (extrasRequest(bothOn, gif: gif), RecordingPanelLayout.Bar(showsTag: true, showsMute: false, showsOverlayButtons: true)),
+        ]
+        for (request, bar) in cases {
+            let driver = FakeRecordingDriver(log: world.log)
+            let chrome = FakeRecordingChrome(log: world.log)
+            let (controller, run) = await begin(request, driver: driver, chrome: chrome)
+            #expect(chrome.shownBars == [bar])
+            if request.extras == nil {
+                driver.send(.recordingStarted)
+                chrome.pressHighlights()
+                chrome.pressBubble()
+                #expect(!controller.highlightsClicks)
+                #expect(!controller.showsBubble)
+                #expect(toggleCalls(chrome).isEmpty)
+            }
+            chrome.pressStop()
+            _ = await run.value
+            controller.close()
+        }
+    }
+
+    /// The recording's clock for R3's log lines (plan Gap 7).
+    @Test func elapsedTimeCountsFromTheFirstFrame() async throws {
+        let driver = FakeRecordingDriver(log: world.log)
+        let chrome = FakeRecordingChrome(log: world.log)
+        let (controller, run) = await begin(extrasRequest, driver: driver, chrome: chrome)
+        await world.advance(by: .seconds(2))
+        #expect(controller.elapsedTime == 0)
+        driver.send(.recordingStarted)
+        await world.advance(by: .seconds(3))
+        #expect(controller.elapsedTime == 3)
+        chrome.pressStop()
+        _ = await run.value
+        controller.close()
+    }
+
     // MARK: One controller, two runs
 
     /// Runs a recording on `first` whose stop never returns, so its wait times out, then starts

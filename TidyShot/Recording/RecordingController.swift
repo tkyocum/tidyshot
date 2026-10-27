@@ -167,6 +167,10 @@ final class RecordingController {
 
     /// The R3 features' run, for the notes after Stop; reset at each run.
     private(set) var extrasSummary = RecordingExtrasSummary()
+    /// Whether clicks are highlighted, and whether the bubble shows, now; the bar's two buttons show
+    /// them (R3 design, Bar, State). Both false without R3's extras, and for a missed feature.
+    private(set) var highlightsClicks = false
+    private(set) var showsBubble = false
 
     init(environment: RecordingEnvironment, makeDriver: @escaping () -> any RecordingStreamDriver) {
         self.environment = environment
@@ -189,8 +193,14 @@ final class RecordingController {
         // fallback exclusion can find it. The mute button is live from here.
         chrome.show(onStop: { [weak self] in self?.stop() }, onCancel: { [weak self] in self?.cancel() },
                     onMute: { [weak self] in self?.toggleMute() },
+                    onHighlights: { [weak self] in self?.toggleHighlights() },
+                    onBubble: { [weak self] in self?.toggleBubble() },
                     bar: RecordingPanelLayout.bar(showsMute: request.configuration.showsMuteButton,
-                                                  isGIF: request.gif != nil))
+                                                  isGIF: request.gif != nil,
+                                                  showsOverlayButtons: request.extras != nil),
+                    highlights: BarToggle(isOn: highlightsClicks, isEnabled: true, disabledToolTip: nil),
+                    bubble: BarToggle(isOn: showsBubble, isEnabled: request.extras?.bubble.isEnabled ?? false,
+                                      disabledToolTip: request.extras?.bubble.disabledToolTip))
         // The bubble and the ring overlay are filmed only with R3's extras.
         let filmedNumbers = request.extras == nil ? [:] : chrome.filmedWindowNumbers
         let exclusions = RecordingExclusions(chromeWindows: chrome.windowNumbers,
@@ -250,6 +260,34 @@ final class RecordingController {
         chrome?.setMuted(isMuted)
     }
 
+    /// The bar's highlights button (R3 design, Bar, Presses). A press before the first frame shows
+    /// at once and installs the monitors at it; one once the recording is ending, or for a missed
+    /// feature, is ignored.
+    func toggleHighlights() {
+        guard isRunning, cause == nil, request?.extras != nil, !extrasSummary.missed.contains(.highlights) else { return }
+        highlightsClicks.toggle()
+        let monitoring = highlightsClicks && firstFrame != nil
+        if monitoring {
+            extrasSummary.highlightsUsed = true
+        }
+        chrome?.setHighlights(highlightsClicks, monitoring: monitoring)
+        RecordingLog.note("Recording: click highlights \(highlightsClicks ? "on" : "off") at \(RecordingClock.format(elapsed))")
+    }
+
+    /// The bar's bubble button. The bubble has been on screen since the count-in, so a press before
+    /// the first frame applies at once. Ignored once the recording is ending, without a usable
+    /// camera, or for a missed feature.
+    func toggleBubble() {
+        guard isRunning, cause == nil, let extras = request?.extras, extras.bubble.isEnabled,
+              !extrasSummary.missed.contains(.bubble) else { return }
+        showsBubble.toggle()
+        if showsBubble {
+            extrasSummary.bubbleWanted = true
+        }
+        chrome?.setBubble(showsBubble)
+        RecordingLog.note("Recording: webcam bubble \(showsBubble ? "on" : "off") at \(RecordingClock.format(elapsed))")
+    }
+
     /// A quit (design, Quit, log out and restart) ends the recording as Stop does, and never waits
     /// for a Cancel's question: when a Cancel came first, the answer is Save, which carries on as
     /// Stop, whether the alert waits to show or is still to come. The real alert shows only in the
@@ -297,7 +335,11 @@ final class RecordingController {
         muteIntervals = []
         muteSequence = 0
         muteLogWriter = nil
-        extrasSummary = RecordingExtrasSummary()
+        let extras = request.extras
+        highlightsClicks = extras?.highlights ?? false
+        showsBubble = extras.map { $0.bubbleToggle && $0.bubble.isEnabled } ?? false
+        extrasSummary = RecordingExtrasSummary(bubbleWanted: extras?.bubbleToggle ?? false,
+                                               highlightsAtStart: extras?.highlights ?? false)
     }
 
     /// Tells the chrome which features the filter films (R3 design, Lookup misses): a feature is
@@ -312,6 +354,12 @@ final class RecordingController {
         RecordingLog.note("Recording: filming \(filmed.count) own windows (\(filmed.map(\.rawValue).joined(separator: ", ")))")
         chrome.setFilmed(Set(filmed))
         extrasSummary.missed = Set(FilmedFeature.allCases).subtracting(filmed)
+        if extrasSummary.missed.contains(.highlights) {
+            highlightsClicks = false
+        }
+        if extrasSummary.missed.contains(.bubble) {
+            showsBubble = false
+        }
     }
 
     private func observeWorkspace() {
@@ -335,6 +383,11 @@ final class RecordingController {
             startedAt = environment.now()
             activity = environment.beginActivity()
             startTicking()
+            // The monitors exist only from the first frame.
+            if request?.extras != nil, highlightsClicks, !extrasSummary.missed.contains(.highlights) {
+                extrasSummary.highlightsUsed = true
+                chrome?.setHighlights(true, monitoring: true)
+            }
             onStarted()
         case .recordingFinished:
             outputEnded = true
@@ -405,6 +458,12 @@ final class RecordingController {
         return (environment.clock.now - firstFrame) / .seconds(1)
     }
 
+    /// Seconds since the first frame, 0 before it, for R3's log lines and the camera's loss note
+    /// (plan Gap 7).
+    var elapsedTime: TimeInterval {
+        elapsed
+    }
+
     // MARK: Ending
 
     /// The first end wins; any later one is ignored. Stop and the mute button are disabled, an open
@@ -469,6 +528,7 @@ final class RecordingController {
                                       gif: request.gif)
             recording.muteIntervals = muteIntervals
             recording.lag = request.lag
+            recording.highlightedClicks = extrasSummary.highlightsUsed
             return .keep(recording, notice: notice)
         case .remove(let notice):
             discard(request)
