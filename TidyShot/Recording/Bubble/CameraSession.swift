@@ -34,6 +34,15 @@ nonisolated enum CameraFormat {
                 return da != db ? da < db : area(a) < area(b)
             }
     }
+
+    /// The frame rate for the log: from the min frame duration when it is a positive number,
+    /// else the format's max rate, else 0. Never traps: some cameras report an invalid or zero
+    /// duration, and no duration is set when the format does not reach 30 fps.
+    static func loggedRate(minFrameDuration: CMTime, formatMax: Double) -> Int {
+        let seconds = minFrameDuration.seconds
+        let rate = minFrameDuration.isNumeric && seconds.isFinite && seconds > 0 ? 1 / seconds : formatMax
+        return rate.isFinite && rate > 0 ? Int(rate.rounded()) : 0
+    }
 }
 
 /// The bubble's camera (design, Webcam bubble, The camera session): one `AVCaptureSession` with
@@ -120,7 +129,9 @@ nonisolated final class CameraSession: @unchecked Sendable {
             return
         }
         let size = CMVideoFormatDescriptionGetDimensions(device.activeFormat.formatDescription)
-        let fps = Int((1 / device.activeVideoMinFrameDuration.seconds).rounded())
+        let fps = CameraFormat.loggedRate(
+            minFrameDuration: device.activeVideoMinFrameDuration,
+            formatMax: device.activeFormat.videoSupportedFrameRateRanges.map(\.maxFrameRate).max() ?? 0)
         RecordingLog.note("Recording: camera \(device.localizedName), \(size.width)×\(size.height) at \(fps) fps, started in \(took) ms")
         send(.started)
     }

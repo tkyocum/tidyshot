@@ -1,3 +1,4 @@
+import CoreMedia
 import Testing
 @testable import TidyShot
 
@@ -39,6 +40,15 @@ struct CameraSessionTests {
             Candidate(width: 960, height: 720, maxFrameRate: 30),
         ]
         #expect(CameraFormat.pick(formats) == 1)
+    }
+
+    @Test func theLoggedRateNeverTraps() {
+        #expect(CameraFormat.loggedRate(minFrameDuration: CMTime(value: 1, timescale: 30), formatMax: 60) == 30)
+        #expect(CameraFormat.loggedRate(minFrameDuration: .invalid, formatMax: 24) == 24)
+        #expect(CameraFormat.loggedRate(minFrameDuration: .zero, formatMax: 15) == 15)
+        #expect(CameraFormat.loggedRate(minFrameDuration: .indefinite, formatMax: 0) == 0)
+        #expect(CameraFormat.loggedRate(minFrameDuration: .positiveInfinity, formatMax: .nan) == 0)
+        #expect(CameraFormat.loggedRate(minFrameDuration: .zero, formatMax: .infinity) == 0)
     }
 
     @Test func theQueue() {
