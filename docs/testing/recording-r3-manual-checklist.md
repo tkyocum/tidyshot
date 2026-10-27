@@ -140,7 +140,9 @@ Run `tccutil reset Camera io.tky.tidyshot` first (Tim's step), then open the Rel
   camera access allowed at the Settings prompt` or `… refused at the Settings prompt`. While the prompt is up,
   each capture shortcut does nothing, no selection overlay shows, the status menu's capture items are shown
   disabled, and `open "tidyshot://capture-area"` (URL commands on) does nothing and logs `URL command from …
-  dropped, the camera prompt is open: tidyshot://capture-area`. Write down what the prompt looked like: ______
+  dropped, the camera prompt is open: tidyshot://capture-area`. That line has no `Recording:` prefix, so the
+  log line's grep does not show it; find it with `/usr/bin/log show --last 10m --style compact --predicate
+  'process == "TidyShot"' | grep "URL command"`. Write down what the prompt looked like: ______
 - [ ] Reset again (`tccutil reset Camera io.tky.tidyshot`), turn the bubble toggle off and then on during a
   recording. No prompt shows in the recording; the log has `Recording: camera prompt from Settings deferred, a
   capture is running`. Stop. The next start asks: Record Screen shows the prompt before the selection, and
@@ -388,6 +390,8 @@ the camera with the RODE microphone.
 K0=1 python3 $P/mute-offset-onsets.py <file>.mp4    # the sound's onset for each clap
 ffmpeg -ss <s> -i <file>.mp4 -frames:v 1 frame.png   # the frame where the hands meet
 ```
+The script prints four events from K0, at 1, 2, 3 and 4 s; with three claps the fourth reads `none`. Its
+`+ms` is against the whole second it looked from, not the clap, so read each onset against that clap's frame.
 - [ ] The offset between the frame where the hands meet and the sound's onset, Brio: ______ ms. iPhone: ______
   ms. The design expects the iPhone about 40 ms behind the voice, about one frame at 30 fps, and adds no
   correction. A larger offset goes to Tim.

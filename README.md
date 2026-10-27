@@ -286,9 +286,10 @@ neither button.
   remembered for the next recording. It appears with the countdown (so you can drag it there), not
   during the area selection. A camera that is lost during a recording leaves a grey circle with a
   crossed-out camera, and the recording goes on.
-- *Highlights* and *Bubble* buttons on the panel turn each on or off during the recording. A press
-  does not change Settings. The bubble's button is greyed out until camera access has been allowed
-  once from Settings, and says why in its tool tip.
+- Two buttons on the panel, *Highlight clicks* and *Show the webcam bubble* (their tool tips), turn
+  each on or off during the recording. A press does not change Settings. The bubble's button is
+  greyed out until camera access is allowed and a camera is connected, with the reason in its tool
+  tip.
 - After you stop, a note says when the bubble or the rings could not be filmed, the camera was not
   connected or was lost, or camera access is off, after the save's own notification and the
   microphone's note. A recording with the toggle off and the button never pressed posts nothing.

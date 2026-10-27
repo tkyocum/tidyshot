@@ -456,8 +456,8 @@ Captures; no pause.
   `RecordingExtras` (made in `record`, closed in its `defer`, shown and placed in `recordingHandOff`),
   and the camera and highlights notes after Stop (`endRecording` and its callees). The one new entry
   point for code outside the family is `requestAccessFromSettings(_:)`, used by `CaptureSettingsView`
-  (the microphone pick and the bubble toggle); the surface check's list of entry points takes it. No
-  member was widened from `private`.
+  (the microphone pick and the bubble toggle). It is a new member, not a widened one, so the surface
+  check, which lists widened members, needs no change. No member was widened from `private`.
 - **Parallel work.** GIF (`+Recording`, `+Upload`), the microphone (`+Recording`) and Trim
   (`+Trim`, `+Overlay`, `+Delete`) can be built on separate branches that rarely touch the same file.
 
