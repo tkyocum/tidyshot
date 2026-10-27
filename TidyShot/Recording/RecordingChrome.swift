@@ -63,9 +63,12 @@ final class RecordingScreenChrome: RecordingChrome {
     private let placement: RecordingChromePlacement
     /// `askToDiscard`'s answer, from its call until the alert or a quit gives it.
     private var discardAnswer: CheckedContinuation<Bool, Never>?
+    /// The bubble and the ring overlay of an area or fullscreen recording; nil for a window.
+    private let extras: RecordingExtras?
 
-    init(placement: RecordingChromePlacement) {
+    init(placement: RecordingChromePlacement, extras: RecordingExtras? = nil) {
         self.placement = placement
+        self.extras = extras
         if case .area(let area, _) = placement {
             frameWindow = ScrollAreaFrameWindow(area: area)
         } else {
@@ -106,7 +109,10 @@ final class RecordingScreenChrome: RecordingChrome {
         model.bubble = bubble
         model.bar = bar
         panel.setFrame(Self.panelFrame(size: RecordingPanelLayout.size(of: bar), placement: placement), display: false)
+        // Both are at `.floating`, so the bar goes back above the bubble after each click on it.
+        extras?.onBubbleInteraction = { [weak panel] in panel?.orderFrontRegardless() }
         frameWindow?.orderFrontRegardless()
+        // After the bubble, which has been on screen since the count-in.
         panel.orderFrontRegardless()
     }
 
@@ -122,18 +128,17 @@ final class RecordingScreenChrome: RecordingChrome {
         model.isMuted = muted
     }
 
-    /// The button only, for now: the highlighter comes with `RecordingExtras`.
     func setHighlights(_ on: Bool, monitoring: Bool) {
         model.highlights.isOn = on
+        extras?.setHighlights(monitoring: monitoring)
     }
 
-    /// The button only, for now: the bubble comes with `RecordingExtras`.
     func setBubble(_ on: Bool) {
         model.bubble.isOn = on
+        extras?.setBubble(on)
     }
 
-    /// None yet: the bubble and the ring overlay come with `RecordingExtras`.
-    var filmedWindowNumbers: [FilmedFeature: CGWindowID] { [:] }
+    var filmedWindowNumbers: [FilmedFeature: CGWindowID] { extras?.windowNumbers ?? [:] }
 
     /// A feature the filter does not film turns off, and its button says it is not available. A
     /// button already disabled keeps its own tool tip, which `BubbleButtonState` ranks first.
@@ -148,6 +153,7 @@ final class RecordingScreenChrome: RecordingChrome {
         if !features.contains(.bubble) {
             model.bubble = notAvailable(model.bubble)
         }
+        extras?.setFilmed(features)
     }
 
     /// Runs as `confirmRemoveFromHistory` does: in a block the run loop performs only in its
@@ -186,7 +192,9 @@ final class RecordingScreenChrome: RecordingChrome {
         discardAnswer = nil
     }
 
+    /// The bubble and the rings go with the bar.
     func close() {
+        extras?.close()
         model.onStop = {}
         model.onCancel = {}
         model.onMute = {}

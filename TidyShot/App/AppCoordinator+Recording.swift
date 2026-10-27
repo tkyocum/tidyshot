@@ -281,12 +281,16 @@ extension AppCoordinator {
     /// built, so a banner from the count-in is not filmed). `run` returns on every end (Stop,
     /// Cancel, a failure, the stream's end, a quit, a start that fails inside it) and never throws,
     /// and each exit before it ends the hold too, so the hold never outlives the start. It stays
-    /// inside the capture lock, so it never nests.
+    /// inside the capture lock, so it never nests. An area or fullscreen recording gets R3's bubble
+    /// and ring overlay (`RecordingExtras`), made here from the options and the camera of this start
+    /// and closed on every exit (R3 design, Who owns the bubble).
     private func record(_ target: CaptureTarget, inputs: RecordingInputs) async -> RecordingEnded? {
+        let extras = makeRecordingExtras(for: target, camera: inputs.camera)
+        defer { extras?.close() }
         recordingCountIn = true
         // Record Fullscreen's hold is on already, and keeps what waits.
         notifier.holdNotices()
-        let start = await recordingHandOff(target, inputs: inputs)
+        let start = await recordingHandOff(target, inputs: inputs, extras: extras)
         recordingCountIn = false
         guard let start, !isQuitting else {
             endNoticeHold()
@@ -301,6 +305,34 @@ extension AppCoordinator {
         }
         recorder.close()
         return (outcome, start.microphoneNote)
+    }
+
+    /// The bubble and the ring overlay for an area or fullscreen target; none for a window. The
+    /// toggles and the size are read here, before the count-in, as the bubble shows from it (plan
+    /// Gap 3). A drag's end writes the insets and a double-click the size, so the next recording
+    /// starts from them.
+    private func makeRecordingExtras(for target: CaptureTarget, camera: CameraStart) -> RecordingExtras? {
+        if case .window = target { return nil }
+        return RecordingExtras(
+            options: settings.recordingOptions, camera: camera, insets: settings.bubbleInsets,
+            clickSource: { ClickMonitor(isFilmedWindow: $0) },
+            elapsed: { [weak self] in self?.recorder.elapsedTime ?? 0 },
+            storeInsets: { [weak self] insets in
+                self?.settings.recordingBubbleInsetRight = Double(insets.right)
+                self?.settings.recordingBubbleInsetBottom = Double(insets.bottom)
+            },
+            storeSize: { [weak self] size in self?.settings.recordingBubbleSize = size })
+    }
+
+    /// Where R3's windows go for a recorded area (CG, nil for fullscreen) on a display: its screen's
+    /// frame and visible frame, or both from the display's CG frame when no screen matches it.
+    private static func extrasPlace(cgArea: CGRect?, displayID: CGDirectDisplayID, cgDisplayFrame: CGRect,
+                                    primaryHeight: CGFloat) -> RecordingExtrasPlace {
+        let screenFrame = CaptureEngine.screen(forDisplayID: displayID)?.frame
+            ?? Geometry.appKitRect(fromCG: cgDisplayFrame, primaryHeight: primaryHeight)
+        return RecordingExtrasPlace.make(cgArea: cgArea, cgDisplayFrame: cgDisplayFrame, screenFrame: screenFrame,
+                                         visibleFrame: visibleFrame(forDisplayID: displayID, cgFrame: cgDisplayFrame),
+                                         primaryHeight: primaryHeight)
     }
 
     /// Ends the notice hold (Decided 2026-10-24, 8): what waited posts now, in the order asked for,
@@ -322,8 +354,10 @@ extension AppCoordinator {
     /// started. The input resolved under the lock goes into `RecordingOptions.microphoneID`, with
     /// its lag in the request, and its note comes back for after Stop; a GIF takes neither. The
     /// camera resolved under the lock comes back too, without its camera and note for a window
-    /// recording, which has no bubble.
-    private func recordingHandOff(_ target: CaptureTarget, inputs: RecordingInputs)
+    /// recording, which has no bubble. `extras` shows before the count-in or the settle delay and is
+    /// placed again from the fresh content; its toggles, its size and the camera go into the options
+    /// and the request (plan Gap 3), and the chrome holds it.
+    private func recordingHandOff(_ target: CaptureTarget, inputs: RecordingInputs, extras: RecordingExtras?)
         async -> (request: RecordingRequest, chrome: any RecordingChrome, microphoneNote: RecordingNotice?,
                   camera: CameraStart)? {
         let isFullscreen: Bool
@@ -336,6 +370,18 @@ extension AppCoordinator {
         // during Record Fullscreen's display read.
         guard !isQuitting else { return nil }
         let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
+        // The bubble and the overlay are on screen from here, so the bubble can be dragged during
+        // the count-in. A display gone by now still shows them; the content read below gives up.
+        switch target {
+        case .area(let rect, let display):
+            extras?.show(at: Self.extrasPlace(cgArea: rect, displayID: display.displayID,
+                                              cgDisplayFrame: display.frame, primaryHeight: primaryHeight))
+        case .display(let display):
+            extras?.show(at: Self.extrasPlace(cgArea: nil, displayID: display.displayID,
+                                              cgDisplayFrame: display.frame, primaryHeight: primaryHeight))
+        case .window:
+            break
+        }
         if settings.recordingCountdown {
             guard let screenFrame = CaptureEngine.screen(forDisplayID: target.displayID)?.frame ?? NSScreen.main?.frame
             else { return nil }
@@ -361,11 +407,15 @@ extension AppCoordinator {
             source = .area(area, on: Self.recordingDisplay(current))
             placement = .area(Geometry.appKitRect(fromCG: area, primaryHeight: primaryHeight),
                               visibleFrame: Self.visibleFrame(forDisplayID: displayID, cgFrame: current.frame))
+            extras?.place(at: Self.extrasPlace(cgArea: area, displayID: displayID, cgDisplayFrame: current.frame,
+                                               primaryHeight: primaryHeight))
         case .display(let display):
             guard let current = connectedDisplay(display.displayID, in: content) else { return nil }
             displayID = current.displayID
             source = .display(Self.recordingDisplay(current))
             placement = .fullscreen(visibleFrame: Self.visibleFrame(forDisplayID: displayID, cgFrame: current.frame))
+            extras?.place(at: Self.extrasPlace(cgArea: nil, displayID: displayID, cgDisplayFrame: current.frame,
+                                               primaryHeight: primaryHeight))
         case .window(let window):
             guard let current = content.windows.first(where: { $0.windowID == window.windowID }) else {
                 notifier.notifyError("The window is no longer on screen.", title: RecordingEnd.refusalTitle)
@@ -384,11 +434,28 @@ extension AppCoordinator {
         let input = MicrophoneChoice.forRecording(inputs.microphone.resolution, format: options.format)
         options.microphoneID = input.device?.uniqueID
         let camera = CameraChoice.forRecording(inputs.camera, source: source)
+        // R3's part of the options is the one on screen since the count-in, so the run and the
+        // bubble agree. Without extras neither feature runs.
+        if let extras {
+            options.clickHighlights = extras.options.clickHighlights
+            options.webcamBubble = extras.options.webcamBubble
+            options.bubbleSize = extras.options.bubbleSize
+            options.cameraID = camera.camera?.uniqueID
+            options.cameraName = camera.camera?.name
+        } else {
+            options.clickHighlights = false
+            options.webcamBubble = false
+            options.bubbleSize = .medium
+        }
+        let extrasStart = extras.map { _ in
+            RecordingExtrasStart(highlights: options.clickHighlights, bubbleToggle: options.webcamBubble,
+                                 bubble: BubbleButtonState.make(camera: camera.camera, access: camera.access, filmed: true))
+        }
         let request = RecordingRequest(id: id, configuration: RecordingConfiguration.make(source, options: options),
                                        displayID: displayID, outputURL: Recording.fileURL(for: id),
                                        muteLogURL: MuteLog.url(for: id), lag: inputs.microphone.lag,
-                                       gif: options.format == .gif ? options.gif : nil)
-        return (request, RecordingScreenChrome(placement: placement), input.note, camera)
+                                       gif: options.format == .gif ? options.gif : nil, extras: extrasStart)
+        return (request, RecordingScreenChrome(placement: placement, extras: extras), input.note, camera)
     }
 
     /// The recording's mute lag (design, Lag), read beside `resolve`: for the resolved input, from
