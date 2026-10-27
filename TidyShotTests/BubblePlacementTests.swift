@@ -188,7 +188,32 @@ struct BubblePlacementTests {
         let frame = CGRect(x: 504, y: 316, width: 180, height: 180)
         let insets = BubbleInsets(right: 316, bottom: 316)
         #expect(BubblePlacement.storedInsets(after: .dragEnded, frame: frame, recorded: recorded) == insets)
-        #expect(BubblePlacement.storedInsets(after: .sizeStepped, frame: frame, recorded: recorded) == insets)
+        let small = CGRect(x: 534, y: 346, width: 120, height: 120)
+        #expect(BubblePlacement.step(small, to: .medium, in: recorded) == frame)
+        #expect(BubblePlacement.storedInsets(after: .sizeStepped(from: small), frame: frame,
+                                             recorded: recorded) == insets)
+    }
+
+    /// The default Small bubble stepped to Medium is clamped to (820, 0): the clamp is not
+    /// written back, so the stored place stays 16, 16 rather than 0, 0.
+    @Test func aStepAgainstTheEdgeIsNotWrittenBack() {
+        let small = BubblePlacement.frame(recorded: recorded, size: .small, insets: .standard)
+        let medium = BubblePlacement.step(small, to: .medium, in: recorded)
+        #expect(medium == CGRect(x: 820, y: 0, width: 180, height: 180))
+        #expect(BubblePlacement.storedInsets(after: .sizeStepped(from: small), frame: medium,
+                                             recorded: recorded) == nil)
+        let large = BubblePlacement.step(medium, to: .large, in: recorded)
+        #expect(BubblePlacement.storedInsets(after: .sizeStepped(from: medium), frame: large,
+                                             recorded: recorded) == nil)
+    }
+
+    /// A drag that ends against an edge is where the user left it, so it is written back.
+    @Test func aDragAgainstTheEdgeIsWrittenBack() {
+        let start = CGRect(x: 804, y: 16, width: 180, height: 180)
+        let moved = BubblePlacement.drag(startFrame: start, from: CGPoint(x: 900, y: 100),
+                                         to: CGPoint(x: 1400, y: 100), in: recorded)
+        #expect(BubblePlacement.storedInsets(after: .dragEnded, frame: moved, recorded: recorded)
+            == BubbleInsets(right: 0, bottom: 16))
     }
 
     @Test func noInsetsAreWrittenAfterAStartOrAReclamp() {

@@ -61,7 +61,8 @@ nonisolated enum BubblePlacement {
         case start
         case reclamp
         case dragEnded
-        case sizeStepped
+        /// A double-click's size step from the frame it had before.
+        case sizeStepped(from: CGRect)
     }
 
     /// The start: `insets` from the rect's right and bottom edges, then clamped.
@@ -92,21 +93,29 @@ nonisolated enum BubblePlacement {
 
     /// `size`'s diameter about the same centre, then clamped.
     static func step(_ frame: CGRect, to size: BubbleSize, in recorded: CGRect) -> CGRect {
-        let d = size.diameter
-        let stepped = CGRect(x: frame.midX - d / 2, y: frame.midY - d / 2, width: d, height: d)
-        return clamp(stepped, into: recorded)
+        clamp(centred(on: frame, diameter: size.diameter), into: recorded)
+    }
+
+    /// A `diameter` square about `frame`'s centre.
+    private static func centred(on frame: CGRect, diameter d: CGFloat) -> CGRect {
+        CGRect(x: frame.midX - d / 2, y: frame.midY - d / 2, width: d, height: d)
     }
 
     static func insets(of frame: CGRect, in recorded: CGRect) -> BubbleInsets {
         BubbleInsets(right: recorded.maxX - frame.maxX, bottom: frame.minY - recorded.minY)
     }
 
-    /// The insets to store after `move`: only a drag's end and a size step write them, so a
-    /// clamp alone never makes the memory drift.
+    /// The insets to store after `move`: only a drag's end and a size step write them, and a
+    /// step against an edge, a clamp, does not, so a clamp alone never makes the memory drift.
     static func storedInsets(after move: Move, frame: CGRect, recorded: CGRect) -> BubbleInsets? {
         switch move {
-        case .start, .reclamp: nil
-        case .dragEnded, .sizeStepped: insets(of: frame, in: recorded)
+        case .start, .reclamp:
+            return nil
+        case .dragEnded:
+            return insets(of: frame, in: recorded)
+        case .sizeStepped(let before):
+            let stepped = centred(on: before, diameter: frame.width)
+            return clamp(stepped, into: recorded) == stepped ? insets(of: frame, in: recorded) : nil
         }
     }
 }
