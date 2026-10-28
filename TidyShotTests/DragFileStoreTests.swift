@@ -278,4 +278,28 @@ struct DragFileStoreTests {
         #expect(!exists(store.directory))
         store.sweep()
     }
+
+    /// A drag-out download lands at `Drag/.downloads/<uuid>`: the folder is made, the path is fresh
+    /// on every call, and nothing is there yet.
+    @Test func landingURLIsAFreshPathInTheDownloadsFolder() throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let first = try store.landingURL()
+        let second = try store.landingURL()
+        let downloads = store.directory.appending(path: ".downloads", directoryHint: .isDirectory)
+        #expect(first.deletingLastPathComponent().standardizedFileURL == downloads.standardizedFileURL)
+        #expect(UUID(uuidString: first.lastPathComponent) != nil)
+        #expect(first != second)
+        #expect(exists(downloads))
+        #expect(!exists(first))
+    }
+
+    /// The launch sweep removes a landed download with the rest of `Drag`.
+    @Test func sweepRemovesTheDownloadsFolder() throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let landing = try store.landingURL()
+        try Data([1]).write(to: landing)
+        store.sweep()
+        #expect(!exists(landing))
+        #expect(!exists(store.directory))
+    }
 }

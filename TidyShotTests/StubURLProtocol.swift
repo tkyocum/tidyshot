@@ -17,7 +17,19 @@ nonisolated final class StubURLProtocol: URLProtocol {
     struct Entry: Sendable {
         var handler: HeaderHandler
         var requests: [URLRequest] = []
+        /// The body is delivered in chunks of this size. Nil: in one piece.
+        var chunkSize: Int? = nil
+        /// A pause after each chunk, so URLSession writes it before the next arrives.
+        var chunkDelay: TimeInterval? = nil
+        /// After this many bytes of a longer body the load fails with
+        /// `URLError(.networkConnectionLost)`.
+        var failAfterBytes: Int? = nil
+        /// A `Range: bytes=<n>-` request is answered 206 with `Content-Range` and the body from `n`.
+        var servesRanges = false
     }
+
+    /// Set by `stopLoading`, so a paced delivery stops calling the client once the task is cancelled.
+    private let stopped = Mutex(false)
 
     static let entries = Mutex<[String: Entry]>([:])
 
@@ -27,18 +39,26 @@ nonisolated final class StubURLProtocol: URLProtocol {
     override func startLoading() {
         let request = self.request
         let id = request.value(forHTTPHeaderField: Self.sessionHeader) ?? ""
-        let handler = Self.entries.withLock { entries -> HeaderHandler? in
+        let entry = Self.entries.withLock { entries -> Entry? in
             entries[id]?.requests.append(request)
-            return entries[id]?.handler
+            return entries[id]
         }
-        guard let handler else {
+        guard let entry else {
             client?.urlProtocol(self, didFailWithError: URLError(.cannotConnectToHost))
             return
         }
-        let (status, headers, body) = handler(request)
+        var (status, headers, body) = entry.handler(request)
         if status == Self.transportFailureStatus {
             client?.urlProtocol(self, didFailWithError: URLError(.cannotFindHost))
             return
+        }
+        if entry.servesRanges, status == 200, let start = Self.rangeStart(of: request), start < body.count {
+            headers["Content-Range"] = "bytes \(start)-\(body.count - 1)/\(body.count)"
+            if headers["Content-Length"] != nil {
+                headers["Content-Length"] = String(body.count - start)
+            }
+            status = 206
+            body = body.subdata(in: start..<body.count)
         }
         let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: "HTTP/1.1", headerFields: headers)!
         if (300..<400).contains(status), let location = headers["Location"], let target = URL(string: location) {
@@ -47,11 +67,51 @@ nonisolated final class StubURLProtocol: URLProtocol {
             client?.urlProtocol(self, wasRedirectedTo: redirect, redirectResponse: response)
         }
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: body)
-        client?.urlProtocolDidFinishLoading(self)
+        guard entry.chunkSize != nil || entry.chunkDelay != nil || entry.failAfterBytes != nil else {
+            client?.urlProtocol(self, didLoad: body)
+            client?.urlProtocolDidFinishLoading(self)
+            return
+        }
+        let limit = entry.failAfterBytes.flatMap { $0 < body.count ? $0 : nil }
+        let delivered = limit.map { body.prefix($0) } ?? body
+        let chunkSize = max(1, entry.chunkSize ?? delivered.count)
+        let chunks = stride(from: 0, to: delivered.count, by: chunkSize).map {
+            delivered.subdata(in: $0..<min($0 + chunkSize, delivered.count))
+        }
+        deliver(chunks[...], delay: entry.chunkDelay ?? 0, thenFail: limit != nil, on: ClientRunLoop())
     }
 
-    override func stopLoading() {}
+    override func stopLoading() {
+        stopped.withLock { $0 = true }
+    }
+
+    /// Hands `chunks` to the client one at a time, pausing `delay` after each, then fails or finishes.
+    /// Each call runs on the run loop `startLoading` ran on, as URLProtocol's client expects.
+    private func deliver(_ chunks: ArraySlice<Data>, delay: TimeInterval, thenFail: Bool, on runLoop: ClientRunLoop) {
+        guard !stopped.withLock({ $0 }) else { return }
+        guard let chunk = chunks.first else {
+            if thenFail {
+                client?.urlProtocol(self, didFailWithError: URLError(.networkConnectionLost))
+            } else {
+                client?.urlProtocolDidFinishLoading(self)
+            }
+            return
+        }
+        client?.urlProtocol(self, didLoad: chunk)
+        let rest = chunks.dropFirst()
+        nonisolated(unsafe) let unsafeSelf = self
+        DispatchQueue.global().asyncAfter(deadline: .now() + delay) {
+            runLoop.perform { unsafeSelf.deliver(rest, delay: delay, thenFail: thenFail, on: runLoop) }
+        }
+    }
+
+    /// `n` from a `Range: bytes=<n>-` header.
+    private static func rangeStart(of request: URLRequest) -> Int? {
+        guard let range = request.value(forHTTPHeaderField: "Range"), range.hasPrefix("bytes="), range.hasSuffix("-") else {
+            return nil
+        }
+        return Int(range.dropFirst("bytes=".count).dropLast())
+    }
 
     /// The body a request carried: URLSession hands a URLProtocol a file or data body as a stream.
     nonisolated static func bodyBytes(of request: URLRequest) -> Data {
@@ -86,10 +146,15 @@ nonisolated final class StubSession: Sendable {
         })
     }
 
-    /// Like `make(handler:)`, for stubs that need response headers.
-    static func make(headerHandler handler: @escaping StubURLProtocol.HeaderHandler) -> (URLSession, StubSession) {
+    /// Like `make(handler:)`, for stubs that need response headers, and optionally a body delivered
+    /// in paced chunks, a failure part way through it, or a 206 for a `Range` request (`Entry`).
+    static func make(headerHandler handler: @escaping StubURLProtocol.HeaderHandler, chunkSize: Int? = nil,
+                     chunkDelay: TimeInterval? = nil, failAfterBytes: Int? = nil,
+                     servesRanges: Bool = false) -> (URLSession, StubSession) {
         let stub = StubSession(id: UUID().uuidString)
-        StubURLProtocol.entries.withLock { $0[stub.id] = StubURLProtocol.Entry(handler: handler) }
+        let entry = StubURLProtocol.Entry(handler: handler, chunkSize: chunkSize, chunkDelay: chunkDelay,
+                                          failAfterBytes: failAfterBytes, servesRanges: servesRanges)
+        StubURLProtocol.entries.withLock { $0[stub.id] = entry }
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [StubURLProtocol.self]
         configuration.httpAdditionalHeaders = [StubURLProtocol.sessionHeader: stub.id]
@@ -99,5 +164,21 @@ nonisolated final class StubSession: Sendable {
     /// Requests sent through this stub's session, in order.
     var requests: [URLRequest] {
         StubURLProtocol.entries.withLock { $0[id]?.requests ?? [] }
+    }
+}
+
+/// The run loop and mode `startLoading` ran in, so a paced delivery calls the client there.
+nonisolated private struct ClientRunLoop: @unchecked Sendable {
+    let runLoop: CFRunLoop
+    let mode: CFRunLoopMode
+
+    init() {
+        runLoop = CFRunLoopGetCurrent()
+        mode = CFRunLoopCopyCurrentMode(runLoop) ?? .defaultMode
+    }
+
+    func perform(_ block: @escaping () -> Void) {
+        CFRunLoopPerformBlock(runLoop, mode.rawValue, block)
+        CFRunLoopWakeUp(runLoop)
     }
 }

@@ -136,7 +136,7 @@ nonisolated struct S3Destination: Destination {
 
     /// The first 64 KiB of an error response saved to a file. An S3 error body is far smaller, and
     /// `excerpt` keeps only 200 characters, so a large body from elsewhere is never read whole.
-    private static func errorBody(at url: URL) -> Data {
+    static func errorBody(at url: URL) -> Data {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return Data() }
         defer { try? handle.close() }
         return (try? handle.read(upToCount: 64 * 1024)) ?? Data()
