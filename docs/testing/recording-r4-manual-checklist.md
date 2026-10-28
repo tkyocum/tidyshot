@@ -85,9 +85,9 @@ parts.
 
 **Reading the log:**
 ```bash
-/usr/bin/log show --last 10m --style compact --predicate 'process == "TidyShot"' | grep -E "Recording:|Upload:|Drag-out"
+/usr/bin/log show --last 10m --style compact --predicate 'process == "TidyShot"' | grep -E "URL command|Recording:|Upload:|Drag-out"
 ```
-Call it "the log" below. The R4 lines are:
+Call it "the log" below. `URL command` is in the pattern because the handler's lines have no `Recording:` prefix. The R4 lines are:
 - `URL command from <sender>: <url>` and `URL command from <sender> dropped, <reason>: <url>` with the reasons `a capture is running`, `a recording is starting`, `a recording is running`, `the microphone prompt is open`, `the camera prompt is open` and `a queued capture command ran first`;
 - `Recording: URL start ignored, the app is quitting`, `Recording: URL start ignored, a recording is starting`, `Recording: not started, the count-in was cancelled`;
 - `Recording: stop-recording from <sender> stopped the recording`, `… cancelled the count-in`, `… did nothing, no recording is running`;
