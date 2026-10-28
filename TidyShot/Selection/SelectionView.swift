@@ -1,6 +1,6 @@
 import AppKit
 
-/// Draws the dimmed overlay, crosshair, drag rectangle, size label, and window highlight.
+/// Draws the dimmed overlay, crosshair, drag rectangle, size label, window highlight and Record Screen's preset rect.
 /// All stored rects and points are in this view's coordinates (bottom-left origin).
 final class SelectionView: NSView {
     var mode: SelectionMode = .area
@@ -33,6 +33,14 @@ final class SelectionView: NSView {
     override var isOpaque: Bool { showsFrozenBackdrop }
     /// Recomputed when the cursor moves or the snapshot arrives, never while drawing.
     private var crosshairStyle: CrosshairStyle = .outlined
+
+    /// Record Screen's preset rect (a URL command's), set by the controller. Drawn as a hole
+    /// with the selection stroke and its size; a click inside it records it.
+    var presetRect: CGRect? {
+        didSet { if presetRect != oldValue { needsDisplay = true } }
+    }
+    /// True while the current press started inside `presetRect`.
+    private var pressInPreset = false
 
     private var dragStart: CGPoint?
     private var dragRect: CGRect?
@@ -134,8 +142,10 @@ final class SelectionView: NSView {
             allInOneMouseDown(event)
             return
         }
-        dragStart = convert(event.locationInWindow, from: nil)
+        let point = convert(event.locationInWindow, from: nil)
+        dragStart = point
         dragRect = nil
+        pressInPreset = presetRect?.contains(point) ?? false
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -164,9 +174,11 @@ final class SelectionView: NSView {
         defer {
             dragStart = nil
             dragRect = nil
+            pressInPreset = false
             needsDisplay = true
         }
-        switch SelectionOutcome.resolve(mode: mode, dragRect: dragRect, hasHighlight: highlightedRect != nil) {
+        switch SelectionOutcome.resolve(mode: mode, dragRect: dragRect, hasHighlight: highlightedRect != nil,
+                                        clickInPreset: clickInPreset(releasedAt: convert(event.locationInWindow, from: nil))) {
         case .area(let rect):
             guard let window else {
                 onCancel?()
@@ -179,6 +191,17 @@ final class SelectionView: NSView {
         case .cancel:
             onCancel?()
         }
+    }
+
+    /// The preset rect when the press and the release were both inside it and there was no real
+    /// drag; nil otherwise.
+    private func clickInPreset(releasedAt point: CGPoint) -> CGRect? {
+        guard pressInPreset, let presetRect, presetRect.contains(point) else { return nil }
+        if let dragRect, dragRect.width >= SelectionOutcome.minimumDragSide,
+           dragRect.height >= SelectionOutcome.minimumDragSide {
+            return nil
+        }
+        return presetRect
     }
 
     override func keyDown(with event: NSEvent) {
@@ -237,11 +260,19 @@ final class SelectionView: NSView {
 
         let isDragging = mode != .window && dragStart != nil && dragRect != nil
 
+        if !isDragging, let presetRect {
+            punchHole(presetRect)
+            stroke(NSBezierPath(rect: presetRect.insetBy(dx: 0.5, dy: 0.5)))
+            drawSizeLabel(for: presetRect)
+        }
+        // Over the preset a click records the preset, not the window, so no highlight is drawn there.
+        let cursorInPreset = cursor.map { presetRect?.contains($0) ?? false } ?? false
+
         if isDragging, let rect = dragRect {
             punchHole(rect)
             stroke(NSBezierPath(rect: rect.insetBy(dx: 0.5, dy: 0.5)))
             drawSizeLabel(for: rect)
-        } else if let highlight = highlightedRect {
+        } else if !cursorInPreset, let highlight = highlightedRect {
             punchHole(highlight)
             NSColor.controlAccentColor.setStroke()
             let border = NSBezierPath(rect: highlight.insetBy(dx: 1, dy: 1))

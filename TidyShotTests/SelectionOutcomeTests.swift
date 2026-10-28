@@ -70,4 +70,41 @@ struct SelectionOutcomeTests {
         #expect(SelectionOutcome.resolve(mode: .recording, dragRect: nil, hasHighlight: false) == .cancel)
         #expect(SelectionOutcome.resolve(mode: .recording, dragRect: jitter, hasHighlight: false) == .cancel)
     }
+    /// A URL command's preset rect in Record Screen (R4): a click in it records it, before the
+    /// window rule; a drag still records its own rect; a click outside picks the highlight.
+    @Test func recordingModeClickInThePresetRecordsIt() {
+        let preset = CGRect(x: 100, y: 120, width: 640, height: 360)
+        #expect(SelectionOutcome.resolve(mode: .recording, dragRect: nil, hasHighlight: true, clickInPreset: preset)
+                == .area(preset))
+        #expect(SelectionOutcome.resolve(mode: .recording, dragRect: nil, hasHighlight: false, clickInPreset: preset)
+                == .area(preset))
+        let jitter = CGRect(x: 200, y: 200, width: 1, height: 1)
+        #expect(SelectionOutcome.resolve(mode: .recording, dragRect: jitter, hasHighlight: true, clickInPreset: preset)
+                == .area(preset))
+        // A click outside the preset (the view passes nil) picks the highlighted window.
+        #expect(SelectionOutcome.resolve(mode: .recording, dragRect: nil, hasHighlight: true, clickInPreset: nil) == .window)
+        #expect(SelectionOutcome.resolve(mode: .recording, dragRect: nil, hasHighlight: false, clickInPreset: nil) == .cancel)
+    }
+
+    /// A drag gives its own rect, even one that starts inside the preset.
+    @Test func recordingModeDragReplacesThePreset() {
+        let preset = CGRect(x: 100, y: 120, width: 640, height: 360)
+        let inside = CGRect(x: 150, y: 150, width: 200, height: 100)
+        #expect(SelectionOutcome.resolve(mode: .recording, dragRect: drag, hasHighlight: true, clickInPreset: preset)
+                == .area(drag))
+        #expect(SelectionOutcome.resolve(mode: .recording, dragRect: inside, hasHighlight: false, clickInPreset: preset)
+                == .area(inside))
+    }
+
+    /// Every other mode ignores the preset click.
+    @Test func otherModesIgnoreThePresetClick() {
+        let preset = CGRect(x: 100, y: 120, width: 640, height: 360)
+        for mode in [SelectionMode.area, .scrolling, .selfTimer, .allInOne] {
+            #expect(SelectionOutcome.resolve(mode: mode, dragRect: nil, hasHighlight: true, clickInPreset: preset) == .window)
+            #expect(SelectionOutcome.resolve(mode: mode, dragRect: nil, hasHighlight: false, clickInPreset: preset) == .cancel)
+            #expect(SelectionOutcome.resolve(mode: mode, dragRect: drag, hasHighlight: false, clickInPreset: preset) == .area(drag))
+        }
+        #expect(SelectionOutcome.resolve(mode: .window, dragRect: nil, hasHighlight: true, clickInPreset: preset) == .window)
+        #expect(SelectionOutcome.resolve(mode: .window, dragRect: nil, hasHighlight: false, clickInPreset: preset) == .cancel)
+    }
 }

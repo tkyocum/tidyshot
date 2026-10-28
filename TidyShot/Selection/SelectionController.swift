@@ -31,10 +31,13 @@ final class SelectionController {
         self.cardWindowNumbers = cardWindowNumbers
     }
 
-    func select(mode: SelectionMode, content: SCShareableContent, freeze: CaptureOptions? = nil) async -> Selection? {
+    /// `preselect` (CoreGraphics global points) is used only in `.recording` mode: a URL command's
+    /// rect, shown as the preset that a click inside records.
+    func select(mode: SelectionMode, content: SCShareableContent, freeze: CaptureOptions? = nil,
+                preselect: CGRect? = nil) async -> Selection? {
         // All-in-One resolves through `selectAllInOne`.
         guard isIdle, mode != .allInOne, !NSScreen.screens.isEmpty else { return nil }
-        await present(mode: mode, content: content, freeze: freeze, preselect: nil, armed: true)
+        await present(mode: mode, content: content, freeze: freeze, preselect: preselect, armed: true)
         return await withCheckedContinuation { continuation = $0 }
     }
 
@@ -99,6 +102,7 @@ final class SelectionController {
         NSApplication.shared.activate(ignoringOtherApps: true)
         windows.first { $0.frame.contains(NSEvent.mouseLocation) }?.makeKey()
         if mode == .allInOne, let preselect { placePreselected(preselect, armed: armed) }
+        if mode == .recording, let preselect { placePreset(preselect) }
         updateHover(at: NSEvent.mouseLocation)
         if mode != .window {
             snapshotTask = Task { await takeSnapshots() }
@@ -141,6 +145,17 @@ final class SelectionController {
         // Return there must not capture before the user has touched the overlay.
         views[index].beginAdjusting(rect.offsetBy(dx: -frame.minX, dy: -frame.minY), fromWindow: false, armed: armed)
         windows[index].makeKey()
+    }
+
+    /// Record Screen's preset (a URL command's rect) on the view whose screen holds its centre,
+    /// in that view's coordinates. Nothing when it is on no screen: the selection opens as the shortcut's.
+    private func placePreset(_ cgRect: CGRect) {
+        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
+        let appKitRect = Geometry.appKitRect(fromCG: cgRect, primaryHeight: primaryHeight)
+        let centre = CGPoint(x: appKitRect.midX, y: appKitRect.midY)
+        guard let index = windows.firstIndex(where: { $0.frame.contains(centre) }) else { return }
+        let frame = windows[index].frame
+        views[index].presetRect = appKitRect.offsetBy(dx: -frame.minX, dy: -frame.minY)
     }
 
     /// A new rect on `view`: the other displays drop theirs, the window it came from is
