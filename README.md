@@ -56,6 +56,18 @@ ad-hoc rebuild may keep this grant or lose it (`tccutil reset Microphone io.tky.
 again). The app's sandbox gains one entitlement for it, `com.apple.security.device.audio-input`, and its
 Info.plist a usage string.
 
+The webcam bubble in a recording (Screen recording below) needs a fourth, optional permission: Camera,
+under the same pane. macOS asks when you turn on Settings > Capture > Recording > *Show webcam bubble*
+while access is still undecided, or when you start a recording with it on and access is still undecided.
+It never asks during a recording or a capture, so the prompt is never in a video or a screenshot. An
+ad-hoc rebuild may keep this grant or lose it (`tccutil reset Camera io.tky.tidyshot` makes macOS ask
+again). The app's sandbox gains one more entitlement, `com.apple.security.device.camera`, and its
+Info.plist three keys: `NSCameraUsageDescription` (the usage string),
+`NSCameraUseContinuityCameraDeviceType` (so an iPhone is listed as a camera) and
+`NSCameraReactionEffectGesturesEnabledDefault` (off, so a hand gesture does not fire effects into a
+recording). Click highlights need no permission: they watch mouse clicks with a plain event monitor,
+not an event tap, so they ask for neither Accessibility nor Input Monitoring.
+
 ## Default shortcuts
 
 | Action | Shortcut |
@@ -218,9 +230,11 @@ for Self-Timer: drag an area at least 32 by 32 points, or click a window. Record
 bar item; no default shortcut, set one in Settings > Shortcuts) records the display under the
 pointer. With *Count down before recording* on, which it is by default, a 3, 2, 1 badge counts first;
 Escape, or either record shortcut, cancels the countdown. Recording needs the same Screen Recording
-permission as screenshots, and Microphone access only when you choose an input (see Permissions).
+permission as screenshots, Microphone access only when you choose an input, and Camera access only
+when you turn on the webcam bubble (see Permissions).
 
-A small panel shows the elapsed time (orange from 5:00, or from 0:30 for a GIF, with no limit), a mute
+A small panel shows the elapsed time (orange from 5:00, or from 0:30 for a GIF, with no limit), for an
+area or fullscreen recording a button for click highlights and one for the webcam bubble, a mute
 button when the recording has sound, Stop and Cancel. A GIF's panel has no mute button and shows a `GIF`
 tag before the time. It never takes focus, you can drag it, and it is not in the video. An area recording
 also has the dashed frame of a scrolling capture. Stop with the panel, with ⌃⇧8 or the fullscreen shortcut, or with *Stop
@@ -231,7 +245,8 @@ seconds after asking *Discard this recording?*, where Save keeps it as Stop woul
 **What is in the picture.** An area or fullscreen recording shows the display as it is, without any
 window of TidyShot: the menu, Recent Captures, Settings, cards, pins and editors stay out of it, even
 when opened during the recording. The desktop covers of *Hide desktop icons while capturing* are in
-it, which is their purpose. A window recording shows only that window, at the size it had when the
+it, which is their purpose. So are the webcam bubble and the click rings, when they are on: they are
+the only two TidyShot windows that are filmed. A window recording shows only that window, at the size it had when the
 recording started; a window resized later is scaled to fit and never stretched. Minimising or hiding
 it, or moving it to another Space, keeps the recording going; closing it ends the recording and keeps
 what was recorded. TidyShot's notifications are not TidyShot windows, so none shows while a recording
@@ -244,10 +259,42 @@ rate* (10, 15 or 20 fps; 15) and *GIF size* (800 px, 1280 px or Full size; 1280 
 side), *Frame rate* (30 or 60 fps; hidden for GIF), *Resolution* (Retina, the display's own pixels, or
 Standard, one pixel to the point; Retina stops at 4,096 pixels on the longer side, so a 5K display
 records at 4096 by 2304), *Record system audio* (off; other apps' sound, never TidyShot's own),
-*Microphone* (Off), *Show cursor in recordings* (on) and *Count down before recording* (on). With GIF
-chosen the two sound rows are greyed out, because a GIF has no sound. Settings > General > *Recording
+*Microphone* (Off), *Show cursor in recordings* (on), *Count down before recording* (on),
+*Highlight clicks* (off), *Show webcam bubble* (off), *Camera* (System Default) and *Bubble size*
+(Small, Medium or Large; Medium). *Camera* and *Bubble size* are greyed out while *Show webcam bubble*
+is off. With GIF chosen the two sound rows are greyed out, because a GIF has no sound. Settings > General > *Recording
 file name* is `Recording {date} at {time}` with the screenshot tokens; the file and the object get
 `.mp4`, or `.gif`.
+
+**Click highlights and the webcam bubble.** Both are off by default and apply to area and fullscreen
+recordings only: a window recording films one window, so neither can appear in it, and its panel has
+neither button.
+- *Highlight clicks* draws a 40 pt ring at each left and right click: yellow for a left click, blue for
+  a right click or a control-click. A quick click's ring grows, then expands and fades over half a
+  second. A drag keeps its ring on the pointer until you let go, and a ring that would fall outside
+  the recorded area or display waits at its edge. It sees clicks in other apps, in menus, on the menu
+  bar and the Dock, and on the bubble, but not on the panel or other TidyShot windows. A click outside
+  the recorded area draws nothing. Nothing draws during the selection or the countdown, and no click's
+  position is logged.
+- *Show webcam bubble* shows the chosen camera in a round window on the screen, and the recording films
+  it. *Camera* lists *System Default* (the camera macOS prefers when the recording starts) and each
+  built-in, external or Continuity camera by name; Desk View cameras are left out. A camera that is
+  gone stays chosen and reads *(not connected)*. *Bubble size* is 120, 180 or 260 pt across, shown
+  mirrored at 720p and 30 fps with a white border. It starts in the recorded area's bottom-right corner,
+  16 pt in; drag it anywhere inside the area (in fullscreen, inside the display's visible frame), and
+  double-click it to step Small, Medium, Large, Small. Its place after a drag and its size are
+  remembered for the next recording. It appears with the countdown (so you can drag it there), not
+  during the area selection. A camera that is lost during a recording leaves a grey circle with a
+  crossed-out camera, and the recording goes on.
+- Two buttons on the panel, *Highlight clicks* and *Show the webcam bubble* (their tool tips), turn
+  each on or off during the recording. A press does not change Settings. The bubble's button is
+  greyed out until camera access is allowed and a camera is connected, with the reason in its tool
+  tip.
+- After you stop, a note says when the bubble or the rings could not be filmed, the camera was not
+  connected or was lost, or camera access is off, after the save's own notification and the
+  microphone's note. A recording with the toggle off and the button never pressed posts nothing.
+- A GIF gets both in its pixels. The ring colours are kept exact in the GIF's palette, and a GIF with
+  the bubble is larger and its face is posterised, because its picture changes in every frame.
 
 **Format and GIF.** A GIF recording is made as an MP4 at 30 fps with no sound, and TidyShot converts
 it after you stop, with its own GIF encoder (no library, no ImageIO, no Clop). One palette of up to 255
@@ -341,7 +388,10 @@ far: `/usr/bin/log show --last 10m --style compact --predicate 'process == "Tidy
 videos, dragging an uploaded video that has no local copy, and URL commands for recording are planned
 for a later release (the recording designs' lists). The start, the conversion, the mute ladder and
 recovery log `Recording:` lines too, among them `Recording: mute lag <s> s (<input>)` at each start and
-the microphone prompt's answer.
+the microphone prompt's answer. The bubble and the rings log `Recording: camera <name>, <w>×<h> at <fps>
+fps, started in <ms> ms`, `Recording: webcam bubble on|off at <m:ss>`, `Recording: click highlights
+on|off at <m:ss>`, `Recording: camera lost at <m:ss>: <notification>` and `Recording: camera back at
+<m:ss>`, and the camera's prompt answers; never a position or a click count.
 
 ## URL scheme
 
@@ -649,6 +699,7 @@ afterwards, so opening it again in the editor starts from the composed picture.
 - Design: `docs/superpowers/specs/2026-10-19-tidyshot-screenshot-design.md`
 - Screen recording design: `docs/superpowers/specs/2026-10-21-tidyshot-screen-recording-design.md`
 - Screen recording R2 design (GIF, microphone, mute, Trim): `docs/superpowers/specs/2026-10-23-tidyshot-screen-recording-r2-design.md`
+- Screen recording R3 design (click highlights, webcam bubble): `docs/superpowers/specs/2026-10-24-tidyshot-screen-recording-r3-design.md`
 - Coordinator split design: `docs/superpowers/specs/2026-10-23-coordinator-split-design.md`
 - Plans: `docs/superpowers/plans/`
 - Phase 1 manual test checklist: `docs/testing/phase-1-manual-checklist.md`
@@ -666,4 +717,5 @@ afterwards, so opening it again in the editor starts from the composed picture.
 - Phase 7c (Backgrounds) manual test checklist: `docs/testing/phase-7c-manual-checklist.md`
 - Recording R1 (screen recording) manual test checklist: `docs/testing/recording-r1-manual-checklist.md`
 - Recording R2 (GIF, microphone, mute, Trim) manual test checklist: `docs/testing/recording-r2-manual-checklist.md`
+- Recording R3 (click highlights, webcam bubble) manual test checklist: `docs/testing/recording-r3-manual-checklist.md`
 - Coordinator split manual test checklist: `docs/testing/coordinator-split-manual-checklist.md`

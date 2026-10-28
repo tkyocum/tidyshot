@@ -46,6 +46,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if UserDefaults.standard.bool(forKey: "RecordingSpike") {
             Task { await RecordingSpike.run() }
         }
+        // R3's P4, the click monitors in the sandbox: `open TidyShot.app --args -ClickMonitorSpike YES`.
+        if UserDefaults.standard.bool(forKey: "ClickMonitorSpike") {
+            Task { await ClickMonitorSpike.run() }
+        }
         #endif
     }
 

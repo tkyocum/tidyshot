@@ -35,6 +35,15 @@ nonisolated struct RecordingOptions: Equatable, Sendable {
     /// The resolved input's `uniqueID`, set at the start only from an authorized choice; never
     /// read for a GIF.
     var microphoneID: String? = nil
+    /// `Highlight clicks` and `Show webcam bubble` as the Capture tab had them, and the bubble's
+    /// size. `RecordingConfiguration.make` ignores all five R3 fields.
+    var clickHighlights = false
+    var webcamBubble = false
+    var bubbleSize = BubbleSize.medium
+    /// The resolved camera's `uniqueID` and `localizedName`, set at the start only from an
+    /// authorized choice.
+    var cameraID: String? = nil
+    var cameraName: String? = nil
 }
 
 /// Everything the stream needs, decided without a screen: the filter plan, the output size with

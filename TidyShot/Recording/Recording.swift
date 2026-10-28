@@ -25,6 +25,9 @@ nonisolated struct Recording: Sendable {
     /// The muted stretches on the recording's clock, closed at its end; empty when it was never
     /// muted. A non-empty list is applied to the file before `saveRecording` (design, After the end).
     var muteIntervals: [MuteInterval] = []
+    /// Click highlights were on at some point after the first frame, so a GIF made from it reserves
+    /// the ring colours in its palette (design, Filming).
+    var highlightedClicks = false
     /// How far the recording's sound sits behind its clock (design, Lag), added after each interval.
     var lag: TimeInterval = RecordingMute.defaultLag
 

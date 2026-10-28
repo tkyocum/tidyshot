@@ -2,19 +2,138 @@ import AppKit
 import Testing
 @testable import TidyShot
 
-/// The recording bar's layout (design, Mute, Bar): each bar laid out with a time past an hour.
+/// The recording bar's layout (design, Mute, Bar; R3 design, Bar): each bar laid out with a time
+/// past an hour.
 struct RecordingPanelLayoutTests {
-    nonisolated static let bars: [RecordingPanelLayout.Bar] = [.plain, .mute, .gif]
+    /// An area or fullscreen recording's bars: R2's with the two R3 buttons.
+    nonisolated static let plainWithButtons = RecordingPanelLayout.Bar(showsTag: false, showsMute: false, showsOverlayButtons: true)
+    nonisolated static let muteWithButtons = RecordingPanelLayout.Bar(showsTag: false, showsMute: true, showsOverlayButtons: true)
+    nonisolated static let gifWithButtons = RecordingPanelLayout.Bar(showsTag: true, showsMute: false, showsOverlayButtons: true)
+    nonisolated static let bars: [RecordingPanelLayout.Bar] = [.plain, .mute, .gif, plainWithButtons, muteWithButtons,
+                                                               gifWithButtons]
 
     func frames(of bar: RecordingPanelLayout.Bar) -> [CGRect] {
-        [RecordingPanelLayout.tagFrame(of: bar), RecordingPanelLayout.timeFrame(of: bar), RecordingPanelLayout.muteFrame(of: bar),
-         RecordingPanelLayout.stopFrame(of: bar), RecordingPanelLayout.cancelFrame(of: bar)].compactMap { $0 }
+        [RecordingPanelLayout.tagFrame(of: bar), RecordingPanelLayout.timeFrame(of: bar),
+         RecordingPanelLayout.highlightsFrame(of: bar), RecordingPanelLayout.bubbleFrame(of: bar),
+         RecordingPanelLayout.muteFrame(of: bar), RecordingPanelLayout.stopFrame(of: bar),
+         RecordingPanelLayout.cancelFrame(of: bar)].compactMap { $0 }
     }
 
     @Test func theBarsAre172And208PointsWide() {
         #expect(RecordingPanelLayout.size(of: .plain) == CGSize(width: 172, height: 44))
         #expect(RecordingPanelLayout.size(of: .mute) == CGSize(width: 208, height: 44))
         #expect(RecordingPanelLayout.size(of: .gif) == CGSize(width: 208, height: 44))
+    }
+
+    /// The two R3 buttons add two slots of 36 pt.
+    @Test func areaAndFullscreenBarsAre244And280PointsWide() {
+        #expect(RecordingPanelLayout.size(of: Self.plainWithButtons) == CGSize(width: 244, height: 44))
+        #expect(RecordingPanelLayout.size(of: Self.muteWithButtons) == CGSize(width: 280, height: 44))
+        #expect(RecordingPanelLayout.size(of: Self.gifWithButtons) == CGSize(width: 280, height: 44))
+    }
+
+    /// R2's three bars are a window recording's, and an area or fullscreen bar is none of them.
+    @Test func theOverlayButtonsAddToR2sBars() {
+        #expect(RecordingPanelLayout.bar(showsMute: false, isGIF: false, showsOverlayButtons: true) == Self.plainWithButtons)
+        #expect(RecordingPanelLayout.bar(showsMute: true, isGIF: false, showsOverlayButtons: true) == Self.muteWithButtons)
+        #expect(RecordingPanelLayout.bar(showsMute: false, isGIF: true, showsOverlayButtons: true) == Self.gifWithButtons)
+        #expect(RecordingPanelLayout.bar(showsMute: true, isGIF: true, showsOverlayButtons: true) == Self.gifWithButtons)
+        for bar in [Self.plainWithButtons, Self.muteWithButtons, Self.gifWithButtons] {
+            #expect(![RecordingPanelLayout.Bar.plain, .mute, .gif].contains(bar))
+        }
+        #expect(RecordingPanelLayout.Bar.plain == RecordingPanelLayout.Bar(showsTag: false, showsMute: false, showsOverlayButtons: false))
+        #expect(RecordingPanelLayout.Bar.mute == RecordingPanelLayout.Bar(showsTag: false, showsMute: true, showsOverlayButtons: false))
+        #expect(RecordingPanelLayout.Bar.gif == RecordingPanelLayout.Bar(showsTag: true, showsMute: false, showsOverlayButtons: false))
+    }
+
+    /// A window recording has neither R3 button.
+    @Test(arguments: [RecordingPanelLayout.Bar.plain, .mute, .gif])
+    func aWindowRecordingsBarHasNoR3Buttons(_ bar: RecordingPanelLayout.Bar) {
+        #expect(RecordingPanelLayout.highlightsFrame(of: bar) == nil)
+        #expect(RecordingPanelLayout.bubbleFrame(of: bar) == nil)
+    }
+
+    /// Left to right: the tag, the time, highlights, bubble, mute, Stop, Cancel, each a spacing
+    /// apart, the buttons a button's size.
+    @Test(arguments: [plainWithButtons, muteWithButtons, gifWithButtons])
+    func theButtonsRunFromTheTimeToCancel(_ bar: RecordingPanelLayout.Bar) throws {
+        let highlights = try #require(RecordingPanelLayout.highlightsFrame(of: bar))
+        let bubble = try #require(RecordingPanelLayout.bubbleFrame(of: bar))
+        let time = RecordingPanelLayout.timeFrame(of: bar)
+        let next = RecordingPanelLayout.muteFrame(of: bar) ?? RecordingPanelLayout.stopFrame(of: bar)
+        if let tag = RecordingPanelLayout.tagFrame(of: bar) {
+            #expect(tag.maxX + 6 == time.minX)
+        }
+        #expect(time.maxX + 6 == highlights.minX)
+        #expect(highlights.maxX + 6 == bubble.minX)
+        #expect(bubble.maxX + 6 == next.minX)
+        if let mute = RecordingPanelLayout.muteFrame(of: bar) {
+            #expect(mute.maxX + 6 == RecordingPanelLayout.stopFrame(of: bar).minX)
+        }
+        #expect(highlights.size == CGSize(width: 28, height: 28))
+        #expect(bubble.size == CGSize(width: 28, height: 28))
+    }
+
+    /// The tag and the mute button read the bar's fields, with or without the R3 buttons.
+    @Test func theTagAndTheMuteButtonFollowTheirFields() {
+        #expect(RecordingPanelLayout.tagFrame(of: .gif) != nil)
+        #expect(RecordingPanelLayout.tagFrame(of: Self.gifWithButtons) != nil)
+        #expect(RecordingPanelLayout.muteFrame(of: .mute) != nil)
+        #expect(RecordingPanelLayout.muteFrame(of: Self.muteWithButtons) != nil)
+        for bar in [RecordingPanelLayout.Bar.plain, .mute, Self.plainWithButtons, Self.muteWithButtons] {
+            #expect(RecordingPanelLayout.tagFrame(of: bar) == nil)
+        }
+        for bar in [RecordingPanelLayout.Bar.plain, .gif, Self.plainWithButtons, Self.gifWithButtons] {
+            #expect(RecordingPanelLayout.muteFrame(of: bar) == nil)
+        }
+    }
+
+    /// Only a bar with the tag is a GIF recording's, so an area or fullscreen GIF keeps its 30 s
+    /// soft limit.
+    @Test(arguments: bars)
+    func theFormatFollowsTheTag(_ bar: RecordingPanelLayout.Bar) {
+        let model = RecordingPanelModel()
+        model.bar = bar
+        #expect(model.format == (bar == .gif || bar == Self.gifWithButtons ? .gif : .mp4))
+    }
+
+    @Test func anAreaGIFTurnsOrangeAtThirtySeconds() {
+        let model = RecordingPanelModel()
+        model.bar = Self.gifWithButtons
+        #expect(RecordingClock.isPastSoftLimit(30, format: model.format))
+    }
+
+    /// The symbol shows the state; the tool tip says what a press does, or why the button is off.
+    @Test func theHighlightsButtonShowsItsStateAndSaysWhatAPressDoes() {
+        let model = RecordingPanelModel()
+        model.highlights = BarToggle(isOn: false, isEnabled: true, disabledToolTip: nil)
+        #expect(model.highlightsSymbol == "cursorarrow")
+        #expect(model.highlightsToolTip == "Highlight clicks")
+        #expect(model.highlightsAccessibilityLabel == "Highlight clicks")
+        model.highlights = BarToggle(isOn: true, isEnabled: true, disabledToolTip: nil)
+        #expect(model.highlightsSymbol == "cursorarrow.rays")
+        #expect(model.highlightsToolTip == "Stop highlighting clicks")
+        #expect(model.highlightsAccessibilityLabel == "Stop highlighting clicks")
+        model.highlights = BarToggle(isOn: false, isEnabled: false, disabledToolTip: BubbleButtonState.notAvailableText)
+        #expect(model.highlightsSymbol == "cursorarrow")
+        #expect(model.highlightsToolTip == "Not available for this recording")
+        #expect(model.highlightsAccessibilityLabel == "Highlight clicks")
+    }
+
+    @Test func theBubbleButtonShowsItsStateAndSaysWhatAPressDoes() {
+        let model = RecordingPanelModel()
+        model.bubble = BarToggle(isOn: false, isEnabled: true, disabledToolTip: nil)
+        #expect(model.bubbleSymbol == "video.slash.fill")
+        #expect(model.bubbleToolTip == "Show the webcam bubble")
+        #expect(model.bubbleAccessibilityLabel == "Show webcam bubble")
+        model.bubble = BarToggle(isOn: true, isEnabled: true, disabledToolTip: nil)
+        #expect(model.bubbleSymbol == "video.fill")
+        #expect(model.bubbleToolTip == "Hide the webcam bubble")
+        #expect(model.bubbleAccessibilityLabel == "Hide webcam bubble")
+        model.bubble = BarToggle(isOn: false, isEnabled: false, disabledToolTip: CameraChoice.noCameraText)
+        #expect(model.bubbleSymbol == "video.slash.fill")
+        #expect(model.bubbleToolTip == CameraChoice.noCameraText)
+        #expect(model.bubbleAccessibilityLabel == "Show webcam bubble")
     }
 
     /// A GIF recording never has a mute button.
@@ -94,7 +213,7 @@ struct RecordingPanelLayoutTests {
     }
 
     /// Stop and Cancel keep R1's places at the bar's right end.
-    @Test(arguments: [RecordingPanelLayout.Bar.plain, .mute, .gif])
+    @Test(arguments: bars)
     func stopAndCancelEndTheBar(_ bar: RecordingPanelLayout.Bar) {
         let width = RecordingPanelLayout.size(of: bar).width
         let stop = RecordingPanelLayout.stopFrame(of: bar), cancel = RecordingPanelLayout.cancelFrame(of: bar)

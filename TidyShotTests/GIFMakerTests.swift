@@ -186,6 +186,34 @@ struct GIFMakerTests {
         try FileManager.default.removeItem(at: dir)
     }
 
+    // MARK: Reserved colours (R3)
+
+    /// Grey frames with the ring colours reserved: yellow, blue and black lead the global table.
+    @Test func reservedRingColoursLeadTheGlobalTable() async throws {
+        let (mp4, gif) = urls()
+        try await VideoFixtures.makeMP4(at: mp4, width: 160, height: 100, seconds: 1, audio: false)
+        _ = try await GIFMaker.make(from: mp4, to: gif, fps: 10, maxSide: 1280,
+                                    reserving: ClickRingColour.reservedGIFColours,
+                                    freeBytes: { nil }, progress: { _ in })
+
+        let file = try GIFBlocks.parse(Array(try bytes(gif)))
+        #expect(Array(file.globalTable.prefix(3)) == ClickRingColour.reservedGIFColours)
+        #expect(file.globalTable.count == file.globalTableEntries)
+        try FileManager.default.removeItem(at: dir)
+    }
+
+    /// Without `reserving`, the same frames give a table with no yellow or blue.
+    @Test func noReservedColoursLeavesTheRingColoursOut() async throws {
+        let (mp4, gif) = urls()
+        try await VideoFixtures.makeMP4(at: mp4, width: 160, height: 100, seconds: 1, audio: false)
+        _ = try await make(mp4, gif, fps: 10)
+
+        let file = try GIFBlocks.parse(Array(try bytes(gif)))
+        #expect(!file.globalTable.contains(ClickRingColour.yellow.gifColour))
+        #expect(!file.globalTable.contains(ClickRingColour.blue.gifColour))
+        try FileManager.default.removeItem(at: dir)
+    }
+
     // MARK: Progress
 
     @Test func progressNeverDecreasesReachesThePaletteShareAndEndsAtOne() async throws {

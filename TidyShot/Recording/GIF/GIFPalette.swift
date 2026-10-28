@@ -103,18 +103,26 @@ nonisolated struct GIFPaletteBuilder {
     /// `sqrt(count)`-weighted squared error is split on the axis and at the position that minimise
     /// the halves' summed error, until there are 255 boxes or none can be split. No pixels give one
     /// black entry.
-    func build() -> GIFPalette {
+    ///
+    /// `reserved` colours come first, in order and exactly (R3's click ring colours); the split
+    /// then makes at most `255 − reserved.count` boxes, and drops any that equal a reserved colour.
+    /// With colours reserved, no pixels give the reserved colours alone.
+    func build(reserving reserved: [GIFColour] = []) -> GIFPalette {
+        precondition(reserved.count <= GIFPalette.maximumColours, "At most 255 reserved colours")
+        let boxLimit = GIFPalette.maximumColours - reserved.count
         var points = Points()
         for bin in 0..<Self.binCount where counts[bin] > 0 {
             let count = Double(counts[bin])
             points.append(r: Double(sums[bin * 3]) / count, g: Double(sums[bin * 3 + 1]) / count,
                           b: Double(sums[bin * 3 + 2]) / count, count: count)
         }
-        guard points.count > 0 else { return GIFPalette(colours: [GIFColour(r: 0, g: 0, b: 0)]) }
+        guard points.count > 0, boxLimit > 0 else {
+            return GIFPalette(colours: reserved.isEmpty ? [GIFColour(r: 0, g: 0, b: 0)] : reserved)
+        }
 
         var order = Array(0..<points.count)
         var boxes = [points.box(order[...], lo: 0)]
-        while boxes.count < GIFPalette.maximumColours {
+        while boxes.count < boxLimit {
             var pick = -1
             var worst = 0.0
             for (index, box) in boxes.enumerated()
@@ -139,8 +147,8 @@ nonisolated struct GIFPaletteBuilder {
         for _ in 0..<refinementPasses {
             means = points.refine(means)
         }
-        var colours: [GIFColour] = []
-        var seen = Set<GIFColour>()
+        var colours = reserved
+        var seen = Set(reserved)
         for mean in means {
             let colour = GIFColour(r: Self.level(mean.r), g: Self.level(mean.g), b: Self.level(mean.b))
             if seen.insert(colour).inserted { colours.append(colour) }

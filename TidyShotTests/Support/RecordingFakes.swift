@@ -42,6 +42,8 @@ final class FakeRecordingDriver: RecordingStreamDriver {
     /// When true, `stop` suspends after any finish it sends first, until `releaseStop()`, like a
     /// `stopCapture()` that does not return.
     var holdsStop = false
+    /// What `start` returns as the filmed windows; nil returns all of `exclusions.filmedWindows`.
+    var filmed: Set<CGWindowID>?
     private(set) var startCount = 0
     private(set) var stopCount = 0
     private(set) var configuration: RecordingConfiguration?
@@ -56,7 +58,7 @@ final class FakeRecordingDriver: RecordingStreamDriver {
     }
 
     func start(_ configuration: RecordingConfiguration, outputURL: URL, exclusions: RecordingExclusions,
-               events: @escaping (RecordingStreamEvent) -> Void) async throws {
+               events: @escaping (RecordingStreamEvent) -> Void) async throws -> Set<CGWindowID> {
         startCount += 1
         self.configuration = configuration
         self.outputURL = outputURL
@@ -65,6 +67,7 @@ final class FakeRecordingDriver: RecordingStreamDriver {
         log.append("start")
         if holdsStart { await withCheckedContinuation { startGate = $0 } }
         if let startError { throw startError }
+        return filmed ?? exclusions.filmedWindows
     }
 
     func stop() async throws {
@@ -111,6 +114,7 @@ final class FakeRecordingDriver: RecordingStreamDriver {
 final class FakeRecordingChrome: RecordingChrome {
     let log: RecordingTestLog
     var windowNumbers: Set<CGWindowID> = [41, 42]
+    var filmedWindowNumbers: [FilmedFeature: CGWindowID] = [.bubble: 51, .highlights: 52]
     /// What `askToDiscard` answers: true for Discard, false for Save.
     var discards = true
     /// When true, `askToDiscard` waits until `answerDiscardWithSave()`, like the real alert while
@@ -122,9 +126,15 @@ final class FakeRecordingChrome: RecordingChrome {
     private(set) var elapsedShown: [TimeInterval] = []
     /// Each `setMuted`, in order.
     private(set) var mutedShown: [Bool] = []
+    /// Each `setFilmed`, in order.
+    private(set) var filmedShown: [Set<FilmedFeature>] = []
+    /// The two R3 buttons each `show` laid out.
+    private(set) var shownToggles: [(highlights: BarToggle, bubble: BarToggle)] = []
     private var onStop: (() -> Void)?
     private var onCancel: (() -> Void)?
     private var onMute: (() -> Void)?
+    private var onHighlights: (() -> Void)?
+    private var onBubble: (() -> Void)?
     private var askGate: CheckedContinuation<Bool, Never>?
 
     init(log: RecordingTestLog) {
@@ -132,11 +142,15 @@ final class FakeRecordingChrome: RecordingChrome {
     }
 
     func show(onStop: @escaping () -> Void, onCancel: @escaping () -> Void, onMute: @escaping () -> Void,
-              bar: RecordingPanelLayout.Bar) {
+              onHighlights: @escaping () -> Void, onBubble: @escaping () -> Void,
+              bar: RecordingPanelLayout.Bar, highlights: BarToggle, bubble: BarToggle) {
         self.onStop = onStop
         self.onCancel = onCancel
         self.onMute = onMute
+        self.onHighlights = onHighlights
+        self.onBubble = onBubble
         shownBars.append(bar)
+        shownToggles.append((highlights, bubble))
         calls.append("show")
         log.append("show")
     }
@@ -151,6 +165,18 @@ final class FakeRecordingChrome: RecordingChrome {
 
     func setMuted(_ muted: Bool) {
         mutedShown.append(muted)
+    }
+
+    func setFilmed(_ features: Set<FilmedFeature>) {
+        filmedShown.append(features)
+    }
+
+    func setHighlights(_ on: Bool, monitoring: Bool) {
+        calls.append("highlights \(on ? "on" : "off") monitoring \(monitoring ? "on" : "off")")
+    }
+
+    func setBubble(_ on: Bool) {
+        calls.append("bubble \(on ? "on" : "off")")
     }
 
     func askToDiscard(elapsed: TimeInterval) async -> Bool {
@@ -188,6 +214,15 @@ final class FakeRecordingChrome: RecordingChrome {
     /// press once the recording is ending all the same.
     func pressMute() {
         onMute?()
+    }
+
+    /// The bar's highlights and bubble buttons, which the real bar disables with Stop.
+    func pressHighlights() {
+        onHighlights?()
+    }
+
+    func pressBubble() {
+        onBubble?()
     }
 }
 
@@ -397,6 +432,34 @@ final class FakeMicrophoneDevices: MicrophoneDevices {
     func list() -> [MicrophoneDevice] { devices }
     func defaultDevice() -> MicrophoneDevice? { defaultInput }
     func access() -> MicrophoneAccess { currentAccess }
+
+    func requestAccess() async -> Bool {
+        requestCount += 1
+        currentAccess = grants ? .authorized : .denied
+        return grants
+    }
+}
+
+/// Cameras, a preferred camera and an access the tests set. `requestAccess` answers with
+/// `grants`, and the access is then what the prompt answered.
+final class FakeCameraDevices: CameraDevices {
+    var devices: [CameraDevice]
+    var preferredCamera: CameraDevice?
+    var currentAccess: CameraAccess
+    var grants: Bool
+    private(set) var requestCount = 0
+
+    init(devices: [CameraDevice] = [], preferredCamera: CameraDevice? = nil,
+         access: CameraAccess = .authorized, grants: Bool = true) {
+        self.devices = devices
+        self.preferredCamera = preferredCamera
+        self.currentAccess = access
+        self.grants = grants
+    }
+
+    func list() -> [CameraDevice] { devices }
+    func preferred() -> CameraDevice? { preferredCamera }
+    func access() -> CameraAccess { currentAccess }
 
     func requestAccess() async -> Bool {
         requestCount += 1

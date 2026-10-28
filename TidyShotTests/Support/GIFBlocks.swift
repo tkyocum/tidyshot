@@ -26,6 +26,8 @@ nonisolated enum GIFBlocks {
         var hasGlobalTable: Bool
         /// The global table's entry count, `2^(size + 1)` from the logical screen's packed field.
         var globalTableEntries: Int
+        /// The global table's colours, every entry the file holds; empty without one.
+        var globalTable: [GIFColour]
         /// The NETSCAPE2.0 block's loop count, nil without one.
         var loopCount: Int?
         var frames: [Frame]
@@ -85,11 +87,17 @@ nonisolated enum GIFBlocks {
         _ = try reader.take(2)   // background colour index, pixel aspect ratio
         let hasGlobalTable = packed & 0x80 != 0
         let globalTableEntries = 1 << (Int(packed & 0x07) + 1)
-        if hasGlobalTable { _ = try reader.take(globalTableEntries * 3) }
+        var globalTable: [GIFColour] = []
+        if hasGlobalTable {
+            let table = try reader.take(globalTableEntries * 3)
+            globalTable = (0..<globalTableEntries).map {
+                GIFColour(r: table[$0 * 3], g: table[$0 * 3 + 1], b: table[$0 * 3 + 2])
+            }
+        }
 
         var file = GIFFile(width: width, height: height, hasGlobalTable: hasGlobalTable,
-                           globalTableEntries: globalTableEntries, loopCount: nil, frames: [],
-                           endsWithTrailer: false)
+                           globalTableEntries: globalTableEntries, globalTable: globalTable, loopCount: nil,
+                           frames: [], endsWithTrailer: false)
         var control: Control?
         while !reader.isAtEnd {
             let introducer = try reader.byte()

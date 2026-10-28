@@ -17,52 +17,98 @@ extension AppCoordinator {
     private static let recordingCountInSeconds = 3
 
     /// What a record shortcut does in each phase: it cancels a count-in and stops a recording,
-    /// and otherwise starts one, also while an earlier recording is being saved. While a start
-    /// waits on the microphone prompt, another start is ignored.
+    /// and otherwise starts one, also while an earlier recording is being saved. While a start or
+    /// Settings waits on the microphone or the camera prompt, another start is ignored.
     nonisolated static func recordingShortcutAction(for phase: RecordingPhase,
-                                                    isAskingMicrophone: Bool) -> RecordingShortcutAction {
+                                                    askingPermission: PermissionPrompt?) -> RecordingShortcutAction {
         switch phase {
         case .countIn: .cancelCountIn
         case .recording: .stop
-        case .idle, .saving: isAskingMicrophone ? .ignore : .start
+        case .idle, .saving: askingPermission != nil ? .ignore : .start
         }
     }
 
-    /// What a record function does about the microphone prompt, before the capture lock (R2 design,
-    /// At the start): with no access to ask for it goes on; with a prompt to show while another
-    /// capture holds the lock it ends there, with no prompt, as the lock would refuse the start and the
-    /// prompt would land in that capture; otherwise the prompt shows.
-    nonisolated static func microphonePromptStep(asksForAccess: Bool, isCapturing: Bool) -> MicrophonePromptStep {
+    /// What a record function does about the microphone or the camera prompt, before the capture
+    /// lock (R2 design, At the start; R3 design, Permission): with no access to ask for it goes on;
+    /// with a prompt to show while another capture holds the lock it ends there, with no prompt, as
+    /// the lock would refuse the start and the prompt would land in that capture; otherwise the
+    /// prompt shows.
+    nonisolated static func permissionPromptStep(asksForAccess: Bool, isCapturing: Bool) -> PermissionPromptStep {
         guard asksForAccess else { return .goOn }
         return isCapturing ? .end : .prompt
     }
 
+    /// The prompts a start shows before the capture lock, in order (R3 design, Permission; plan
+    /// Gap 9): the microphone first, then the camera.
+    nonisolated static func startPrompts(microphone: Bool, camera: Bool) -> [PermissionPrompt] {
+        (microphone ? [.microphone] : []) + (camera ? [.camera] : [])
+    }
+
+    /// Whether Settings may show a prompt now (R3 design, Asking from Settings; plan Gap 8): only
+    /// with no recording from its count-in to its save, no capture holding the lock and no other
+    /// prompt open, so the prompt is never filmed nor in a screenshot. Otherwise it waits, and the
+    /// next start asks.
+    nonisolated static func settingsPromptStep(phase: RecordingPhase, isCapturing: Bool,
+                                               askingPermission: PermissionPrompt?) -> SettingsPromptStep {
+        phase == .idle && !isCapturing && askingPermission == nil ? .ask : .wait
+    }
+
+    /// Settings' camera toggle and microphone pick ask for access here, not from the view (R3
+    /// design, Asking from Settings), under the same rule as a start's prompt: while it is open every
+    /// capture is refused and a start is ignored (`askingPermission`). While a capture, a recording
+    /// or another prompt runs, it does not ask (`settingsPromptStep`) and logs why; the next start
+    /// asks instead. The answer is logged and changes nothing stored.
+    func requestAccessFromSettings(_ prompt: PermissionPrompt) async {
+        switch Self.settingsPromptStep(phase: recordingPhase, isCapturing: isCapturing, askingPermission: askingPermission) {
+        case .wait:
+            let reason = askingPermission.map { "the \($0.name) prompt is open" } ?? "a capture is running"
+            RecordingLog.note("Recording: \(prompt.name) prompt from Settings deferred, \(reason)")
+        case .ask:
+            askingPermission = prompt
+            let granted = await requestAccess(prompt)
+            askingPermission = nil
+            RecordingLog.note("Recording: \(prompt.name) access \(granted ? "allowed" : "refused") at the Settings prompt")
+        }
+    }
+
+    /// Shows the system prompt for the microphone or the camera; true when access is granted.
+    private func requestAccess(_ prompt: PermissionPrompt) async -> Bool {
+        switch prompt {
+        case .microphone: await microphones.requestAccess()
+        case .camera: await cameras.requestAccess()
+        }
+    }
+
     /// What a record start the capture lock refused posts (R2 design, Decided 2026-10-24, 9): after
-    /// the microphone prompt, which the user answered, `RecordingEnd.busyAfterPrompt`; otherwise
-    /// nothing, as any capture the lock refuses ends silently.
+    /// the microphone or the camera prompt, which the user answered, `RecordingEnd.busyAfterPrompt`;
+    /// otherwise nothing, as any capture the lock refuses ends silently.
     nonisolated static func lockRefusalNotice(afterPrompt: Bool) -> RecordingNotice? {
         afterPrompt ? RecordingEnd.busyAfterPrompt : nil
     }
 
-    /// The stored microphone a start reads before the capture lock, and whether it showed the prompt.
-    private typealias MicrophoneAsk = (choice: MicrophoneChoice.Stored, prompted: Bool)
+    /// The stored microphone a start reads before the capture lock, and the last prompt it showed.
+    private typealias RecordingAsk = (microphone: MicrophoneChoice.Stored, prompted: PermissionPrompt?)
     /// The input a recording takes, resolved under the capture lock, and its mute lag.
     private typealias MicrophoneStart = (resolution: MicrophoneChoice.Resolution, lag: TimeInterval)
-    /// What `recorder.run` gave, with the microphone note to post after Stop.
-    private typealias RecordingEnded = (outcome: RecordingOutcome, microphoneNote: RecordingNotice?)
+    /// The microphone and the camera a recording starts with, both resolved under the capture lock.
+    private typealias RecordingInputs = (microphone: MicrophoneStart, camera: CameraStart)
+    /// What `recorder.run` gave, with the microphone, camera and highlights notes to post after Stop.
+    private typealias RecordingEnded = (outcome: RecordingOutcome, microphoneNote: RecordingNotice?,
+                                        cameraNote: RecordingNotice?, highlightsNote: RecordingNotice?)
 
     /// Record Screen (recording design, Starting): select an area or click a window, then the
     /// hand-off and the recording. The lock is held from the selection to the end of the recording,
     /// and the file is saved after it. An area under 32×32 pt is refused, and no area becomes the
-    /// previous area: that is for image captures. The microphone prompt, when it shows, comes
-    /// before the lock, and the input is resolved under it before the selection (R2 design, At the
-    /// start).
+    /// previous area: that is for image captures. The microphone and camera prompts, when they show,
+    /// come before the lock, and the input and the camera are resolved under it before the selection
+    /// (R2 design, At the start; R3 design, Permission). The selection cannot yet know whether a
+    /// window will be picked, so a window recording can follow a camera prompt it does not use.
     func recordScreen() async {
-        guard recordShortcutStarts(), let ask = await recordingMicrophoneChoice() else { return }
+        guard recordShortcutStarts(), let ask = await recordingPrompts() else { return }
         let intent = CaptureIntent.standard
         var ended: RecordingEnded?
         let tookLock = await withCaptureLock(coversDesktop: true) {
-            guard let microphone = recordingCanStart(microphone: ask.choice) else { return }
+            guard let inputs = recordingCanStart(microphone: ask.microphone) else { return }
             guard let content = await loadContent(failureTitle: RecordingEnd.failedTitle) else { return }
             guard let selection = await selector.select(mode: .recording, content: content) else { return }
             let target: CaptureTarget
@@ -80,7 +126,7 @@ extension AppCoordinator {
                 covers.hide(for: .capture)
                 target = .window(window)
             }
-            ended = await record(target, microphone: microphone)
+            ended = await record(target, inputs: inputs)
         }
         if !tookLock {
             lockRefusedStart(afterPrompt: ask.prompted)
@@ -89,14 +135,14 @@ extension AppCoordinator {
     }
 
     /// Record Fullscreen: the display under the pointer, with the same re-entry, lock, checks and
-    /// microphone as Record Screen. There is no selection overlay to dismiss and no activation to
-    /// give up; the count-in is centred on the display with no frame.
+    /// prompts, microphone and camera as Record Screen. There is no selection overlay to dismiss and
+    /// no activation to give up; the count-in is centred on the display with no frame.
     func recordFullscreen() async {
-        guard recordShortcutStarts(), let ask = await recordingMicrophoneChoice() else { return }
+        guard recordShortcutStarts(), let ask = await recordingPrompts() else { return }
         let intent = CaptureIntent.standard
         var ended: RecordingEnded?
         let tookLock = await withCaptureLock(coversDesktop: true) {
-            guard let microphone = recordingCanStart(microphone: ask.choice) else { return }
+            guard let inputs = recordingCanStart(microphone: ask.microphone) else { return }
             // The hand-off starts here: the count-in phase, and the notice hold `record` keeps on.
             recordingCountIn = true
             notifier.holdNotices()
@@ -106,7 +152,7 @@ extension AppCoordinator {
                 endNoticeHold()
                 return
             }
-            ended = await record(.display(display), microphone: microphone)
+            ended = await record(.display(display), inputs: inputs)
         }
         if !tookLock {
             lockRefusedStart(afterPrompt: ask.prompted)
@@ -115,11 +161,12 @@ extension AppCoordinator {
     }
 
     /// A start the capture lock refused (R2 design, Decided 2026-10-24, 9). One that showed the
-    /// microphone prompt posts and logs why it did not start, as the user answered it; captures are
-    /// refused while the prompt is up, so this is a backstop. One that showed none ends silently.
-    private func lockRefusedStart(afterPrompt prompted: Bool) {
-        guard let notice = Self.lockRefusalNotice(afterPrompt: prompted) else { return }
-        RecordingLog.note("Recording: not started after the microphone prompt, another capture was running")
+    /// microphone or the camera prompt posts and logs why it did not start, naming the last prompt,
+    /// as the user answered it; captures are refused while a prompt is up, so this is a backstop. One
+    /// that showed none ends silently.
+    private func lockRefusedStart(afterPrompt prompted: PermissionPrompt?) {
+        guard let prompted, let notice = Self.lockRefusalNotice(afterPrompt: true) else { return }
+        RecordingLog.note("Recording: not started after the \(prompted.name) prompt, another capture was running")
         notifier.notifyError(notice.body, title: notice.title)
     }
 
@@ -131,13 +178,16 @@ extension AppCoordinator {
     /// Both record functions start here, before the capture lock, as Capture Scrolling's shortcut
     /// reaches `advance()`: a count-in is cancelled and a recording stopped, whichever of the two
     /// started it. True when a new recording may start, never once the app is quitting nor while
-    /// another start waits on the microphone prompt.
+    /// another start or Settings waits on the microphone or the camera prompt.
     private func recordShortcutStarts() -> Bool {
-        switch Self.recordingShortcutAction(for: recordingPhase, isAskingMicrophone: isAskingMicrophone) {
+        switch Self.recordingShortcutAction(for: recordingPhase, askingPermission: askingPermission) {
         case .start:
             return !isQuitting
         case .ignore:
-            RecordingLog.note("Recording: start ignored, the microphone prompt is open")
+            // `.ignore` comes only with a prompt open.
+            if let prompt = askingPermission {
+                RecordingLog.note("Recording: start ignored, the \(prompt.name) prompt is open")
+            }
         case .cancelCountIn:
             selfTimer.cancel()
         case .stop:
@@ -146,34 +196,44 @@ extension AppCoordinator {
         return false
     }
 
-    /// The stored microphone a recording starts with, read once (R2 design, At the start): Off for
-    /// a GIF, which never prompts. While access is not yet decided, the system prompt shows here,
-    /// before the capture lock, so it never shows during a count-in or a recording. Meanwhile
-    /// another start is ignored and every other capture refused (`isAskingMicrophone`), so none can
-    /// contain the prompt and the lock is free once it is answered (Decided 2026-10-24, 9). Whatever
-    /// the answer, the start goes on: the access is read again under the lock. Nil, so nothing
-    /// starts, when the prompt would show while another capture holds the lock, which would refuse
-    /// the start, and the prompt would land in its screenshot (`microphonePromptStep`); and when the
-    /// app began quitting while the prompt was up. `prompted` says whether the prompt showed.
-    private func recordingMicrophoneChoice() async -> MicrophoneAsk? {
+    /// The prompts a recording starts with, before the capture lock (R2 design, At the start; R3
+    /// design, Permission). The stored microphone is read once: Off for a GIF, which never asks for
+    /// it. The camera is asked for with `Show webcam bubble` on, whatever the format, as the bubble
+    /// applies to GIF; with it off, never. While access is not yet decided, the system prompts show
+    /// here, the microphone's first, so neither shows during a count-in or a recording. Meanwhile
+    /// another start is ignored and every other capture refused (`askingPermission`), so none can
+    /// contain a prompt and the lock is free once it is answered (Decided 2026-10-24, 9). Whatever
+    /// the answers, the start goes on: the access is read again under the lock. Nil, so nothing
+    /// starts, when a prompt would show while another capture holds the lock, which would refuse
+    /// the start, and the prompt would land in its screenshot (`permissionPromptStep`); and when the
+    /// app began quitting while a prompt was up. `prompted` is the last prompt that showed.
+    private func recordingPrompts() async -> RecordingAsk? {
         let format = settings.recordingFormat
         let stored = MicrophoneChoice.Stored(value: settings.recordingMicrophone, name: settings.recordingMicrophoneName)
         let choice = MicrophoneChoice.forRecording(stored, format: format)
-        // Off, and so every GIF, reads no access.
-        let asks = choice != .off && MicrophoneChoice.asksForAccess(stored, format: format, access: microphones.access())
-        // A screenshot's selection or self-timer, or a scrolling capture, with a prompt to show: the
-        // start ends here, as `withCaptureLock` ends any start while another capture runs. The real
-        // lock, not `capturesRefused`: no other start can be at its prompt (`recordShortcutStarts`).
-        switch Self.microphonePromptStep(asksForAccess: asks, isCapturing: isCapturing) {
-        case .goOn: return (choice, false)
-        case .end: return nil
-        case .prompt: break
+        // Off, and so every GIF, reads no microphone access.
+        let asksMicrophone = choice != .off
+            && MicrophoneChoice.asksForAccess(stored, format: format, access: microphones.access())
+        let asksCamera = CameraChoice.asksForAccess(bubble: settings.recordingWebcamBubble, access: cameras.access())
+        var prompted: PermissionPrompt?
+        for prompt in Self.startPrompts(microphone: asksMicrophone, camera: asksCamera) {
+            // A screenshot's selection or self-timer, or a scrolling capture, with a prompt to show:
+            // the start ends here, as `withCaptureLock` ends any start while another capture runs.
+            // The real lock, not `capturesRefused`: no other start or Settings can be at a prompt
+            // (`recordShortcutStarts`, `settingsPromptStep`).
+            switch Self.permissionPromptStep(asksForAccess: true, isCapturing: isCapturing) {
+            case .goOn: continue
+            case .end: return nil
+            case .prompt: break
+            }
+            askingPermission = prompt
+            let granted = await requestAccess(prompt)
+            askingPermission = nil
+            RecordingLog.note("Recording: \(prompt.name) access \(granted ? "allowed" : "refused") at the prompt")
+            if isQuitting { return nil }
+            prompted = prompt
         }
-        isAskingMicrophone = true
-        let granted = await microphones.requestAccess()
-        isAskingMicrophone = false
-        RecordingLog.note("Recording: microphone access \(granted ? "allowed" : "refused") at the prompt")
-        return isQuitting ? nil : (choice, true)
+        return (choice, prompted)
     }
 
     /// Makes `tmp/Recording`, then reads its free space. A folder that cannot be made fails the
@@ -181,8 +241,10 @@ extension AppCoordinator {
     /// Beside that check, before the selection overlay or the count-in, the input the recording
     /// takes (R2 design, At the start; Lag): for a microphone, the access is read again and the
     /// input resolved, with its mute lag; Off, and so every GIF, reads nothing and takes the lag
-    /// with no microphone. Nothing here awaits. Nil when the start is refused.
-    private func recordingCanStart(microphone choice: MicrophoneChoice.Stored) -> MicrophoneStart? {
+    /// with no microphone. The camera is resolved for every start, with `Show webcam bubble` on or
+    /// off, so the bar can turn the bubble on (R3 design, Under the lock): its access and the devices
+    /// are read, which never prompts. Nothing here awaits. Nil when the start is refused.
+    private func recordingCanStart(microphone choice: MicrophoneChoice.Stored) -> RecordingInputs? {
         do {
             try Recording.makeDirectory()
         } catch {
@@ -202,7 +264,10 @@ extension AppCoordinator {
         let resolution = MicrophoneChoice.resolveAtStart(choice, access: { microphones.access() },
                                                          devices: { microphones.list() },
                                                          defaultDevice: { microphones.defaultDevice() })
-        return (resolution, muteLag(for: resolution.device))
+        let camera = CameraChoice.resolveAtStart(
+            stored: CameraChoice.Stored(value: settings.recordingCamera, name: settings.recordingCameraName),
+            access: { cameras.access() }, devices: { cameras.list() }, preferred: { cameras.preferred() })
+        return ((resolution, muteLag(for: resolution.device)), camera)
     }
 
     /// The hand-off and the recording, with the capture lock held. `recordingCountIn` is true
@@ -210,19 +275,24 @@ extension AppCoordinator {
     /// `recordingSavesInFlight` before `recorder.close()`, so the phase goes from `.recording` to
     /// `.saving` with nothing between. Nil when nothing started, also when a quit came during the
     /// hand-off: `isQuitting` is read just before `recorder.run`, with no suspension between.
-    /// Otherwise the outcome comes back with the microphone note, which posts after Stop.
+    /// Otherwise the outcome comes back with the microphone note and R3's camera and highlights
+    /// notes, read from the run and the extras before `recorder.close()`, which post after Stop.
     /// Notifications wait while `recordingPhase` is `.countIn` or `.recording`: from the hand-off's
     /// start (here, or before Record Fullscreen's display read) until the start gives up or
     /// `recorder.run` returns, and post then, before this recording's own (Decided 2026-10-24, 8, as
     /// built, so a banner from the count-in is not filmed). `run` returns on every end (Stop,
     /// Cancel, a failure, the stream's end, a quit, a start that fails inside it) and never throws,
     /// and each exit before it ends the hold too, so the hold never outlives the start. It stays
-    /// inside the capture lock, so it never nests.
-    private func record(_ target: CaptureTarget, microphone: MicrophoneStart) async -> RecordingEnded? {
+    /// inside the capture lock, so it never nests. An area or fullscreen recording gets R3's bubble
+    /// and ring overlay (`RecordingExtras`), made here from the options and the camera of this start
+    /// and closed on every exit (R3 design, Who owns the bubble).
+    private func record(_ target: CaptureTarget, inputs: RecordingInputs) async -> RecordingEnded? {
+        let extras = makeRecordingExtras(for: target, camera: inputs.camera)
+        defer { extras?.close() }
         recordingCountIn = true
         // Record Fullscreen's hold is on already, and keeps what waits.
         notifier.holdNotices()
-        let start = await recordingHandOff(target, microphone: microphone)
+        let start = await recordingHandOff(target, inputs: inputs, extras: extras)
         recordingCountIn = false
         guard let start, !isQuitting else {
             endNoticeHold()
@@ -235,8 +305,43 @@ extension AppCoordinator {
         if case .keep = outcome {
             recordingSavesInFlight += 1
         }
+        // Read before `close`, with the extras still open. A window recording's summary is empty,
+        // so neither note posts.
+        let summary = recorder.extrasSummary
+        let cameraNote = CameraNote.afterStop(start: start.camera.note, wanted: summary.bubbleWanted,
+                                              missed: summary.missed.contains(.bubble), loss: extras?.cameraLoss)
+        let highlightsNote = ClickHighlightRule.noteAfterStop(onAtStart: summary.highlightsAtStart,
+                                                              missed: summary.missed.contains(.highlights))
         recorder.close()
-        return (outcome, start.microphoneNote)
+        return (outcome, start.microphoneNote, cameraNote, highlightsNote)
+    }
+
+    /// The bubble and the ring overlay for an area or fullscreen target; none for a window. The
+    /// toggles and the size are read here, before the count-in, as the bubble shows from it (plan
+    /// Gap 3). A drag's end writes the insets and a double-click the size, so the next recording
+    /// starts from them.
+    private func makeRecordingExtras(for target: CaptureTarget, camera: CameraStart) -> RecordingExtras? {
+        if case .window = target { return nil }
+        return RecordingExtras(
+            options: settings.recordingOptions, camera: camera, insets: settings.bubbleInsets,
+            clickSource: { ClickMonitor(isFilmedWindow: $0) },
+            elapsed: { [weak self] in self?.recorder.elapsedTime ?? 0 },
+            storeInsets: { [weak self] insets in
+                self?.settings.recordingBubbleInsetRight = Double(insets.right)
+                self?.settings.recordingBubbleInsetBottom = Double(insets.bottom)
+            },
+            storeSize: { [weak self] size in self?.settings.recordingBubbleSize = size })
+    }
+
+    /// Where R3's windows go for a recorded area (CG, nil for fullscreen) on a display: its screen's
+    /// frame and visible frame, or both from the display's CG frame when no screen matches it.
+    private static func extrasPlace(cgArea: CGRect?, displayID: CGDirectDisplayID, cgDisplayFrame: CGRect,
+                                    primaryHeight: CGFloat) -> RecordingExtrasPlace {
+        let screenFrame = CaptureEngine.screen(forDisplayID: displayID)?.frame
+            ?? Geometry.appKitRect(fromCG: cgDisplayFrame, primaryHeight: primaryHeight)
+        return RecordingExtrasPlace.make(cgArea: cgArea, cgDisplayFrame: cgDisplayFrame, screenFrame: screenFrame,
+                                         visibleFrame: visibleFrame(forDisplayID: displayID, cgFrame: cgDisplayFrame),
+                                         primaryHeight: primaryHeight)
     }
 
     /// Ends the notice hold (Decided 2026-10-24, 8): what waited posts now, in the order asked for,
@@ -256,9 +361,14 @@ extension AppCoordinator {
     /// `captureAfterCountdown` does, and a window is sized from its fresh frame. A cancelled
     /// count-in, a quit, or a display or window that went (`Screen recording`), gives nil: nothing
     /// started. The input resolved under the lock goes into `RecordingOptions.microphoneID`, with
-    /// its lag in the request, and its note comes back for after Stop; a GIF takes neither.
-    private func recordingHandOff(_ target: CaptureTarget, microphone: MicrophoneStart)
-        async -> (request: RecordingRequest, chrome: any RecordingChrome, microphoneNote: RecordingNotice?)? {
+    /// its lag in the request, and its note comes back for after Stop; a GIF takes neither. The
+    /// camera resolved under the lock comes back too, without its camera and note for a window
+    /// recording, which has no bubble. `extras` shows before the count-in or the settle delay and is
+    /// placed again from the fresh content; its toggles, its size and the camera go into the options
+    /// and the request (plan Gap 3), and the chrome holds it.
+    private func recordingHandOff(_ target: CaptureTarget, inputs: RecordingInputs, extras: RecordingExtras?)
+        async -> (request: RecordingRequest, chrome: any RecordingChrome, microphoneNote: RecordingNotice?,
+                  camera: CameraStart)? {
         let isFullscreen: Bool
         if case .display = target { isFullscreen = true } else { isFullscreen = false }
         if !isFullscreen {
@@ -269,6 +379,18 @@ extension AppCoordinator {
         // during Record Fullscreen's display read.
         guard !isQuitting else { return nil }
         let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
+        // The bubble and the overlay are on screen from here, so the bubble can be dragged during
+        // the count-in. A display gone by now still shows them; the content read below gives up.
+        switch target {
+        case .area(let rect, let display):
+            extras?.show(at: Self.extrasPlace(cgArea: rect, displayID: display.displayID,
+                                              cgDisplayFrame: display.frame, primaryHeight: primaryHeight))
+        case .display(let display):
+            extras?.show(at: Self.extrasPlace(cgArea: nil, displayID: display.displayID,
+                                              cgDisplayFrame: display.frame, primaryHeight: primaryHeight))
+        case .window:
+            break
+        }
         if settings.recordingCountdown {
             guard let screenFrame = CaptureEngine.screen(forDisplayID: target.displayID)?.frame ?? NSScreen.main?.frame
             else { return nil }
@@ -294,11 +416,15 @@ extension AppCoordinator {
             source = .area(area, on: Self.recordingDisplay(current))
             placement = .area(Geometry.appKitRect(fromCG: area, primaryHeight: primaryHeight),
                               visibleFrame: Self.visibleFrame(forDisplayID: displayID, cgFrame: current.frame))
+            extras?.place(at: Self.extrasPlace(cgArea: area, displayID: displayID, cgDisplayFrame: current.frame,
+                                               primaryHeight: primaryHeight))
         case .display(let display):
             guard let current = connectedDisplay(display.displayID, in: content) else { return nil }
             displayID = current.displayID
             source = .display(Self.recordingDisplay(current))
             placement = .fullscreen(visibleFrame: Self.visibleFrame(forDisplayID: displayID, cgFrame: current.frame))
+            extras?.place(at: Self.extrasPlace(cgArea: nil, displayID: displayID, cgDisplayFrame: current.frame,
+                                               primaryHeight: primaryHeight))
         case .window(let window):
             guard let current = content.windows.first(where: { $0.windowID == window.windowID }) else {
                 notifier.notifyError("The window is no longer on screen.", title: RecordingEnd.refusalTitle)
@@ -314,13 +440,31 @@ extension AppCoordinator {
         // Read once: a change in Settings during the recording or its conversion does not reach it.
         var options = settings.recordingOptions
         // `Format` is read again here, so a start that became a GIF drops the input and its note.
-        let input = MicrophoneChoice.forRecording(microphone.resolution, format: options.format)
+        let input = MicrophoneChoice.forRecording(inputs.microphone.resolution, format: options.format)
         options.microphoneID = input.device?.uniqueID
+        let camera = CameraChoice.forRecording(inputs.camera, source: source)
+        // R3's part of the options is the one on screen since the count-in, so the run and the
+        // bubble agree. Without extras neither feature runs.
+        if let extras {
+            options.clickHighlights = extras.options.clickHighlights
+            options.webcamBubble = extras.options.webcamBubble
+            options.bubbleSize = extras.options.bubbleSize
+            options.cameraID = camera.camera?.uniqueID
+            options.cameraName = camera.camera?.name
+        } else {
+            options.clickHighlights = false
+            options.webcamBubble = false
+            options.bubbleSize = .medium
+        }
+        let extrasStart = extras.map { _ in
+            RecordingExtrasStart(highlights: options.clickHighlights, bubbleToggle: options.webcamBubble,
+                                 bubble: BubbleButtonState.make(camera: camera.camera, access: camera.access, filmed: true))
+        }
         let request = RecordingRequest(id: id, configuration: RecordingConfiguration.make(source, options: options),
                                        displayID: displayID, outputURL: Recording.fileURL(for: id),
-                                       muteLogURL: MuteLog.url(for: id), lag: microphone.lag,
-                                       gif: options.format == .gif ? options.gif : nil)
-        return (request, RecordingScreenChrome(placement: placement), input.note)
+                                       muteLogURL: MuteLog.url(for: id), lag: inputs.microphone.lag,
+                                       gif: options.format == .gif ? options.gif : nil, extras: extrasStart)
+        return (request, RecordingScreenChrome(placement: placement, extras: extras), input.note, camera)
     }
 
     /// The recording's mute lag (design, Lag), read beside `resolve`: for the resolved input, from
@@ -430,25 +574,32 @@ extension AppCoordinator {
     /// After the capture lock: a kept file is handed to `saveRecording`, with `Recording stopped`
     /// when something other than the user's Stop ended it, through a GIF conversion for a GIF
     /// recording and through the mute ladder for a muted one; otherwise the recorder's notice, if
-    /// any, posts, in `RecordingNoticeOrder`'s order. The microphone note posts last either way,
-    /// as `recorder.run` ran (R2 design, The note posts after Stop). `record.circle` goes as the
-    /// file is handed on, or once it was removed.
+    /// any, posts, in `RecordingNoticeOrder`'s order. The microphone, camera and highlights notes
+    /// post last either way, as `recorder.run` ran (R2 design, The note posts after Stop; R3 design,
+    /// Notices). `record.circle` goes as the file is handed on, or once it was removed.
     private func endRecording(_ ended: RecordingEnded?, intent: CaptureIntent) async {
         guard let ended else { return }
         isRecording = false
         let microphoneNote = ended.microphoneNote
+        let cameraNote = ended.cameraNote
+        let highlightsNote = ended.highlightsNote
         switch ended.outcome {
         case .keep(let recording, let notice):
             if let gif = recording.gif {
-                // A GIF takes no microphone, so it has no note.
-                await makeGIF(from: recording, settings: gif, intent: intent, stopNotice: notice)
+                // A GIF takes no microphone, so it has no microphone note; the bubble and the
+                // highlights apply to it.
+                await makeGIF(from: recording, settings: gif, intent: intent, stopNotice: notice,
+                              cameraNote: cameraNote, highlightsNote: highlightsNote)
             } else if !recording.muteIntervals.isEmpty {
-                await muteAndSave(recording, intent: intent, stopNotice: notice, microphoneNote: microphoneNote)
+                await muteAndSave(recording, intent: intent, stopNotice: notice, microphoneNote: microphoneNote,
+                                  cameraNote: cameraNote, highlightsNote: highlightsNote)
             } else {
-                await saveRecording(recording, intent: intent, stopNotice: notice, microphoneNote: microphoneNote)
+                await saveRecording(recording, intent: intent, stopNotice: notice, microphoneNote: microphoneNote,
+                                    cameraNote: cameraNote, highlightsNote: highlightsNote)
             }
         case .nothing(let notice):
-            postAfterStop(save: nil, stop: notice, microphone: microphoneNote, quitMode: isQuitting, revealing: nil)
+            postAfterStop(save: nil, stop: notice, microphone: microphoneNote, camera: cameraNote,
+                          highlights: highlightsNote, quitMode: isQuitting, revealing: nil)
         }
     }
 
@@ -460,9 +611,11 @@ extension AppCoordinator {
     /// fail in Debug builds. `.muted` and `.soundRemoved` remove the log and save, the second with
     /// `Sound removed` (nothing posts in quit mode; the ladder's log line is the trace). `.notMuted`
     /// saves the file marked with the segments, and the log goes once the record exists; with none
-    /// (`.leftInTmp`) it stays for the next launch. The microphone note goes to the save either way.
+    /// (`.leftInTmp`) it stays for the next launch. The microphone, camera and highlights notes go
+    /// to the save either way.
     private func muteAndSave(_ recording: Recording, intent: CaptureIntent, stopNotice: RecordingNotice?,
-                             microphoneNote: RecordingNotice?) async {
+                             microphoneNote: RecordingNotice?, cameraNote: RecordingNotice?,
+                             highlightsNote: RecordingNotice?) async {
         let log = MuteLog.url(for: recording.id)
         let resolution = await RecordingMute.resolve(file: recording.fileURL,
                                                      output: RecordingMute.rewriteURL(for: recording.id),
@@ -471,13 +624,16 @@ extension AppCoordinator {
         switch resolution.outcome {
         case .muted:
             Recording.removeFile(at: log)
-            await saveRecording(recording, intent: intent, stopNotice: stopNotice, microphoneNote: microphoneNote)
+            await saveRecording(recording, intent: intent, stopNotice: stopNotice, microphoneNote: microphoneNote,
+                                cameraNote: cameraNote, highlightsNote: highlightsNote)
         case .soundRemoved:
             Recording.removeFile(at: log)
             await saveRecording(recording, intent: intent, stopNotice: stopNotice,
-                                saveNotice: RecordingMute.soundRemovedNotice, microphoneNote: microphoneNote)
+                                saveNotice: RecordingMute.soundRemovedNotice, microphoneNote: microphoneNote,
+                                cameraNote: cameraNote, highlightsNote: highlightsNote)
         case .notMuted:
             if await saveRecording(recording, intent: intent, stopNotice: stopNotice, microphoneNote: microphoneNote,
+                                   cameraNote: cameraNote, highlightsNote: highlightsNote,
                                    unmutedIntervals: resolution.segments) != nil {
                 Recording.removeFile(at: log)
             }
@@ -501,13 +657,17 @@ extension AppCoordinator {
 
     /// Converts a kept GIF recording's MP4 and saves the result (design, Conversion). The recording
     /// already counts in `recordingSavesInFlight`, so the phase stays `.saving` and a new recording
-    /// may start; the conversion's task is kept in `gifConversions` until it has saved.
+    /// may start; the conversion's task is kept in `gifConversions` until it has saved. The camera
+    /// and highlights notes go to the save, whether it saves the GIF or the MP4.
     private func makeGIF(from recording: Recording, settings gif: GIFSettings, intent: CaptureIntent,
-                         stopNotice: RecordingNotice?) async {
+                         stopNotice: RecordingNotice?, cameraNote: RecordingNotice?,
+                         highlightsNote: RecordingNotice?) async {
+        let reserved = recording.highlightedClicks ? ClickRingColour.reservedGIFColours : []
         let conversion = GIFConversion(
             freeBytes: { RecordingLimits.freeBytes(at: Recording.directory) },
             make: { mp4, gifURL, settings, progress in
                 try await GIFMaker.make(from: mp4, to: gifURL, fps: settings.fps, maxSide: settings.effectiveMaxSide,
+                                        reserving: reserved,
                                         freeBytes: { RecordingLimits.freeBytes(at: Recording.directory) },
                                         progress: progress)
             },
@@ -515,7 +675,8 @@ extension AppCoordinator {
                 // A task of its own, so `Stop Making GIF`'s cancel never reaches the save.
                 await Task {
                     await self.saveRecording(recording, intent: intent, stopNotice: stopNotice, mode: mode,
-                                             saveNotice: saveNotice)
+                                             saveNotice: saveNotice, cameraNote: cameraNote,
+                                             highlightsNote: highlightsNote)
                 }.value
             },
             removeFile: { Recording.removeFile(at: $0) },
@@ -541,18 +702,20 @@ extension AppCoordinator {
     /// with the poster as the thumbnail and the card's image. The record's kind and the file's
     /// extension are `recording.mediaKind`'s. `saveNotice` (`GIF not made`) and `stopNotice`
     /// (`Recording stopped`) post last, in `RecordingNoticeOrder`'s order, `Recording stopped`
-    /// revealing the file, in place of `Recording saved`; `microphoneNote` posts after them both,
-    /// after `Recording saved` too, and replaces neither. Quit mode (`mode`, or `isQuitting` once
-    /// set) never asks for a folder and has no Clop, upload, card or notification; it returns once
-    /// the thumbnail is written. `intent.then` and `intent.copyOnly` are ignored. `unmutedIntervals`
-    /// (the mute ladder's `.notMuted` segments) keep the file in `pending/` with no folder asked for,
-    /// no upload and nothing on the clipboard, mark the record, and post `Sound not muted` (design,
-    /// Privacy rule). Returns the record, or nil when the file stayed in `tmp/Recording`, where the
-    /// notice names `recording.recoveryURL`, the file the launch check recovers.
+    /// revealing the file, in place of `Recording saved`; `microphoneNote`, then `cameraNote` and
+    /// `highlightsNote` (R3), post after them both, after `Recording saved` too, and replace
+    /// neither. Quit mode (`mode`, or `isQuitting` once set) never asks for a folder and has no
+    /// Clop, upload, card or notification; it returns once the thumbnail is written. `intent.then`
+    /// and `intent.copyOnly` are ignored. `unmutedIntervals` (the mute ladder's `.notMuted`
+    /// segments) keep the file in `pending/` with no folder asked for, no upload and nothing on the
+    /// clipboard, mark the record, and post `Sound not muted` (design, Privacy rule). Returns the
+    /// record, or nil when the file stayed in `tmp/Recording`, where the notice names
+    /// `recording.recoveryURL`, the file the launch check recovers.
     @discardableResult
     func saveRecording(_ recording: Recording, intent: CaptureIntent = .standard, stopNotice: RecordingNotice? = nil,
                        mode: RecordingSaveMode = .normal, saveNotice: RecordingNotice? = nil,
-                       microphoneNote: RecordingNotice? = nil,
+                       microphoneNote: RecordingNotice? = nil, cameraNote: RecordingNotice? = nil,
+                       highlightsNote: RecordingNotice? = nil,
                        unmutedIntervals: [MuteInterval] = []) async -> CaptureRecord? {
         // Its only callers, the record functions and their GIF conversions, counted the recording in
         // when the recorder kept it.
@@ -603,8 +766,8 @@ extension AppCoordinator {
             if case .notice(let notice) = plan.notification {
                 notifier.notifyError(notice.body, title: notice.title)
             }
-            postAfterStop(save: saveNotice, stop: stopNotice, microphone: microphoneNote, quitMode: quitMode,
-                          revealing: recoveryURL)
+            postAfterStop(save: saveNotice, stop: stopNotice, microphone: microphoneNote, camera: cameraNote,
+                          highlights: highlightsNote, quitMode: quitMode, revealing: recoveryURL)
             return nil
         }
         if plan.setsLastCaptureURL {
@@ -632,16 +795,18 @@ extension AppCoordinator {
                          notConfiguredWarning: plan.notConfiguredWarning, showsCard: plan.showsCard,
                          upload: plan.uploads ? destination : nil, payload: { try uploadPayload(for: record) },
                          notification: notification, awaitsThumbnail: quitMode)
-        postAfterStop(save: saveNotice, stop: stopNotice, microphone: microphoneNote, quitMode: quitMode,
-                      revealing: fileURL)
+        postAfterStop(save: saveNotice, stop: stopNotice, microphone: microphoneNote, camera: cameraNote,
+                      highlights: highlightsNote, quitMode: quitMode, revealing: fileURL)
         return record
     }
 
     /// The notices after Stop (plan Gap 2) in `RecordingNoticeOrder`'s order, none in quit mode.
     /// `stop` reveals `file`, the recording's final file.
     private func postAfterStop(save: RecordingNotice?, stop: RecordingNotice?, microphone: RecordingNotice?,
+                               camera: RecordingNotice?, highlights: RecordingNotice?,
                                quitMode: Bool, revealing file: URL?) {
-        for notice in RecordingNoticeOrder.afterStop(save: save, stop: stop, microphone: microphone, quitMode: quitMode) {
+        for notice in RecordingNoticeOrder.afterStop(save: save, stop: stop, microphone: microphone, camera: camera,
+                                                     highlights: highlights, quitMode: quitMode) {
             notifier.notifyError(notice.body, title: notice.title, revealing: notice == stop ? file : nil)
         }
     }
@@ -704,9 +869,9 @@ nonisolated enum RecordingPhase: Equatable, Sendable {
     case saving
 }
 
-/// What a start does about the microphone prompt
-/// (`AppCoordinator.microphonePromptStep(asksForAccess:isCapturing:)`).
-nonisolated enum MicrophonePromptStep: Equatable, Sendable {
+/// What a start does about the microphone or the camera prompt
+/// (`AppCoordinator.permissionPromptStep(asksForAccess:isCapturing:)`).
+nonisolated enum PermissionPromptStep: Equatable, Sendable {
     case prompt
     /// Nothing to ask: on to the capture lock.
     case goOn
@@ -714,10 +879,18 @@ nonisolated enum MicrophonePromptStep: Equatable, Sendable {
     case end
 }
 
-/// What a record shortcut does (`AppCoordinator.recordingShortcutAction(for:isAskingMicrophone:)`).
+/// What Settings does about a prompt (`AppCoordinator.settingsPromptStep(phase:isCapturing:askingPermission:)`).
+nonisolated enum SettingsPromptStep: Equatable, Sendable {
+    /// Nothing records, no capture holds the lock and no prompt is open: the prompt shows.
+    case ask
+    /// The prompt does not show; the next start asks.
+    case wait
+}
+
+/// What a record shortcut does (`AppCoordinator.recordingShortcutAction(for:askingPermission:)`).
 nonisolated enum RecordingShortcutAction: Equatable, Sendable {
     case start
-    /// A start while another waits on the microphone prompt.
+    /// A start while another start or Settings waits on the microphone or the camera prompt.
     case ignore
     case cancelCountIn
     case stop

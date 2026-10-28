@@ -9,6 +9,9 @@ struct CaptureSettingsView: View {
     /// notifications; the access also when the Settings window becomes key.
     @State private var microphoneDevices: [MicrophoneDevice] = []
     @State private var microphoneAccess = MicrophoneAccess.authorized
+    /// `Camera`'s list and the access, read as the microphone's are.
+    @State private var cameraDevices: [CameraDevice] = []
+    @State private var cameraAccess = CameraAccess.authorized
     /// The Settings window, so another window becoming key does not count.
     @State private var settingsWindow: ObjectIdentifier?
 
@@ -16,10 +19,16 @@ struct CaptureSettingsView: View {
     private static let microphoneChanges = Publishers.MergeMany(
         LiveMicrophoneDevices.changeNotifications.map { NotificationCenter.default.publisher(for: $0) })
         .receive(on: DispatchQueue.main)
+    /// The camera list refreshes when a camera comes or goes, as the microphone's does.
+    private static let cameraChanges = Publishers.MergeMany(
+        LiveCameraDevices.changeNotifications.map { NotificationCenter.default.publisher(for: $0) })
+        .receive(on: DispatchQueue.main)
 
     /// Which Recording rows show and which are enabled, for the chosen format.
     private var recordingLayout: RecordingSettingsLayout {
-        RecordingSettingsLayout(format: settings.recordingFormat)
+        RecordingSettingsLayout(format: settings.recordingFormat,
+                                clickHighlights: settings.recordingClickHighlights,
+                                webcamBubble: settings.recordingWebcamBubble)
     }
 
     /// The same `AVCaptureDevice` reads the recorder's `microphones` makes; it holds no state.
@@ -27,6 +36,13 @@ struct CaptureSettingsView: View {
 
     private var storedMicrophone: MicrophoneChoice.Stored {
         MicrophoneChoice.Stored(value: settings.recordingMicrophone, name: settings.recordingMicrophoneName)
+    }
+
+    /// The same `AVCaptureDevice` reads the coordinator's `cameras` makes; it holds no state.
+    private let cameras: any CameraDevices = LiveCameraDevices()
+
+    private var storedCamera: CameraChoice.Stored {
+        CameraChoice.Stored(value: settings.recordingCamera, name: settings.recordingCameraName)
     }
 
     var body: some View {
@@ -119,6 +135,42 @@ struct CaptureSettingsView: View {
                 }
                 Toggle("Show cursor in recordings", isOn: $settings.recordingShowsCursor)
                 Toggle("Count down before recording", isOn: $settings.recordingCountdown)
+                Toggle("Highlight clicks", isOn: $settings.recordingClickHighlights)
+                Toggle("Show webcam bubble", isOn: Binding(get: { settings.recordingWebcamBubble }, set: setWebcamBubble))
+                Picker("Camera", selection: Binding(get: { storedCamera.value }, set: pickCamera)) {
+                    ForEach(CameraChoice.entries(stored: storedCamera, devices: cameraDevices), id: \.tag) { entry in
+                        Text(entry.title).tag(entry.tag)
+                    }
+                }
+                .disabled(!recordingLayout.cameraRowsEnabled)
+                if CameraChoice.showsAccessNote(bubble: settings.recordingWebcamBubble, access: cameraAccess) {
+                    HStack {
+                        Text(CameraChoice.accessOffText)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Privacy Settings…") {
+                            NSWorkspace.shared.open(CameraChoice.privacySettingsURL)
+                        }
+                    }
+                }
+                Picker("Bubble size", selection: $settings.recordingBubbleSize) {
+                    ForEach(BubbleSize.allCases, id: \.self) { size in
+                        Text(size.title).tag(size)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .disabled(!recordingLayout.cameraRowsEnabled)
+                if recordingLayout.showsBubbleGIFCaption {
+                    Text(RecordingSettingsLayout.bubbleGIFCaption)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if recordingLayout.showsOverlayCaption {
+                    Text(RecordingSettingsLayout.overlayCaption)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .formStyle(.grouped)
@@ -128,12 +180,17 @@ struct CaptureSettingsView: View {
             })
         }
         .background(WindowReader { settingsWindow = $0.map(ObjectIdentifier.init) })
-        .onAppear(perform: refreshMicrophones)
+        .onAppear {
+            refreshMicrophones()
+            refreshCameras()
+        }
         .onReceive(Self.microphoneChanges) { _ in refreshMicrophones() }
-        // Back from System Settings, the note clears once access is allowed.
+        .onReceive(Self.cameraChanges) { _ in refreshCameras() }
+        // Back from System Settings, the notes clear once access is allowed.
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notification in
             guard let window = notification.object as? NSWindow, ObjectIdentifier(window) == settingsWindow else { return }
             microphoneAccess = microphones.access()
+            cameraAccess = cameras.access()
         }
     }
 
@@ -150,8 +207,9 @@ struct CaptureSettingsView: View {
 
     /// A pick writes the choice and the device's name, whatever the access (`MicrophoneChoice.pick`;
     /// design, Microphone, Permission). A microphone picked while access is not determined asks for
-    /// it. The answer changes nothing stored: after a refusal, or a pick while access is off, the row
-    /// shows the access note.
+    /// it through the coordinator, which waits while a capture, a recording or another prompt runs
+    /// (R3 design, Asking from Settings). The answer changes nothing stored: after a refusal, or a
+    /// pick while access is off, the row shows the access note.
     private func pickMicrophone(_ tag: String) {
         let name = microphoneDevices.first { $0.uniqueID == tag }?.name
             ?? (tag == settings.recordingMicrophone ? settings.recordingMicrophoneName : "")
@@ -161,8 +219,39 @@ struct CaptureSettingsView: View {
         settings.recordingMicrophoneName = pick.stored.name
         guard pick.asksForAccess else { return }
         Task {
-            _ = await microphones.requestAccess()
+            await AppCoordinator.shared.requestAccessFromSettings(.microphone)
             microphoneAccess = microphones.access()
+        }
+    }
+
+    /// Reads the cameras and the access. A stored camera that is listed under another name gets
+    /// the new name written (`CameraChoice.refreshedName`).
+    private func refreshCameras() {
+        cameraDevices = cameras.list()
+        cameraAccess = cameras.access()
+        if let name = CameraChoice.refreshedName(stored: storedCamera, devices: cameraDevices) {
+            settings.recordingCameraName = name
+        }
+    }
+
+    /// A pick writes the camera and its name (`CameraChoice.pick`), whatever the access.
+    private func pickCamera(_ tag: String) {
+        let picked = CameraChoice.pick(tag: tag, devices: cameraDevices, stored: storedCamera)
+        settings.recordingCamera = picked.value
+        settings.recordingCameraName = picked.name
+    }
+
+    /// `Show webcam bubble` turned on while camera access is not determined asks for it through the
+    /// coordinator (R3 design, Asking from Settings), which waits while a capture, a recording or
+    /// another prompt runs; the next start then asks. The toggle stays on whatever the answer
+    /// (Decided 2026-10-24, 7): after a refusal the rows show the access note.
+    private func setWebcamBubble(_ on: Bool) {
+        settings.recordingWebcamBubble = on
+        cameraAccess = cameras.access()
+        guard CameraChoice.asksForAccess(bubble: on, access: cameraAccess) else { return }
+        Task {
+            await AppCoordinator.shared.requestAccessFromSettings(.camera)
+            cameraAccess = cameras.access()
         }
     }
 }

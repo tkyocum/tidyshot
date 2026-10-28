@@ -455,6 +455,76 @@ struct AppSettingsTests {
         #expect(AppSettings(defaults: defaults).recordingFormat == .mp4)
     }
 
+    /// Recording R3: both features off, the default camera, a Medium bubble 16 pt from the corner.
+    @Test func r3RecordingSettingsDefaultAsTheDesignSays() {
+        let settings = AppSettings(defaults: freshDefaults())
+        #expect(!settings.recordingClickHighlights)
+        #expect(!settings.recordingWebcamBubble)
+        #expect(settings.recordingCamera == "default")
+        #expect(settings.recordingCameraName == "")
+        #expect(settings.recordingBubbleSize == .medium)
+        #expect(settings.recordingBubbleInsetRight == 16)
+        #expect(settings.recordingBubbleInsetBottom == 16)
+        #expect(settings.bubbleInsets == BubbleInsets.standard)
+    }
+
+    @Test func r3RecordingSettingsPersistUnderTheirKeys() {
+        let defaults = freshDefaults()
+        let first = AppSettings(defaults: defaults)
+        first.recordingClickHighlights = true
+        first.recordingWebcamBubble = true
+        first.recordingCamera = "0x8020000005ac8514"
+        first.recordingCameraName = "Brio 500"
+        first.recordingBubbleSize = .large
+        first.recordingBubbleInsetRight = 40
+        first.recordingBubbleInsetBottom = 72.5
+        #expect(defaults.bool(forKey: "recordingClickHighlights"))
+        #expect(defaults.bool(forKey: "recordingWebcamBubble"))
+        #expect(defaults.string(forKey: "recordingCamera") == "0x8020000005ac8514")
+        #expect(defaults.string(forKey: "recordingCameraName") == "Brio 500")
+        #expect(defaults.string(forKey: "recordingBubbleSize") == "large")
+        #expect(defaults.object(forKey: "recordingBubbleInsetRight") as? Double == 40)
+        #expect(defaults.object(forKey: "recordingBubbleInsetBottom") as? Double == 72.5)
+
+        let second = AppSettings(defaults: defaults)
+        #expect(second.recordingClickHighlights)
+        #expect(second.recordingWebcamBubble)
+        #expect(second.recordingCamera == "0x8020000005ac8514")
+        #expect(second.recordingCameraName == "Brio 500")
+        #expect(second.recordingBubbleSize == .large)
+        #expect(second.bubbleInsets == BubbleInsets(right: 40, bottom: 72.5))
+    }
+
+    @Test func aStoredBubbleSizeOutsideTheThreeReadsAsMedium() {
+        let defaults = freshDefaults()
+        for stored in ["huge", "", "Large"] {
+            defaults.set(stored, forKey: "recordingBubbleSize")
+            #expect(AppSettings(defaults: defaults).recordingBubbleSize == .medium)
+        }
+        defaults.set("small", forKey: "recordingBubbleSize")
+        #expect(AppSettings(defaults: defaults).recordingBubbleSize == .small)
+    }
+
+    @Test func aNegativeOrUnreadableBubbleInsetReadsAs16() {
+        let defaults = freshDefaults()
+        defaults.set(-4, forKey: "recordingBubbleInsetRight")
+        defaults.set(Double.nan, forKey: "recordingBubbleInsetBottom")
+        let settings = AppSettings(defaults: defaults)
+        #expect(settings.recordingBubbleInsetRight == 16)
+        #expect(settings.recordingBubbleInsetBottom == 16)
+        #expect(settings.bubbleInsets == BubbleInsets.standard)
+
+        // A string, as `defaults write -string` stores it, is not a number, so it must not read
+        // as 0, as `double(forKey:)` would.
+        defaults.set("nope", forKey: "recordingBubbleInsetRight")
+        defaults.set("24", forKey: "recordingBubbleInsetBottom")
+        #expect(AppSettings(defaults: defaults).bubbleInsets == BubbleInsets.standard)
+
+        defaults.set(0, forKey: "recordingBubbleInsetRight")
+        defaults.set(Float(24.5), forKey: "recordingBubbleInsetBottom")
+        #expect(AppSettings(defaults: defaults).bubbleInsets == BubbleInsets(right: 0, bottom: 24.5))
+    }
+
     /// `Full size` keeps R1's 4096 px cap.
     @Test func fullSizeGIFsKeepTheRecordingCap() {
         #expect(GIFSettings(fps: 15, maxSide: 0).effectiveMaxSide == RecordingConfiguration.maximumSide)

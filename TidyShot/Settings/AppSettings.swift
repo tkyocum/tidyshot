@@ -77,6 +77,13 @@ final class AppSettings {
         static let gifMaxSide = "gifMaxSide"
         static let recordingMicrophone = "recordingMicrophone"
         static let recordingMicrophoneName = "recordingMicrophoneName"
+        static let recordingClickHighlights = "recordingClickHighlights"
+        static let recordingWebcamBubble = "recordingWebcamBubble"
+        static let recordingCamera = "recordingCamera"
+        static let recordingCameraName = "recordingCameraName"
+        static let recordingBubbleSize = "recordingBubbleSize"
+        static let recordingBubbleInsetRight = "recordingBubbleInsetRight"
+        static let recordingBubbleInsetBottom = "recordingBubbleInsetBottom"
     }
 
     @ObservationIgnored private let defaults: UserDefaults
@@ -185,6 +192,39 @@ final class AppSettings {
     var recordingMicrophoneName: String {
         didSet { defaults.set(recordingMicrophoneName, forKey: Keys.recordingMicrophoneName) }
     }
+    /// `Highlight clicks`: a ring at each click in area and fullscreen recordings.
+    var recordingClickHighlights: Bool {
+        didSet { defaults.set(recordingClickHighlights, forKey: Keys.recordingClickHighlights) }
+    }
+    /// `Show webcam bubble`: the camera in a round window the recording films.
+    var recordingWebcamBubble: Bool {
+        didSet { defaults.set(recordingWebcamBubble, forKey: Keys.recordingWebcamBubble) }
+    }
+    /// `Camera`: `default`, otherwise the device's `uniqueID`.
+    var recordingCamera: String { didSet { defaults.set(recordingCamera, forKey: Keys.recordingCamera) } }
+    /// The chosen camera's `localizedName`, empty for System Default, so a disconnected camera
+    /// can still be named.
+    var recordingCameraName: String {
+        didSet { defaults.set(recordingCameraName, forKey: Keys.recordingCameraName) }
+    }
+    /// `Bubble size`; anything stored but the three raw values reads as Medium.
+    var recordingBubbleSize: BubbleSize {
+        didSet { defaults.set(recordingBubbleSize.rawValue, forKey: Keys.recordingBubbleSize) }
+    }
+    /// The bubble's last place: its right and bottom edges' distance from the recorded rect's.
+    /// A negative or non-finite stored value reads as 16.
+    var recordingBubbleInsetRight: Double {
+        didSet { defaults.set(recordingBubbleInsetRight, forKey: Keys.recordingBubbleInsetRight) }
+    }
+    var recordingBubbleInsetBottom: Double {
+        didSet { defaults.set(recordingBubbleInsetBottom, forKey: Keys.recordingBubbleInsetBottom) }
+    }
+
+    /// The two bubble insets as one value.
+    var bubbleInsets: BubbleInsets {
+        BubbleInsets(right: BubbleInsets.reading(recordingBubbleInsetRight),
+                     bottom: BubbleInsets.reading(recordingBubbleInsetBottom))
+    }
 
     /// `GIF frame rate` and `GIF size` as one value.
     var gifSettings: GIFSettings {
@@ -195,7 +235,9 @@ final class AppSettings {
     var recordingOptions: RecordingOptions {
         RecordingOptions(framesPerSecond: recordingFrameRate, retina: recordingRetina,
                          systemAudio: recordingSystemAudio, showsCursor: recordingShowsCursor,
-                         format: recordingFormat, gif: gifSettings)
+                         format: recordingFormat, gif: gifSettings,
+                         clickHighlights: recordingClickHighlights, webcamBubble: recordingWebcamBubble,
+                         bubbleSize: recordingBubbleSize)
     }
 
     /// The seven editor values as one value. Setting it writes all seven keys.
@@ -264,6 +306,13 @@ final class AppSettings {
             Keys.gifMaxSide: 1280,
             Keys.recordingMicrophone: "",
             Keys.recordingMicrophoneName: "",
+            Keys.recordingClickHighlights: false,
+            Keys.recordingWebcamBubble: false,
+            Keys.recordingCamera: "default",
+            Keys.recordingCameraName: "",
+            Keys.recordingBubbleSize: BubbleSize.medium.rawValue,
+            Keys.recordingBubbleInsetRight: 16.0,
+            Keys.recordingBubbleInsetBottom: 16.0,
         ])
         showsCursor = defaults.bool(forKey: Keys.showsCursor)
         copyImageToClipboard = defaults.bool(forKey: Keys.copyImageToClipboard)
@@ -327,6 +376,17 @@ final class AppSettings {
         }
         recordingMicrophone = defaults.string(forKey: Keys.recordingMicrophone) ?? ""
         recordingMicrophoneName = defaults.string(forKey: Keys.recordingMicrophoneName) ?? ""
+        recordingClickHighlights = defaults.bool(forKey: Keys.recordingClickHighlights)
+        recordingWebcamBubble = defaults.bool(forKey: Keys.recordingWebcamBubble)
+        recordingCamera = defaults.string(forKey: Keys.recordingCamera) ?? "default"
+        recordingCameraName = defaults.string(forKey: Keys.recordingCameraName) ?? ""
+        recordingBubbleSize = BubbleSize(stored: defaults.string(forKey: Keys.recordingBubbleSize) ?? "")
+        // A value that is not a number must read as 16, not as 0, as `double(forKey:)` would.
+        let storedInset = { (key: String) in
+            Double(BubbleInsets.reading((defaults.object(forKey: key) as? NSNumber)?.doubleValue ?? .nan))
+        }
+        recordingBubbleInsetRight = storedInset(Keys.recordingBubbleInsetRight)
+        recordingBubbleInsetBottom = storedInset(Keys.recordingBubbleInsetBottom)
         // Not registered: a missing value, or one that does not decode (a fill or aspect from a
         // newer build), means the default style.
         backgroundStyle = defaults.data(forKey: Keys.backgroundStyle)

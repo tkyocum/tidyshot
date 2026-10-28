@@ -210,6 +210,40 @@ struct RecordingConfigurationTests {
         #expect(!RecordingConfiguration.make(area, options: gif).showsMuteButton)
     }
 
+    // MARK: What the filter films (R3 design, Filming the bubble and the rings)
+
+    let exclusions = RecordingExclusions(chromeWindows: [41, 42], cardWindows: [7], coverWindows: [90],
+                                         filmedWindows: [51, 52])
+
+    @Test func anAreaAndADisplayExceptTheCoversAndTheFilmedWindows() {
+        let area = RecordingFilterPlan.area(displayID: 1, sourceRect: CGRect(x: 100, y: 50, width: 800, height: 500))
+        #expect(exclusions.exceptedWindowNumbers(for: area) == [90, 51, 52])
+        #expect(exclusions.exceptedWindowNumbers(for: .display(displayID: 1)) == [90, 51, 52])
+    }
+
+    @Test func aWindowRecordingExceptsNothing() {
+        #expect(exclusions.exceptedWindowNumbers(for: .window(windowID: 77)).isEmpty)
+    }
+
+    @Test func theFallbackFilterLeavesOutOnlyTheChromeAndTheCards() {
+        #expect(exclusions.fallbackExcludedWindowNumbers == [41, 42, 7])
+        #expect(exclusions.fallbackExcludedWindowNumbers.isDisjoint(with: exclusions.filmedWindows))
+    }
+
+    @Test func onlyFilmedWindowsThatWereFoundAreFilmed() {
+        #expect(exclusions.filmed(found: [90, 51, 52]) == [51, 52])
+        #expect(exclusions.filmed(found: [90, 52]) == [52])
+        #expect(exclusions.filmed(found: [90]).isEmpty)
+        #expect(exclusions.filmed(found: [51, 41, 7]) == [51])
+    }
+
+    @Test func R2sExclusionsFilmNoOwnWindow() {
+        let r2 = RecordingExclusions(chromeWindows: [41, 42], cardWindows: [7], coverWindows: [90])
+        #expect(r2.filmedWindows.isEmpty)
+        #expect(r2.exceptedWindowNumbers(for: .display(displayID: 1)) == [90])
+        #expect(r2.filmed(found: [90]).isEmpty)
+    }
+
     @Test func areaMinimumIs32PointsEachWay() {
         #expect(RecordingConfiguration.minimumAreaSide == 32)
         #expect(RecordingConfiguration.isLargeEnough(CGRect(x: 10, y: 10, width: 32, height: 32)))

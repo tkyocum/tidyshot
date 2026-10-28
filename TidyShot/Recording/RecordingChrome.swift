@@ -1,19 +1,41 @@
 import AppKit
 
+/// One of the bar's R3 buttons (R3 design, Bar): whether its feature is on, and whether it can be
+/// pressed, with the tool tip that says why not.
+nonisolated struct BarToggle: Equatable, Sendable {
+    var isOn: Bool
+    var isEnabled: Bool
+    var disabledToolTip: String?
+}
+
 /// What a recording puts on screen: the control panel, the dashed frame of an area recording, and
 /// the Cancel question. `RecordingScreenChrome` is the real one; tests use a fake.
 protocol RecordingChrome: AnyObject {
     /// The panel and the frame, for the filter's fallback exclusion. Valid once shown.
     var windowNumbers: Set<CGWindowID> { get }
+    /// The bubble's and the ring overlay's window numbers, for the filter to film. A feature with
+    /// no window is missing (plan Gap 4).
+    var filmedWindowNumbers: [FilmedFeature: CGWindowID] { get }
     /// Orders the frame and the panel front, laid out as `bar`, with Stop enabled, the time at
-    /// `0:00` and the sound not muted. `onMute` is the mute button's, which only the mute bar has.
+    /// `0:00` and the sound not muted. `onMute` is the mute button's, which only a bar with it has;
+    /// `onHighlights` and `onBubble` are the R3 buttons', shown as `highlights` and `bubble` on a bar
+    /// with the overlay buttons.
     func show(onStop: @escaping () -> Void, onCancel: @escaping () -> Void, onMute: @escaping () -> Void,
-              bar: RecordingPanelLayout.Bar)
+              onHighlights: @escaping () -> Void, onBubble: @escaping () -> Void,
+              bar: RecordingPanelLayout.Bar, highlights: BarToggle, bubble: BarToggle)
     func update(elapsed: TimeInterval)
-    /// Stop, Cancel and the mute button together.
+    /// Stop, Cancel, the mute button and the R3 buttons together.
     func setStopEnabled(_ enabled: Bool)
     /// The mute button's state.
     func setMuted(_ muted: Bool)
+    /// The highlights button's state, and whether the click monitors are installed, which the
+    /// controller makes true only from the first frame (plan Gap 5).
+    func setHighlights(_ on: Bool, monitoring: Bool)
+    /// The bubble button's state; the bubble shows or hides at once.
+    func setBubble(_ on: Bool)
+    /// The features whose windows the filter films. A missing one is not shown (R3 design, Lookup
+    /// misses).
+    func setFilmed(_ features: Set<FilmedFeature>)
     /// `Discard this recording?` with `<m:ss> of recording will be deleted.`. True for Discard,
     /// false for Save.
     func askToDiscard(elapsed: TimeInterval) async -> Bool
@@ -41,9 +63,12 @@ final class RecordingScreenChrome: RecordingChrome {
     private let placement: RecordingChromePlacement
     /// `askToDiscard`'s answer, from its call until the alert or a quit gives it.
     private var discardAnswer: CheckedContinuation<Bool, Never>?
+    /// The bubble and the ring overlay of an area or fullscreen recording; nil for a window.
+    private let extras: RecordingExtras?
 
-    init(placement: RecordingChromePlacement) {
+    init(placement: RecordingChromePlacement, extras: RecordingExtras? = nil) {
         self.placement = placement
+        self.extras = extras
         if case .area(let area, _) = placement {
             frameWindow = ScrollAreaFrameWindow(area: area)
         } else {
@@ -70,16 +95,24 @@ final class RecordingScreenChrome: RecordingChrome {
     }
 
     func show(onStop: @escaping () -> Void, onCancel: @escaping () -> Void, onMute: @escaping () -> Void,
-              bar: RecordingPanelLayout.Bar) {
+              onHighlights: @escaping () -> Void, onBubble: @escaping () -> Void,
+              bar: RecordingPanelLayout.Bar, highlights: BarToggle, bubble: BarToggle) {
         model.onStop = onStop
         model.onCancel = onCancel
         model.onMute = onMute
+        model.onHighlights = onHighlights
+        model.onBubble = onBubble
         model.elapsed = 0
         model.stopEnabled = true
         model.isMuted = false
+        model.highlights = highlights
+        model.bubble = bubble
         model.bar = bar
         panel.setFrame(Self.panelFrame(size: RecordingPanelLayout.size(of: bar), placement: placement), display: false)
+        // Both are at `.floating`, so the bar goes back above the bubble after each click on it.
+        extras?.onBubbleInteraction = { [weak panel] in panel?.orderFrontRegardless() }
         frameWindow?.orderFrontRegardless()
+        // After the bubble, which has been on screen since the count-in.
         panel.orderFrontRegardless()
     }
 
@@ -93,6 +126,34 @@ final class RecordingScreenChrome: RecordingChrome {
 
     func setMuted(_ muted: Bool) {
         model.isMuted = muted
+    }
+
+    func setHighlights(_ on: Bool, monitoring: Bool) {
+        model.highlights.isOn = on
+        extras?.setHighlights(monitoring: monitoring)
+    }
+
+    func setBubble(_ on: Bool) {
+        model.bubble.isOn = on
+        extras?.setBubble(on)
+    }
+
+    var filmedWindowNumbers: [FilmedFeature: CGWindowID] { extras?.windowNumbers ?? [:] }
+
+    /// A feature the filter does not film turns off, and its button says it is not available. A
+    /// button already disabled keeps its own tool tip, which `BubbleButtonState` ranks first.
+    func setFilmed(_ features: Set<FilmedFeature>) {
+        func notAvailable(_ toggle: BarToggle) -> BarToggle {
+            BarToggle(isOn: false, isEnabled: false,
+                      disabledToolTip: toggle.isEnabled ? BubbleButtonState.notAvailableText : toggle.disabledToolTip)
+        }
+        if !features.contains(.highlights) {
+            model.highlights = notAvailable(model.highlights)
+        }
+        if !features.contains(.bubble) {
+            model.bubble = notAvailable(model.bubble)
+        }
+        extras?.setFilmed(features)
     }
 
     /// Runs as `confirmRemoveFromHistory` does: in a block the run loop performs only in its
@@ -131,10 +192,14 @@ final class RecordingScreenChrome: RecordingChrome {
         discardAnswer = nil
     }
 
+    /// The bubble and the rings go with the bar.
     func close() {
+        extras?.close()
         model.onStop = {}
         model.onCancel = {}
         model.onMute = {}
+        model.onHighlights = {}
+        model.onBubble = {}
         panel.orderOut(nil)
         frameWindow?.orderOut(nil)
     }

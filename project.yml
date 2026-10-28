@@ -54,6 +54,13 @@ targets:
         NSHumanReadableCopyright: "Copyright © 2026 Tim Yocum"
         # Asking for microphone access without it ends the process.
         NSMicrophoneUsageDescription: TidyShot records your microphone in screen recordings when you turn it on.
+        # Capture → Recording → Show webcam bubble (recording R3). Asking for camera access without
+        # the usage string ends the process. Without the Continuity Camera key the iPhone reports
+        # as a built-in camera, and reaction gestures stay off so a hand does not fire balloons
+        # into a recording.
+        NSCameraUsageDescription: TidyShot shows your camera in a bubble in screen recordings when you turn it on.
+        NSCameraUseContinuityCameraDeviceType: true
+        NSCameraReactionEffectGesturesEnabledDefault: false
         CFBundleURLTypes:
           - CFBundleURLName: io.tky.tidyshot
             CFBundleURLSchemes:
@@ -67,6 +74,8 @@ targets:
         com.apple.security.network.client: true
         # Capture → Recording → Microphone (recording R2).
         com.apple.security.device.audio-input: true
+        # Capture → Recording → Show webcam bubble (recording R3).
+        com.apple.security.device.camera: true
         # Optimize images with Clop (spec 2.7): Clop's CFMessagePort, direct and Setapp builds.
         com.apple.security.temporary-exception.mach-lookup.global-name:
           - com.lowtechguys.Clop.optimisationService
