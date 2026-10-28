@@ -231,4 +231,57 @@ struct DragDownloadTests {
         #expect(fractions.all.last == 1)
         #expect(fractions.all.allSatisfy { $0 >= 0.5 })
     }
+
+    /// A cancel that lands before the continuation is handed over (during `signedRequest`, say)
+    /// cancels the URLSession task first, and URLSession completes it with no `resume()`. `start`
+    /// then resumes at once with that result instead of waiting for a completion that has passed.
+    @Test func aTaskCancelledBeforeStartStillResumes() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (session, stub) = StubSession.make(headerHandler: { _ in (200, [:], Data("x".utf8)) })
+        let landing = try store.landingURL()
+        let delegate = DragDownloadDelegate(landing: landing, expectedBytes: nil, onProgress: { _ in })
+        let task = session.downloadTask(with: URL(string: "https://snap.s3.us-east-1.amazonaws.com/a.mp4")!)
+        task.delegate = delegate
+        task.cancel()
+        // URLSession completes a task cancelled before it was resumed a few ms later.
+        try await Task.sleep(for: .milliseconds(300))
+        let error = await #expect(throws: URLError.self) {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+                delegate.start(continuation)
+                task.resume()
+            }
+        }
+        #expect(error?.code == .cancelled)
+        #expect(stub.requests.isEmpty)
+        #expect(!exists(landing))
+    }
+
+    /// Whichever order `start` and the completion come in, the continuation is resumed once with
+    /// the task's result.
+    @Test func aCompletionBeforeStartIsKeptForStart() async throws {
+        let session = URLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        let task = session.downloadTask(with: URL(string: "https://snap.s3.us-east-1.amazonaws.com/a.mp4")!)
+        let landing = root.appending(path: "landing")
+
+        let succeeded = DragDownloadDelegate(landing: landing, expectedBytes: nil, onProgress: { _ in })
+        succeeded.urlSession(session, task: task, didCompleteWithError: nil)
+        try await withCheckedThrowingContinuation { succeeded.start($0) }
+
+        let failed = DragDownloadDelegate(landing: landing, expectedBytes: nil, onProgress: { _ in })
+        failed.urlSession(session, task: task, didCompleteWithError: URLError(.networkConnectionLost))
+        await #expect(throws: URLError(.networkConnectionLost)) {
+            try await withCheckedThrowingContinuation { failed.start($0) }
+        }
+
+        let afterStart = DragDownloadDelegate(landing: landing, expectedBytes: nil, onProgress: { _ in })
+        await #expect(throws: URLError(.timedOut)) {
+            try await withCheckedThrowingContinuation { continuation in
+                afterStart.start(continuation)
+                afterStart.urlSession(session, task: task, didCompleteWithError: URLError(.timedOut))
+                // A second completion does nothing.
+                afterStart.urlSession(session, task: task, didCompleteWithError: nil)
+            }
+        }
+    }
 }

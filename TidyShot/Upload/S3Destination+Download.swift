@@ -40,8 +40,18 @@ extension S3Destination {
 /// status is read there. Refuses redirects and throttles progress as `UploadProgressDelegate` does.
 /// URLSession calls it on its own queue, so its state is locked.
 nonisolated final class DragDownloadDelegate: NSObject, URLSessionDownloadDelegate, Sendable {
+    /// The continuation and the task's result can arrive in either order: a cancel that lands
+    /// before `withTaskCancellationHandler` cancels the task before `start`, and URLSession still
+    /// completes it. Whichever comes second resumes the continuation.
+    private enum Phase {
+        case waiting
+        case started(CheckedContinuation<Void, any Error>)
+        case completed(Result<Void, any Error>)
+        case resumed
+    }
+
     private struct State {
-        var continuation: CheckedContinuation<Void, any Error>?
+        var phase = Phase.waiting
         /// A non-2xx response or a failed move, kept for `didCompleteWithError`.
         var failure: (any Error)?
     }
@@ -58,9 +68,24 @@ nonisolated final class DragDownloadDelegate: NSObject, URLSessionDownloadDelega
         self.onProgress = onProgress
     }
 
-    /// Set before the task resumes; resumed once, when the task completes.
+    /// Set before the task resumes; resumed once, when the task completes, or at once when it
+    /// already has.
     func start(_ continuation: CheckedContinuation<Void, any Error>) {
-        state.withLock { $0.continuation = continuation }
+        let result: Result<Void, any Error>? = state.withLock { state in
+            switch state.phase {
+            case .waiting:
+                state.phase = .started(continuation)
+                return nil
+            case .completed(let result):
+                state.phase = .resumed
+                return result
+            case .started, .resumed:
+                preconditionFailure("DragDownloadDelegate started twice")
+            }
+        }
+        if let result {
+            continuation.resume(with: result)
+        }
     }
 
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64,
@@ -95,19 +120,30 @@ nonisolated final class DragDownloadDelegate: NSObject, URLSessionDownloadDelega
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: (any Error)?) {
-        let (continuation, failure) = state.withLock { state in
-            defer { state.continuation = nil }
-            return (state.continuation, state.failure)
-        }
+        let failure = state.withLock { $0.failure }
+        let result: Result<Void, any Error>
         if let error {
             // Only a file that landed before the error could be there.
             try? FileManager.default.removeItem(at: landing)
-            continuation?.resume(throwing: error)
+            result = .failure(error)
         } else if let failure {
-            continuation?.resume(throwing: failure)
+            result = .failure(failure)
         } else {
-            continuation?.resume()
+            result = .success(())
         }
+        let continuation: CheckedContinuation<Void, any Error>? = state.withLock { state in
+            switch state.phase {
+            case .waiting:
+                state.phase = .completed(result)
+                return nil
+            case .started(let continuation):
+                state.phase = .resumed
+                return continuation
+            case .completed, .resumed:
+                return nil
+            }
+        }
+        continuation?.resume(with: result)
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
