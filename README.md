@@ -355,10 +355,13 @@ it finishes.
   the clipboard is left alone, *Uploaded* posts, and a click on it copies the link.
 - *Upload only* keeps the file inside TidyShot until the upload succeeds.
 
-A recording is moved, never read into memory, and the upload streams it from disk in one PUT of up to
-5 GiB; a larger file is kept and *Not uploaded* says why (multipart is planned). A failed upload tries
-six times over about a minute, and a Retry starts again from the first byte. The Mac is kept from
-idle sleep while a recording uploads, but not from a lid close. When the save folder cannot be used
+A recording is moved, never read into memory, and the upload streams it from disk. A recording of
+100 MiB or more uploads in 16 MiB parts, three at a time; a smaller one goes in one PUT, and its Retry
+starts again from the first byte. A failed part is sent again, and a failed or interrupted upload
+resumes from the parts already sent when you retry, also after a relaunch, unless it waited more than
+7 days, when it starts from zero. A recording over 625 GB is kept and *Not uploaded* says why. A
+failed request tries six times over about a minute. See *Large uploads* under Upload for the bucket
+setup. The Mac is kept from idle sleep while a recording uploads, but not from a lid close. When the save folder cannot be used
 (none chosen, gone, read-only or full) the file is kept inside TidyShot and *Not saved to a folder*
 says so; the card reads *Kept in TidyShot*, and Save As… copies it where you want. With no upload
 destination set up, *Upload and copy URL* saves the recording and puts the file on the clipboard, and
@@ -370,7 +373,8 @@ upload is left). There is no Annotate, Pin or Copy Image for a video or a GIF. *
 clipboard (for a file that is still waiting to upload, a copy that stays valid after the upload
 removes the original). Save As… copies the file (a GIF offers `.gif`), or downloads the uploaded object when no copy is
 left. Drag a card to drop the file into Finder, Slack or Mail. A recording that was uploaded and has
-no local file cannot be dragged. Delete removes the file and the uploaded object, as for a
+no local file is downloaded first when you drag it, with progress on its card; a download that fails
+shows *Download failed*, and the next drag tries again. Delete removes the file and the uploaded object, as for a
 screenshot.
 
 **Sleep, quitting and crashes.** The Mac stays awake, display included, while a recording runs. A
@@ -384,9 +388,8 @@ macOS to finish writing the file.
 
 TidyShot logs one `Recording:` line for each stream and output callback, with the time recorded so
 far: `/usr/bin/log show --last 10m --style compact --predicate 'process == "TidyShot"' | grep "Recording:"`
-(the full path, because zsh has a `log` builtin). Pause, uploads over 5 GiB, a separate upload lane for
-videos, dragging an uploaded video that has no local copy, and URL commands for recording are planned
-for a later release (the recording designs' lists). The start, the conversion, the mute ladder and
+(the full path, because zsh has a `log` builtin). Pause and a separate upload lane for videos are left
+out. The start, the conversion, the mute ladder and
 recovery log `Recording:` lines too, among them `Recording: mute lag <s> s (<input>)` at each start and
 the microphone prompt's answer. The bubble and the rings log `Recording: camera <name>, <w>×<h> at <fps>
 fps, started in <ms> ms`, `Recording: webcam bubble on|off at <m:ss>`, `Recording: click highlights
@@ -414,6 +417,8 @@ The names follow CleanShot X's, so a CleanShot macro works after changing `clean
 | `self-timer` | Select, then count down | `action` |
 | `capture-scrolling` (or `scrolling-capture`) | Scrolling capture; a rectangle skips the selection, and the capture waits until you click Start (Return in the frontmost app does not start it); unstarted for a minute, it cancels itself | `action`, `x`, `y`, `width`, `height`, `display` |
 | `capture-text` | Capture Text; with a rectangle, read it at once. The text or code goes to the clipboard | `x`, `y`, `width`, `height`, `display` |
+| `record-screen` | Record Screen: select an area or click a window. A rectangle is shown in the selection, and a click inside it records it (no key does). `action` is `upload` or `save` | `action`, `x`, `y`, `width`, `height`, `display` |
+| `stop-recording` | Stop the recording, or cancel its count-in; nothing otherwise | none |
 | `restore-recently-closed` | Restore Closed Overlay | none |
 | `hide-desktop-icons` | Turn Hide Desktop Icons on | none |
 | `show-desktop-icons` | Turn Hide Desktop Icons off | none |
@@ -422,7 +427,8 @@ The names follow CleanShot X's, so a CleanShot macro works after changing `clean
 `action` is `upload` (upload only when that is your after-capture setting, otherwise save, upload
 and copy the URL), `save` (save and copy the image), `copy` (the image on the clipboard and nothing
 else: no file, no history, no card, no upload), `annotate` (then open the editor) or `pin` (then pin
-it). Without `action` the after-capture setting in Settings > General applies.
+it). `record-screen` takes only `upload` and `save`. Without `action` the after-capture setting in
+Settings > General applies.
 
 `x`, `y`, `width` and `height` are points from the bottom-left corner of the display, as in
 CleanShot: all four or none, plain numbers such as `120` or `40.5`, width and height above 0. A
@@ -442,9 +448,14 @@ the Mac can then take a screenshot through TidyShot and read it from the clipboa
 is what the sending app calls itself. Every other command waits for your drag, click or Start, or
 captures nothing, and commands never take a file path.
 
-Errors (an unknown command or action, a bad rectangle, a missing display, a parameter given twice)
+`record-screen` always shows the selection, with a rectangle too, so it needs only the first switch.
+Once you click, the recording takes the microphone and the webcam bubble as Settings has them. It
+asks for microphone and camera access first when macOS has not asked yet, as the shortcut does.
+
+Errors (an unknown command or action, an action the command does not take, a bad rectangle, a
+missing display, a parameter given twice, and for `record-screen` an area under 32 by 32 points)
 appear as notifications titled *TidyShot URL command*. A capture command that arrives while a
-capture runs, or while macOS asks for microphone access for a recording, is ignored (restore and the
+capture runs or a recording starts or runs, or while macOS asks for microphone access for a recording, is ignored (restore and the
 desktop-icon commands still run), and of several URLs that wait for TidyShot to launch only the
 first capture command runs. If `open tidyshot://…` starts an old build, more than one TidyShot.app
 is registered: list them with
@@ -473,6 +484,32 @@ After capture, "Upload and copy URL" saves the file locally first, then uploads 
 URL replaces the clipboard contents when the upload finishes. "Upload only, keep no local file"
 writes the PNG inside TidyShot's container instead, uploads it, copies the URL and deletes the
 file; a failed upload keeps it until a retry succeeds or the capture is deleted.
+
+**Large uploads.** A recording or GIF of 100 MiB or more uploads as an S3 multipart upload (16 MiB
+parts, three at a time, resumable; see Screen recording). Which IAM actions an upload-only key needs
+for it is pending the multipart check against the real bucket, and this paragraph will list them
+once that has run.
+
+An upload that is started and never finished is billed for its stored parts until it is aborted.
+TidyShot aborts the uploads it knows about; a crash at the wrong moment, a record pruned while the
+app was closed, or a part that lands after an abort leaves one it does not know about. A lifecycle
+rule on the bucket aborts the rest. S3 replaces a bucket's whole lifecycle
+configuration when you put one, so add the rule to the rules the bucket already has:
+
+1. Read the current configuration:
+   `aws s3api get-bucket-lifecycle-configuration --bucket snap.tky.io`
+   It answers `NoSuchLifecycleConfiguration` when the bucket has none.
+2. Save the rules it returned, plus this one, as `lifecycle.json` (with no other rules, the file is
+   just this):
+   ```json
+   {"Rules":[{"ID":"abort-incomplete-multipart","Status":"Enabled","Filter":{"Prefix":""},"AbortIncompleteMultipartUpload":{"DaysAfterInitiation":7}}]}
+   ```
+3. Put the merged list:
+   `aws s3api put-bucket-lifecycle-configuration --bucket snap.tky.io --lifecycle-configuration file://lifecycle.json`
+4. Run the get again and check that the rule is there beside the old ones.
+
+Use your own bucket's name for `snap.tky.io`. Cloudflare R2 aborts incomplete uploads after 7 days
+without a rule. A resume after the rule has aborted an upload starts again from the first byte.
 
 ### Optimise with Clop
 
