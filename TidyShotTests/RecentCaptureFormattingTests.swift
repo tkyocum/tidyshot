@@ -248,6 +248,27 @@ struct RecentCaptureFormattingTests {
                 == "2 minutes ago · \(fiveKB) · Uploading")
     }
 
+    /// While a drag-out download runs, the row's state says `Downloading`, whatever the upload state;
+    /// otherwise it reads as before. `Sound not muted` still wins.
+    @Test func detailSaysDownloadingWhileADragDownloadRuns() {
+        var recording = video(.uploaded(url: URL(string: "https://snap.tky.io/aB3dE9.mp4")!, key: "aB3dE9.mp4"),
+                              file: nil, location: location)
+        #expect(RecentCaptureFormatting.detail(for: recording, now: now, locale: english, isDownloading: true)
+                == "2 minutes ago · Downloading")
+        #expect(RecentCaptureFormatting.detail(for: recording, now: now, locale: english, isDownloading: false)
+                == "2 minutes ago")
+        recording.byteCount = 5_000
+        #expect(RecentCaptureFormatting.detail(for: recording, now: now, locale: english, isDownloading: true)
+                == "2 minutes ago · \(fiveKB) · Downloading")
+        #expect(RecentCaptureFormatting.detailWithoutSize(for: recording, now: now, locale: english, isDownloading: true)
+                == "2 minutes ago · Downloading")
+        #expect(RecentCaptureFormatting.detailWithoutSize(for: recording, now: now, locale: english)
+                == "2 minutes ago")
+        recording.unmutedIntervals = [MuteInterval(start: 2, end: 5)]
+        #expect(RecentCaptureFormatting.detail(for: recording, now: now, locale: english, isDownloading: true)
+                == "2 minutes ago · \(fiveKB) · Sound not muted")
+    }
+
     /// An unknown size (a record from before 2.13 with no local file) and a zero one show no size part.
     @Test func detailHasNoSizeWhenNilOrZero() {
         for byteCount in [nil, 0] as [Int?] {

@@ -15,18 +15,20 @@ final class RecentCaptureMenuItemView: NSView {
     private var thumbnailArea: NSTrackingArea?
 
     /// `saveFolder` and `retainedID` say what Annotate can load from, `isOptimizing` whether a
-    /// recording waits for Clop, and `trimState` its Trim items; the menu reads them once per rebuild.
+    /// recording waits for Clop, `isDownloading` whether it downloads for a drag, and `trimState` its
+    /// Trim items; the menu reads them once per rebuild.
     init(record: CaptureRecord, now: Date, saveFolder: URL?, retainedID: UUID?, isOptimizing: Bool,
-         trimState: RecordingTrim.MenuState, provider: ThumbnailProvider, actions: RecentCaptureActions,
+         isDownloading: Bool, trimState: RecordingTrim.MenuState, provider: ThumbnailProvider, actions: RecentCaptureActions,
          onThumbnailHover: @escaping (RecentCaptureMenuItemView, Bool) -> Void) {
         recordID = record.id
         self.onThumbnailHover = onThumbnailHover
         super.init(frame: CGRect(origin: .zero, size: RecentCaptureRow.size))
         let name = RecentCaptureFormatting.name(for: record)
-        let detail = RecentCaptureFormatting.detail(for: record, now: now, isOptimizing: isOptimizing)
+        let detail = RecentCaptureFormatting.detail(for: record, now: now, isOptimizing: isOptimizing,
+                                                    isDownloading: isDownloading)
         let row = RecentCaptureRow(record: record, name: name, detail: detail,
                                    detailWithoutSize: RecentCaptureFormatting.detailWithoutSize(
-                                       for: record, now: now, isOptimizing: isOptimizing),
+                                       for: record, now: now, isOptimizing: isOptimizing, isDownloading: isDownloading),
                                    canCopyLink: RecentCaptureFormatting.canCopyLink(record),
                                    canCopyImage: RecentCaptureFormatting.canCopyImage(record),
                                    canAnnotate: RecentCaptureFormatting.canAnnotate(record, retainedID: retainedID,

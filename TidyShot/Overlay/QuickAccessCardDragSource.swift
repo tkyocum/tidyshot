@@ -26,7 +26,8 @@ struct QuickAccessCardDragSource: NSViewRepresentable {
 /// The drag-out surface of a Quick Access card (spec 2.9). A press asks for the drag file to be
 /// staged; once the pointer has moved `dragThreshold` points and the file exists, a session starts
 /// with the file URL. A file that is not staged yet makes the drag wait for the next
-/// mouse-dragged event; for a restored card still downloading, the drag does nothing.
+/// mouse-dragged event. With no file, the first drag past the threshold of a press also asks for an
+/// uploaded recording with no local file to be downloaded (design, Drag-out download).
 final class QuickAccessCardDragView: NSView, NSDraggingSource {
     /// How far the pointer moves, in points, before a press becomes a drag.
     static let dragThreshold: CGFloat = 3
@@ -40,6 +41,9 @@ final class QuickAccessCardDragView: NSView, NSDraggingSource {
     /// The pointer has passed `dragThreshold` since the press: a release is not a click, also
     /// when the drag never started because the file was not ready.
     private var movedPastThreshold = false
+    /// This press has asked for the drag download, so a download that fails while the button is
+    /// still held is not asked for again on every mouse-dragged event.
+    private var askedForDownload = false
 
     // The card's panel never becomes key and TidyShot is usually not active.
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
@@ -54,6 +58,7 @@ final class QuickAccessCardDragView: NSView, NSDraggingSource {
         mouseDownEvent = event
         dragStarted = false
         movedPastThreshold = false
+        askedForDownload = false
         model?.onPrepareDrag()
     }
 
@@ -63,7 +68,13 @@ final class QuickAccessCardDragView: NSView, NSDraggingSource {
         let dy = event.locationInWindow.y - down.locationInWindow.y
         guard movedPastThreshold || dx * dx + dy * dy >= Self.dragThreshold * Self.dragThreshold else { return }
         movedPastThreshold = true
-        guard let fileURL = model.dragFileURL else { return }
+        guard let fileURL = model.dragFileURL else {
+            if !askedForDownload {
+                askedForDownload = true
+                model.onDownloadForDrag()
+            }
+            return
+        }
         dragStarted = true
         model.isDraggingOut = true
         let item = NSDraggingItem(pasteboardWriter: fileURL as NSURL)

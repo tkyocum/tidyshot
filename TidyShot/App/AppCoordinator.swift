@@ -226,6 +226,8 @@ final class AppCoordinator {
     /// local file). One stage per record runs at a time: a press or a Copy File during it waits
     /// for it, so a large file is copied across volumes once.
     @ObservationIgnored var stagingVideoIDs: [UUID: Task<URL?, Never>] = [:]
+    /// Recordings downloading for a drag-out, for the row's `Downloading`.
+    var downloadingVideoIDs: Set<UUID> = []
     /// Per recording, the clipboard's change count after Copy File put a staged drag copy there.
     /// While the clipboard still has that count, the drag folder's clean-up leaves the copy and
     /// waits again; it removes the copy once the count has moved on (Gap 7).

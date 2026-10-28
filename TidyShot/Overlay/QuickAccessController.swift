@@ -57,6 +57,9 @@ final class QuickAccessController {
         var prepareDrag: (UUID) -> Void
         /// A drag-out ended; true when a receiver took the file.
         var dragEnded: (UUID, Bool) -> Void
+        /// A drag past the threshold with no drag file: downloads an uploaded recording that has no
+        /// local file; see `AppCoordinator.downloadDragFile(recordID:)`.
+        var downloadForDrag: (UUID) -> Void
     }
 
     /// One card: its panel, its model and its auto-close countdown.
@@ -169,6 +172,13 @@ final class QuickAccessController {
         model.isOptimizing = isOptimizing
     }
 
+    /// Tells the card showing `recordID` its drag-out download's status (`Downloading…` or `Download
+    /// failed`), or nil for none. Does nothing when no card shows the record.
+    func setDownloading(_ status: DragDownloadStatus?, for recordID: UUID) {
+        guard let model = cards.first(where: { $0.id == recordID })?.model, model.dragDownload != status else { return }
+        model.dragDownload = status
+    }
+
     /// Tells the card showing `recordID` whether its URL replaced the clipboard (`URL copied`) or
     /// not (`Uploaded`). Does nothing when no card shows the record.
     func setLinkWasCopied(_ linkWasCopied: Bool, for recordID: UUID) {
@@ -219,6 +229,7 @@ final class QuickAccessController {
         model.onUploadTrimmed = { actions.uploadTrimmed(id) }
         model.onPrepareDrag = { actions.prepareDrag(id) }
         model.onDragEnded = { accepted in actions.dragEnded(id, accepted) }
+        model.onDownloadForDrag = { actions.downloadForDrag(id) }
         let card = Card(model: model, autoCloseSeconds: autoCloseSeconds)
         model.onClose = { [weak self, weak card] in
             // After the context menu's tracking, and outside the hosting view's own click.
@@ -338,7 +349,8 @@ final class QuickAccessController {
     }
 
     /// Waits the card's `autoCloseSeconds`; while the pointer is over the card, or a drag-out
-    /// from it runs, the countdown restarts (as `scheduleClose` did for the one panel).
+    /// from it or its drag-out download runs, the countdown restarts (as `scheduleClose` did for
+    /// the one panel).
     private func scheduleClose(_ card: Card) {
         card.closeTask?.cancel()
         card.closeTask = nil
@@ -350,9 +362,11 @@ final class QuickAccessController {
                 guard !Task.isCancelled else { return }
                 // The pointer's place now, not the last hover event: a card that slid away or
                 // under a still pointer is judged where it is. A card never closes under a
-                // running drag-out session.
+                // running drag-out session or download.
                 if let panel = card?.panel, panel.frame.contains(NSEvent.mouseLocation) { continue }
-                if card?.model.isDraggingOut == true { continue }
+                if let model = card?.model,
+                   DragDownloadRule.keepsCardOpen(isDraggingOut: model.isDraggingOut,
+                                                  isDownloading: model.isDownloadingForDrag) { continue }
                 break
             }
             guard !Task.isCancelled, let self, let card else { return }

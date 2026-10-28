@@ -13,12 +13,14 @@ nonisolated enum RecentCaptureFormatting {
     /// state while it is not settled: "2 minutes ago · 5 KB · Uploading", "yesterday · 5 KB · Upload
     /// failed", or "2 minutes ago · 5 KB · Optimizing…" while a recording waits for Clop
     /// (`isOptimizing`, from `AppCoordinator.optimizingVideoIDs`). A trimmed MP4 whose link still
-    /// shows the full recording ends with `Link not updated`, and a recording whose muting failed
-    /// with `Sound not muted`, whatever its upload state. The parts are joined by a middle dot with a
-    /// space either side, and an unknown or zero size leaves its part out.
+    /// shows the full recording ends with `Link not updated`, a recording whose muting failed with
+    /// `Sound not muted`, and one downloading for a drag with `Downloading` (`isDownloading`, from
+    /// `AppCoordinator.downloadingVideoIDs`), whatever its upload state. The parts are joined by a
+    /// middle dot with a space either side, and an unknown or zero size leaves its part out.
     static func detail(for record: CaptureRecord, now: Date, locale: Locale = .current,
-                       isOptimizing: Bool = false) -> String {
-        let parts = detailParts(for: record, now: now, locale: locale, isOptimizing: isOptimizing)
+                       isOptimizing: Bool = false, isDownloading: Bool = false) -> String {
+        let parts = detailParts(for: record, now: now, locale: locale, isOptimizing: isOptimizing,
+                                isDownloading: isDownloading)
         return [parts.time, parts.size, parts.state].compactMap { $0 }.joined(separator: " · ")
     }
 
@@ -26,20 +28,23 @@ nonisolated enum RecentCaptureFormatting {
     /// whole detail would not fit, so the size gives way before the upload state is cut off. Nil
     /// when there is no size to leave out.
     static func detailWithoutSize(for record: CaptureRecord, now: Date, locale: Locale = .current,
-                                  isOptimizing: Bool = false) -> String? {
-        let parts = detailParts(for: record, now: now, locale: locale, isOptimizing: isOptimizing)
+                                  isOptimizing: Bool = false, isDownloading: Bool = false) -> String? {
+        let parts = detailParts(for: record, now: now, locale: locale, isOptimizing: isOptimizing,
+                                isDownloading: isDownloading)
         guard parts.size != nil else { return nil }
         return [parts.time, parts.state].compactMap { $0 }.joined(separator: " · ")
     }
 
     private static func detailParts(for record: CaptureRecord, now: Date, locale: Locale,
-                                    isOptimizing: Bool) -> (time: String, size: String?, state: String?) {
+                                    isOptimizing: Bool, isDownloading: Bool) -> (time: String, size: String?, state: String?) {
         let formatter = RelativeDateTimeFormatter()
         formatter.locale = locale
         formatter.unitsStyle = .full
         formatter.dateTimeStyle = .named
         let state: String? = if isSoundNotMuted(record) {
             CaptureRecord.soundNotMutedTitle
+        } else if isDownloading {
+            "Downloading"
         } else {
             switch record.uploadState {
             case .uploading: isOptimizing ? "Optimizing…" : "Uploading"

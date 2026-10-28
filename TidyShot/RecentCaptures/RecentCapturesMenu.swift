@@ -55,6 +55,7 @@ final class RecentCapturesMenu: NSObject, NSMenuDelegate {
             let row = NSMenuItem()
             row.view = RecentCaptureMenuItemView(record: record, now: now, saveFolder: saveFolder, retainedID: retainedID,
                                                  isOptimizing: coordinator.optimizingVideoIDs.contains(record.id),
+                                                 isDownloading: coordinator.downloadingVideoIDs.contains(record.id),
                                                  trimState: coordinator.trimMenuState(for: record),
                                                  provider: coordinator.thumbnailProvider,
                                                  actions: actions, onThumbnailHover: { [weak self] view, inside in

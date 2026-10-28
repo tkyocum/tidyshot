@@ -33,7 +33,9 @@ extension AppCoordinator {
             trim: { [weak self] id in self?.afterMenuTracking { self?.trimCapture(recordID: id) } },
             uploadTrimmed: { [weak self] id in self?.afterMenuTracking { self?.uploadTrimmed(recordID: id) } },
             prepareDrag: { [weak self] id in self?.prepareDragFile(recordID: id) },
-            dragEnded: { [weak self] id, accepted in self?.dragDidEnd(recordID: id, accepted: accepted) })
+            dragEnded: { [weak self] id, accepted in self?.dragDidEnd(recordID: id, accepted: accepted) },
+            // Task 16 starts the download here.
+            downloadForDrag: { _ in })
     }
 
     /// What a card shows for `image`: the top of a tall capture, as its thumbnail does (the crop
