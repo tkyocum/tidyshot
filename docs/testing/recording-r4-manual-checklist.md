@@ -72,12 +72,14 @@ M1 shows which of these are missing. The README's `Large uploads` paragraph is w
 **The lifecycle rule.** Tim says the bucket already has the `AbortIncompleteMultipartUpload` rule; that is not
 verified. Check it with `aws s3api get-bucket-lifecycle-configuration --bucket snap.tky.io`. If the rule is
 absent, add it by the README's get, merge and put steps (`Large uploads`): `put-bucket-lifecycle-configuration`
-replaces the whole configuration, so the merged list must hold the old rules too. It must be on before the multipart
-hand checks. Write down what the get printed: ______
+replaces the whole configuration, so the merged list must hold the old rules too, and `lifecycle.json` holds only
+`Rules` (the put refuses the get's `TransitionDefaultMinimumObjectSize` in the file). It must be on before the
+multipart hand checks. Write down what the get printed: ______
 
 **The recordings.** One of about 300 MB and one of about 6 GB, each recorded or already in history (a long
-fullscreen recording at a high frame rate reaches 6 GB). Upload-only is Tim's mode (Settings > General > After capture). Run every multipart check with Clop off, then once
-with Clop on (Settings > General > Optimization, and Clop running).
+fullscreen recording at a high frame rate reaches 6 GB). Upload-only is Tim's mode (Settings > General > After
+capture). Run every multipart check with Clop off, then once with Clop on (Settings > General > Optimization, and Clop
+running).
 
 **Reading `footprint`** while an upload runs: `footprint TidyShot | head -12`. The `Footprint:` line is the memory
 now; `phys_footprint_peak` under `Auxiliary data` is the most used so far. Judge the peak against 120 MB at 16 MiB
@@ -269,7 +271,7 @@ Each with the 300 MB and the 6 GB recording, upload-only, Clop off, then Clop on
   Overlay > `Keep history for 1 days` and take a new capture: the record leaves Recent Captures, and `multipart/`
   holds nothing for it. Put the retention back.
 - [ ] The files in `multipart/` of a record with no state, or a state older than 7 days, are removed at launch (put an
-  unrelated `<uuid>.json` there, relaunch); a file not named by a record id is left alone.
+  unrelated `<uuid>.json` there, relaunch); a file whose name does not start with a UUID is left alone.
 - [ ] The lifecycle rule is on the bucket (Setup).
 - [ ] A recording over 625 GB is not reachable by recording; the pure rule is tested. Nothing to run.
 
