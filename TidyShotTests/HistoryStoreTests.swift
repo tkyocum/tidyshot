@@ -201,6 +201,28 @@ struct HistoryStoreTests {
         #expect(third.record(id: item.id)?.priorUpload == prior)
     }
 
+    @Test func interruptedMultipartUploadKeepsItsStateOnLoad() {
+        let state = MultipartUploadState(
+            uploadID: "VXBsb2FkSWQ", key: "rec.mp4",
+            location: ObjectLocation(endpoint: "https://s3.us-west-2.amazonaws.com", region: "us-west-2",
+                                     bucket: "snap.tky.io", usePathStyle: true),
+            partSize: 16_777_216, byteCount: 3_400_000_000,
+            sourceModified: Date(timeIntervalSinceReferenceDate: 783_456_789.1234567),
+            sourcePath: "/Users/tim/Movies/rec.mp4", startedAt: now)
+        var item = record(state: .uploading(fraction: 0.4))
+        item.multipart = state
+        store().add(item)
+
+        let second = store()
+        second.load()
+        #expect(second.record(id: item.id)?.uploadState == .failed(message: "Upload was interrupted."))
+        #expect(second.record(id: item.id)?.multipart == state)
+
+        let third = store()
+        third.load()
+        #expect(third.record(id: item.id)?.multipart == state)
+    }
+
     @Test func missingFileLoadsEmpty() {
         let fresh = store()
         fresh.load()

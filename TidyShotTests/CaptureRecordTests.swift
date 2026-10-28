@@ -559,6 +559,62 @@ struct CaptureRecordTests {
         #expect(!String(decoding: encoded, as: UTF8.self).contains("byteCount"))
     }
 
+    // MARK: Multipart state (R4)
+
+    func multipartState(modified: Date = Date(timeIntervalSinceReferenceDate: 783_456_789.1234567)) -> MultipartUploadState {
+        MultipartUploadState(
+            uploadID: "VXBsb2FkSWQ", key: "aB3dE9.mp4",
+            location: ObjectLocation(endpoint: "https://s3.us-west-2.amazonaws.com", region: "us-west-2",
+                                     bucket: "snap.tky.io", usePathStyle: true),
+            partSize: 16_777_216, byteCount: 3_400_000_000, sourceModified: modified,
+            sourcePath: "/Users/tim/Movies/rec.mp4", startedAt: Date(timeIntervalSince1970: 1_792_411_000))
+    }
+
+    @Test func multipartStateRoundTripsAndOldHistoryDecodesNil() throws {
+        var video = CaptureRecord(timestamp: Date(timeIntervalSince1970: 1_792_411_200), fileURL: dir.appending(path: "rec.mp4"),
+                                  pixelWidth: 1600, pixelHeight: 1000, appName: nil, mediaKind: .video)
+        video.multipart = multipartState()
+        let plain = CaptureRecord(timestamp: Date(timeIntervalSince1970: 1_792_411_100), fileURL: dir.appending(path: "Shot.png"),
+                                  pixelWidth: 20, pixelHeight: 10, appName: nil)
+        #expect(plain.multipart == nil)
+        let first = store()
+        first.add(video)
+        first.add(plain)
+
+        let reloaded = store()
+        reloaded.load()
+        #expect(reloaded.record(id: video.id) == video)
+        #expect(reloaded.record(id: video.id)?.multipart == multipartState())
+        #expect(reloaded.record(id: plain.id)?.multipart == nil)
+
+        // A record with no state writes no key; files from before R4 decode it nil.
+        let encoded = try JSONEncoder().encode(plain)
+        #expect(!String(decoding: encoded, as: UTF8.self).contains("multipart"))
+        try Data(phase2JSON.utf8).write(to: dir.appending(path: "history.json"))
+        let old = store()
+        old.load()
+        #expect(old.record(id: UUID(uuidString: "0B2E8A4C-1C3D-4E5F-8A9B-0C1D2E3F4A5B")!)?.multipart == nil)
+    }
+
+    /// `HistoryStore` writes dates in milliseconds. The state's modification date is coded as a
+    /// `Double`, so the resume check after a relaunch still sees the file's own date.
+    @Test func subMillisecondSourceDateSurvivesHistoryAndResumes() throws {
+        let modified = Date(timeIntervalSinceReferenceDate: 783_456_789.1234567)
+        var video = CaptureRecord(timestamp: Date(timeIntervalSince1970: 1_792_411_200), fileURL: dir.appending(path: "rec.mp4"),
+                                  pixelWidth: 1600, pixelHeight: 1000, appName: nil, mediaKind: .video)
+        video.multipart = multipartState(modified: modified)
+        store().add(video)
+
+        let reloaded = store()
+        reloaded.load()
+        let state = try #require(reloaded.record(id: video.id)?.multipart)
+        #expect(state.sourceModified == modified)
+        let decision = MultipartPlan.resumeDecision(
+            stored: state, location: state.location, fixedKey: nil,
+            source: MultipartSourceAttributes(byteCount: 3_400_000_000, modified: modified))
+        #expect(decision == .resume(state))
+    }
+
     @Test func mediaKindTypes() {
         #expect(MediaKind.image.fileExtension == "png")
         #expect(MediaKind.video.fileExtension == "mp4")
