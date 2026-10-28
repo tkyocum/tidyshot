@@ -84,14 +84,27 @@ enum R4Multipart {
         }
 
         print("\n3. ListParts")
-        if let listed = try await client.listParts(uploadID: uploadID) {
+        let listed: [MultipartPart]?
+        do {
+            listed = try await client.listParts(uploadID: uploadID)
+        } catch {
+            await client.abortQuietly(uploadID)
+            throw error
+        }
+        if let listed {
             for part in listed {
                 print("   part \(part.number) ETag \(part.etag) size \(part.size)")
             }
         }
 
         print("\n4. Complete")
-        let (status, body) = try await client.send(MultipartRequests.complete(uploadID: uploadID, parts: parts), "complete")
+        let status: Int, body: Data
+        do {
+            (status, body) = try await client.send(MultipartRequests.complete(uploadID: uploadID, parts: parts), "complete")
+        } catch {
+            await client.abortQuietly(uploadID)
+            throw error
+        }
         guard (200..<300).contains(status) else {
             await client.abortQuietly(uploadID)
             throw ProbeError.status("complete", status)
@@ -99,6 +112,8 @@ enum R4Multipart {
         print("   body: \(String(decoding: body, as: UTF8.self))")
         if let error = MultipartXML.error(in: body) {
             print("   the 200 carries <Error>: \(error.code) \(error.message ?? "")")
+            await client.abortQuietly(uploadID)
+            throw ProbeError.status("complete", status)
         }
 
         print("\n5. HEAD (Content-Length \(11 * mib) and Cache-Control no-cache expected)")
@@ -179,13 +194,21 @@ enum R4Multipart {
             throw error
         }
 
-        let (status, body) = try await client.send(MultipartRequests.complete(uploadID: uploadID, parts: parts), "complete")
+        let status: Int, body: Data
+        do {
+            (status, body) = try await client.send(MultipartRequests.complete(uploadID: uploadID, parts: parts), "complete")
+        } catch {
+            await client.abortQuietly(uploadID)
+            throw error
+        }
         guard (200..<300).contains(status) else {
             await client.abortQuietly(uploadID)
             throw ProbeError.status("complete", status)
         }
         if let error = MultipartXML.error(in: body) {
             print("   the 200 carries <Error>: \(error.code) \(error.message ?? "")")
+            await client.abortQuietly(uploadID)
+            throw ProbeError.status("complete", status)
         }
         try await client.deleteObject()
     }
