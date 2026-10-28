@@ -157,6 +157,8 @@ extension AppCoordinator {
         case .success:
             guard !Task.isCancelled, dragGenerations[recordID, default: 0] == generation else {
                 try? FileManager.default.removeItem(at: landing)
+                // A fraction queued before the cancel can have put the ring back.
+                overlay.setDownloading(nil, for: recordID)
                 NSLog("Drag-out download for \(recordID) cancelled")
                 return nil
             }
@@ -172,6 +174,7 @@ extension AppCoordinator {
         case .failure(let error):
             // The download leaves nothing at `landing` when it throws.
             guard !Task.isCancelled else {
+                overlay.setDownloading(nil, for: recordID)
                 NSLog("Drag-out download for \(recordID) cancelled")
                 return nil
             }
