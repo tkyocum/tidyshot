@@ -2034,4 +2034,51 @@ struct UploadQueueTests {
                                             : "multipart abort failed: Server returned HTTP 403: AccessDenied: Access Denied"
         #expect(logged(lines) == [abortLine, created("upload-1"), "multipart completed"])
     }
+
+    /// A start over whose new file is under the threshold goes as one PUT. The stored upload is
+    /// still aborted first, once, and a failed abort is logged and the job goes on.
+    @Test(arguments: [nil, UploadError.httpStatus(403, body: "AccessDenied: Access Denied")])
+    func aSinglePutJobWithAnUploadToAbortAbortsItFirst(abortFailure: UploadError?) async throws {
+        let movie = try makeMovie()
+        defer { try? FileManager.default.removeItem(at: movie.folder) }
+        let id = UUID()
+        let destination = FakeDestination(.init(abortFailures: abortFailure.map { [$0] } ?? []))
+        let log = EventLog()
+        let lines = LogLines()
+        let queue = makeMultipartQueue(destination: destination, log: log, store: MultipartStore(directory: movie.folder),
+                                       lines: lines)
+        var job = largeJob(id, file: movie.file, byteCount: 3)
+        job.abortFirst = MultipartRef(uploadID: "old-1", key: "s/OLD.mp4", location: lane)
+
+        await queue.enqueue(job)
+        try await eventually { hasEnded(log) }
+
+        #expect(log.events.contains(.uploaded(id: id, url: templateURL, key: templateKey)))
+        #expect(destination.state.withLock { $0.creates.isEmpty })
+        #expect(destination.state.withLock { $0.fileUploads.count } == 1)
+        #expect(destination.state.withLock { $0.aborts.map(\.uploadID) } == ["old-1"])
+        #expect(destination.state.withLock { $0.aborts.map(\.key) } == ["s/OLD.mp4"])
+        #expect(Array(destination.state.withLock { $0.calls }.prefix(1)) == ["abort"])
+        let abortLine = abortFailure == nil ? "multipart aborted"
+                                            : "multipart abort failed: Server returned HTTP 403: AccessDenied: Access Denied"
+        #expect(logged(lines) == [abortLine])
+    }
+
+    /// The abort is not repeated by the single PUT's own retries.
+    @Test func aSinglePutJobAbortsOnceAcrossItsRetries() async throws {
+        let movie = try makeMovie()
+        defer { try? FileManager.default.removeItem(at: movie.folder) }
+        let id = UUID()
+        let destination = FakeDestination(.init(failuresRemaining: 2, failure: .httpStatus(503, body: "")))
+        let log = EventLog()
+        let queue = makeMultipartQueue(destination: destination, log: log, store: MultipartStore(directory: movie.folder))
+        var job = largeJob(id, file: movie.file, byteCount: 3)
+        job.abortFirst = MultipartRef(uploadID: "old-1", key: "s/OLD.mp4", location: lane)
+
+        await queue.enqueue(job)
+        try await eventually { hasEnded(log) }
+
+        #expect(starts(in: log).count == 3)
+        #expect(destination.state.withLock { $0.aborts.count } == 1)
+    }
 }

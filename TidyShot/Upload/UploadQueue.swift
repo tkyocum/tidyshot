@@ -223,6 +223,14 @@ actor UploadQueue {
         case .data: policy = self.policy
         case .file: policy = filePolicy
         }
+        // A start over whose new file is under the threshold goes as one PUT, and the stored
+        // upload is aborted here, once, as `processMultipart` does (best effort).
+        if let ref = job.abortFirst {
+            await abortUpload(key: ref.key, uploadID: ref.uploadID, name: Self.fileName(of: job.payload))
+            if cancelledIDs.contains(job.id) {
+                return await deliverCancelled(job.id)
+            }
+        }
         var attempt = 1
         while true {
             await events(.started(id: job.id, attempt: attempt, fraction: 0))
@@ -532,6 +540,11 @@ actor UploadQueue {
             guard !Task.isCancelled else { return }
             log("Upload: \(name) multipart abort failed: \(error.localizedDescription)")
         }
+    }
+
+    /// The file's name for a log line; empty for data.
+    private static func fileName(of payload: UploadPayload) -> String {
+        if case .file(let url, _) = payload { url.lastPathComponent } else { "" }
     }
 
     /// `key` again for a restart: a fixed key as is; a template key HEADed again, and kept when
