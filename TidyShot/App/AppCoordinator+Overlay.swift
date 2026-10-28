@@ -34,8 +34,7 @@ extension AppCoordinator {
             uploadTrimmed: { [weak self] id in self?.afterMenuTracking { self?.uploadTrimmed(recordID: id) } },
             prepareDrag: { [weak self] id in self?.prepareDragFile(recordID: id) },
             dragEnded: { [weak self] id, accepted in self?.dragDidEnd(recordID: id, accepted: accepted) },
-            // Task 16 starts the download here.
-            downloadForDrag: { _ in })
+            downloadForDrag: { [weak self] id in self?.downloadDragFile(recordID: id) })
     }
 
     /// What a card shows for `image`: the top of a tall capture, as its thumbnail does (the crop
@@ -63,7 +62,8 @@ extension AppCoordinator {
     }
 
     /// Every card close: the retained image goes with the newest card, a restorable close is
-    /// remembered, and the card's drag folder is scheduled for removal.
+    /// remembered, a drag-out download is cancelled, and the card's drag folder is scheduled for
+    /// removal.
     func overlayDidClose(_ id: UUID, reason: QuickAccessCloseReason) {
         forgetLatestCapture(id)
         if isRestoring, reason == .pushedOut {
@@ -71,6 +71,7 @@ extension AppCoordinator {
         } else {
             closedOverlays.didClose(id, reason: reason)
         }
+        cancelDragDownload(id)
         scheduleDragCleanup(id)
     }
 

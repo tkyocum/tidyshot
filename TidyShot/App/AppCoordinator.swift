@@ -211,6 +211,7 @@ final class AppCoordinator {
 
     // MARK: Drag-out state (AppCoordinator+DragOut.swift)
     // +RecordActions' Copy File writes dragCleanups and copyFileCounts; +Delete's prune clears copyFileCounts.
+    // +Overlay's overlayDidClose and +Delete's removeRecord (through removeDragFolder) cancel downloadingDragIDs.
     /// Bumped when a record's drag folder is removed or its pending file adopted. A stage or
     /// download that started before compares it at its end and drops what it made.
     @ObservationIgnored var dragGenerations: [UUID: Int] = [:]
@@ -226,6 +227,13 @@ final class AppCoordinator {
     /// local file). One stage per record runs at a time: a press or a Copy File during it waits
     /// for it, so a large file is copied across volumes once.
     @ObservationIgnored var stagingVideoIDs: [UUID: Task<URL?, Never>] = [:]
+    /// Uploaded recordings with no local file whose drag file is downloading, each with its
+    /// download (design, Drag-out download). One per record: a second drag, a press and Save As…
+    /// during it wait for it. Its result is the drag file, or nil.
+    @ObservationIgnored var downloadingDragIDs: [UUID: Task<URL?, Never>] = [:]
+    /// A failed drag-out download's resume data, with the time its request was signed. Dropped on
+    /// Delete and when the card closes.
+    @ObservationIgnored var dragDownloadResume: [UUID: (data: Data, signedAt: Date)] = [:]
     /// Recordings downloading for a drag-out, for the row's `Downloading`.
     var downloadingVideoIDs: Set<UUID> = []
     /// Per recording, the clipboard's change count after Copy File put a staged drag copy there.

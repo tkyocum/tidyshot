@@ -203,6 +203,7 @@ extension AppCoordinator {
         pins.close(recordID: id)
         // Cancels a pass before its put; Delete refuses while one writes.
         trimWindows[id]?.close()
+        // Also cancels a drag-out download and drops its resume data.
         removeDragFolder(id)
         pushEditorState(for: id)
     }
