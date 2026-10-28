@@ -1402,6 +1402,61 @@ struct UploadQueueTests {
         #expect(store.readSidecar(id: id, uploadID: "upload-1") == atComplete)
     }
 
+    /// Replaces the store's folder with a plain file, so every sidecar write after this fails.
+    nonisolated static func blockSidecarWrites(in store: MultipartStore) {
+        try? FileManager.default.removeItem(at: store.directory)
+        FileManager.default.createFile(atPath: store.directory.path(percentEncoded: false), contents: Data())
+    }
+
+    /// A sidecar that cannot be written after Create fails the job before any part goes, with the
+    /// write's error and no log line of its own.
+    @Test func aSidecarUnwritableAtCreateFailsTheJob() async throws {
+        let movie = try makeLargeMovie(byteCount: mib)
+        defer { try? FileManager.default.removeItem(at: movie.folder) }
+        let store = movie.store
+        let destination = FakeDestination(.init(onCall: { call in
+            if call == "create" { Self.blockSidecarWrites(in: store) }
+        }))
+        let log = EventLog()
+        let lines = LogLines()
+        let queue = makeMultipartQueue(destination: destination, log: log, store: store, lines: lines)
+        let id = UUID()
+
+        await queue.enqueue(largeJob(id, file: movie.file, byteCount: mib))
+        try await eventually { hasEnded(log) }
+        try await eventually { await queue.isIdle }
+
+        #expect(failures(in: log).count == 1)
+        #expect(destination.state.withLock { $0.calls } == ["create"])
+        #expect(!log.events.contains { if case .uploaded = $0 { return true } else { return false } })
+        #expect(lines.lines.withLock { $0 }.allSatisfy { !$0.contains("not saved") })
+    }
+
+    /// A sidecar that cannot be written once parts are going fails the job before Complete, so
+    /// Complete never goes without `completeSent` stored.
+    @Test func aSidecarUnwritableDuringThePartsFailsTheJobBeforeComplete() async throws {
+        let movie = try makeLargeMovie(byteCount: mib)
+        defer { try? FileManager.default.removeItem(at: movie.folder) }
+        let store = movie.store
+        let destination = FakeDestination(.init(onCall: { call in
+            if call == "part 4" { Self.blockSidecarWrites(in: store) }
+        }))
+        let log = EventLog()
+        let lines = LogLines()
+        let queue = makeMultipartQueue(destination: destination, log: log, store: store, lines: lines)
+        let id = UUID()
+
+        await queue.enqueue(largeJob(id, file: movie.file, byteCount: mib))
+        try await eventually { hasEnded(log) }
+        try await eventually { await queue.isIdle }
+
+        #expect(failures(in: log).count == 1)
+        #expect(destination.state.withLock { $0.completes.isEmpty })
+        #expect(destination.state.withLock { $0.partsInFlight } == 0)
+        #expect(!log.events.contains { if case .uploaded = $0 { return true } else { return false } })
+        #expect(lines.lines.withLock { $0 }.allSatisfy { !$0.contains("not saved") && !$0.contains("completed") })
+    }
+
     /// The key is reserved once, before Create, and every part and Complete use it. A HEAD that
     /// fails is retried on its own.
     @Test func aTemplateKeyIsReservedOncePerUploadID() async throws {

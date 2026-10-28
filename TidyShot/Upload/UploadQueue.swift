@@ -216,7 +216,8 @@ actor UploadQueue {
     /// A multipart job's one pass, holding `folder`'s scope throughout: the key, Create, the parts
     /// (at most `plan.inFlight` at a time, added in part order as each finishes) and Complete.
     /// Each request retries on its own under `filePolicy`; the job as a whole is not retried. The
-    /// sidecar is rewritten after each part, and marks Complete as sent before it goes.
+    /// sidecar is rewritten after each part, and marks Complete as sent before it goes; a sidecar
+    /// that cannot be written fails the job with the write's error.
     private func processMultipart(_ job: UploadJob, file url: URL, holding folder: URL?,
                                   source: MultipartSource, store: MultipartStore) async -> JobOutcome {
         let name = url.lastPathComponent
@@ -250,7 +251,7 @@ actor UploadQueue {
                                              sourceModified: source.modified, sourcePath: source.path,
                                              startedAt: now())
             var sidecar = MultipartSidecar(uploadID: uploadID, completeSent: false, parts: [])
-            saveSidecar(sidecar, id: job.id, name: name, in: store)
+            try store.writeSidecar(sidecar, id: job.id)
             await events(.multipartStarted(id: job.id, state: state))
             let count = MultipartPlan.partCount(byteCount: source.byteCount, partSize: partSize)
             log("Upload: \(name) multipart, \(count) parts of \(Self.mebibytes(partSize)) MiB, upload id \(uploadID)")
@@ -270,7 +271,7 @@ actor UploadQueue {
                 while let part = try await group.next() {
                     sidecar.parts.append(part)
                     sidecar.parts.sort { $0.number < $1.number }
-                    saveSidecar(sidecar, id: job.id, name: name, in: store)
+                    try store.writeSidecar(sidecar, id: job.id)
                     sender.report(sender.progress.finish(part: part.number, size: part.size))
                     if next <= count {
                         let number = next
@@ -280,8 +281,9 @@ actor UploadQueue {
                 }
             }
 
+            // Complete never goes before the sidecar says it was sent.
             sidecar.completeSent = true
-            saveSidecar(sidecar, id: job.id, name: name, in: store)
+            try store.writeSidecar(sidecar, id: job.id)
             let parts = sidecar.parts
             try await Self.withRetries(policy: filePolicy, sleep: sleep) {
                 try await self.destination.completeMultipartUpload(key: key, uploadID: uploadID, parts: parts)
@@ -299,15 +301,6 @@ actor UploadQueue {
             reservedKeys[job.id] = nil
             await events(.failed(id: job.id, message: error.localizedDescription))
             return .failed
-        }
-    }
-
-    /// A sidecar that cannot be written leaves the upload going: a resume then lists the parts.
-    private func saveSidecar(_ sidecar: MultipartSidecar, id: UUID, name: String, in store: MultipartStore) {
-        do {
-            try store.writeSidecar(sidecar, id: id)
-        } catch {
-            log("Upload: \(name) part list not saved: \(error.localizedDescription)")
         }
     }
 
