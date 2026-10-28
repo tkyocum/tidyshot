@@ -231,7 +231,11 @@ extension AppCoordinator {
                     await lane.queue.enqueue(job)
                     return
                 }
-                // Task 13: abort `step.abortElsewhere`, the stored upload at another destination.
+                // A destination change: the stored upload is aborted where it was created, best
+                // effort and not awaited; a failure is only logged.
+                if let ref = step.abortElsewhere {
+                    Task { _ = await abortUploads([ref], name: name) }
+                }
             }
             let optimises = !isFile || (step.runsClop && kind.isSentToClop && settings.optimiseWithClop && clopIsRunning())
             if isFile && optimises {
