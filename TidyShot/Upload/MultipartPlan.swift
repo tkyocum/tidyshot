@@ -90,6 +90,17 @@ nonisolated struct MultipartPlan: Equatable, Sendable {
         return .startOver(reason: reason, abort: stored.ref)
     }
 
+    /// True when the stored upload sends a kept Clop copy (`sourcePath` in `keptCopyFolder`) and
+    /// the record's own file was written after the upload started: a trim since, so the copy holds
+    /// the earlier file and must not be completed at the link. The copy's own size and date still
+    /// match, so `startUpload` passes no source and the upload starts over. False when the record's
+    /// file could not be read, or the upload sends that file (the source check covers it).
+    static func keptCopyIsOutdated(stored: MultipartUploadState, keptCopyFolder: URL, recordFileModified: Date?) -> Bool {
+        guard let recordFileModified,
+              SaveLocation.contains(URL(filePath: stored.sourcePath), inFolder: keptCopyFolder) else { return false }
+        return recordFileModified > stored.startedAt
+    }
+
     /// What `startUpload` does for `decision` (nil when the record has no stored upload).
     static func startStep(decision: MultipartResumeDecision?) -> UploadStartStep {
         switch decision {

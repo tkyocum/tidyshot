@@ -201,8 +201,18 @@ extension AppCoordinator {
             if let stored {
                 let sourceURL = URL(filePath: stored.sourcePath)
                 let sourceScope = UploadPayload.scope(for: sourceURL, isTemporary: false, saveFolder: saveLocation.currentURL)
-                let source = await Self.sourceAttributes(of: sourceURL, scope: sourceScope)
-                // Delete cancelled the upload during the read (`cancelUpload` did the bookkeeping).
+                var source = await Self.sourceAttributes(of: sourceURL, scope: sourceScope)
+                // A kept Clop copy is checked against the record's own file too: a trim since the
+                // upload started leaves the copy matching itself but holding the earlier trim.
+                let keptCopyFolder = multipartFiles.directory
+                if SaveLocation.contains(sourceURL, inFolder: keptCopyFolder) {
+                    let (_, recordFileModified) = await Self.byteCount(of: payload)
+                    if MultipartPlan.keptCopyIsOutdated(stored: stored, keptCopyFolder: keptCopyFolder,
+                                                        recordFileModified: recordFileModified) {
+                        source = nil
+                    }
+                }
+                // Delete cancelled the upload during the reads (`cancelUpload` did the bookkeeping).
                 guard optimisingIDs[recordID] == token else { return }
                 let decision = MultipartPlan.resumeDecision(stored: stored, location: lane.location, fixedKey: fixedKey,
                                                             source: source)

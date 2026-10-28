@@ -80,4 +80,43 @@ struct UploadStartTests {
         #expect(!step.runsClop)
         #expect(!step.drawsCounter)
     }
+
+    // MARK: A kept Clop copy and a newer record file
+
+    private static let keptCopyFolder = URL(filePath: "/Users/tim/Library/Containers/io.tky.TidyShot/Data/Library/Application Support/TidyShot/multipart",
+                                            directoryHint: .isDirectory)
+
+    private static func keptCopyIsOutdated(stored: MultipartUploadState, recordFileModified: Date?) -> Bool {
+        MultipartPlan.keptCopyIsOutdated(stored: stored, keptCopyFolder: keptCopyFolder, recordFileModified: recordFileModified)
+    }
+
+    /// `Upload Trimmed` failed with Clop's copy kept, then a second trim wrote the record's file:
+    /// the copy still matches its own size and date, but holds the earlier trim, so the upload
+    /// starts over rather than completing the earlier trim's bytes at the link.
+    @Test func aRecordFileWrittenAfterTheUploadStartedOutdatesTheKeptCopy() {
+        let stored = Self.state()
+        let outdated = Self.keptCopyIsOutdated(stored: stored, recordFileModified: stored.startedAt.addingTimeInterval(60))
+        #expect(outdated)
+        let step = Self.step(stored: stored, fixedKey: stored.key, source: outdated ? nil : Self.matching)
+        #expect(step == UploadStartStep(runsClop: true, drawsCounter: true, resume: nil, abortFirst: stored.ref, abortElsewhere: nil))
+    }
+
+    /// The record's file was written before Create (capture, or the trim this upload sends):
+    /// the kept copy is Clop's result of it, and the upload resumes.
+    @Test func aRecordFileWrittenBeforeTheUploadStartedKeepsTheCopy() {
+        let stored = Self.state()
+        #expect(!Self.keptCopyIsOutdated(stored: stored, recordFileModified: stored.startedAt.addingTimeInterval(-60)))
+    }
+
+    /// The record's file could not be read: nothing says the copy is older, so the source check
+    /// alone decides.
+    @Test func anUnreadableRecordFileKeepsTheCopy() {
+        #expect(!Self.keptCopyIsOutdated(stored: Self.state(), recordFileModified: nil))
+    }
+
+    /// A stored upload that sends the record's own file is checked by the source check itself.
+    @Test func aStoredUploadOfTheRecordsFileHasNoKeptCopy() {
+        let stored = Self.state(sourcePath: Self.recordFile)
+        #expect(!Self.keptCopyIsOutdated(stored: stored, recordFileModified: stored.startedAt.addingTimeInterval(60)))
+    }
 }
