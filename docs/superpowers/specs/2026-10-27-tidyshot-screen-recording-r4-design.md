@@ -60,6 +60,12 @@ This is a build of more than one file, and `swiftc` then accepts top-level code 
   - A cold launch from `tidyshot://record-screen`.
 - **Setup step, not a probe.** Tim adds a lifecycle rule to `snap.tky.io`: `AbortIncompleteMultipartUpload` with `DaysAfterInitiation` 7 and an empty prefix. `put-bucket-lifecycle-configuration` replaces the bucket's whole lifecycle configuration, so he first runs `aws s3api get-bucket-lifecycle-configuration --bucket snap.tky.io`, adds the rule to the rules it returns (none, if it answers `NoSuchLifecycleConfiguration`), puts the merged list, and runs the get again to check it (Multipart, Orphaned uploads; the README gives the rule's JSON and these steps).
 
+**Results (2026-10-28).** No probe has run, so there is nothing to record yet. Each needs Tim's shell and key or his hands, and the checklist (`docs/testing/recording-r4-manual-checklist.md`) has a blank for each answer. Copy the answers here with the date and the Mac when they come in.
+- **M1:** not run. G1 is open. Blanks: each step's status and time; ListParts and Abort statuses (a 403 with its `<Code>`); Complete's whole body; the HEAD's `Content-Length` and `Cache-Control`; `footprint` (current and peak) at 16 MiB and at 64 MiB parts.
+- **D1:** not run. G2 is open. Blanks: whether resume data came back and its size; the first fraction after the resume and its status; the file size against `Content-Length`; the late resume's status (or inconclusive).
+- **U1:** not run (the hand checks, not a probe).
+- **Setup, the lifecycle rule:** Tim says the bucket already has the `AbortIncompleteMultipartUpload` rule. That is unverified: `aws s3api get-bucket-lifecycle-configuration --bucket snap.tky.io` has not been run by anyone.
+
 **Gates.** The pure code (Tests), the URL commands and the whole drag-out download build on no probe. These parts wait:
 - **G1, multipart against the real bucket** waits on M1. Everything builds and is tested against the local stub first. Before the PR merges, M1 confirms with Tim's key and the dotted path-style bucket:
   - that Create, UploadPart, Complete and Abort work, and that ListParts does;
@@ -372,3 +378,90 @@ The coordinator is not built in tests, so two rules are hand checks: `handle` se
 27. `Download failed` has no Retry button; the next drag retries (Failure).
 28. A failed download's resume data is used while less than 14 minutes have passed since the request was signed, then dropped (Failure).
 29. A download is refused unless the disk has the file's size plus 1 GB free (Disk space).
+
+## R4 built notes (2026-10-28)
+
+Built on `recording-r4`, cut from `main` at 5bd11c3 (R3 merged). The design and plan (7f2095e, bd32310, 5f091fb, 605b398), then one commit or more per task: Task 1 8916fc3, e3a6cae and 177de74; Task 2 1649d6a; Task 3 dc3a9cb; Task 4 7a2b0e1; Task 5 c236055; Task 6 a0fa539; Task 7 9ba432e; Task 8 b61659f; Task 9 cc67ade; Task 10 681a104 and b092475; Task 11 b142026; Task 12 20040b5 and dde2805; Task 13 b9f4e1f; Task 14 c6549e7 and 546b052; Task 15 ef5f0dc; Task 16 932f5ab; Task 17 6b4f553 and 0da6fd4; then this close-out. Nothing is pushed.
+
+- **Gates.** Both are open, because neither probe has run (Probes, Results).
+  - **G1 (M1)** holds the IAM sentences of the README's `Large uploads` paragraph, which says only that the key's multipart permissions are pending the check against the real bucket, and the merge. The `s3:GetObject` sentence for the drag-out download does not depend on M1 and goes in with them.
+  - **G2 (D1)** holds Task 16's "Resume a failed download" step, which is not built: `dragDownloadResume` and its drops on close and Delete are in place, but nothing writes or reads it. Every failed download starts again with a fresh signed GET, which is the design's fallback if D1 fails.
+  - No held step was shipped without. If Tim chooses to, this section says which.
+- **Suite and build.** `Test run with 2088 tests in 174 suites passed` (the baseline's 1877 in 166, plus 211 tests in 8 new suites: `MultipartXMLTests`, `MultipartRequestsTests`, `MultipartPlanTests`, `UploadStartTests`, `MultipartStoreTests`, `UploadErrorTests`, `DragDownloadTests`, `DragDownloadRuleTests`). The Release build succeeds. `git diff --stat main -- project.yml` prints nothing, so the generated Info.plist and entitlements are unchanged.
+- **Strings.** Every string, log line and error description the design gives was grepped in the finished code. None had drifted. The log lines that carry a reason are built from `MultipartStartOverReason.logText` (`source changed`, `destination changed`, `key changed`) and the queue's `Restart` reasons (`key taken`, `upload id gone`, `part list unavailable`), so a grep for the whole line finds the pieces, not one literal.
+- **Surface check.** The coordinator split's Task 7 command, with `startRecording` and `stopRecordingCommand` added to its member list, prints nothing. One outside read is new and is not a write: `RecentCapturesMenu` reads `coordinator.downloadingVideoIDs`, as it reads `optimizingVideoIDs`.
+
+### The eighteen gaps the plan filled
+
+Each stands as built; the checklist asks Tim to confirm or overrule each.
+1. `MultipartPart` lives in `MultipartXML.swift`, not `MultipartUploadState.swift`, so the probes' build line holds the type `MultipartRequests.complete` takes.
+2. `MultipartRequests` builds no path: each call gives its method, decoded query pairs, extra headers and body. The app takes the path from `S3DestinationConfig.objectPath(for:)` and the probes from their own `/<bucket>/<key>`.
+3. The job carries its source: `UploadJob.multipartSource` (location, path, size, modification date), set by the coordinator for every `.file` job whose size and date it read. The queue never needs the lane's location.
+4. The queue logs through an injected closure (`log: @Sendable (String) -> Void`, `NSLog` in the app), so tests read its `Upload:` lines.
+5. `RecordingController.isEnding`, so a second `stop-recording` during the stop wait logs `did nothing, no recording is running`. It is `isRunning && cause != nil`, not bare `cause != nil`, because `cause` is only cleared at the next run's reset.
+6. `recordingStartCancelled` is reset in `recordingCountIn`'s `didSet`, on a change from false to true.
+7. The download has its own delegate, `DragDownloadDelegate`, in `S3Destination+Download.swift`. `ProgressGate` is internal so both delegates use it.
+8. `AppCoordinator.multipartFiles: MultipartStore` is a collaborator beside `pendingFiles`, made in `init`. It holds no state.
+9. A resumed template job that must draw a new key names it from `TemplateContext(date: record.timestamp)`, whose counter is 0. Tim's template has no `{counter}`.
+10. The preset click reaches `SelectionOutcome.resolve` as `clickInPreset: CGRect?`, the preset rect when the press and the release were both inside it.
+11. The card's drag view asks for the download once per press (`askedForDownload`, reset on `mouseDown`).
+12. The card's download state is `QuickAccessModel.dragDownload: DragDownloadStatus?` (`.running(Double)`, `.failed(String)`), set by `QuickAccessController.setDownloading(_:for:)`. `Download failed` uses `exclamationmark.triangle.fill` in red, as `Upload failed` does.
+13. `S3Destination`'s `httpResponse`, `failure` and `excerpt` are internal, and so is `errorBody(at:)` (Task 14 found it needed the same change). Their bodies and the SECURITY comment did not change.
+14. `MultipartAbortResult` (`.aborted` for 204, `.notFound` for 404) is what `abortMultipartUpload` returns.
+15. `DragFileStore.landingURL()` makes `Drag/.downloads/` and returns `Drag/.downloads/<uuid>`. `sweep()` already removes it with the rest of `Drag`.
+16. Resume data travels in the error: a failed download throws its `URLError`, and the coordinator keeps `downloadTaskResumeData` with `signedAt`, read as `Date()` just before the first `download` call. Not built (G2 held).
+17. The drag-out download's form differs from the design's wording, with the same behaviour:
+    - The card's status lives on its model (Gap 12), and `downloadDragFile` sets it with `setDownloading(_:for:)` directly. `pushCardFlags` and the refresh do not push it, as the design's opening list and Progress say: `overlay.update(record:)` leaves the model's flags alone, and a close cancels the download, so there is nothing to restore.
+    - Two files the design's Files list does not name: `S3Destination+Download.swift` and `Overlay/DragDownloadRule.swift`.
+    - The call is `download(key:to:expectedBytes:resumeData:progress:)`, not `download(key:to:progress:)`.
+18. `urlRecordingStartPending` in the Recording group: `startRecording` sets it before its `Task` and `startRecordScreen` clears it when the lock's body runs or refuses. A second `record-screen` handled in that gap logs `Recording: URL start ignored, a recording is starting`, so it is a logged drop and not a lost race at the lock.
+
+### What was built differently from this design, task by task
+
+- **Probes (Task 1).** M1's halfway pause holds three parts read into memory just before they are sent, so the `Footprint:` reading shows three parts held and `phys_footprint_peak` is the number judged against 120 and 250 MB (177de74). D1 copies the partial file the resume data names before step 3 and puts it back before step 4, because step 3 uses it up; when it cannot, it says a status-less step 4 is inconclusive. The plist layout it reads on macOS 26 is unverified. M1 aborts and stops when Complete or ListParts throws (e3a6cae). `MultipartRequests.Call` has an `init` that derives `payloadHash` from `body`, so no call carries a hash that does not match. `partsPage` returns `NextPartNumberMarker` as the body has it, and a caller checks `isTruncated` before using it.
+- **Kinds and errors (Task 2).** `Kind.actions` is `[]` for a kind that takes no action. `parse` checks `Action(rawValue:)` first (`.unknownAction`), then `kind.actions` (`.unknownActionForKind`).
+- **Phase rules (Task 3).** The two-argument `captureRefusal` is gone. `Recording: not started, the count-in was cancelled` logs when the flag stops a start the hand-off allowed; a countdown cancelled inside `selfTimer.run` returns nil silently, as before, and the URL stop's own line covers it.
+- **Preset rect (Task 4).** `placePreset` does not call `makeKey`: the key window stays the one under the mouse and Escape works on any overlay view. The preset is not drawn during a drag, so the drag replaces it on screen. When the cursor is outside the preset over a window that overlaps it, the highlight is drawn after the preset and can cover part of its stroke.
+- **URL commands (Task 5).** The 32 pt message is a `static let` on the handler (`recordingAreaTooSmallMessage`). `startRecording` logs only the quitting refusal; the others are the handler's drop lines.
+- **Plan (Task 6).** `resumeDecision` checks location, then key, then source, so a destination change wins and only `.location` sends the abort to the coordinator. At exactly 156.25 GiB the part size stays 16 MiB.
+- **Record (Task 7).** A trim does not clear a stale `multipart`; the resume's source check rejects a changed file (see Task 12's fix).
+- **Store (Task 8).** A file whose name does not start with a record id is never removed by `sweep` or `remove`. `keepClopCopy` throws first when its source is gone, so an earlier copy is not removed for nothing.
+- **S3 calls (Task 9).** `listParts` ends on a truncated page whose marker does not move, so a misbehaving server cannot loop it. A 404 that is not `NoSuchUpload` is an ordinary failure, and Abort maps any 404 to `.notFound`. The test bucket recomputes the SigV4 signature from the URL's decoded query, so a query that differs from the signed one fails. The stub's `MalformedXML` code for a Complete with the wrong content type is a guess at what AWS returns; only the 400 matters to the app.
+- **Queue (Tasks 10 and 11).**
+  - A sidecar that cannot be written fails the job, at all three writes (b092475), so Complete never goes out unless the sidecar says `completeSent`. A first write that fails leaves the upload id out of the record, and the lifecycle rule removes it.
+  - `<try>` in `part <k> failed, retry <try>` is the attempt about to be made (2 for the first retry).
+  - A part is read once and the same bytes are resent on a retry.
+  - A resume sends no `.started` until it knows its done fraction: a template resume whose key already holds the upload ends with `.uploaded` and no `.started`, and one that restarts before its first part sends `.started(attempt: 2, fraction: 0)` with no attempt-1 event.
+  - A second `partsRejected` in a job restarts with no reason line of its own.
+  - Every abort of a start over or a restart is one try, not a retry loop.
+  - A rebuilt sidecar has `completeSent: false`.
+  - `UploadQueue.swift` is now about 750 lines. A split into `UploadQueue+Multipart.swift` would be mechanical and was not made.
+- **Coordinator (Task 12).**
+  - The kept Clop copy moves on the main actor (a rename), so nothing waits between the token being cleared and the enqueue.
+  - `byteCount(of:)` returns the size and the modification date from one `resourceValues` read.
+  - `fitsSingleUpload` became `fitsUpload`, which is `MultipartPlan.fits(byteCount:)` for a `.file` payload with a known size.
+  - Fix (dde2805): a kept Clop copy outdated by a later trim of the record's own file starts the upload over. `MultipartPlan.keptCopyIsOutdated(stored:keptCopyFolder:recordFileModified:)` is true when `sourcePath` is inside the kept-copy folder and the record's file changed after `startedAt`; `startUpload` then passes a nil source to `resumeDecision`. Without it, a resume would complete the first trim's bytes over a second trim. The Resume section's sentence "A new Clop result never meets the old upload's parts" is true, and this covers a kept copy that outlives a change to the record's file.
+- **Delete (Task 13).** A failing second Abort fails Delete like the first, and the second alert reuses `The object stays in the bucket.` for an Abort failure, though what stays is an incomplete upload.
+- **Download (Task 14).** `DragDownloadDelegate` keeps a phase (`waiting`, `started`, `completed`, `resumed`), so a task cancelled before its continuation is handed over still resumes it (546b052). `download` starts with `try Task.checkCancellation()`, so an already-cancelled caller gets `CancellationError` and a cancel mid-transfer gets `URLError(.cancelled)`; the coordinator tells them apart by `Task.isCancelled`. Progress is also reported for a non-2xx body, so a fraction can reach 1 just before the call throws.
+- **Card and row (Task 15).** `isDownloadingForDrag` is true only for `.running`, so a failed download does not hold the card open. `.downloadFailed` shows the file label under it and the message as the tool tip.
+- **Drag-out (Task 16).**
+  - `cancelDragDownload` leaves `downloadingDragIDs[id]` in place; the task's own end clears it, so a second download cannot start while a cancelled one winds down.
+  - The progress hop sets `.running(f)` only while `downloadingVideoIDs` holds the id.
+  - A `landingURL()` throw is handled like a source error: `Download failed` and the `failed:` log line.
+  - A small race stays: a press's slow empty-folder read that finishes after a download has landed can reset the card's drag file to nil; the next press fixes it.
+- **Single-PUT start over (Task 17, 6b4f553).** The concern from Tasks 12 and 13: a start over whose new file is under 100 MiB goes as one PUT, and the queue's single-PUT path never read `abortFirst`, so the stored upload was left to the lifecycle rule. Ruled a bug, because the design has the queue abort `abortFirst` on a start over without limiting that to multipart jobs. The single-PUT path now aborts it once before its retry loop, with the multipart path's `abortUpload` and log lines; a cancel during it delivers `.cancelled`; a failed abort is logged and the job goes on. The record's `multipart` stays until `.uploaded` clears it. Delete aborts it meanwhile (a second Abort on an already-aborted id answers 404, accepted), and a Retry before then decides start over again and aborts again with a 404.
+- **README (Task 17).** The URL scheme, Security, Errors, Screen recording and Large uploads text is as the design says, except the IAM sentences (G1). The drop sentence also names the new reasons. `Large uploads` gives the lifecycle rule's JSON and the get, merge and put steps.
+
+### Probe results
+
+None yet (Probes, Results). The checklist has the blanks.
+
+### Still open (the PR lists these)
+
+- **G1 and G2** (above). The branch is not offered for merge while a step is held.
+- **M1 and D1** are Tim's to run; **U1** and every hand check in `docs/testing/recording-r4-manual-checklist.md` have not run. The Release build has no Screen Recording grant, and a grant is Tim's to give.
+- **The lifecycle rule** on `snap.tky.io`: Tim says it is there; nobody has checked.
+- **Tim's IAM policy** against the actions the checklist's Setup lists; M1 shows which are missing.
+- **The design's 29 calls and the eighteen gaps**: the checklist asks Tim to confirm or overrule each.
+- **Reviewer notes** from each task's review (216 minors, in the local scratch `.superpowers/sdd/r4/minors-all.json`, not in the repository) go to the whole-branch review. The ones the task reports name as left alone are above (Tasks 10, 11, 13, 14, 16).
+- **Untested by design:** the coordinator (`finishDragDownload`'s three-way choice, `abortUploads`, `startUpload`'s resume wiring, `handle` setting the bar to `.started`'s fraction, `recordingStartCancelled` stopping a start during the settle delay). The hand checks are the only verification.
