@@ -24,6 +24,35 @@ nonisolated protocol Destination: Sendable {
     func delete(key: String) async throws
     /// Where `key` can be read from after upload.
     func publicURL(for key: String) throws -> URL
+
+    // Multipart (R4). Each request is signed with its payload's SHA-256 and refuses redirects.
+
+    /// CreateMultipartUpload at `key`, with the object's headers as `upload` sends them. Returns
+    /// the upload id.
+    func createMultipartUpload(key: String, contentType: String, cacheControl: String?) async throws -> String
+    /// UploadPart: sends `data` as part `number` and returns the `ETag` S3 gave it, quotes included.
+    /// `progress` receives the bytes sent since its last call, from the transport thread.
+    /// Throws `UploadError.noSuchUpload` when the server no longer knows `uploadID`.
+    func uploadPart(key: String, uploadID: String, number: Int, data: Data,
+                    progress: @escaping @Sendable (Int64) -> Void) async throws -> String
+    /// CompleteMultipartUpload with `parts` in ascending order. Throws `.completeError` for a 200
+    /// that carries an `<Error>`, `.noSuchUpload`, and `.partsRejected` for `InvalidPart` or
+    /// `InvalidPartOrder`.
+    func completeMultipartUpload(key: String, uploadID: String, parts: [MultipartPart]) async throws
+    /// AbortMultipartUpload. Both answers that leave nothing behind count as done; the result says which.
+    func abortMultipartUpload(key: String, uploadID: String) async throws -> MultipartAbortResult
+    /// Every part the server holds for `uploadID`, over as many ListParts pages as it takes.
+    /// Throws `.noSuchUpload` when the server no longer knows `uploadID`.
+    func listParts(key: String, uploadID: String) async throws -> [MultipartPart]
+    /// The size of the object at `key` (HEAD), or nil when it is missing (404, or 403 for a key
+    /// without `s3:ListBucket`, as `exists` reads it).
+    func objectSize(key: String) async throws -> Int64?
+}
+
+/// What `abortMultipartUpload` got: 204 (`aborted`) or 404 (`notFound`, nothing left to abort).
+nonisolated enum MultipartAbortResult: Equatable, Sendable {
+    case aborted
+    case notFound
 }
 
 extension Destination {
@@ -114,6 +143,17 @@ nonisolated enum UploadError: LocalizedError, Equatable, Sendable {
     case keyCollisionsExhausted
     case notConfigured
     case fileUnreadable(String)
+    /// The server no longer knows the multipart upload id (aborted, completed, or removed by a
+    /// lifecycle rule). The queue handles it apart from the retry rule.
+    case noSuchUpload
+    /// Complete's `InvalidPart` or `InvalidPartOrder`; `body` as for `httpStatus`. The queue
+    /// handles it apart from the retry rule.
+    case partsRejected(body: String)
+    /// A Complete answered 200 with an `<Error>` in its body; `body` as for `httpStatus`.
+    case completeError(code: String, body: String)
+
+    /// The `<Error>` codes of a 200 Complete that a 5xx or a 429 would carry.
+    private static let retryableCompleteCodes: Set<String> = ["InternalError", "SlowDown", "ServiceUnavailable"]
 
     /// Server-side and transport failures are retried; client errors (bad credentials,
     /// missing bucket, forbidden) and a file that cannot be read are not.
@@ -121,7 +161,8 @@ nonisolated enum UploadError: LocalizedError, Equatable, Sendable {
         switch self {
         case .httpStatus(let status, _): status >= 500 || status == 429
         case .noHTTPResponse: true
-        case .keyCollisionsExhausted, .notConfigured, .fileUnreadable: false
+        case .completeError(let code, _): Self.retryableCompleteCodes.contains(code)
+        case .keyCollisionsExhausted, .notConfigured, .fileUnreadable, .noSuchUpload, .partsRejected: false
         }
     }
 
@@ -133,6 +174,9 @@ nonisolated enum UploadError: LocalizedError, Equatable, Sendable {
         case .keyCollisionsExhausted: "Could not find an unused object key after 5 tries."
         case .notConfigured: "No upload destination is configured."
         case .fileUnreadable(let path): "The file could not be read: \(path)"
+        case .noSuchUpload: "The upload was no longer known to the server."
+        case .partsRejected(let body): "The server rejected the upload's part list: \(body)"
+        case .completeError(_, let body): "The server could not complete the upload: \(body)"
         }
     }
 

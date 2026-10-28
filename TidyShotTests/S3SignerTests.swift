@@ -189,4 +189,90 @@ struct S3SignerTests {
         #expect(fromFile.value(forHTTPHeaderField: "content-length") == nil)
         #expect(fromFile.value(forHTTPHeaderField: "authorization")?.contains("content-length") == false)
     }
+
+    // MARK: Multipart
+
+    /// Tim's dotted bucket, which is always addressed path-style.
+    var dotted: S3DestinationConfig {
+        S3DestinationConfig(endpoint: "https://s3.us-east-1.amazonaws.com", region: "us-east-1", bucket: "snap.tky.io",
+                            publicURLTemplate: "https://snap.tky.io/{key}")
+    }
+
+    /// Signs `call` for `r/Recording.mp4` as `S3Destination` puts it together, and checks that the
+    /// destination's own request carries the same signature and the same query.
+    func signedMultipart(_ call: MultipartRequests.Call) throws -> S3Signer.Signed {
+        let key = "r/Recording.mp4"
+        let headers = call.headers + [(name: "host", value: "s3.us-east-1.amazonaws.com"),
+                                      (name: "x-amz-content-sha256", value: call.payloadHash)]
+        let signed = S3Signer.sign(
+            S3Signer.Request(method: call.method, path: dotted.objectPath(for: key), query: call.query, headers: headers,
+                             payloadHash: call.payloadHash),
+            credentials: credentials, region: "us-east-1", date: date)
+        let destination = S3Destination(config: dotted, credentials: credentials, now: { date })
+        let request = try destination.signedRequest(method: call.method, key: key, query: call.query,
+                                                    payloadHash: call.payloadHash, extraHeaders: call.headers)
+        #expect(request.httpMethod == call.method)
+        #expect(request.value(forHTTPHeaderField: "authorization") == signed.headers.last?.value)
+        #expect(request.url?.query(percentEncoded: true) == S3Signer.canonicalQuery(call.query))
+        return signed
+    }
+
+    @Test func createMultipartUploadCanonicalRequest() throws {
+        let signed = try signedMultipart(MultipartRequests.create(contentType: "video/mp4", cacheControl: "no-cache",
+                                                                  publicRead: true))
+        #expect(signed.canonicalRequest == """
+        POST
+        /snap.tky.io/r/Recording.mp4
+        uploads=
+        cache-control:no-cache
+        content-type:video/mp4
+        host:s3.us-east-1.amazonaws.com
+        x-amz-acl:public-read
+        x-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+        x-amz-date:20130524T000000Z
+
+        cache-control;content-type;host;x-amz-acl;x-amz-content-sha256;x-amz-date
+        e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+        """)
+    }
+
+    /// The query is sorted by name and each value is encoded with `/` as `%2F` and `~` kept.
+    @Test func uploadPartCanonicalRequest() throws {
+        let signed = try signedMultipart(MultipartRequests.uploadPart(uploadID: "a/b~c", number: 7, data: Data("hello".utf8)))
+        #expect(signed.canonicalRequest == """
+        PUT
+        /snap.tky.io/r/Recording.mp4
+        partNumber=7&uploadId=a%2Fb~c
+        host:s3.us-east-1.amazonaws.com
+        x-amz-content-sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
+        x-amz-date:20130524T000000Z
+
+        host;x-amz-content-sha256;x-amz-date
+        2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
+        """)
+        // The same pairs in the other order sign the same request.
+        var reversed = MultipartRequests.uploadPart(uploadID: "a/b~c", number: 7, data: Data("hello".utf8))
+        reversed.query.reverse()
+        #expect(try signedMultipart(reversed).canonicalRequest == signed.canonicalRequest)
+    }
+
+    /// The payload hash is the SHA-256 of the Complete body below, computed with `shasum -a 256`.
+    @Test func completeMultipartUploadCanonicalRequest() throws {
+        let parts = [MultipartPart(number: 2, etag: "\"e2\"", size: 1), MultipartPart(number: 1, etag: "\"e1\"", size: 5)]
+        let call = MultipartRequests.complete(uploadID: "2~Ab+c/d=", parts: parts)
+        #expect(String(decoding: call.body, as: UTF8.self) == "<CompleteMultipartUpload><Part><PartNumber>1</PartNumber><ETag>\"e1\"</ETag></Part><Part><PartNumber>2</PartNumber><ETag>\"e2\"</ETag></Part></CompleteMultipartUpload>")
+        let signed = try signedMultipart(call)
+        #expect(signed.canonicalRequest == """
+        POST
+        /snap.tky.io/r/Recording.mp4
+        uploadId=2~Ab%2Bc%2Fd%3D
+        content-type:application/xml
+        host:s3.us-east-1.amazonaws.com
+        x-amz-content-sha256:c882ce0a23ff1e84eea9622e544f60217bfc1ebc7df2dde084a988aa5e6d37c6
+        x-amz-date:20130524T000000Z
+
+        content-type;host;x-amz-content-sha256;x-amz-date
+        c882ce0a23ff1e84eea9622e544f60217bfc1ebc7df2dde084a988aa5e6d37c6
+        """)
+    }
 }

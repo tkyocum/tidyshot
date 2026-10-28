@@ -136,6 +136,12 @@ nonisolated struct S3DestinationConfig: Codable, Equatable, Sendable {
 
     /// The URL the signed request is sent to.
     func objectURL(for key: String) throws -> URL {
+        try objectURL(for: key, query: [])
+    }
+
+    /// The URL the signed request is sent to, with `query` (decoded pairs) as the canonical
+    /// query, so the query sent and the query signed cannot disagree. No query when it is empty.
+    func objectURL(for key: String, query: [(name: String, value: String)]) throws -> URL {
         guard let endpointURL, var components = URLComponents(url: endpointURL, resolvingAgainstBaseURL: false),
               let host = components.host, !host.isEmpty else {
             throw ConfigError.invalidEndpoint
@@ -144,7 +150,7 @@ nonisolated struct S3DestinationConfig: Codable, Equatable, Sendable {
             components.host = "\(normalized.bucket).\(host)"
         }
         components.percentEncodedPath = S3Signer.uriEncode(objectPath(for: key), keepSlash: true)
-        components.query = nil
+        components.percentEncodedQuery = query.isEmpty ? nil : S3Signer.canonicalQuery(query)
         guard let url = components.url else { throw ConfigError.invalidEndpoint }
         return url
     }

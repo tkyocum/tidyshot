@@ -133,6 +133,25 @@ nonisolated final class FakeDestination: Destination, Sendable {
     func publicURL(for key: String) throws -> URL {
         URL(string: "https://snap.tky.io/\(key)")!
     }
+
+    // Multipart, not scripted yet: every call succeeds.
+
+    func createMultipartUpload(key: String, contentType: String, cacheControl: String?) async throws -> String {
+        "upload-1"
+    }
+
+    func uploadPart(key: String, uploadID: String, number: Int, data: Data,
+                    progress: @escaping @Sendable (Int64) -> Void) async throws -> String {
+        "\"etag-\(number)\""
+    }
+
+    func completeMultipartUpload(key: String, uploadID: String, parts: [MultipartPart]) async throws {}
+
+    func abortMultipartUpload(key: String, uploadID: String) async throws -> MultipartAbortResult { .aborted }
+
+    func listParts(key: String, uploadID: String) async throws -> [MultipartPart] { [] }
+
+    func objectSize(key: String) async throws -> Int64? { nil }
 }
 
 /// Counts security-scope starts and stops, per folder, in order.
