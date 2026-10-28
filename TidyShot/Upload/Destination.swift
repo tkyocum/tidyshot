@@ -85,6 +85,13 @@ nonisolated struct UploadJob: Sendable, Identifiable {
     let key: KeyPolicy
     /// Sent as a signed `Cache-Control` header on the PUT; nil sends none.
     let cacheControl: String?
+    /// The file a `.file` job sends, as the coordinator read it. A job that has it and is at or
+    /// over the plan's threshold goes multipart; without it the job uses the single PUT.
+    var multipartSource: MultipartSource? = nil
+    /// A stored multipart upload to resume.
+    var resume: MultipartUploadState? = nil
+    /// A stored multipart upload to abort before this job creates its own.
+    var abortFirst: MultipartRef? = nil
 
     /// A job whose key is named from the template. It sends no `Cache-Control`.
     init(id: UUID, payload: UploadPayload, contentType: String, fileExtension: String,
@@ -124,7 +131,11 @@ nonisolated struct UploadJob: Sendable, Identifiable {
 }
 
 nonisolated enum UploadEvent: Sendable, Equatable {
-    case started(id: UUID, attempt: Int)
+    /// `fraction` is where the bar starts: 0 for a single PUT and for a fresh multipart attempt.
+    case started(id: UUID, attempt: Int, fraction: Double)
+    /// A multipart upload was created, before any of its parts is sent. The record keeps `state`
+    /// so a Retry can resume it and Delete knows what to abort.
+    case multipartStarted(id: UUID, state: MultipartUploadState)
     case progress(id: UUID, fraction: Double)
     case uploaded(id: UUID, url: URL, key: String)
     case failed(id: UUID, message: String)

@@ -484,11 +484,11 @@ extension AppCoordinator {
                 refreshOverlay(for: id)
             }
             fileUploadIDs.remove(id)
-        case .started, .progress:
+        case .started, .progress, .multipartStarted:
             break
         }
         switch event {
-        case .started(let id, let attempt):
+        case .started(let id, let attempt, _):
             if attempt > 1 {
                 NSLog("Upload retry \(attempt) for \(id)")
                 // Start the bar again rather than leaving the failed attempt's fraction.
@@ -496,6 +496,9 @@ extension AppCoordinator {
                     refreshOverlay(for: id)
                 }
             }
+        case .multipartStarted:
+            // The lane's queue has no multipart store yet, so this never arrives.
+            break
         case .progress(let id, let fraction):
             if history.setProgress(id: id, fraction: fraction) {
                 refreshOverlay(for: id)
