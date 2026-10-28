@@ -3,7 +3,8 @@ import Synchronization
 
 /// Uploads jobs one at a time, in order, with retry and backoff. A template job's key is reserved
 /// with HEAD before its PUT; a fixed-key job PUTs its key as is. A large file goes multipart: its
-/// parts are sent a few at a time, each request retried on its own, in one pass of the job.
+/// parts are sent a few at a time, each request retried on its own, in one pass of the job. A
+/// stored multipart upload resumes from the parts it has, and one the server lost starts again.
 /// Reports progress and results through `events`, which runs on the main actor. A job can be
 /// cancelled while pending or in flight; it then ends with a single `.cancelled` event.
 actor UploadQueue {
@@ -64,6 +65,59 @@ actor UploadQueue {
         var error: any Error
 
         var errorDescription: String? { "Part \(number) of \(count): \(error.localizedDescription)" }
+    }
+
+    /// Where a multipart job goes next: on with a stored upload, or a new one (at `reusing`, or a
+    /// key drawn afresh).
+    private nonisolated enum MultipartStep: Sendable {
+        case resume(MultipartUploadState)
+        case create(reusing: String?)
+    }
+
+    /// Why a multipart job drops its upload and creates another (design, Resume).
+    private nonisolated struct Restart: Error {
+        /// The job's failure when it has no restart left.
+        var cause: any Error
+        /// The log line's reason, before `, starting again`; nil logs none.
+        var reason: String?
+        /// The upload to abort first, when it may still exist.
+        var abort: (key: String, uploadID: String)?
+        /// The key to create under: nil draws a new one.
+        var key: String?
+
+        /// The server no longer knows the upload id: nothing to abort, and the same key.
+        static func uploadIDGone(key: String) -> Restart {
+            Restart(cause: UploadError.noSuchUpload, reason: "upload id gone", abort: nil, key: key)
+        }
+    }
+
+    /// One upload id and how its file is cut into parts.
+    private nonisolated struct MultipartTarget: Sendable {
+        var key: String
+        var uploadID: String
+        var partSize: Int64
+        var byteCount: Int64
+
+        var count: Int { MultipartPlan.partCount(byteCount: byteCount, partSize: partSize) }
+
+        /// True when `part` has a number of this upload and the size that number should have.
+        func expects(_ part: MultipartPart) -> Bool {
+            guard part.number >= 1, part.number <= count else { return false }
+            let range = MultipartPlan.range(ofPart: part.number, partSize: partSize, byteCount: byteCount)
+            return part.size == range.upperBound - range.lowerBound
+        }
+    }
+
+    /// What every step of one multipart job shares.
+    private nonisolated struct MultipartPass: Sendable {
+        var job: UploadJob
+        /// For the log: the file's name.
+        var name: String
+        var file: URL
+        var source: MultipartSource
+        var store: MultipartStore
+        /// The job's throttled `.progress` events.
+        var report: @Sendable (Double) -> Void
     }
 
     static let maxKeyAttempts = 5
@@ -213,11 +267,12 @@ actor UploadQueue {
         }
     }
 
-    /// A multipart job's one pass, holding `folder`'s scope throughout: the key, Create, the parts
-    /// (at most `plan.inFlight` at a time, added in part order as each finishes) and Complete.
-    /// Each request retries on its own under `filePolicy`; the job as a whole is not retried. The
-    /// sidecar is rewritten after each part, and marks Complete as sent before it goes; a sidecar
-    /// that cannot be written fails the job with the write's error.
+    /// A multipart job's one pass, holding `folder`'s scope throughout. A fresh job creates its
+    /// upload; a job with `resume` carries on with the stored one. Each request retries on its own
+    /// under `filePolicy`; the job as a whole is not retried. A cause in `Restart` drops the upload
+    /// and creates another, at most `MultipartPlan.restartLimit` times. The sidecar is rewritten
+    /// after each part, and marks Complete as sent before it goes; a sidecar that cannot be written
+    /// fails the job with the write's error.
     private func processMultipart(_ job: UploadJob, file url: URL, holding folder: URL?,
                                   source: MultipartSource, store: MultipartStore) async -> JobOutcome {
         let name = url.lastPathComponent
@@ -225,74 +280,53 @@ actor UploadQueue {
         defer {
             if accessing, let folder { scope.stop(folder) }
         }
-        await events(.started(id: job.id, attempt: 1, fraction: 0))
+        let pass = MultipartPass(job: job, name: name, file: url, source: source, store: store,
+                                 report: throttledProgress(for: job.id))
+        // A resume starts its bar once it knows the parts done.
+        if job.resume == nil {
+            await events(.started(id: job.id, attempt: 1, fraction: 0))
+        }
         do {
-            // The coordinator refuses a file over the plan's limit, so a nil part size cannot happen.
-            guard FileManager.default.isReadableFile(atPath: url.path(percentEncoded: false)),
-                  let partSize = plan.partSize(for: source.byteCount) else {
+            guard FileManager.default.isReadableFile(atPath: url.path(percentEncoded: false)) else {
                 throw UploadError.fileUnreadable(name)
             }
-            let key = try await objectKey(for: job, retryingHEADs: true)
-            reservedKeys[job.id] = key
-            let uploadID: String
-            do {
-                uploadID = try await Self.withRetries(policy: filePolicy, sleep: sleep) {
-                    try await self.destination.createMultipartUpload(key: key, contentType: job.contentType,
-                                                                     cacheControl: job.cacheControl)
-                }
-            } catch {
-                if !cancelledIDs.contains(job.id) {
-                    log("Upload: \(name) create failed: \(error.localizedDescription)")
-                }
-                throw error
+            if let ref = job.abortFirst {
+                await abortUpload(key: ref.key, uploadID: ref.uploadID, name: name)
+                try Task.checkCancellation()
             }
-            let state = MultipartUploadState(uploadID: uploadID, key: key, location: source.location,
-                                             partSize: partSize, byteCount: source.byteCount,
-                                             sourceModified: source.modified, sourcePath: source.path,
-                                             startedAt: now())
-            var sidecar = MultipartSidecar(uploadID: uploadID, completeSent: false, parts: [])
-            try store.writeSidecar(sidecar, id: job.id)
-            await events(.multipartStarted(id: job.id, state: state))
-            let count = MultipartPlan.partCount(byteCount: source.byteCount, partSize: partSize)
-            log("Upload: \(name) multipart, \(count) parts of \(Self.mebibytes(partSize)) MiB, upload id \(uploadID)")
-
-            let sender = PartSender(destination: destination, policy: filePolicy, sleep: sleep, log: log,
-                                    name: name, file: url, key: key, uploadID: uploadID, partSize: partSize,
-                                    byteCount: source.byteCount, count: count,
-                                    progress: MultipartProgress(total: source.byteCount),
-                                    report: throttledProgress(for: job.id))
-            try await withThrowingTaskGroup(of: MultipartPart.self) { group in
-                var next = 1
-                while next <= min(plan.inFlight, count) {
-                    let number = next
-                    group.addTask { try await sender.send(number) }
-                    next += 1
-                }
-                while let part = try await group.next() {
-                    sidecar.parts.append(part)
-                    sidecar.parts.sort { $0.number < $1.number }
-                    try store.writeSidecar(sidecar, id: job.id)
-                    sender.report(sender.progress.finish(part: part.number, size: part.size))
-                    if next <= count {
-                        let number = next
-                        group.addTask { try await sender.send(number) }
-                        next += 1
+            var step: MultipartStep = job.resume.map { .resume($0) } ?? .create(reusing: nil)
+            var restarts = 0
+            var rejectedOnce = false
+            while true {
+                do {
+                    let key: String
+                    switch step {
+                    case .resume(let stored):
+                        key = try await resumeUpload(stored, pass, rejectedOnce: &rejectedOnce)
+                    case .create(let reusing):
+                        key = try await createUpload(pass, reusing: reusing, rejectedOnce: &rejectedOnce)
                     }
+                    let publicURL = try destination.publicURL(for: key)
+                    reservedKeys[job.id] = nil
+                    await events(.uploaded(id: job.id, url: publicURL, key: key))
+                    return .uploaded
+                } catch let restart as Restart {
+                    if cancelledIDs.contains(job.id) { return await deliverCancelled(job.id) }
+                    guard restarts < MultipartPlan.restartLimit else { throw restart.cause }
+                    restarts += 1
+                    reservedKeys[job.id] = nil
+                    if let abort = restart.abort {
+                        await abortUpload(key: abort.key, uploadID: abort.uploadID, name: name)
+                    }
+                    if let reason = restart.reason {
+                        log("Upload: \(name) \(reason), starting again")
+                    }
+                    try Task.checkCancellation()
+                    // `attempt` counts restarts.
+                    await events(.started(id: job.id, attempt: restarts + 1, fraction: 0))
+                    step = .create(reusing: restart.key)
                 }
             }
-
-            // Complete never goes before the sidecar says it was sent.
-            sidecar.completeSent = true
-            try store.writeSidecar(sidecar, id: job.id)
-            let parts = sidecar.parts
-            try await Self.withRetries(policy: filePolicy, sleep: sleep) {
-                try await self.destination.completeMultipartUpload(key: key, uploadID: uploadID, parts: parts)
-            }
-            log("Upload: \(name) multipart completed")
-            let publicURL = try destination.publicURL(for: key)
-            reservedKeys[job.id] = nil
-            await events(.uploaded(id: job.id, url: publicURL, key: key))
-            return .uploaded
         } catch {
             // The task group has awaited every part by now, so a cancel's event comes after the last.
             if cancelledIDs.contains(job.id) {
@@ -302,6 +336,212 @@ actor UploadQueue {
             await events(.failed(id: job.id, message: error.localizedDescription))
             return .failed
         }
+    }
+
+    /// A new upload: the key (drawn and reserved, or `reusing` HEADed again), Create, the state
+    /// and an empty sidecar, then every part and Complete. Returns the key the object landed at.
+    private func createUpload(_ pass: MultipartPass, reusing: String?, rejectedOnce: inout Bool) async throws -> String {
+        let job = pass.job
+        // The coordinator refuses a file over the plan's limit, so a nil part size cannot happen.
+        guard let partSize = plan.partSize(for: pass.source.byteCount) else {
+            throw UploadError.fileUnreadable(pass.name)
+        }
+        let key = if let reusing { try await reserveAgain(reusing, for: job) } else {
+            try await objectKey(for: job, retryingHEADs: true)
+        }
+        reservedKeys[job.id] = key
+        let uploadID: String
+        do {
+            uploadID = try await Self.withRetries(policy: filePolicy, sleep: sleep) {
+                try await self.destination.createMultipartUpload(key: key, contentType: job.contentType,
+                                                                 cacheControl: job.cacheControl)
+            }
+        } catch {
+            if !cancelledIDs.contains(job.id) {
+                log("Upload: \(pass.name) create failed: \(error.localizedDescription)")
+            }
+            throw error
+        }
+        let source = pass.source
+        let state = MultipartUploadState(uploadID: uploadID, key: key, location: source.location,
+                                         partSize: partSize, byteCount: source.byteCount,
+                                         sourceModified: source.modified, sourcePath: source.path,
+                                         startedAt: now())
+        let target = MultipartTarget(key: key, uploadID: uploadID, partSize: partSize, byteCount: source.byteCount)
+        var sidecar = MultipartSidecar(uploadID: uploadID, completeSent: false, parts: [])
+        try pass.store.writeSidecar(sidecar, id: job.id)
+        await events(.multipartStarted(id: job.id, state: state))
+        log("Upload: \(pass.name) multipart, \(target.count) parts of \(Self.mebibytes(partSize)) MiB, upload id \(uploadID)")
+        try await sendParts(Array(1..<(target.count + 1)), of: target, sidecar: &sidecar, pass)
+        try await complete(target, sidecar: &sidecar, pass, rejectedOnce: &rejectedOnce)
+        return key
+    }
+
+    /// Carries on with a stored upload, at its key, id and part size. A template key is HEADed
+    /// first: absent goes on, the stored size means an earlier Complete landed, and another size
+    /// means another capture took the key, which restarts under a new one. Then the parts the
+    /// sidecar (or ListParts) lacks, and Complete. Returns the key the object landed at.
+    private func resumeUpload(_ stored: MultipartUploadState, _ pass: MultipartPass,
+                              rejectedOnce: inout Bool) async throws -> String {
+        let target = MultipartTarget(key: stored.key, uploadID: stored.uploadID, partSize: stored.partSize,
+                                     byteCount: stored.byteCount)
+        if case .template = pass.job.key {
+            let size = try await Self.withRetries(policy: filePolicy, sleep: sleep) {
+                try await self.destination.objectSize(key: stored.key)
+            }
+            if size == stored.byteCount { return stored.key }
+            if size != nil {
+                // A resume's first step, so never a third cause.
+                throw Restart(cause: UploadError.keyCollisionsExhausted, reason: "key taken",
+                              abort: (stored.key, stored.uploadID), key: nil)
+            }
+        }
+        reservedKeys[pass.job.id] = stored.key
+        var sidecar = try await partList(of: target, pass)
+        let numbers = Set(sidecar.parts.map(\.number))
+        let missing = (1..<(target.count + 1)).filter { !numbers.contains($0) }
+        let doneBytes = sidecar.parts.reduce(0) { $0 + $1.size }
+        await events(.started(id: pass.job.id, attempt: 1,
+                              fraction: MultipartPlan.fraction(doneBytes: doneBytes, inFlightBytes: 0, total: target.byteCount)))
+        log("Upload: \(pass.name) resumes at \(sidecar.parts.count) of \(target.count) parts")
+        try await sendParts(missing, of: target, sidecar: &sidecar, pass)
+        try await complete(target, sidecar: &sidecar, pass, rejectedOnce: &rejectedOnce)
+        return stored.key
+    }
+
+    /// The stored sidecar, or one rebuilt from ListParts when it is missing, unreadable or for
+    /// another upload id. A listed part is trusted when its size is the one its number should have.
+    private func partList(of target: MultipartTarget, _ pass: MultipartPass) async throws -> MultipartSidecar {
+        if let sidecar = pass.store.readSidecar(id: pass.job.id, uploadID: target.uploadID) {
+            return sidecar
+        }
+        log("Upload: \(pass.name) part list missing, listing parts")
+        var trusted: [Int: MultipartPart] = [:]
+        for part in try await listParts(of: target, pass) where target.expects(part) {
+            trusted[part.number] = part
+        }
+        let sidecar = MultipartSidecar(uploadID: target.uploadID, completeSent: false,
+                                       parts: trusted.values.sorted { $0.number < $1.number })
+        try pass.store.writeSidecar(sidecar, id: pass.job.id)
+        return sidecar
+    }
+
+    /// ListParts, retried. A gone upload id, or any other failure left after the retries (a 403
+    /// for a key without `s3:ListMultipartUploadParts`), restarts the job under the same key.
+    private func listParts(of target: MultipartTarget, _ pass: MultipartPass) async throws -> [MultipartPart] {
+        do {
+            return try await Self.withRetries(policy: filePolicy, sleep: sleep) {
+                try await self.destination.listParts(key: target.key, uploadID: target.uploadID)
+            }
+        } catch UploadError.noSuchUpload {
+            throw Restart.uploadIDGone(key: target.key)
+        } catch {
+            throw Restart(cause: error, reason: "part list unavailable", abort: (target.key, target.uploadID),
+                          key: target.key)
+        }
+    }
+
+    /// Sends `numbers` of `target`'s parts, at most `plan.inFlight` at a time and added in order as
+    /// each finishes, putting each in the sidecar (rewritten) as it lands. Progress starts at the
+    /// sidecar's bytes. A part whose upload id is gone restarts the job under the same key.
+    private func sendParts(_ numbers: [Int], of target: MultipartTarget, sidecar: inout MultipartSidecar,
+                           _ pass: MultipartPass) async throws {
+        guard !numbers.isEmpty else { return }
+        let doneBytes = sidecar.parts.reduce(0) { $0 + $1.size }
+        let sender = PartSender(destination: destination, policy: filePolicy, sleep: sleep, log: log,
+                                name: pass.name, file: pass.file, key: target.key, uploadID: target.uploadID,
+                                partSize: target.partSize, byteCount: target.byteCount, count: target.count,
+                                progress: MultipartProgress(total: target.byteCount, done: doneBytes),
+                                report: pass.report)
+        do {
+            try await withThrowingTaskGroup(of: MultipartPart.self) { group in
+                var next = numbers.startIndex
+                while next < numbers.endIndex, next - numbers.startIndex < plan.inFlight {
+                    let number = numbers[next]
+                    group.addTask { try await sender.send(number) }
+                    next += 1
+                }
+                while let part = try await group.next() {
+                    sidecar.parts.removeAll { $0.number == part.number }
+                    sidecar.parts.append(part)
+                    sidecar.parts.sort { $0.number < $1.number }
+                    try pass.store.writeSidecar(sidecar, id: pass.job.id)
+                    sender.report(sender.progress.finish(part: part.number, size: part.size))
+                    if next < numbers.endIndex {
+                        let number = numbers[next]
+                        group.addTask { try await sender.send(number) }
+                        next += 1
+                    }
+                }
+            }
+        } catch let failure as PartFailure where (failure.error as? UploadError) == .noSuchUpload {
+            throw Restart.uploadIDGone(key: target.key)
+        }
+    }
+
+    /// Complete, retried, once the sidecar says it was sent. A gone upload id restarts the job,
+    /// unless a Complete was sent for it before (before a quit, or a try whose answer was lost)
+    /// and the object has the upload's size. The first rejected part list in the job is listed
+    /// again and the parts that differ are resent; a second one restarts.
+    private func complete(_ target: MultipartTarget, sidecar: inout MultipartSidecar, _ pass: MultipartPass,
+                          rejectedOnce: inout Bool) async throws {
+        while true {
+            var sentBefore = sidecar.completeSent
+            // Complete never goes before the sidecar says it was sent.
+            sidecar.completeSent = true
+            try pass.store.writeSidecar(sidecar, id: pass.job.id)
+            let parts = sidecar.parts
+            do {
+                try await Self.withRetries(policy: filePolicy, sleep: sleep, onRetry: { _, _ in sentBefore = true }) {
+                    try await self.destination.completeMultipartUpload(key: target.key, uploadID: target.uploadID,
+                                                                       parts: parts)
+                }
+            } catch UploadError.noSuchUpload {
+                guard sentBefore else { throw Restart.uploadIDGone(key: target.key) }
+                let size = try await Self.withRetries(policy: filePolicy, sleep: sleep) {
+                    try await self.destination.objectSize(key: target.key)
+                }
+                guard size == target.byteCount else { throw Restart.uploadIDGone(key: target.key) }
+            } catch let error as UploadError {
+                guard case .partsRejected = error else { throw error }
+                guard !rejectedOnce else {
+                    throw Restart(cause: error, reason: nil, abort: (target.key, target.uploadID), key: target.key)
+                }
+                rejectedOnce = true
+                log("Upload: \(pass.name) part list rejected, listing parts")
+                let listed = Set(try await listParts(of: target, pass))
+                sidecar.parts.removeAll { !listed.contains($0) }
+                try pass.store.writeSidecar(sidecar, id: pass.job.id)
+                let kept = Set(sidecar.parts.map(\.number))
+                try await sendParts((1..<(target.count + 1)).filter { !kept.contains($0) }, of: target,
+                                    sidecar: &sidecar, pass)
+                continue
+            }
+            log("Upload: \(pass.name) multipart completed")
+            return
+        }
+    }
+
+    /// Aborts an upload the job no longer uses, in one try. A failure is logged and the job goes on;
+    /// the bucket's lifecycle rule removes what is left.
+    private func abortUpload(key: String, uploadID: String, name: String) async {
+        do {
+            _ = try await destination.abortMultipartUpload(key: key, uploadID: uploadID)
+            log("Upload: \(name) multipart aborted")
+        } catch {
+            guard !Task.isCancelled else { return }
+            log("Upload: \(name) multipart abort failed: \(error.localizedDescription)")
+        }
+    }
+
+    /// `key` again for a restart: a fixed key as is; a template key HEADed again, and kept when
+    /// free, else a new one drawn and reserved.
+    private func reserveAgain(_ key: String, for job: UploadJob) async throws -> String {
+        guard case .template(let context) = job.key else { return key }
+        let taken = try await Self.withRetries(policy: filePolicy, sleep: sleep) {
+            try await self.destination.exists(key: key)
+        }
+        return taken ? try await reserveKey(ext: job.fileExtension, context: context, retryingHEADs: true) : key
     }
 
     /// `bytes` in MiB for the log: whole for every real part size, decimal for a test's.
@@ -472,11 +712,13 @@ nonisolated final class MultipartProgress: Sendable {
         var inFlight: [Int: Int64] = [:]
     }
 
-    private let counts = Mutex(Counts())
+    private let counts: Mutex<Counts>
     private let total: Int64
 
-    init(total: Int64) {
+    /// `done` is the bytes of parts already sent, as a resume starts.
+    init(total: Int64, done: Int64 = 0) {
         self.total = total
+        counts = Mutex(Counts(done: done))
     }
 
     /// Adds `delta` bytes sent by part `number`, and returns the job's fraction.

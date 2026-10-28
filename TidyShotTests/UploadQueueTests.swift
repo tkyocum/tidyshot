@@ -1570,4 +1570,468 @@ struct UploadQueueTests {
         #expect(destination.state.withLock { $0.calls }.isEmpty)
         #expect(destination.state.withLock { $0.headKeys }.isEmpty)
     }
+
+    // MARK: Resume and restarts
+
+    let storedKey = "s/STORED.mp4"
+    let storedURL = URL(string: "https://snap.tky.io/s/STORED.mp4")!
+    let replaceKey = "shots/2026/10/aB3dE9.mp4"
+    let replaceURL = URL(string: "https://snap.tky.io/shots/2026/10/aB3dE9.mp4")!
+
+    /// The state a job made at Create, as `multipartStarted` carries it.
+    func createdState(_ uploadID: String, key: String, file: URL, byteCount: Int64 = 1_048_576) -> MultipartUploadState {
+        MultipartUploadState(uploadID: uploadID, key: key, location: lane, partSize: 262_144, byteCount: byteCount,
+                             sourceModified: modified, sourcePath: file.path(percentEncoded: false), startedAt: createdAt)
+    }
+
+    /// A job that resumes `stored-1` at `storedKey` (a template job), or at `fixedKey`.
+    func resumeJob(_ id: UUID, file: URL, byteCount: Int64 = 1_048_576, fixedKey: String? = nil) -> UploadJob {
+        var job = largeJob(id, file: file, byteCount: byteCount, fixedKey: fixedKey)
+        job.resume = createdState("stored-1", key: fixedKey ?? storedKey, file: file, byteCount: byteCount)
+        return job
+    }
+
+    func part(_ number: Int, size: Int64 = 262_144, etag: String? = nil) -> MultipartPart {
+        MultipartPart(number: number, etag: etag ?? "\"etag-\(number)\"", size: size)
+    }
+
+    func withoutProgress(_ log: EventLog) -> [UploadEvent] {
+        log.events.filter { if case .progress = $0 { return false } else { return true } }
+    }
+
+    /// The queue's log lines without the `Upload: Recording.mp4 ` in front.
+    func logged(_ lines: LogLines) -> [String] {
+        lines.lines.withLock { $0 }.map { $0.replacingOccurrences(of: "Upload: Recording.mp4 ", with: "") }
+    }
+
+    func created(_ uploadID: String) -> String {
+        "multipart, 4 parts of 0.25 MiB, upload id \(uploadID)"
+    }
+
+    /// The sidecar's parts are not sent again, and the bar starts at their fraction. The stored
+    /// template key is HEADed first and found free.
+    @Test func aResumeSendsOnlyTheMissingParts() async throws {
+        let movie = try makeLargeMovie(byteCount: mib)
+        defer { try? FileManager.default.removeItem(at: movie.folder) }
+        let id = UUID()
+        try movie.store.writeSidecar(MultipartSidecar(uploadID: "stored-1", completeSent: false, parts: [part(1), part(2)]), id: id)
+        let destination = FakeDestination()
+        let log = EventLog()
+        let lines = LogLines()
+        let queue = makeMultipartQueue(destination: destination, log: log, store: movie.store, lines: lines)
+
+        await queue.enqueue(resumeJob(id, file: movie.file))
+        try await eventually { hasEnded(log) }
+        try await eventually { await queue.isIdle }
+
+        #expect(withoutProgress(log) == [.started(id: id, attempt: 1, fraction: 0.5),
+                                         .uploaded(id: id, url: storedURL, key: storedKey)])
+        #expect(destination.state.withLock { $0.objectSizeKeys } == [storedKey])
+        #expect(destination.state.withLock { $0.headKeys }.isEmpty)
+        #expect(destination.state.withLock { $0.creates.isEmpty })
+        #expect(destination.state.withLock { $0.parts.map(\.uploadID) } == ["stored-1", "stored-1"])
+        #expect(partNumbers(destination) == [3, 4])
+        let completes = destination.state.withLock { $0.completes }
+        #expect(completes.map(\.key) == [storedKey])
+        #expect(completes.map(\.uploadID) == ["stored-1"])
+        #expect(completes.first?.parts == expectedParts(4))
+        #expect(logged(lines) == ["resumes at 2 of 4 parts", "multipart completed"])
+        let fractions = log.events.compactMap { event -> Double? in
+            if case .progress(_, let fraction) = event { return fraction } else { return nil }
+        }
+        #expect(fractions.allSatisfy { $0 >= 0.5 })
+    }
+
+    /// With no sidecar for the stored id, ListParts rebuilds it: a part of the part size (or, last,
+    /// the rest) is trusted, any other is sent again. A fixed key gets no HEAD.
+    @Test(arguments: [false, true])
+    func aResumeWithoutItsSidecarListsTheParts(staleSidecar: Bool) async throws {
+        let byteCount = mib + 1000
+        let movie = try makeLargeMovie(byteCount: byteCount)
+        defer { try? FileManager.default.removeItem(at: movie.folder) }
+        let id = UUID()
+        if staleSidecar {
+            try movie.store.writeSidecar(MultipartSidecar(uploadID: "other-1", completeSent: false, parts: expectedParts(4)), id: id)
+        }
+        let destination = FakeDestination(.init(listedParts: [part(1), part(2, size: 1000, etag: "\"short\""), part(3),
+                                                              part(5, size: 1000)]))
+        let log = EventLog()
+        let lines = LogLines()
+        let queue = makeMultipartQueue(destination: destination, log: log, store: movie.store, lines: lines)
+
+        await queue.enqueue(resumeJob(id, file: movie.file, byteCount: byteCount, fixedKey: replaceKey))
+        try await eventually { hasEnded(log) }
+        try await eventually { await queue.isIdle }
+
+        let done = Double(2 * 262_144 + 1000) / Double(byteCount)
+        #expect(withoutProgress(log) == [.started(id: id, attempt: 1, fraction: done),
+                                         .uploaded(id: id, url: replaceURL, key: replaceKey)])
+        #expect(destination.state.withLock { $0.calls }.first == "list")
+        #expect(destination.state.withLock { $0.listPartsCalls.map(\.uploadID) } == ["stored-1"])
+        #expect(destination.state.withLock { $0.listPartsCalls.map(\.key) } == [replaceKey])
+        #expect(destination.state.withLock { $0.headKeys.isEmpty && $0.objectSizeKeys.isEmpty && $0.creates.isEmpty })
+        #expect(partNumbers(destination) == [2, 4])
+        let all = expectedParts(4) + [part(5, size: 1000)]
+        #expect(destination.state.withLock { $0.completes.first?.parts } == all)
+        #expect(logged(lines) == ["part list missing, listing parts", "resumes at 3 of 5 parts", "multipart completed"])
+        #expect(movie.store.readSidecar(id: id, uploadID: "stored-1") == MultipartSidecar(uploadID: "stored-1",
+                                                                                          completeSent: true, parts: all))
+    }
+
+    /// The stored key holds an object of the stored size: an earlier Complete landed.
+    @Test func aTemplateResumeWhoseKeyHoldsTheUploadCountsAsUploaded() async throws {
+        let movie = try makeLargeMovie(byteCount: mib)
+        defer { try? FileManager.default.removeItem(at: movie.folder) }
+        let id = UUID()
+        let destination = FakeDestination(.init(objectSizes: [storedKey: mib]))
+        let log = EventLog()
+        let lines = LogLines()
+        let queue = makeMultipartQueue(destination: destination, log: log, store: movie.store, lines: lines)
+
+        await queue.enqueue(resumeJob(id, file: movie.file))
+        try await eventually { hasEnded(log) }
+        try await eventually { await queue.isIdle }
+
+        #expect(log.events == [.uploaded(id: id, url: storedURL, key: storedKey)])
+        #expect(destination.state.withLock { $0.calls } == ["size"])
+        #expect(logged(lines).isEmpty)
+    }
+
+    /// Another capture took the stored key while the upload waited: the stored id is aborted and a
+    /// new key drawn, as a restart.
+    @Test func aTemplateResumeWhoseKeyWasTakenDrawsANewKeyAndRestarts() async throws {
+        let movie = try makeLargeMovie(byteCount: mib)
+        defer { try? FileManager.default.removeItem(at: movie.folder) }
+        let id = UUID()
+        try movie.store.writeSidecar(MultipartSidecar(uploadID: "stored-1", completeSent: false, parts: [part(1), part(2)]), id: id)
+        let destination = FakeDestination(.init(objectSizes: [storedKey: 5]))
+        let log = EventLog()
+        let lines = LogLines()
+        let queue = makeMultipartQueue(destination: destination, log: log, store: movie.store, lines: lines)
+
+        await queue.enqueue(resumeJob(id, file: movie.file))
+        try await eventually { hasEnded(log) }
+        try await eventually { await queue.isIdle }
+
+        #expect(withoutProgress(log) == [.started(id: id, attempt: 2, fraction: 0),
+                                         .multipartStarted(id: id, state: createdState("upload-1", key: templateKey, file: movie.file)),
+                                         .uploaded(id: id, url: templateURL, key: templateKey)])
+        #expect(Array(destination.state.withLock { $0.calls }.prefix(3)) == ["size", "abort", "create"])
+        #expect(destination.state.withLock { $0.aborts.map(\.key) } == [storedKey])
+        #expect(destination.state.withLock { $0.aborts.map(\.uploadID) } == ["stored-1"])
+        #expect(destination.state.withLock { $0.headKeys } == [templateKey])
+        #expect(destination.state.withLock { $0.creates.map(\.key) } == [templateKey])
+        #expect(partNumbers(destination) == [1, 2, 3, 4])
+        #expect(logged(lines) == ["multipart aborted", "key taken, starting again", created("upload-1"), "multipart completed"])
+    }
+
+    /// ListParts refused (a key without `s3:ListMultipartUploadParts`) or out of tries: the stored
+    /// id is aborted and the job restarts under the same key.
+    @Test(arguments: [[UploadError.httpStatus(403, body: "AccessDenied: Access Denied")],
+                      Array(repeating: UploadError.httpStatus(503, body: ""), count: 3)])
+    func aResumeWhosePartListIsUnavailableRestarts(listFailures: [UploadError]) async throws {
+        let movie = try makeLargeMovie(byteCount: mib)
+        defer { try? FileManager.default.removeItem(at: movie.folder) }
+        let id = UUID()
+        let destination = FakeDestination(.init(listPartsFailures: listFailures, listedParts: [part(1)]))
+        let log = EventLog()
+        let lines = LogLines()
+        let queue = makeMultipartQueue(destination: destination, log: log, store: movie.store, lines: lines)
+
+        await queue.enqueue(resumeJob(id, file: movie.file, fixedKey: replaceKey))
+        try await eventually { hasEnded(log) }
+        try await eventually { await queue.isIdle }
+
+        #expect(withoutProgress(log) == [.started(id: id, attempt: 2, fraction: 0),
+                                         .multipartStarted(id: id, state: createdState("upload-1", key: replaceKey, file: movie.file)),
+                                         .uploaded(id: id, url: replaceURL, key: replaceKey)])
+        #expect(destination.state.withLock { $0.listPartsCalls.count } == listFailures.count)
+        #expect(Array(destination.state.withLock { $0.calls }.dropFirst(listFailures.count).prefix(2)) == ["abort", "create"])
+        #expect(destination.state.withLock { $0.aborts.map(\.uploadID) } == ["stored-1"])
+        #expect(destination.state.withLock { $0.creates.map(\.key) } == [replaceKey])
+        #expect(partNumbers(destination) == [1, 2, 3, 4])
+        #expect(logged(lines) == ["part list missing, listing parts", "multipart aborted", "part list unavailable, starting again",
+                                  created("upload-1"), "multipart completed"])
+    }
+
+    /// ListParts finding the upload id gone restarts under the same key, with nothing to abort.
+    @Test func aResumeWhoseUploadIDIsGoneAtListPartsRestarts() async throws {
+        let movie = try makeLargeMovie(byteCount: mib)
+        defer { try? FileManager.default.removeItem(at: movie.folder) }
+        let id = UUID()
+        let destination = FakeDestination(.init(listPartsFailures: [.noSuchUpload]))
+        let log = EventLog()
+        let lines = LogLines()
+        let queue = makeMultipartQueue(destination: destination, log: log, store: movie.store, lines: lines)
+
+        await queue.enqueue(resumeJob(id, file: movie.file, fixedKey: replaceKey))
+        try await eventually { hasEnded(log) }
+        try await eventually { await queue.isIdle }
+
+        #expect(log.events.contains(.uploaded(id: id, url: replaceURL, key: replaceKey)))
+        #expect(starts(in: log) == [.started(id: id, attempt: 2, fraction: 0)])
+        #expect(Array(destination.state.withLock { $0.calls }.prefix(2)) == ["list", "create"])
+        #expect(destination.state.withLock { $0.aborts.isEmpty })
+        #expect(destination.state.withLock { $0.creates.map(\.key) } == [replaceKey])
+        #expect(logged(lines) == ["part list missing, listing parts", "upload id gone, starting again", created("upload-1"),
+                                  "multipart completed"])
+    }
+
+    /// A cancel during a resume reports the stored key, found free, and keeps the sidecar's parts.
+    @Test func aCancelDuringAResumeReportsTheStoredKey() async throws {
+        let movie = try makeLargeMovie(byteCount: mib)
+        defer { try? FileManager.default.removeItem(at: movie.folder) }
+        let id = UUID()
+        let sidecar = MultipartSidecar(uploadID: "stored-1", completeSent: false, parts: [part(1)])
+        try movie.store.writeSidecar(sidecar, id: id)
+        let destination = FakeDestination(.init(partDelay: .seconds(60)))
+        let log = EventLog()
+        let queue = makeMultipartQueue(destination: destination, log: log, store: movie.store)
+
+        await queue.enqueue(resumeJob(id, file: movie.file))
+        try await eventually { destination.state.withLock { $0.partsInFlight } == 3 }
+
+        #expect(await queue.cancel(recordID: id) == .stopped(reservedKey: storedKey))
+        #expect(withoutProgress(log) == [.started(id: id, attempt: 1, fraction: 0.25),
+                                         .cancelled(id: id, reservedKey: storedKey)])
+        #expect(movie.store.readSidecar(id: id, uploadID: "stored-1") == sidecar)
+    }
+
+    @Test func listPartsRetriesUnderThePolicy() async throws {
+        let movie = try makeLargeMovie(byteCount: mib)
+        defer { try? FileManager.default.removeItem(at: movie.folder) }
+        let id = UUID()
+        let destination = FakeDestination(.init(listPartsFailures: [.httpStatus(503, body: ""), .noHTTPResponse],
+                                                listedParts: [part(1)]))
+        let log = EventLog()
+        let queue = makeMultipartQueue(destination: destination, log: log, store: movie.store)
+
+        await queue.enqueue(resumeJob(id, file: movie.file, fixedKey: replaceKey))
+        try await eventually { hasEnded(log) }
+
+        #expect(withoutProgress(log) == [.started(id: id, attempt: 1, fraction: 0.25),
+                                         .uploaded(id: id, url: replaceURL, key: replaceKey)])
+        #expect(destination.state.withLock { $0.listPartsCalls.count } == 3)
+        #expect(partNumbers(destination) == [2, 3, 4])
+        #expect(destination.state.withLock { $0.creates.isEmpty && $0.aborts.isEmpty })
+    }
+
+    /// The server forgot the upload id mid-parts: a new upload under the same key, HEADed again.
+    @Test func aPartWhoseUploadIDIsGoneRestartsUnderTheSameKey() async throws {
+        let movie = try makeLargeMovie(byteCount: mib)
+        defer { try? FileManager.default.removeItem(at: movie.folder) }
+        let id = UUID()
+        let destination = FakeDestination(.init(partFailures: [2: [.noSuchUpload]]))
+        let log = EventLog()
+        let lines = LogLines()
+        let queue = makeMultipartQueue(destination: destination, log: log, store: movie.store, lines: lines)
+
+        await queue.enqueue(largeJob(id, file: movie.file, byteCount: mib))
+        try await eventually { hasEnded(log) }
+        try await eventually { await queue.isIdle }
+
+        #expect(withoutProgress(log) == [.started(id: id, attempt: 1, fraction: 0),
+                                         .multipartStarted(id: id, state: createdState("upload-1", key: templateKey, file: movie.file)),
+                                         .started(id: id, attempt: 2, fraction: 0),
+                                         .multipartStarted(id: id, state: createdState("upload-2", key: templateKey, file: movie.file)),
+                                         .uploaded(id: id, url: templateURL, key: templateKey)])
+        #expect(destination.state.withLock { $0.headKeys } == [templateKey, templateKey])
+        #expect(destination.state.withLock { $0.creates.map(\.key) } == [templateKey, templateKey])
+        #expect(destination.state.withLock { $0.aborts.isEmpty })
+        #expect(destination.state.withLock { $0.parts.filter { $0.uploadID == "upload-2" }.map(\.number).sorted() } == [1, 2, 3, 4])
+        let completes = destination.state.withLock { $0.completes }
+        #expect(completes.map(\.uploadID) == ["upload-2"])
+        #expect(completes.first?.parts == expectedParts(4))
+        #expect(logged(lines) == [created("upload-1"), "upload id gone, starting again", created("upload-2"), "multipart completed"])
+        #expect(movie.store.readSidecar(id: id, uploadID: "upload-2")?.parts == expectedParts(4))
+    }
+
+    /// A server that keeps forgetting the upload cannot loop: the third time fails the job.
+    @Test func anUploadIDGoneOnEveryCreateFailsAfterTwoRestarts() async throws {
+        let movie = try makeLargeMovie(byteCount: mib)
+        defer { try? FileManager.default.removeItem(at: movie.folder) }
+        let id = UUID()
+        let destination = FakeDestination(.init(partFailures: [1: [.noSuchUpload, .noSuchUpload, .noSuchUpload]]))
+        let log = EventLog()
+        let lines = LogLines()
+        let queue = makeMultipartQueue(destination: destination, log: log, store: movie.store, lines: lines)
+
+        await queue.enqueue(largeJob(id, file: movie.file, byteCount: mib))
+        try await eventually { hasEnded(log) }
+        try await eventually { await queue.isIdle }
+
+        #expect(failures(in: log) == ["The upload was no longer known to the server."])
+        #expect(starts(in: log) == [.started(id: id, attempt: 1, fraction: 0), .started(id: id, attempt: 2, fraction: 0),
+                                    .started(id: id, attempt: 3, fraction: 0)])
+        #expect(destination.state.withLock { $0.creates.count } == 3)
+        #expect(destination.state.withLock { $0.completes.isEmpty && $0.aborts.isEmpty })
+        #expect(logged(lines) == [created("upload-1"), "upload id gone, starting again", created("upload-2"),
+                                  "upload id gone, starting again", created("upload-3")])
+    }
+
+    /// A Complete sent before (here, before a quit) may have landed: the object's size decides.
+    @Test(arguments: [Int64(1_048_576), 5])
+    func aCompleteWhoseUploadIDIsGoneAfterAnEarlierCompleteChecksTheObject(size: Int64) async throws {
+        let movie = try makeLargeMovie(byteCount: mib)
+        defer { try? FileManager.default.removeItem(at: movie.folder) }
+        let id = UUID()
+        try movie.store.writeSidecar(MultipartSidecar(uploadID: "stored-1", completeSent: true, parts: expectedParts(4)), id: id)
+        let destination = FakeDestination(.init(completeFailures: [.noSuchUpload], objectSizes: [replaceKey: size]))
+        let log = EventLog()
+        let lines = LogLines()
+        let queue = makeMultipartQueue(destination: destination, log: log, store: movie.store, lines: lines)
+
+        await queue.enqueue(resumeJob(id, file: movie.file, fixedKey: replaceKey))
+        try await eventually { hasEnded(log) }
+        try await eventually { await queue.isIdle }
+
+        let calls = destination.state.withLock { $0.calls }
+        #expect(Array(calls.prefix(2)) == ["complete", "size"])
+        #expect(destination.state.withLock { $0.objectSizeKeys } == [replaceKey])
+        #expect(log.events.contains(.uploaded(id: id, url: replaceURL, key: replaceKey)))
+        if size == mib {
+            #expect(calls == ["complete", "size"])
+            #expect(withoutProgress(log) == [.started(id: id, attempt: 1, fraction: 1),
+                                             .uploaded(id: id, url: replaceURL, key: replaceKey)])
+            #expect(logged(lines) == ["resumes at 4 of 4 parts", "multipart completed"])
+        } else {
+            #expect(calls.dropFirst(2).first == "create")
+            #expect(destination.state.withLock { $0.aborts.isEmpty })
+            #expect(starts(in: log) == [.started(id: id, attempt: 1, fraction: 1), .started(id: id, attempt: 2, fraction: 0)])
+            #expect(logged(lines) == ["resumes at 4 of 4 parts", "upload id gone, starting again", created("upload-1"),
+                                      "multipart completed"])
+        }
+    }
+
+    /// No Complete was sent for the id before this one, so the id is gone without an object.
+    @Test func aCompleteWhoseUploadIDIsGoneBeforeAnyCompleteRestarts() async throws {
+        let movie = try makeLargeMovie(byteCount: mib)
+        defer { try? FileManager.default.removeItem(at: movie.folder) }
+        let id = UUID()
+        try movie.store.writeSidecar(MultipartSidecar(uploadID: "stored-1", completeSent: false, parts: expectedParts(4)), id: id)
+        let destination = FakeDestination(.init(completeFailures: [.noSuchUpload], objectSizes: [replaceKey: mib]))
+        let log = EventLog()
+        let lines = LogLines()
+        let queue = makeMultipartQueue(destination: destination, log: log, store: movie.store, lines: lines)
+
+        await queue.enqueue(resumeJob(id, file: movie.file, fixedKey: replaceKey))
+        try await eventually { hasEnded(log) }
+        try await eventually { await queue.isIdle }
+
+        #expect(Array(destination.state.withLock { $0.calls }.prefix(2)) == ["complete", "create"])
+        #expect(destination.state.withLock { $0.objectSizeKeys.isEmpty && $0.aborts.isEmpty })
+        #expect(destination.state.withLock { $0.completes.map(\.uploadID) } == ["stored-1", "upload-1"])
+        #expect(starts(in: log) == [.started(id: id, attempt: 1, fraction: 1), .started(id: id, attempt: 2, fraction: 0)])
+        #expect(log.events.contains(.uploaded(id: id, url: replaceURL, key: replaceKey)))
+        #expect(logged(lines) == ["resumes at 4 of 4 parts", "upload id gone, starting again", created("upload-1"),
+                                  "multipart completed"])
+    }
+
+    /// A Complete retried in this run may have landed on its first try, whose answer was lost.
+    @Test func aRetriedCompleteWhoseUploadIDIsGoneChecksTheObject() async throws {
+        let movie = try makeLargeMovie(byteCount: mib)
+        defer { try? FileManager.default.removeItem(at: movie.folder) }
+        let id = UUID()
+        let destination = FakeDestination(.init(completeFailures: [.noHTTPResponse, .noSuchUpload],
+                                                objectSizes: [templateKey: mib]))
+        let log = EventLog()
+        let lines = LogLines()
+        let queue = makeMultipartQueue(destination: destination, log: log, store: movie.store, lines: lines)
+
+        await queue.enqueue(largeJob(id, file: movie.file, byteCount: mib))
+        try await eventually { hasEnded(log) }
+
+        #expect(log.events.contains(.uploaded(id: id, url: templateURL, key: templateKey)))
+        #expect(destination.state.withLock { $0.completes.count } == 2)
+        #expect(destination.state.withLock { $0.objectSizeKeys } == [templateKey])
+        #expect(destination.state.withLock { $0.creates.count } == 1)
+        #expect(logged(lines) == [created("upload-1"), "multipart completed"])
+    }
+
+    /// The first rejection lists the parts and sends again those missing or different.
+    @Test func aRejectedPartListIsListedAndTheDifferingPartsSentAgain() async throws {
+        let movie = try makeLargeMovie(byteCount: mib)
+        defer { try? FileManager.default.removeItem(at: movie.folder) }
+        let id = UUID()
+        let rejected = UploadError.partsRejected(body: "InvalidPart: One or more of the specified parts could not be found.")
+        let destination = FakeDestination(.init(completeFailures: [rejected],
+                                                listedParts: [part(1), part(2), part(3, etag: "\"stale\"")]))
+        let log = EventLog()
+        let lines = LogLines()
+        let queue = makeMultipartQueue(destination: destination, log: log, store: movie.store, lines: lines)
+
+        await queue.enqueue(largeJob(id, file: movie.file, byteCount: mib))
+        try await eventually { hasEnded(log) }
+        try await eventually { await queue.isIdle }
+
+        #expect(log.events.contains(.uploaded(id: id, url: templateURL, key: templateKey)))
+        #expect(starts(in: log) == [.started(id: id, attempt: 1, fraction: 0)])
+        let calls = destination.state.withLock { $0.calls }
+        let afterFirstComplete = Array(calls.drop { $0 != "complete" })
+        #expect(afterFirstComplete.first == "complete")
+        #expect(afterFirstComplete.dropFirst().first == "list")
+        #expect(Set(afterFirstComplete.dropFirst(2).prefix(2)) == ["part 3", "part 4"])
+        #expect(afterFirstComplete.last == "complete")
+        #expect(afterFirstComplete.count == 5)
+        let completes = destination.state.withLock { $0.completes }
+        #expect(completes.map(\.uploadID) == ["upload-1", "upload-1"])
+        #expect(completes.last?.parts == expectedParts(4))
+        #expect(destination.state.withLock { $0.creates.count == 1 && $0.aborts.isEmpty })
+        #expect(logged(lines) == [created("upload-1"), "part list rejected, listing parts", "multipart completed"])
+        #expect(movie.store.readSidecar(id: id, uploadID: "upload-1") == MultipartSidecar(uploadID: "upload-1",
+                                                                                          completeSent: true, parts: expectedParts(4)))
+    }
+
+    /// A second rejection in the job aborts the upload and starts again under the same key.
+    @Test func aSecondRejectedPartListRestarts() async throws {
+        let movie = try makeLargeMovie(byteCount: mib)
+        defer { try? FileManager.default.removeItem(at: movie.folder) }
+        let id = UUID()
+        let rejected = UploadError.partsRejected(body: "InvalidPartOrder: The list of parts was not in ascending order.")
+        let destination = FakeDestination(.init(completeFailures: [rejected, rejected], listedParts: expectedParts(4)))
+        let log = EventLog()
+        let lines = LogLines()
+        let queue = makeMultipartQueue(destination: destination, log: log, store: movie.store, lines: lines)
+
+        await queue.enqueue(largeJob(id, file: movie.file, byteCount: mib))
+        try await eventually { hasEnded(log) }
+        try await eventually { await queue.isIdle }
+
+        #expect(log.events.contains(.uploaded(id: id, url: templateURL, key: templateKey)))
+        #expect(starts(in: log) == [.started(id: id, attempt: 1, fraction: 0), .started(id: id, attempt: 2, fraction: 0)])
+        #expect(destination.state.withLock { $0.listPartsCalls.count } == 1)
+        #expect(destination.state.withLock { $0.aborts.map(\.uploadID) } == ["upload-1"])
+        #expect(destination.state.withLock { $0.aborts.map(\.key) } == [templateKey])
+        #expect(destination.state.withLock { $0.creates.map(\.key) } == [templateKey, templateKey])
+        #expect(destination.state.withLock { $0.completes.map(\.uploadID) } == ["upload-1", "upload-1", "upload-2"])
+        #expect(logged(lines) == [created("upload-1"), "part list rejected, listing parts", "multipart aborted",
+                                  created("upload-2"), "multipart completed"])
+    }
+
+    /// A start over aborts the stored upload before its Create; a failed abort is logged and the
+    /// job goes on.
+    @Test(arguments: [nil, UploadError.httpStatus(403, body: "AccessDenied: Access Denied")])
+    func aJobWithAnUploadToAbortAbortsItBeforeItsCreate(abortFailure: UploadError?) async throws {
+        let movie = try makeLargeMovie(byteCount: mib)
+        defer { try? FileManager.default.removeItem(at: movie.folder) }
+        let id = UUID()
+        let destination = FakeDestination(.init(abortFailures: abortFailure.map { [$0] } ?? []))
+        let log = EventLog()
+        let lines = LogLines()
+        let queue = makeMultipartQueue(destination: destination, log: log, store: movie.store, lines: lines)
+        var job = largeJob(id, file: movie.file, byteCount: mib)
+        job.abortFirst = MultipartRef(uploadID: "old-1", key: "s/OLD.mp4", location: lane)
+
+        await queue.enqueue(job)
+        try await eventually { hasEnded(log) }
+
+        #expect(log.events.contains(.uploaded(id: id, url: templateURL, key: templateKey)))
+        #expect(starts(in: log) == [.started(id: id, attempt: 1, fraction: 0)])
+        #expect(Array(destination.state.withLock { $0.calls }.prefix(2)) == ["abort", "create"])
+        #expect(destination.state.withLock { $0.aborts.map(\.key) } == ["s/OLD.mp4"])
+        #expect(destination.state.withLock { $0.aborts.map(\.uploadID) } == ["old-1"])
+        let abortLine = abortFailure == nil ? "multipart aborted"
+                                            : "multipart abort failed: Server returned HTTP 403: AccessDenied: Access Denied"
+        #expect(logged(lines) == [abortLine, created("upload-1"), "multipart completed"])
+    }
 }
