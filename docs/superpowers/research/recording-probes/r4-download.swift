@@ -61,6 +61,18 @@ enum R4Download {
         let fullLength = first.contentLength
         guard let resumeData else { exit(1) }
 
+        // The resume data names URLSession's partial file, and step 3's finished download moves that
+        // file away. A copy of it, put back before step 4, lets the late resume reach the bucket.
+        let partial = partialFile(in: resumeData)
+        let aside = landing.appendingPathExtension("partial")
+        defer { try? FileManager.default.removeItem(at: aside) }
+        if let partial, (try? FileManager.default.copyItem(at: partial, to: aside)) != nil {
+            print("   partial file \(partial.lastPathComponent) copied aside for step 4")
+        } else {
+            print("   the partial file the resume data names was not found or not copied; "
+                  + "a step 4 failure with no status is then inconclusive")
+        }
+
         print("\n3. Resume after 2 s")
         try? await Task.sleep(for: .seconds(2))
         let second = Watcher(label: "resume", landing: landing, cancelAtHalf: false)
@@ -77,12 +89,47 @@ enum R4Download {
         let wait = lateAt.timeIntervalSinceNow
         print("\n4. Resume again from the same data at 16 minutes after signing, in \(Int(max(0, wait))) s (403 expected)")
         if wait > 0 { try? await Task.sleep(for: .seconds(wait)) }
+        if let partial, FileManager.default.fileExists(atPath: aside.path) {
+            try? FileManager.default.removeItem(at: partial)
+            do {
+                try FileManager.default.copyItem(at: aside, to: partial)
+                print("   partial file put back")
+            } catch {
+                print("   the partial file was not put back (\(error)); a failure with no status is inconclusive")
+            }
+        }
         let late = Watcher(label: "late resume", landing: landing, cancelAtHalf: false)
         let lateTask = session.downloadTask(withResumeData: resumeData)
         lateTask.delegate = late
         lateTask.resume()
         print("   \(await late.ended())")
+        if let partial { try? FileManager.default.removeItem(at: partial) }
         print("done")
+    }
+
+    /// The partial file a resume data plist names: `NSURLSessionResumeInfoTempFileName` (a name in
+    /// the temporary directory) or `NSURLSessionResumeInfoLocalPath`, in a plain dictionary or among a
+    /// keyed archive's `$objects`. Nil when no named file exists.
+    static func partialFile(in resumeData: Data) -> URL? {
+        guard let plist = try? PropertyListSerialization.propertyList(from: resumeData, format: nil),
+              let dictionary = plist as? [String: Any] else { return nil }
+        var names: [String] = []
+        for key in ["NSURLSessionResumeInfoTempFileName", "NSURLSessionResumeInfoLocalPath"] {
+            if let name = dictionary[key] as? String { names.append(name) }
+        }
+        if let objects = dictionary["$objects"] as? [Any] {
+            names += objects.compactMap { $0 as? String }
+                .filter { $0.hasPrefix("CFNetworkDownload_") || $0.hasPrefix("/") }
+        }
+        let temporary = URL(fileURLWithPath: NSTemporaryDirectory())
+        for name in names {
+            let url = name.hasPrefix("/") ? URL(fileURLWithPath: name) : temporary.appendingPathComponent(name)
+            var isDirectory: ObjCBool = false
+            if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory), !isDirectory.boolValue {
+                return url
+            }
+        }
+        return nil
     }
 
     /// The GET as the app signs it: path-style `/<bucket>/<key>`, `host` and the empty payload hash

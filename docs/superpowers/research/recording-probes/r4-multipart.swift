@@ -138,7 +138,8 @@ enum R4Multipart {
     // MARK: Steps 8 and 9
 
     /// 2 GiB of a sparse file in `partSize` parts, three in flight, each part read with its own
-    /// FileHandle and hashed as the app does. Pauses 20 s at half the parts for `footprint`.
+    /// FileHandle and hashed as the app does. Pauses 20 s at half the parts, with three parts read
+    /// and held, for `footprint`.
     static func largeUpload(_ client: Client, partSize: Int, publicRead: Bool) async throws {
         let total: Int64 = 2 * 1024 * 1024 * 1024
         let count = Int((total + Int64(partSize) - 1) / Int64(partSize))
@@ -147,6 +148,9 @@ enum R4Multipart {
         defer { TemporaryFile.remove() }
 
         let uploadID = try await client.create(publicRead: publicRead)
+        // The three parts from the middle on are all in flight together: each waits here once read,
+        // so the footprint taken during the pause holds three parts.
+        let pause = HalfwayPause(parts: count / 2 ... count / 2 + 2)
         var parts: [MultipartPart] = []
         do {
             parts = try await withThrowingTaskGroup(of: MultipartPart.self) { group in
@@ -158,6 +162,7 @@ enum R4Multipart {
                     let length = Int(min(Int64(partSize), total - offset))
                     group.addTask {
                         let data = try await readPart(of: file, offset: offset, length: length)
+                        try await pause.hold(number)
                         return try await client.uploadPart(uploadID: uploadID, number: number, data: data)
                     }
                 }
@@ -165,10 +170,6 @@ enum R4Multipart {
                 var parts: [MultipartPart] = []
                 for try await part in group {
                     parts.append(part)
-                    if parts.count == count / 2 {
-                        print("halfway, pid \(getpid()): run footprint \(getpid()) now")
-                        try await Task.sleep(for: .seconds(20))
-                    }
                     if next <= count { add() }
                 }
                 return parts
@@ -345,6 +346,31 @@ final class Client: Sendable {
             }
         }
         return (http.statusCode, body, http)
+    }
+}
+
+/// Holds the parts in `parts` once each is read, until all of them have arrived and 20 s have
+/// passed. The task group starts a part only as another finishes, so the three are in flight
+/// together and nothing else is. Task.sleep throws on cancellation, so a failed part ends the wait.
+actor HalfwayPause {
+    let parts: ClosedRange<Int>
+    private var arrived = 0
+    private var released = false
+
+    init(parts: ClosedRange<Int>) {
+        self.parts = parts
+    }
+
+    func hold(_ number: Int) async throws {
+        guard parts.contains(number) else { return }
+        arrived += 1
+        if arrived == parts.count {
+            print("halfway, pid \(getpid()): run footprint \(getpid()) now")
+            try await Task.sleep(for: .seconds(20))
+            released = true
+        } else {
+            while !released { try await Task.sleep(for: .milliseconds(100)) }
+        }
     }
 }
 
