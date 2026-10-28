@@ -191,7 +191,8 @@ struct URLCommandHandlerTests {
 
     /// Never queued behind a running capture, nor while the microphone or the camera prompt is open
     /// (each sets `captureRefusal`); a scrolling session is never advanced by a URL.
-    @Test(arguments: [CaptureRefusal.captureRunning, .permissionPrompt(.microphone), .permissionPrompt(.camera)])
+    @Test(arguments: [CaptureRefusal.captureRunning, .recordingStarting, .recordingRunning,
+                      .permissionPrompt(.microphone), .permissionPrompt(.camera)])
     func captureCommandsAreDroppedWhileCapturesAreRefused(reason: CaptureRefusal) async throws {
         settings.urlCommandsAllowSilent = true
         target.captureRefusal = reason
@@ -209,15 +210,19 @@ struct URLCommandHandlerTests {
         #expect(target.calls == [.restore, .desktopIconsHidden(true), .desktopIconsHidden(false), .toggleDesktopIcons])
     }
 
-    /// The dropped command's log line says why (R2 design, Decided 2026-10-24, 9): a burst's later
-    /// capture command, a running capture, or a prompt alone, named; nil when nothing drops it.
+    /// The dropped command's log line says why (R2 design, Decided 2026-10-24, 9; R4 design): a
+    /// burst's later capture command, a running capture, a count-in or a recording, or a prompt
+    /// alone, named; nil when nothing drops it.
     @Test func theLogSaysWhyACaptureCommandWasDropped() {
         #expect(URLCommandHandler.dropReason(busy: false, refusal: nil) == nil)
         #expect(URLCommandHandler.dropReason(busy: false, refusal: .captureRunning) == "a capture is running")
+        #expect(URLCommandHandler.dropReason(busy: false, refusal: .recordingStarting) == "a recording is starting")
+        #expect(URLCommandHandler.dropReason(busy: false, refusal: .recordingRunning) == "a recording is running")
         #expect(URLCommandHandler.dropReason(busy: false, refusal: .permissionPrompt(.microphone))
                 == "the microphone prompt is open")
         #expect(URLCommandHandler.dropReason(busy: false, refusal: .permissionPrompt(.camera)) == "the camera prompt is open")
         #expect(URLCommandHandler.dropReason(busy: true, refusal: nil) == "a queued capture command ran first")
+        #expect(URLCommandHandler.dropReason(busy: true, refusal: .recordingRunning) == "a queued capture command ran first")
         #expect(URLCommandHandler.dropReason(busy: true, refusal: .permissionPrompt(.microphone))
                 == "a queued capture command ran first")
         #expect(URLCommandHandler.dropReason(busy: true, refusal: .permissionPrompt(.camera))

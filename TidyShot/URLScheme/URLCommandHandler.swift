@@ -4,6 +4,10 @@ import Foundation
 nonisolated enum CaptureRefusal: Equatable, Sendable {
     /// Another capture holds the capture lock.
     case captureRunning
+    /// A recording's count-in (its whole hand-off) holds the capture lock.
+    case recordingStarting
+    /// A recording runs, its stop wait included, and holds the capture lock.
+    case recordingRunning
     /// A record start or Settings waits on the microphone or the camera prompt, and no capture
     /// holds the lock.
     case permissionPrompt(PermissionPrompt)
@@ -98,12 +102,14 @@ final class URLCommandHandler {
     }
 
     /// Why a capture command is dropped, for its log line, or nil when it runs: `busy` (a queued
-    /// capture command ran first), then the target's refusal (a running capture, or the microphone
-    /// or the camera prompt alone).
+    /// capture command ran first), then the target's refusal (a running capture, a recording's
+    /// count-in or the recording, or the microphone or the camera prompt alone).
     static func dropReason(busy: Bool, refusal: CaptureRefusal?) -> String? {
         if busy { return "a queued capture command ran first" }
         switch refusal {
         case .captureRunning: return "a capture is running"
+        case .recordingStarting: return "a recording is starting"
+        case .recordingRunning: return "a recording is running"
         case .permissionPrompt(let prompt): return "the \(prompt.name) prompt is open"
         case nil: return nil
         }

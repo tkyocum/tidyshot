@@ -81,7 +81,15 @@ final class AppCoordinator {
     /// free-space check) until `recorder.run` is called or the start gives up. It covers the
     /// count-in, the settle delay and the fresh content read, with the count-in on or off.
     /// `selfTimer.isRunning` cannot serve: it stays true until `run`'s capture closure returns.
-    @ObservationIgnored var recordingCountIn = false
+    @ObservationIgnored var recordingCountIn = false {
+        didSet { if recordingCountIn, !oldValue { recordingStartCancelled = false } }
+    }
+    /// Set by `stop-recording` or the record shortcut during a count-in (R4 design, What
+    /// `stop-recording` does in each phase): `selfTimer.cancel()` reaches only the countdown, so a
+    /// cancel during the settle delay or the fresh content read would be lost. `record()` reads it
+    /// with `isQuitting` just before `recorder.run` and starts nothing when it is set. Reset when
+    /// `recordingCountIn` turns from false to true (plan Gap 6).
+    @ObservationIgnored var recordingStartCancelled = false
     /// The system prompt a record function waits on, before the capture lock, or Settings asked
     /// for (`requestAccessFromSettings`): another start is ignored, and every other capture is
     /// refused as while one runs (`capturesRefused`). The lock itself is free and `recordingPhase`
@@ -473,16 +481,23 @@ final class AppCoordinator {
         Self.refusesCapture(isCapturing: isCapturing, askingPermission: askingPermission)
     }
 
-    /// Why a capture is refused, for the URL handler's log: a capture holding the lock, or else the
-    /// open prompt. Nil when captures run.
-    nonisolated static func captureRefusal(isCapturing: Bool, askingPermission: PermissionPrompt?) -> CaptureRefusal? {
+    /// Why a capture is refused, for the URL handler's log (R4 design, What `record-screen` does in
+    /// each phase): a recording's count-in, then the recording, then a capture holding the lock (also
+    /// while idle or saving), or else the open prompt. Nil when captures run.
+    nonisolated static func captureRefusal(isCapturing: Bool, askingPermission: PermissionPrompt?,
+                                           recordingPhase: RecordingPhase) -> CaptureRefusal? {
+        switch recordingPhase {
+        case .countIn: return .recordingStarting
+        case .recording: return .recordingRunning
+        case .idle, .saving: break
+        }
         if isCapturing { return .captureRunning }
         return askingPermission.map { .permissionPrompt($0) }
     }
 
-    /// `captureRefusal` for the capture lock and the open prompt now.
+    /// `captureRefusal` for the recording's phase, the capture lock and the open prompt now.
     var captureRefusal: CaptureRefusal? {
-        Self.captureRefusal(isCapturing: isCapturing, askingPermission: askingPermission)
+        Self.captureRefusal(isCapturing: isCapturing, askingPermission: askingPermission, recordingPhase: recordingPhase)
     }
 
     /// Runs `body` unless captures are refused (`capturesRefused`): a capture already runs, or the

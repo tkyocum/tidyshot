@@ -126,6 +126,9 @@ final class RecordingController {
     private let makeDriver: () -> any RecordingStreamDriver
     /// From `run`'s call to its return.
     private(set) var isRunning = false
+    /// While running, an end has come (Stop, Cancel or another end) and the stop wait runs: a
+    /// later Stop does nothing (plan Gap 5).
+    var isEnding: Bool { isRunning && cause != nil }
     /// Counts the runs. A driver's events, its stop's return and the timers carry their run's
     /// number, and anything from an earlier run is dropped: a stop that outlived its wait still
     /// holds that run's driver, whose late finish must not end the next run's wait.
