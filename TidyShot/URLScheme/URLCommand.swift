@@ -12,6 +12,8 @@ nonisolated struct URLCommand: Equatable, Sendable {
         case selfTimer = "self-timer"
         case captureScrolling = "capture-scrolling"
         case captureText = "capture-text"
+        case recordScreen = "record-screen"
+        case stopRecording = "stop-recording"
         case restoreRecentlyClosed = "restore-recently-closed"
         case hideDesktopIcons = "hide-desktop-icons"
         case showDesktopIcons = "show-desktop-icons"
@@ -20,10 +22,11 @@ nonisolated struct URLCommand: Equatable, Sendable {
         /// CleanShot's names that mean the same command.
         static let aliases: [String: Kind] = ["scrolling-capture": .captureScrolling]
 
-        /// Dropped while a capture runs. Restore and the desktop-icon commands capture nothing.
+        /// Dropped while a capture runs. Stop Recording, Restore and the desktop-icon commands capture
+        /// nothing.
         var isCapture: Bool {
             switch self {
-            case .restoreRecentlyClosed, .hideDesktopIcons, .showDesktopIcons, .toggleDesktopIcons: false
+            case .stopRecording, .restoreRecentlyClosed, .hideDesktopIcons, .showDesktopIcons, .toggleDesktopIcons: false
             default: true
             }
         }
@@ -32,6 +35,13 @@ nonisolated struct URLCommand: Equatable, Sendable {
         /// Takes `x`, `y`, `width`, `height` and `display`.
         var takesArea: Bool {
             self == .captureArea || self == .allInOne || self == .captureScrolling || self == .captureText
+                || self == .recordScreen
+        }
+        /// The values of `action` the command takes. A recording is saved or uploaded, never copied,
+        /// annotated or pinned.
+        var actions: [Action] {
+            guard takesAction else { return [] }
+            return self == .recordScreen ? [.upload, .save] : Action.allCases
         }
     }
 
@@ -59,8 +69,8 @@ nonisolated struct URLCommand: Equatable, Sendable {
         switch kind {
         case .captureFullscreen, .capturePreviousArea: true
         case .captureArea, .captureText: area != nil
-        case .captureWindow, .allInOne, .selfTimer, .captureScrolling, .restoreRecentlyClosed,
-             .hideDesktopIcons, .showDesktopIcons, .toggleDesktopIcons: false
+        case .captureWindow, .allInOne, .selfTimer, .captureScrolling, .recordScreen, .stopRecording,
+             .restoreRecentlyClosed, .hideDesktopIcons, .showDesktopIcons, .toggleDesktopIcons: false
         }
     }
 
@@ -102,6 +112,9 @@ nonisolated struct URLCommand: Equatable, Sendable {
         var command = URLCommand(kind: kind)
         if let raw = values["action"] {
             guard let action = Action(rawValue: raw.lowercased()) else { return .failure(.unknownAction(raw)) }
+            guard kind.actions.contains(action) else {
+                return .failure(.unknownActionForKind(value: raw, command: kind.rawValue))
+            }
             command.action = action
         }
         let rect = rectNames.map { values[$0] }
@@ -159,6 +172,8 @@ nonisolated struct URLCommand: Equatable, Sendable {
 nonisolated enum URLCommandError: Error, Equatable, Sendable {
     case unknownCommand(String)
     case unknownAction(String)
+    /// A real action the command does not take.
+    case unknownActionForKind(value: String, command: String)
     case badArea
     case noDisplay(String)
     case repeatedParameter(String)
@@ -169,6 +184,8 @@ nonisolated enum URLCommandError: Error, Equatable, Sendable {
             "Unknown command “\(URLCommand.displayed(name))”."
         case .unknownAction(let value):
             "Unknown action “\(URLCommand.displayed(value))”. Use upload, save, copy, annotate or pin."
+        case .unknownActionForKind(let value, let command):
+            "Unknown action “\(URLCommand.displayed(value))” for \(command). Use upload or save."
         case .badArea:
             "x, y, width and height must be given together, as numbers, with width and height above 0."
         case .noDisplay(let value):

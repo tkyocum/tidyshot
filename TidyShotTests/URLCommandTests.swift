@@ -19,7 +19,7 @@ struct URLCommandTests {
     }
 
     @Test func everyCommandParsesFromTheHost() throws {
-        #expect(URLCommand.Kind.allCases.count == 12)
+        #expect(URLCommand.Kind.allCases.count == 14)
         for kind in URLCommand.Kind.allCases {
             #expect(try parse("tidyshot://\(kind.rawValue)") == .success(URLCommand(kind: kind)))
         }
@@ -62,10 +62,12 @@ struct URLCommandTests {
                 == .failure(.unknownAction("upload&action=copy")))
     }
 
+    /// Every action parses on the screenshot commands; record-screen takes upload and save only
+    /// (its own test below).
     @Test func everyActionParsesOnEveryCaptureCommand() throws {
         #expect(URLCommand.Action.allCases.map(\.rawValue) == ["upload", "save", "copy", "annotate", "pin"])
         for kind in URLCommand.Kind.allCases where kind.takesAction {
-            for action in URLCommand.Action.allCases {
+            for action in kind.actions {
                 #expect(try parse("tidyshot://\(kind.rawValue)?action=\(action.rawValue)")
                         == .success(URLCommand(kind: kind, action: action)))
             }
@@ -83,8 +85,8 @@ struct URLCommandTests {
         #expect(try parse("tidyshot://Capture-Everything") == .failure(.unknownCommand("Capture-Everything")))
         #expect(try parse("tidyshot://") == .failure(.unknownCommand("")))
         #expect(try parse("tidyshot:") == .failure(.unknownCommand("")))
-        // CleanShot commands that take a file path, open other windows or record are not offered.
-        for name in ["pin", "open-annotate", "add-quick-access-overlay", "open-settings", "open-history", "record-screen"] {
+        // CleanShot commands that take a file path, open other windows or record a display are not offered.
+        for name in ["pin", "open-annotate", "add-quick-access-overlay", "open-settings", "open-history", "record-fullscreen"] {
             #expect(try parse("tidyshot://\(name)?filepath=/tmp/x.png") == .failure(.unknownCommand(name)))
         }
         #expect(try parse("https://capture-area") == .failure(.unknownCommand("https://capture-area")))
@@ -110,14 +112,82 @@ struct URLCommandTests {
     /// result always goes to the clipboard. Restore and the desktop-icon commands capture nothing
     /// and take no action.
     @Test func everyCaptureButCaptureTextTakesAnAction() {
-        let capturesNothing: [URLCommand.Kind] = [.restoreRecentlyClosed, .hideDesktopIcons, .showDesktopIcons,
-                                                  .toggleDesktopIcons]
+        let capturesNothing: [URLCommand.Kind] = [.stopRecording, .restoreRecentlyClosed, .hideDesktopIcons,
+                                                  .showDesktopIcons, .toggleDesktopIcons]
         for kind in URLCommand.Kind.allCases {
             #expect(kind.isCapture == !capturesNothing.contains(kind), "\(kind)")
             #expect(kind.takesAction == (!capturesNothing.contains(kind) && kind != .captureText), "\(kind)")
         }
         #expect(URLCommand.Kind.captureText.rawValue == "capture-text")
         #expect(URLCommand.Kind.captureText.takesArea)
+    }
+
+    @Test func theRecordingCommandsParseFromTheHostAndThePath() throws {
+        #expect(URLCommand.Kind.recordScreen.rawValue == "record-screen")
+        #expect(URLCommand.Kind.stopRecording.rawValue == "stop-recording")
+        let kinds = URLCommand.Kind.allCases
+        let capture = try #require(kinds.firstIndex(of: .captureText))
+        #expect(kinds[capture + 1] == .recordScreen && kinds[capture + 2] == .stopRecording)
+        #expect(kinds[capture + 3] == .restoreRecentlyClosed)
+        for (name, kind) in [("record-screen", URLCommand.Kind.recordScreen), ("stop-recording", .stopRecording)] {
+            #expect(try parse("tidyshot://\(name)") == .success(URLCommand(kind: kind)))
+            #expect(try parse("tidyshot:\(name)") == .success(URLCommand(kind: kind)))
+            #expect(try parse("tidyshot:///\(name)") == .success(URLCommand(kind: kind)))
+            #expect(try parse("TidyShot://\(name.uppercased())") == .success(URLCommand(kind: kind)))
+        }
+    }
+
+    @Test func recordScreenTakesTheActionTheRectAndTheDisplay() throws {
+        let kind = URLCommand.Kind.recordScreen
+        #expect(kind.isCapture && kind.takesAction && kind.takesArea)
+        #expect(try parse("tidyshot://record-screen?action=upload") == .success(URLCommand(kind: kind, action: .upload)))
+        #expect(try parse("tidyshot://record-screen?action=SAVE") == .success(URLCommand(kind: kind, action: .save)))
+        #expect(try parse("tidyshot://record-screen?x=10&y=20&width=300&height=40&display=2&action=save")
+                == .success(URLCommand(kind: kind, action: .save, area: .init(x: 10, y: 20, width: 300, height: 40), display: 2)))
+        #expect(try parse("tidyshot://record-screen?x=10&y=20") == .failure(.badArea))
+        #expect(try parse("tidyshot://record-screen?display=0") == .failure(.noDisplay("0")))
+        #expect(try parse("tidyshot://record-screen?action=save&action=upload") == .failure(.repeatedParameter("action")))
+    }
+
+    /// A recording ignores copy, annotate and pin (R1), so a sender who asks for one is told.
+    @Test func recordScreenRefusesTheActionsARecordingCannotDo() throws {
+        let message = "Unknown action “copy” for record-screen. Use upload or save."
+        #expect(try parse("tidyshot://record-screen?action=copy")
+                == .failure(.unknownActionForKind(value: "copy", command: "record-screen")))
+        #expect(URLCommandError.unknownActionForKind(value: "copy", command: "record-screen").message == message)
+        for value in ["copy", "annotate", "pin", "PIN"] {
+            #expect(try parse("tidyshot://record-screen?action=\(value)")
+                    == .failure(.unknownActionForKind(value: value, command: "record-screen")))
+        }
+        #expect(try parse("tidyshot://record-screen?action=bogus") == .failure(.unknownAction("bogus")))
+        #expect(try parse("tidyshot://record-screen?action=") == .failure(.unknownAction("")))
+        #expect(URLCommandError.unknownActionForKind(value: "a\u{202E}b\n" + String(repeating: "c", count: 60), command: "record-screen")
+                .message == "Unknown action “ab" + String(repeating: "c", count: 38) + "…” for record-screen. Use upload or save.")
+    }
+
+    @Test func theActionsEachKindTakes() {
+        for kind in URLCommand.Kind.allCases {
+            switch kind {
+            case .recordScreen: #expect(kind.actions == [.upload, .save])
+            case _ where kind.takesAction: #expect(kind.actions == URLCommand.Action.allCases, "\(kind)")
+            default: #expect(kind.actions.isEmpty, "\(kind)")
+            }
+        }
+    }
+
+    /// Stop Recording takes no parameter, so any value is ignored, even a malformed or repeated one.
+    @Test func stopRecordingIgnoresEveryParameter() throws {
+        let kind = URLCommand.Kind.stopRecording
+        #expect(!kind.isCapture && !kind.takesAction && !kind.takesArea)
+        #expect(try parse("tidyshot://stop-recording?action=bogus&action=copy&x=1&y=2&width=-3&display=0&display=0")
+                == .success(URLCommand(kind: kind)))
+    }
+
+    @Test func theRecordingCommandsCaptureWithoutASelectionNever() throws {
+        for query in ["", "?x=10&y=20&width=300&height=40"] {
+            #expect(try parse("tidyshot://record-screen" + query).get().capturesWithoutSelection == false)
+            #expect(try parse("tidyshot://stop-recording" + query).get().capturesWithoutSelection == false)
+        }
     }
 
     /// CleanShot's names (spec 2.10). They capture nothing and take no parameters, so an action, a

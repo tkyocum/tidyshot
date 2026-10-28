@@ -178,6 +178,8 @@ final class URLCommandHandler {
             } else {
                 await target.captureText()
             }
+        case .recordScreen, .stopRecording:
+            break // Task 5
         case .restoreRecentlyClosed: await target.restoreClosedOverlay()
         case .hideDesktopIcons: await target.setDesktopIconsHidden(true)
         case .showDesktopIcons: await target.setDesktopIconsHidden(false)
