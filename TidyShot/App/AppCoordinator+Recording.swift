@@ -132,21 +132,80 @@ extension AppCoordinator {
     private typealias RecordingEnded = (outcome: RecordingOutcome, microphoneNote: RecordingNotice?,
                                         cameraNote: RecordingNotice?, highlightsNote: RecordingNotice?)
 
-    /// Record Screen (recording design, Starting): select an area or click a window, then the
-    /// hand-off and the recording. The lock is held from the selection to the end of the recording,
-    /// and the file is saved after it. An area under 32×32 pt is refused, and no area becomes the
-    /// previous area: that is for image captures. The microphone and camera prompts, when they show,
-    /// come before the lock, and the input and the camera are resolved under it before the selection
-    /// (R2 design, At the start; R3 design, Permission). The selection cannot yet know whether a
-    /// window will be picked, so a window recording can follow a camera prompt it does not use.
+    /// Record Screen (recording design, Starting): the shortcut's toggle, then the start
+    /// (`startRecordScreen`). A count-in is cancelled and a recording stopped instead.
     func recordScreen() async {
-        guard recordShortcutStarts(), let ask = await recordingPrompts() else { return }
-        let intent = CaptureIntent.standard
+        guard recordShortcutStarts() else { return }
+        await startRecordScreen(intent: .standard, preselect: nil)
+    }
+
+    /// `record-screen` (R4 design, What `record-screen` does in each phase): it only starts, idle or
+    /// while an earlier recording is saved, through the same code as the shortcut's start, in its
+    /// own `Task`, and returns at once. The handler has already dropped it in the other phases and
+    /// with a prompt open, and logged why; quitting is logged here. A second one before the first
+    /// holds the lock is ignored (`urlRecordingStartPending`). The rect is only preselected and is
+    /// never the previous area.
+    func startRecording(intent: CaptureIntent, preselect: ScreenRect?) {
+        guard Self.recordingStartsFromURL(phase: recordingPhase, askingPermission: askingPermission,
+                                          isQuitting: isQuitting) else {
+            if isQuitting {
+                RecordingLog.note("Recording: URL start ignored, the app is quitting")
+            }
+            return
+        }
+        guard !urlRecordingStartPending else {
+            RecordingLog.note("Recording: URL start ignored, a recording is starting")
+            return
+        }
+        urlRecordingStartPending = true
+        Task { await startRecordScreen(intent: intent, preselect: preselect?.rect) }
+    }
+
+    /// `stop-recording` (R4 design, What `stop-recording` does in each phase): stops a recording,
+    /// cancels a count-in, and otherwise does nothing, with no notice. A second one during the stop
+    /// wait finds the recording ending and does nothing. Each outcome is logged with the sender.
+    func stopRecordingCommand(sender: String?) {
+        let name = sender ?? "an unknown app"
+        switch Self.recordingStopCommandAction(for: recordingPhase) {
+        case .stop:
+            if recorder.isEnding {
+                RecordingLog.note("Recording: stop-recording from \(name) did nothing, no recording is running")
+            } else {
+                recorder.stop()
+                RecordingLog.note("Recording: stop-recording from \(name) stopped the recording")
+            }
+        case .cancelCountIn:
+            // As the shortcut's cancel: the flag holds a cancel the countdown cannot see.
+            recordingStartCancelled = true
+            selfTimer.cancel()
+            RecordingLog.note("Recording: stop-recording from \(name) cancelled the count-in")
+        case .nothing:
+            RecordingLog.note("Recording: stop-recording from \(name) did nothing, no recording is running")
+        }
+    }
+
+    /// Record Screen's start, from the shortcut or `record-screen`: select an area or click a
+    /// window (`preselect`, CoreGraphics global points, shown in the selection), then the hand-off
+    /// and the recording. The lock is held from the selection to the end of the recording, and the
+    /// file is saved after it with `intent`. An area under 32×32 pt is refused, and no area becomes
+    /// the previous area: that is for image captures. The microphone and camera prompts, when they
+    /// show, come before the lock, and the input and the camera are resolved under it before the
+    /// selection (R2 design, At the start; R3 design, Permission). The selection cannot yet know
+    /// whether a window will be picked, so a window recording can follow a camera prompt it does not
+    /// use. `urlRecordingStartPending` is cleared once the lock is held or refused, or when the
+    /// prompts end the start.
+    private func startRecordScreen(intent: CaptureIntent, preselect: CGRect?) async {
+        guard let ask = await recordingPrompts() else {
+            urlRecordingStartPending = false
+            return
+        }
         var ended: RecordingEnded?
         let tookLock = await withCaptureLock(coversDesktop: true) {
+            urlRecordingStartPending = false
             guard let inputs = recordingCanStart(microphone: ask.microphone) else { return }
             guard let content = await loadContent(failureTitle: RecordingEnd.failedTitle) else { return }
-            guard let selection = await selector.select(mode: .recording, content: content) else { return }
+            guard let selection = await selector.select(mode: .recording, content: content,
+                                                        preselect: preselect) else { return }
             let target: CaptureTarget
             switch selection {
             case .area(let rect, let display):
@@ -164,6 +223,7 @@ extension AppCoordinator {
             }
             ended = await record(target, inputs: inputs)
         }
+        urlRecordingStartPending = false
         if !tookLock {
             lockRefusedStart(afterPrompt: ask.prompted)
         }

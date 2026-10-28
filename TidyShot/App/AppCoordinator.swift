@@ -90,6 +90,11 @@ final class AppCoordinator {
     /// with `isQuitting` just before `recorder.run` and starts nothing when it is set. Reset when
     /// `recordingCountIn` turns from false to true (plan Gap 6).
     @ObservationIgnored var recordingStartCancelled = false
+    /// Set by `startRecording` (a `record-screen` URL) before its `Task` runs, and cleared once that
+    /// start's capture lock is held or refused (plan Gap 18). In between the phase reads idle with
+    /// no lock and no prompt, so a second `record-screen` would not be dropped by the handler; while
+    /// it is set, `startRecording` ignores it and logs why.
+    @ObservationIgnored var urlRecordingStartPending = false
     /// The system prompt a record function waits on, before the capture lock, or Settings asked
     /// for (`requestAccessFromSettings`): another start is ignored, and every other capture is
     /// refused as while one runs (`capturesRefused`). The lock itself is free and `recordingPhase`
@@ -521,7 +526,7 @@ final class AppCoordinator {
     }
 }
 
-/// The URL scheme's routes are AppCoordinator's capture, overlay and desktop-icon functions (in +Capture, +Overlay and this file), with their own signatures.
+/// The URL scheme's routes are AppCoordinator's capture, overlay and desktop-icon functions (in +Capture, +Overlay and this file) and its recording entry points (in +Recording), with their own signatures.
 extension AppCoordinator: URLCommandTarget {}
 
 /// The system prompt a record start or Settings waits on (`AppCoordinator.askingPermission`), while
