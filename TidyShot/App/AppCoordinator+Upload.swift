@@ -1,6 +1,6 @@
 import AppKit
 
-// Uploads: the destination, the lanes, Clop, the size check, retry and the queue's events. Its state is declared in AppCoordinator.swift.
+// Uploads: the destination, the lanes, the multipart resume decision, Clop, the size check, retry and the queue's events. Its state is declared in AppCoordinator.swift.
 extension AppCoordinator {
     /// An upload queue and where its destination writes. Upload events carry no destination, so
     /// the location travels with the queue and is stored on the records it uploads.
@@ -104,6 +104,8 @@ extension AppCoordinator {
         let keyTemplate = destination.config.keyTemplate
         let queue = UploadQueue(destination: destination,
                                 keyNamer: ObjectKeyNamer(template: keyTemplate),
+                                plan: .standard,
+                                store: multipartFiles,
                                 events: { [weak self] event in self?.handle(event, at: location) })
         return UploadLane(queue: queue, location: location, keyTemplate: keyTemplate)
     }
@@ -112,10 +114,12 @@ extension AppCoordinator {
     /// media kind. `destination` is only used when the queue has to be created (first upload, or
     /// after the Upload tab was saved); callers read it once. With `fixedKey` the job PUTs that
     /// exact key with `Cache-Control: no-cache` and draws no counter (an editor replace, or a retry
-    /// of one); otherwise the key is named from the template. With Clop on and running, Clop
-    /// optimises a copy first: a PNG on its image queue, an MP4 on its video queue; a GIF is never
-    /// sent. A recording's file is then checked against the single-PUT limit, and one over it is
-    /// never enqueued (`refuseOversizedUpload`).
+    /// of one); otherwise the key is named from the template. A record with a stored multipart
+    /// upload first decides whether it resumes (design, Resume): a resume sends the stored file
+    /// with no Clop and no counter, and a start over runs as a fresh upload that aborts the stored
+    /// one. With Clop on and running, Clop optimises a copy first: a PNG on its image queue, an MP4
+    /// on its video queue; a GIF is never sent. A recording's file is then checked against the
+    /// 625 GiB limit, and one over it is never enqueued (`refuseOversizedUpload`).
     func startUpload(recordID: UUID, payload: UploadPayload, destination: S3Destination, fixedKey: String? = nil) {
         // Look the record up before marking it uploading, so a missing record never leaves an
         // id in `uploadingIDs` (and the menu bar icon spinning) with no job to clear it.
@@ -140,18 +144,20 @@ extension AppCoordinator {
         // the capture's own, so a retried upload lands in the capture's date folder. An image's
         // counter is drawn before Clop runs, so counters follow the order uploads start. A
         // recording's is drawn just before its enqueue, after the size check, so an upload refused
-        // for its size draws none.
+        // for its size draws none. A resume draws none and names a new key, if it needs one, with
+        // counter 0 (Gap 9).
         let kind = record.mediaKind
         let isFile = if case .file = payload { true } else { false }
         let settings = settings
         let drawCounter = { lane.keyTemplate.contains("{counter}") ? settings.nextCounter() : 0 }
         let imageCounter = fixedKey == nil && !isFile ? drawCounter() : nil
-        let makeJob: (UploadPayload) -> UploadJob = { sent in
+        let makeJob: (UploadPayload, Bool) -> UploadJob = { sent, drawsCounter in
             if let fixedKey {
                 return UploadJob(id: recordID, payload: sent, contentType: kind.contentType, fileExtension: kind.fileExtension,
                                  fixedKey: fixedKey, cacheControl: "no-cache")
             }
-            let naming = TemplateContext(date: record.timestamp, counter: imageCounter ?? drawCounter())
+            let counter = drawsCounter ? imageCounter ?? drawCounter() : 0
+            let naming = TemplateContext(date: record.timestamp, counter: counter)
             return UploadJob(id: recordID, payload: sent, contentType: kind.contentType, fileExtension: kind.fileExtension,
                              naming: naming)
         }
@@ -164,87 +170,171 @@ extension AppCoordinator {
             loggedGIFNotSentToClop = true
             NSLog("%@", "Clop: GIFs are not sent to Clop")
         }
-        let optimises = kind.isSentToClop && settings.optimiseWithClop && clopIsRunning()
-        guard optimises || isFile else {
+        // A file decides on Clop in its task, after the resume decision.
+        let optimisesImage = !isFile && kind.isSentToClop && settings.optimiseWithClop && clopIsRunning()
+        guard optimisesImage || isFile else {
             if case .data(let data) = payload {
                 sentByteCounts[recordID] = data.count
             }
-            Task { await lane.queue.enqueue(makeJob(payload)) }
+            Task { await lane.queue.enqueue(makeJob(payload, true)) }
             return
         }
         // Clop rewrites a throwaway copy: the save-folder file, the pending file and the editor's
         // file stay as captured, so a Retry optimises the original again. A recording also waits
-        // for its size check, with Clop or without. The record stays `.uploading(fraction: 0)`
-        // meanwhile, and Delete's cancel takes the token back.
+        // for its resume decision and its size check, with Clop or without. The record stays
+        // `.uploading(fraction: 0)` meanwhile, and Delete's cancel takes the token back.
         let token = UUID()
         optimisingIDs[recordID] = token
         let laneID = ObjectIdentifier(lane.queue)
         clopWaitsPerLane[laneID, default: 0] += 1
-        if isFile && optimises {
-            optimizingVideoIDs.insert(recordID)
-            refreshOverlay(for: recordID)
-        }
         let duration = record.durationSeconds ?? 0
+        let stored = isFile ? record.multipart : nil
+        let name = record.fileURL?.lastPathComponent ?? recordID.uuidString
         Task {
             defer {
                 clopWaitsPerLane[laneID, default: 1] -= 1
                 if clopWaitsPerLane[laneID] == 0 { clopWaitsPerLane[laneID] = nil }
             }
-            let (sent, clopResult) = optimises ? await optimisedForUpload(payload, duration: duration) : (payload, nil)
-            // On the bytes actually sent: Clop's result when Clop's result was accepted.
-            let sentBytes = await Self.byteCount(of: sent)
-            let fits = Self.fitsSingleUpload(sent, byteCount: sentBytes)
-            // Delete cancelled the upload while Clop or the size check ran (`cancelUpload` did the
-            // bookkeeping), or a newer retry is waiting now. Nothing will upload this attempt's movie.
-            guard optimisingIDs[recordID] == token else {
-                if let clopResult { removeClopFile(clopResult) }
-                return
+            // A stored multipart upload resumes or starts over, decided before Clop runs and before
+            // any counter is drawn, on the file the stored upload sends.
+            var step = MultipartPlan.startStep(decision: nil)
+            if let stored {
+                let sourceURL = URL(filePath: stored.sourcePath)
+                let sourceScope = UploadPayload.scope(for: sourceURL, isTemporary: false, saveFolder: saveLocation.currentURL)
+                let source = await Self.sourceAttributes(of: sourceURL, scope: sourceScope)
+                // Delete cancelled the upload during the read (`cancelUpload` did the bookkeeping).
+                guard optimisingIDs[recordID] == token else { return }
+                let decision = MultipartPlan.resumeDecision(stored: stored, location: lane.location, fixedKey: fixedKey,
+                                                            source: source)
+                step = MultipartPlan.startStep(decision: decision)
+                if case .startOver(let reason, _) = decision {
+                    NSLog("%@", "Upload: \(name) \(reason.logText), starting again")
+                }
+                if let state = step.resume {
+                    guard endUploadWait(of: recordID, token: token, clopResult: nil) else { return }
+                    // The stored size fitted at Create, so there is no size check.
+                    var job = makeJob(.file(sourceURL, scope: sourceScope), step.drawsCounter)
+                    job.multipartSource = MultipartSource(location: state.location, path: state.sourcePath,
+                                                          byteCount: state.byteCount, modified: state.sourceModified)
+                    job.resume = state
+                    sentByteCounts[recordID] = Int(state.byteCount)
+                    await lane.queue.enqueue(job)
+                    return
+                }
+                // Task 13: abort `step.abortElsewhere`, the stored upload at another destination.
             }
-            optimisingIDs[recordID] = nil
-            if optimizingVideoIDs.remove(recordID) != nil {
+            let optimises = !isFile || (step.runsClop && kind.isSentToClop && settings.optimiseWithClop && clopIsRunning())
+            if isFile && optimises {
+                optimizingVideoIDs.insert(recordID)
                 refreshOverlay(for: recordID)
             }
-            guard history.record(id: recordID) != nil else {
-                // Removed from history meanwhile: nothing would point at the object.
-                uploadingIDs.remove(recordID)
-                fileUploadIDs.remove(recordID)
-                if let clopResult { removeClopFile(clopResult) }
-                return
-            }
+            let (optimised, clopResult) = optimises ? await optimisedForUpload(payload, duration: duration) : (payload, nil)
+            // On the bytes actually sent: Clop's result when Clop's result was accepted.
+            let (sentBytes, sentModified) = await Self.byteCount(of: optimised)
+            let fits = Self.fitsUpload(optimised, byteCount: sentBytes)
+            // Delete cancelled the upload while Clop or the size check ran, or a newer retry is
+            // waiting now. Nothing will upload this attempt's movie.
+            guard endUploadWait(of: recordID, token: token, clopResult: clopResult) else { return }
             guard fits else {
                 if let clopResult { removeClopFile(clopResult) }
                 await refuseOversizedUpload(of: recordID)
                 return
             }
-            // Owned until the upload ends (the top of `handle(_:at:)`).
-            if let clopResult { clopResults[recordID] = clopResult }
+            var sent = optimised
+            if let clopResult {
+                if MultipartPlan.standard.uses(payload: sent, byteCount: sentBytes.map(Int64.init)) {
+                    // Kept in `multipart/` so a Retry, also after a relaunch, resumes from the same
+                    // bytes. A rename within the container, so nothing waits between the token and
+                    // the enqueue.
+                    do {
+                        sent = .file(try multipartFiles.keepClopCopy(clopResult, id: recordID, ext: kind.fileExtension),
+                                     scope: nil)
+                    } catch {
+                        NSLog("%@", "Upload: Clop's copy could not be kept for resume: \(error.localizedDescription)")
+                        clopResults[recordID] = clopResult
+                    }
+                } else {
+                    // Owned until the upload ends (the top of `handle(_:at:)`).
+                    clopResults[recordID] = clopResult
+                }
+            }
             sentByteCounts[recordID] = sentBytes
-            await lane.queue.enqueue(makeJob(sent))
+            var job = makeJob(sent, step.drawsCounter)
+            if case .file(let url, _) = sent, let sentBytes, let sentModified {
+                // A rename keeps the modification date, so the kept copy has the attributes read.
+                job.multipartSource = MultipartSource(location: lane.location, path: url.path(percentEncoded: false),
+                                                      byteCount: Int64(sentBytes), modified: sentModified)
+            }
+            job.abortFirst = step.abortFirst
+            await lane.queue.enqueue(job)
         }
     }
 
-    /// The size of what `payload` sends: the data's length, or the file's size, read in a detached
-    /// task holding the save folder's scope when it has one. Nil when the size cannot be read.
-    nonisolated private static func byteCount(of payload: UploadPayload) async -> Int? {
+    /// The end of an upload's wait for its resume decision, Clop or its size check: true when the
+    /// upload goes on. False when Delete cancelled it meanwhile (`cancelUpload` did the
+    /// bookkeeping), a newer retry is waiting, or the record left history; Clop's movie is then
+    /// removed, as nothing will upload it.
+    private func endUploadWait(of recordID: UUID, token: UUID, clopResult: URL?) -> Bool {
+        guard optimisingIDs[recordID] == token else {
+            if let clopResult { removeClopFile(clopResult) }
+            return false
+        }
+        optimisingIDs[recordID] = nil
+        if optimizingVideoIDs.remove(recordID) != nil {
+            refreshOverlay(for: recordID)
+        }
+        guard history.record(id: recordID) != nil else {
+            // Removed from history meanwhile: nothing would point at the object.
+            uploadingIDs.remove(recordID)
+            fileUploadIDs.remove(recordID)
+            if let clopResult { removeClopFile(clopResult) }
+            return false
+        }
+        return true
+    }
+
+    /// The size of what `payload` sends, and a file's modification date: the data's length, or
+    /// the file's attributes, read in a detached task holding the save folder's scope when it has
+    /// one. Either is nil when it cannot be read.
+    nonisolated private static func byteCount(of payload: UploadPayload) async -> (byteCount: Int?, modified: Date?) {
         switch payload {
         case .data(let data):
-            return data.count
+            return (data.count, nil)
         case .file(let url, let scope):
             return await Task.detached(priority: .utility) {
-                FileSizes.byteCount(of: url, scope: scope)
+                fileAttributes(of: url, scope: scope)
             }.value
         }
     }
 
-    /// Whether `payload`, of `byteCount` bytes, fits a single PUT (5 GiB). Only a recording's file
-    /// is checked. A size that cannot be read counts as fitting; the queue then reports the file
-    /// unreadable.
-    nonisolated private static func fitsSingleUpload(_ payload: UploadPayload, byteCount: Int?) -> Bool {
-        guard case .file = payload, let byteCount else { return true }
-        return RecordingLimits.fitsSingleUpload(byteCount: Int64(byteCount))
+    /// The size and modification date of the file a stored multipart upload sends, read as
+    /// `byteCount(of:)` reads them. Nil when the file is gone or either cannot be read.
+    nonisolated private static func sourceAttributes(of url: URL, scope: URL?) async -> MultipartSourceAttributes? {
+        let (byteCount, modified) = await Task.detached(priority: .utility) {
+            fileAttributes(of: url, scope: scope)
+        }.value
+        guard let byteCount, let modified else { return nil }
+        return MultipartSourceAttributes(byteCount: Int64(byteCount), modified: modified)
     }
 
-    /// A recording over the single-PUT limit (design, Size): no job, no key and no counter. The
+    nonisolated private static func fileAttributes(of fileURL: URL, scope: URL?) -> (byteCount: Int?, modified: Date?) {
+        let accessing = scope?.startAccessingSecurityScopedResource() ?? false
+        defer { if accessing { scope?.stopAccessingSecurityScopedResource() } }
+        var url = fileURL
+        url.removeAllCachedResourceValues()
+        let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+        return (values?.fileSize, values?.contentModificationDate)
+    }
+
+    /// Whether `payload`, of `byteCount` bytes, can be uploaded: up to 625 GiB
+    /// (`MultipartPlan.maxBytes`). Only a recording's file is checked. A size that cannot be read
+    /// counts as fitting; the queue then reports the file unreadable.
+    nonisolated private static func fitsUpload(_ payload: UploadPayload, byteCount: Int?) -> Bool {
+        guard case .file = payload, let byteCount else { return true }
+        return MultipartPlan.fits(byteCount: Int64(byteCount))
+    }
+
+    /// A recording over 625 GiB (design, Parts): no job, no key and no counter. The
     /// record gets `.none`, never `.failed`, which would keep offering Retry and running Clop
     /// again. Where the file is decides, not the action: a pending file moves into the save
     /// folder, asking for one when none is set, and a save-folder file stays. With no folder
@@ -256,7 +346,7 @@ extension AppCoordinator {
         // Before the folder prompt, so nothing offers Retry while it is open.
         history.update(id: recordID) { $0.uploadState = .none }
         refreshOverlay(for: recordID)
-        RecordingLog.note("Recording: \(record.fileURL?.lastPathComponent ?? recordID.uuidString) is too large to upload in one piece")
+        RecordingLog.note("Recording: \(record.fileURL?.lastPathComponent ?? recordID.uuidString) is too large to upload (over 625 GB)")
 
         var move: RecordingFileResult?
         var movedURL: URL?
@@ -294,7 +384,8 @@ extension AppCoordinator {
         }
     }
 
-    /// Removes a movie Clop made, detached. The launch sweep of `tmp/Clop` is the backstop.
+    /// Removes a movie Clop made, in `tmp/Clop` or kept in `multipart/`, detached. The launch
+    /// sweeps of both folders are the backstop.
     private func removeClopFile(_ url: URL) {
         Task.detached(priority: .utility) {
             try? FileManager.default.removeItem(at: url)
@@ -445,9 +536,10 @@ extension AppCoordinator {
         guard uploadingIDs.contains(recordID) else { return }
         // The queue's `.cancelled` event also takes it out; this covers the Clop wait.
         defer { fileUploadIDs.remove(recordID) }
-        // Still waiting for Clop or the size check: nothing is enqueued and no key is reserved, so
-        // this is the whole cancel, as the queue's `.cancelled` event would do it. Clop's movie,
-        // when it comes, is removed by the waiting task, whose token no longer matches.
+        // Still waiting for the resume decision, Clop or the size check: nothing is enqueued and no
+        // key is reserved, so this is the whole cancel, as the queue's `.cancelled` event would do
+        // it. Clop's movie, when it comes, is removed by the waiting task, whose token no longer
+        // matches.
         if optimisingIDs.removeValue(forKey: recordID) != nil {
             optimizingVideoIDs.remove(recordID)
             uploadingIDs.remove(recordID)
@@ -488,23 +580,34 @@ extension AppCoordinator {
             break
         }
         switch event {
-        case .started(let id, let attempt, _):
+        case .started(let id, let attempt, let fraction):
             if attempt > 1 {
                 NSLog("Upload retry \(attempt) for \(id)")
-                // Start the bar again rather than leaving the failed attempt's fraction.
-                if history.setProgress(id: id, fraction: 0) {
-                    refreshOverlay(for: id)
-                }
             }
-        case .multipartStarted:
-            // The lane's queue has no multipart store yet, so this never arrives.
-            break
+            // Every attempt sets the bar: a fresh one starts again at 0 rather than leaving the
+            // failed attempt's fraction, and a resume shows its parts done at once.
+            if history.setProgress(id: id, fraction: fraction) {
+                refreshOverlay(for: id)
+            }
+        case .multipartStarted(let id, let state):
+            let older = history.record(id: id)?.multipart
+            history.update(id: id) { $0.multipart = state }
+            // A start over that sends another file (Clop off now, say) drops the older upload's
+            // kept Clop copy now. Only a file in `multipart/` is a kept copy, never the record's own.
+            // The queue has already rewritten the sidecar for the new upload id.
+            if let older, older.sourcePath != state.sourcePath,
+               SaveLocation.contains(URL(filePath: older.sourcePath), inFolder: multipartFiles.directory) {
+                removeClopFile(URL(filePath: older.sourcePath))
+            }
         case .progress(let id, let fraction):
             if history.setProgress(id: id, fraction: fraction) {
                 refreshOverlay(for: id)
             }
         case .uploaded(let id, let url, let key):
             uploadingIDs.remove(id)
+            // A multipart upload's part list and any kept Clop copy have done their job.
+            let multipartFiles = multipartFiles
+            Task.detached(priority: .utility) { multipartFiles.remove(id: id) }
             guard let before = history.record(id: id) else {
                 // The record disappeared while its upload was running. Nothing would point at the
                 // new object, so remove it again instead of copying or announcing its URL.
@@ -538,6 +641,8 @@ extension AppCoordinator {
                     record.fileURL = nil
                     record.fileIsTemporary = false
                 }
+                // Finished: nothing to resume or abort.
+                record.multipart = nil
                 record = EditorUploadPlan.applyingSuccess(to: record)
             }
             // A screenshot's URL always replaces the clipboard. A recording's does only while the

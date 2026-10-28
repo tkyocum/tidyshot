@@ -1,7 +1,7 @@
 import Foundation
 
 /// The recording thresholds: free space at the start and during a recording, the Cancel alert,
-/// the shortest recording kept, the stop wait and the single-PUT upload limit.
+/// the shortest recording kept and the stop wait. The upload's size limit is `MultipartPlan.maxBytes`.
 nonisolated enum RecordingLimits {
     /// Under this much free space for `tmp/Recording`, nothing records (decimal GB, as Finder shows).
     static let startFreeBytes: Int64 = 2_000_000_000
@@ -14,8 +14,6 @@ nonisolated enum RecordingLimits {
     static let minimumDuration: TimeInterval = 0.5
     /// How long a stop waits for the output's finish callback, in time awake.
     static let stopTimeout: Duration = .seconds(15)
-    /// 5 GiB, the largest single PUT.
-    static let singleUploadBytes: Int64 = 5_368_709_120
     static let diskFullText = "Your disk is almost full."
 
     /// Under 2 GB refuses. An unreadable value (nil) counts as enough.
@@ -39,10 +37,6 @@ nonisolated enum RecordingLimits {
 
     static func asksBeforeDiscarding(elapsed: TimeInterval) -> Bool {
         elapsed >= cancelConfirmationSeconds
-    }
-
-    static func fitsSingleUpload(byteCount: Int64) -> Bool {
-        byteCount <= singleUploadBytes
     }
 
     /// `volumeAvailableCapacityForImportantUsageKey` of `url`, or of its nearest existing ancestor

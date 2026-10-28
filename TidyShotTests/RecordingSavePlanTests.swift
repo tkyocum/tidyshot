@@ -283,7 +283,7 @@ struct RecordingSavePlanTests {
 
     @Test func oversizedNotice() {
         #expect(RecordingSavePlan.oversizedNotice == RecordingNotice(
-            title: "Not uploaded", body: "The recording is larger than 5 GB, too large to upload in one piece."))
+            title: "Not uploaded", body: "The recording is larger than 625 GB, too large to upload."))
     }
 
     @Test func oversizedSaveFolderFileStays() {

@@ -16,6 +16,8 @@ final class AppCoordinator {
     /// `thumbnails` and `pending` folders next to `history.json`.
     let thumbnails: ThumbnailStore
     let pendingFiles: PendingFileStore
+    /// `multipart` next to `history.json`: each multipart upload's part list and kept Clop copy.
+    let multipartFiles: MultipartStore
     /// Drag-out copies, `<container tmp>/Drag/<id>/` (spec 2.9).
     let dragFiles: DragFileStore
     let credentialStore: any CredentialStore = KeychainCredentialStore()
@@ -252,6 +254,7 @@ final class AppCoordinator {
         history = HistoryStore(fileURL: url, retentionDays: { AppSettings.shared.historyRetentionDays })
         thumbnails = ThumbnailStore(nextTo: url)
         pendingFiles = PendingFileStore(nextTo: url)
+        multipartFiles = MultipartStore(nextTo: url)
         dragFiles = DragFileStore(temporaryDirectory: FileManager.default.temporaryDirectory)
         history.didPrune = { [weak self] records in self?.removeFiles(ofPruned: records) }
         overlay.onDidClose = { [weak self] id, reason in self?.overlayDidClose(id, reason: reason) }
@@ -268,6 +271,12 @@ final class AppCoordinator {
         try? FileManager.default.removeItem(at: RecordingTrim.directory)
         notifier.setUp()
         history.load()
+        // Part lists and kept Clop copies with no state, or older than the lifecycle rule. No network.
+        let multipartStates = Dictionary(history.records.compactMap { record in
+            record.multipart.map { (record.id, $0.startedAt) }
+        }, uniquingKeysWith: { first, _ in first })
+        let multipartFiles = multipartFiles
+        Task.detached(priority: .utility) { multipartFiles.sweep(states: multipartStates, now: Date()) }
         // Records from before 2.13 have no size; those with a local file get it from the file.
         Task { await backfillByteCounts() }
         // A recording a crash, a kill or a failed rename left in tmp/Recording is checked, not swept.
