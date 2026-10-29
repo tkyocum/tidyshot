@@ -121,9 +121,9 @@ extension AppCoordinator {
         // Resume data replays the first request and its signature, so a resume keeps that request's
         // time. Past the window, or with none, the download starts again with a new signature.
         let now = Date()
-        let resume = dragDownloadResume.removeValue(forKey: recordID).flatMap {
-            DragDownloadRule.usesResumeData(signedAt: $0.signedAt, now: now) ? $0 : nil
-        }
+        let kept = dragDownloadResume.removeValue(forKey: recordID)
+        let resume = kept.flatMap { DragDownloadRule.usesResumeData(signedAt: $0.signedAt, now: now) ? $0 : nil }
+        if let kept, resume == nil { removePartialDownload(kept.data) }
         let resumeData = resume?.data
         let signedAt = resume?.signedAt ?? now
         let resumeLog = resumeData == nil ? nil : ResumeLog()
@@ -209,8 +209,17 @@ extension AppCoordinator {
     /// `downloadingDragIDs`, so no second download starts before it has ended.
     func cancelDragDownload(_ id: UUID) {
         downloadingDragIDs[id]?.cancel()
-        dragDownloadResume[id] = nil
+        if let kept = dragDownloadResume.removeValue(forKey: id) { removePartialDownload(kept.data) }
         overlay.setDownloading(nil, for: id)
+    }
+
+    /// Resume data that will not be used leaves URLSession's partial file in the temporary folder,
+    /// which for a long recording can be gigabytes.
+    private func removePartialDownload(_ resumeData: Data) {
+        Task.detached(priority: .utility) {
+            guard let partial = DragDownloadRule.partialFile(in: resumeData) else { return }
+            try? FileManager.default.removeItem(at: partial)
+        }
     }
 
     /// `.uploaded` for an upload-only capture: when a card shows it, moves the pending file to

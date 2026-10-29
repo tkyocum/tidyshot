@@ -73,4 +73,39 @@ struct DragDownloadRuleTests {
         #expect(DragDownloadRule.keepsCardOpen(isDraggingOut: false, isDownloading: true))
         #expect(DragDownloadRule.keepsCardOpen(isDraggingOut: true, isDownloading: true))
     }
+
+    /// The partial file URLSession names in resume data, keyed-archive or plain, found in the
+    /// temporary folder, so a resume that is dropped unused can remove it.
+    @Test func findsThePartialFileTheResumeDataNames() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let partial = folder.appendingPathComponent("CFNetworkDownload_aB3dE9.tmp")
+        try Data([1, 2, 3]).write(to: partial)
+
+        let archived = try NSKeyedArchiver.archivedData(
+            withRootObject: ["NSURLSessionResumeInfoTempFileName": "CFNetworkDownload_aB3dE9.tmp",
+                             "NSURLSessionResumeBytesReceived": 3] as NSDictionary,
+            requiringSecureCoding: false)
+        #expect(DragDownloadRule.partialFile(in: archived, temporaryDirectory: folder) == partial)
+
+        let plain = try PropertyListSerialization.data(
+            fromPropertyList: ["NSURLSessionResumeInfoLocalPath": partial.path], format: .xml, options: 0)
+        #expect(DragDownloadRule.partialFile(in: plain, temporaryDirectory: folder) == partial)
+    }
+
+    /// No file, a folder or data that is not a property list gives nothing to remove.
+    @Test func findsNoPartialFileWhenNoneIsThere() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder.appendingPathComponent("CFNetworkDownload_dir.tmp"),
+                                                withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let missing = try PropertyListSerialization.data(
+            fromPropertyList: ["NSURLSessionResumeInfoTempFileName": "CFNetworkDownload_gone.tmp"], format: .xml, options: 0)
+        let directory = try PropertyListSerialization.data(
+            fromPropertyList: ["NSURLSessionResumeInfoTempFileName": "CFNetworkDownload_dir.tmp"], format: .xml, options: 0)
+        #expect(DragDownloadRule.partialFile(in: missing, temporaryDirectory: folder) == nil)
+        #expect(DragDownloadRule.partialFile(in: directory, temporaryDirectory: folder) == nil)
+        #expect(DragDownloadRule.partialFile(in: Data("not a plist".utf8), temporaryDirectory: folder) == nil)
+    }
 }

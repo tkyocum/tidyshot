@@ -27,6 +27,28 @@ nonisolated enum DragDownloadRule {
         now.timeIntervalSince(signedAt) < resumeWindow
     }
 
+    /// The partial file URLSession keeps for `resumeData`, so a resume that is dropped unused can
+    /// remove it. The data is a keyed archive on current macOS and a plain dictionary on older
+    /// ones; both are read. Only a file named `CFNetworkDownload_…` is returned, so nothing else
+    /// can be removed by mistake.
+    static func partialFile(in resumeData: Data,
+                            temporaryDirectory: URL = FileManager.default.temporaryDirectory) -> URL? {
+        guard let dictionary = (try? PropertyListSerialization.propertyList(from: resumeData, format: nil))
+                as? [String: Any] else { return nil }
+        var names = ["NSURLSessionResumeInfoTempFileName", "NSURLSessionResumeInfoLocalPath"]
+            .compactMap { dictionary[$0] as? String }
+        names += (dictionary["$objects"] as? [Any] ?? []).compactMap { $0 as? String }
+        for name in names {
+            let url = name.hasPrefix("/") ? URL(fileURLWithPath: name) : temporaryDirectory.appendingPathComponent(name)
+            var isDirectory: ObjCBool = false
+            if url.lastPathComponent.hasPrefix("CFNetworkDownload_"),
+               FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory), !isDirectory.boolValue {
+                return url
+            }
+        }
+        return nil
+    }
+
     /// The auto-close countdown waits during a download as it does during a drag-out session.
     static func keepsCardOpen(isDraggingOut: Bool, isDownloading: Bool) -> Bool {
         isDraggingOut || isDownloading
