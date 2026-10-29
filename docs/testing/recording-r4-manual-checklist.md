@@ -149,7 +149,7 @@ Date and Mac: ______
   probe says it could not find or put back the partial file, or step 4 failed with no status, write it down as
   inconclusive, not as a refusal: ______.
 
-Result for G2: ______ (resume data works and the late resume is refused: build the held step; no resume data or a
+Result for G2: ______ (resume data works and the late resume is refused: keep the resume step; no resume data or a
 resume that does not continue: drop it). Run on 2026-10-29: passed, and the step is built (the R4 design's Probes,
 Results).
 
