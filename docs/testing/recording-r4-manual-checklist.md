@@ -21,36 +21,21 @@ what the bucket did. Fill each blank, then copy the results into the R4 design's
 (`docs/superpowers/specs/2026-10-27-tidyshot-screen-recording-r4-design.md`) with the date and the Mac, and mark
 the item done in its R4 built notes.
 
-## Held gates (read this first)
+## Gates (read this first)
 
-Neither gate has passed, because neither probe has run. Two steps are unbuilt and the branch is not offered
-for merge while they are.
+Both probes ran on 2026-10-29 (the R4 design's Probes, Results), and no step is held.
 
-- **G1, multipart against the real bucket (M1).** Everything multipart is built and tested against the local
-  stub. M1 settles whether the real bucket does what the stub does. Held until M1 has run:
-  - the IAM sentences of the README's `Large uploads` paragraph (the actions an upload-only key needs for
-    multipart, with M1's results; and one sentence that the drag-out download is a signed GET and needs
-    `s3:GetObject`, as Copy Image does). The paragraph now says only that the key's multipart permissions are
-    pending this check;
-  - the merge.
-
-  What M1 can send back:
-  - ListParts answers 403 (`s3:ListMultipartUploadParts` missing): the code already restarts a job whose part
-    list is lost and cannot be listed. The README then says that, and why.
-  - Abort answers 403 (`s3:AbortMultipartUpload` missing): add the action to Tim's key before the merge. Delete is
-    not changed to swallow the 403.
-  - A Complete whose 200 carries `<Error>`, `Cache-Control` or the ACL not reaching the object, or a `footprint`
-    peak over 120 MB at 16 MiB parts or over 250 MB at 64 MiB parts, goes back to Tim and holds the merge.
-- **G2, resume data for a failed drag-out download (D1).** Held: Task 16's "Resume a failed download" step. Today
-  every failed download starts again with a fresh signed GET, which is also what the design does if D1 shows no
-  resume data or a resume that does not continue with a 206. Built: the download, its progress, its failure, the
-  disk check, the cancel paths, and the storage and drop for resume data. Not built: keeping a failed download's
-  `downloadTaskResumeData` with the time it was signed, passing it back within 14 minutes, and a log line for the
-  fraction at which a resumed download starts. With the step unbuilt, the "drag soon after resumes" check in the
-  Drag-out section below fails by design: the drag starts again from 0. If D1 passes, Tim says go and the step is
-  built; if D1 fails, the step is dropped.
-- **Tim may ship without a held step.** If he does, the R4 built notes record which, and this checklist's lines for
-  it are struck.
+- **G1, multipart against the real bucket (M1).** Passed for the calls: Create, UploadPart, Complete, Abort and
+  ListParts all answered as expected with Tim's key, no call was refused, Complete's 200 carried no `<Error>`, and
+  the HEAD showed `Cache-Control: no-cache` (Tim's lane sends no ACL). The README's `Large uploads` paragraph now
+  lists the IAM actions and says the drag-out download needs `s3:GetObject`. M1's `footprint` was over the design's
+  limits: 171 MB peak at 16 MiB parts (limit 120 MB) and 495 MB at 64 MiB parts (limit 250 MB). That goes back to
+  Tim, and the merge waits on his decision; the upload path is unchanged.
+- **G2, resume data for a failed drag-out download (D1).** Passed: resume data came back, the resume after 2 s
+  continued at 0.5004 with a 206, and the late resume at 16 minutes was refused with 403 `RequestTimeTooSkewed`.
+  Task 16's "Resume a failed download" step is built: a failed download keeps its `downloadTaskResumeData` with the
+  time its request was signed, the next drag passes it back while less than 14 minutes have passed and starts again
+  with a new signature after that, and a resumed download logs `Drag-out download for <id> resumed at <fraction>`.
 - **The hand checks** in every section below have not run. The Release build has no Screen Recording grant, and a
   grant is Tim's to give.
 
@@ -67,7 +52,7 @@ run at a time.
 - `s3:ListMultipartUploadParts` (a resume whose part list was lost);
 - `s3:GetObject` (Copy Image, and the drag-out download's signed GET).
 
-M1 shows which of these are missing. The README's `Large uploads` paragraph is written once it has run.
+M1 (2026-10-29) found none of them missing. The README's `Large uploads` paragraph lists them.
 
 **The lifecycle rule.** Tim says the bucket already has the `AbortIncompleteMultipartUpload` rule; that is not
 verified. Check it with `aws s3api get-bucket-lifecycle-configuration --bucket snap.tky.io`. If the rule is
@@ -141,7 +126,8 @@ upload it prints `halfway, pid <pid>: run footprint <pid> now`; in a second Term
 - [ ] The probe left no object behind (the console, or `aws s3 ls s3://snap.tky.io/<prefix>/`) and no incomplete upload
   (`aws s3api list-multipart-uploads --bucket snap.tky.io`, if the key may list): ______.
 
-Result for G1: ______ (passed, or what goes back to Tim).
+Result for G1: ______ (passed, or what goes back to Tim). Run on 2026-10-29: every call passed; the footprint was
+over both limits and went back to Tim (the R4 design's Probes, Results).
 
 ## D1, a signed download with progress and resume (settles G2)
 
@@ -164,7 +150,8 @@ Date and Mac: ______
   inconclusive, not as a refusal: ______.
 
 Result for G2: ______ (resume data works and the late resume is refused: build the held step; no resume data or a
-resume that does not continue: drop it).
+resume that does not continue: drop it). Run on 2026-10-29: passed, and the step is built (the R4 design's Probes,
+Results).
 
 ## U1, the URL commands by hand
 
@@ -291,8 +278,9 @@ empty drag folder (`tmp/Drag`), and a copy of the same recording that is longer 
 - [ ] Delete during the download cancels it and removes the folder.
 - [ ] The row in Recent Captures reads `Downloading` meanwhile, and its normal detail afterwards.
 - [ ] Wi-Fi off during the download shows `Download failed` with the error as its tool tip and no Retry button; the
-  folder is empty and nothing posts. A drag soon after, with Wi-Fi back, downloads again. (With G2 held it starts
-  from 0; with the held step built, the log's fraction continues. Skip the second half while G2 is held.)
+  folder is empty and nothing posts. A drag soon after, with Wi-Fi back, resumes: the log shows `Drag-out download
+  for <id> resumed at <fraction>` near where it stopped, not 0. A drag 14 minutes or more after the first request
+  was signed starts again from 0, with no `resumed at` line.
 - [ ] A recording marked `Sound not muted` starts no download on a drag.
 - [ ] A disk-check refusal shows `Download failed` with `Your disk is almost full.` as its tool tip and logs `refused,
   not enough disk space`. (A small APFS volume as the container's is a hand set-up; read the log if none is at hand.)
@@ -343,7 +331,7 @@ in the design's built notes.
 - [ ] 25. The row's detail reads `Downloading` during it. ______
 - [ ] 26. No Cancel button; closing the card cancels. ______
 - [ ] 27. `Download failed` has no Retry button; the next drag retries. ______
-- [ ] 28. A failed download's resume data is used for 14 minutes after signing (G2, held). ______
+- [ ] 28. A failed download's resume data is used for 14 minutes after signing (G2). ______
 - [ ] 29. A download is refused unless the disk has the file's size plus 1 GB free. ______
 
 ## The eighteen gaps, to confirm or overrule
@@ -368,7 +356,7 @@ say how each stands. Write `confirm` or `overrule` and why.
 - [ ] 13. `S3Destination`'s `httpResponse`, `failure`, `excerpt` (and `errorBody`) are internal. Internal. ______
 - [ ] 14. `MultipartAbortResult` (`.aborted` for 204, `.notFound` for 404). Internal. ______
 - [ ] 15. `DragFileStore.landingURL()` makes `Drag/.downloads/<uuid>`. Internal. ______
-- [ ] 16. Resume data travels in the error with `signedAt` read before the first call (G2, held). ______
+- [ ] 16. Resume data travels in the error with `signedAt` read before the first call (G2). ______
 - [ ] 17. The drag-out download's form differs from the design's wording: the card's status lives on its model and is set
   directly, not pushed in `pushCardFlags`; two files the design's list does not name; the call is
   `download(key:to:expectedBytes:resumeData:progress:)`. Check: the card shows and clears `Downloading…`
