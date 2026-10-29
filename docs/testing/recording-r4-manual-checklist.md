@@ -54,12 +54,11 @@ run at a time.
 
 M1 (2026-10-29) found none of them missing. The README's `Large uploads` paragraph lists them.
 
-**The lifecycle rule.** Tim says the bucket already has the `AbortIncompleteMultipartUpload` rule; that is not
-verified. Check it with `aws s3api get-bucket-lifecycle-configuration --bucket snap.tky.io`. If the rule is
-absent, add it by the README's get, merge and put steps (`Large uploads`): `put-bucket-lifecycle-configuration`
+**The lifecycle rule.** The get on 2026-10-29 found no `AbortIncompleteMultipartUpload` rule: the bucket's only
+rule is `2 Year Retention` (`Expiration` 730 days). Add the abort rule by the README's get, merge and put steps (`Large uploads`): `put-bucket-lifecycle-configuration`
 replaces the whole configuration, so the merged list must hold the old rules too, and `lifecycle.json` holds only
 `Rules` (the put refuses the get's `TransitionDefaultMinimumObjectSize` in the file). It must be on before the
-multipart hand checks. Write down what the get printed: ______
+multipart hand checks. Write down what the get prints afterwards: ______
 
 **The recordings.** One of about 300 MB and one of about 6 GB, each recorded or already in history (a long
 fullscreen recording at a high frame rate reaches 6 GB). Upload-only is Tim's mode (Settings > General > After

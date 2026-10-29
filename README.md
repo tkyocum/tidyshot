@@ -489,11 +489,11 @@ file; a failed upload keeps it until a retry succeeds or the capture is deleted.
 **Large uploads.** A recording or GIF of 100 MiB or more uploads as an S3 multipart upload (16 MiB
 parts, three at a time, resumable; see Screen recording). An upload-only key needs three IAM actions
 for it: `s3:PutObject`, which covers starting the upload, sending its parts and completing it;
-`s3:AbortMultipartUpload`, for Delete and for an upload that starts over; and
-`s3:ListMultipartUploadParts`, for a resume whose list of sent parts was lost. A check against
-`snap.tky.io` on 2026-10-29 ran every one of these calls and none was refused. Dragging out an
-uploaded recording that has no local file downloads it with a signed GET, so it needs
-`s3:GetObject`, as Copy Image does; without it the card shows *Download failed*.
+`s3:AbortMultipartUpload`, for Delete, for an upload that starts over and for one that moves to
+another destination; and `s3:ListMultipartUploadParts`, for a resume whose list of sent parts was
+lost. A check against `snap.tky.io` on 2026-10-29 ran every one of these calls and none was refused. The key also needs
+`s3:GetObject` for dragging out an uploaded recording that has no local file, which downloads it
+with a signed GET, as Copy Image does; without it the card shows *Download failed*.
 
 An upload that is started and never finished is billed for its stored parts until it is aborted.
 TidyShot aborts the uploads it knows about; a crash at the wrong moment, a record pruned while the
