@@ -92,7 +92,9 @@ extension AppCoordinator {
     /// empty drag folder (design, Drag-out download): a signed GET into `Drag/.downloads`, with the
     /// card's `Downloading…` ring, then a rename into the record's drag folder, handed to the card.
     /// A failure shows `Download failed` with the error as its tool tip and posts nothing; the next
-    /// drag tries again. A close, Delete and the clean-up cancel it (`cancelDragDownload`).
+    /// drag tries again, from the failed download's resume data while its signature is still good
+    /// (`DragDownloadRule.usesResumeData`). A close, Delete and the clean-up cancel it
+    /// (`cancelDragDownload`).
     func downloadDragFile(recordID: UUID) {
         guard let record = history.record(id: recordID), overlay.isShowing(recordID: recordID),
               DragDownloadRule.starts(record: record, hasDragFile: dragFiles.stagedFile(id: recordID) != nil,
@@ -116,10 +118,23 @@ extension AppCoordinator {
         let name = DragFileName.name(for: record, suggestion: saveAsSuggestion(recordID: recordID))
         let generation = dragGenerations[recordID, default: 0]
         let expectedBytes = record.byteCount.map(Int64.init)
+        // Resume data replays the first request and its signature, so a resume keeps that request's
+        // time. Past the window, or with none, the download starts again with a new signature.
+        let now = Date()
+        let resume = dragDownloadResume.removeValue(forKey: recordID).flatMap {
+            DragDownloadRule.usesResumeData(signedAt: $0.signedAt, now: now) ? $0 : nil
+        }
+        let resumeData = resume?.data
+        let signedAt = resume?.signedAt ?? now
+        let resumeLog = resumeData == nil ? nil : ResumeLog()
         // A fraction can arrive after the end, so it is shown only while the download runs.
         let report: @Sendable (Double) -> Void = { [weak self] fraction in
             Task { @MainActor in
                 guard let self, self.downloadingVideoIDs.contains(recordID) else { return }
+                if let resumeLog, !resumeLog.logged {
+                    resumeLog.logged = true
+                    NSLog("Drag-out download for \(recordID) resumed at \(String(format: "%.4f", fraction))")
+                }
                 self.overlay.setDownloading(.running(fraction), for: recordID)
             }
         }
@@ -129,7 +144,7 @@ extension AppCoordinator {
             // Signing and the transfer run off the main actor; a cancel of this task cancels it.
             let transfer = Task.detached(priority: .userInitiated) {
                 try await source.destination.download(key: source.key, to: landing, expectedBytes: expectedBytes,
-                                                      progress: report)
+                                                      resumeData: resumeData, progress: report)
             }
             let result = await withTaskCancellationHandler {
                 await transfer.result
@@ -141,15 +156,16 @@ extension AppCoordinator {
                 return nil
             }
             return self.finishDragDownload(recordID, result: result, landing: landing, name: name,
-                                           generation: generation)
+                                           generation: generation, signedAt: signedAt)
         }
     }
 
     /// The end of `downloadDragFile`'s task, on the main actor. A file that lands after a close or a
     /// removal of the folder is dropped: a close cancels without bumping `dragGenerations`, and the
-    /// file can be at `landing` before the cancel arrives.
+    /// file can be at `landing` before the cancel arrives. A failed transfer's resume data is kept
+    /// with `signedAt`, the time of the request it replays.
     private func finishDragDownload(_ recordID: UUID, result: Result<Void, any Error>, landing: URL, name: String,
-                                    generation: Int) -> URL? {
+                                    generation: Int, signedAt: Date) -> URL? {
         downloadingDragIDs[recordID] = nil
         downloadingVideoIDs.remove(recordID)
         let failure: any Error
@@ -177,6 +193,9 @@ extension AppCoordinator {
                 overlay.setDownloading(nil, for: recordID)
                 NSLog("Drag-out download for \(recordID) cancelled")
                 return nil
+            }
+            if let data = (error as? URLError)?.downloadTaskResumeData {
+                dragDownloadResume[recordID] = (data: data, signedAt: signedAt)
             }
             failure = error
         }
@@ -351,6 +370,11 @@ extension AppCoordinator {
         guard !overlay.isShowing(recordID: id) else { return }
         dragFiles.remove(id: id)
     }
+}
+
+/// Whether a resumed drag-out download has logged the fraction it starts at.
+private final class ResumeLog {
+    var logged = false
 }
 
 /// What a drag clean-up does when its delay is over (`AppCoordinator.dragCleanupStep`).

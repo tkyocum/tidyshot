@@ -231,7 +231,8 @@ final class AppCoordinator {
     /// download (design, Drag-out download). One per record: a second drag, a press and Save As…
     /// during it wait for it. Its result is the drag file, or nil.
     @ObservationIgnored var downloadingDragIDs: [UUID: Task<URL?, Never>] = [:]
-    /// A failed drag-out download's resume data, with the time its request was signed. Dropped on
+    /// A failed drag-out download's resume data, with the time its request was signed. The next
+    /// download takes it, and uses it while `DragDownloadRule.usesResumeData` holds. Dropped on
     /// Delete and when the card closes.
     @ObservationIgnored var dragDownloadResume: [UUID: (data: Data, signedAt: Date)] = [:]
     /// Recordings downloading for a drag-out, for the row's `Downloading`.
