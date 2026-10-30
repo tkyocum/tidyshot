@@ -64,4 +64,24 @@ struct PendingFileStoreTests {
         #expect(throws: (any Error).self) { try store.remove(url) }
         #expect(FileManager.default.fileExists(atPath: url.path(percentEncoded: false)))
     }
+
+    /// The launch step's listing (harness design 4.2): a missing folder and an empty one list nothing.
+    @Test func listOfAMissingOrEmptyFolderIsEmpty() throws {
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = PendingFileStore(directory: dir.appending(path: "pending"))
+        #expect(store.list().isEmpty)
+
+        try FileManager.default.createDirectory(at: store.directory, withIntermediateDirectories: true)
+        #expect(store.list().isEmpty)
+    }
+
+    /// Hidden files are skipped; every other file is listed.
+    @Test func listSkipsHiddenFiles() throws {
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = PendingFileStore(directory: dir.appending(path: "pending"))
+        let url = try store.write(Data([1]), id: UUID(), ext: "png")
+        try Data([2]).write(to: store.directory.appending(path: ".DS_Store"))
+
+        #expect(store.list().map(\.lastPathComponent) == [url.lastPathComponent])
+    }
 }

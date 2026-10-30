@@ -380,12 +380,14 @@ Delete removes the file and the uploaded object, as for a screenshot.
 
 **Sleep, quitting and crashes.** The Mac stays awake, display included, while a recording runs. A
 system sleep, a lid close and a fast user switch stop the recording and save it; a screen lock (⌃⌘Q)
-does not stop it. Quitting, restarting or logging out stops and keeps the recording without a prompt:
-it goes to the save folder, or inside TidyShot when there is none, and an upload that was under way is
-marked interrupted for a Retry. If TidyShot crashes or is killed, the partly written file plays, and
-the next launch keeps it with *Recovered a recording*. TidyShot refuses to start a recording with less
-than 2 GB free, and stops and saves one that has under 1 GB left. Stop waits up to 15 seconds for
-macOS to finish writing the file.
+does not stop it. Quitting, restarting or logging out stops and keeps the recording without a
+prompt: it goes to the save folder, or inside TidyShot when there is none, and an upload that was
+under way is marked interrupted for a Retry. If TidyShot crashes or is killed, the partly written
+file plays, and the next launch keeps it with *Recovered a recording*. A screenshot or recording
+TidyShot keeps in its own folder that a crash left without its row in Recent Captures comes back the
+same way, with *Recovered a capture* or *Recovered a recording*. TidyShot refuses to start a
+recording with less than 2 GB free, and stops and saves one that has under 1 GB left. Stop waits up
+to 15 seconds for macOS to finish writing the file.
 
 TidyShot logs one `Recording:` line for each stream and output callback, with the time recorded so
 far: `/usr/bin/log show --last 10m --style compact --predicate 'process == "TidyShot"' | grep "Recording:"`

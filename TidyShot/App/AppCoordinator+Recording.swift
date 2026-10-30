@@ -50,6 +50,14 @@ extension AppCoordinator {
         }
     }
 
+    /// What `record()` does once the hand-off returns (harness design 3.4): it starts only with a start,
+    /// no quit and no cancelled count-in. Otherwise nothing records, and the log says why only when
+    /// the cancel stopped a start the hand-off allowed; a quit, or a hand-off that gave up, says nothing here.
+    nonisolated static func recordingProceeds(started: Bool, isQuitting: Bool, cancelled: Bool) -> RecordingProceeds {
+        guard started, !isQuitting else { return .stop(logsCancel: false) }
+        return cancelled ? .stop(logsCancel: true) : .start
+    }
+
     /// What a record function does about the microphone or the camera prompt, before the capture
     /// lock (R2 design, At the start; R3 design, Permission): with no access to ask for it goes on;
     /// with a prompt to show while another capture holds the lock it ends there, with no prompt, as
@@ -352,7 +360,7 @@ extension AppCoordinator {
             notifier.notifyError(notice.body, title: notice.title)
             return nil
         }
-        let freeBytes = RecordingLimits.freeBytes(at: Recording.directory)
+        let freeBytes = environment.freeBytes(Recording.directory)
         if freeBytes == nil {
             RecordingLog.note("Recording: the free space of tmp/Recording could not be read, recording anyway")
         }
@@ -396,8 +404,10 @@ extension AppCoordinator {
         recordingCountIn = false
         // Read together with no suspension before `recorder.run`, so neither a quit nor a cancel
         // of the count-in can slip in between.
-        guard let start, !isQuitting, !recordingStartCancelled else {
-            if start != nil, !isQuitting {
+        let proceeds = Self.recordingProceeds(started: start != nil, isQuitting: isQuitting,
+                                              cancelled: recordingStartCancelled)
+        guard let start, proceeds == .start else {
+            if proceeds == .stop(logsCancel: true) {
                 RecordingLog.note("Recording: not started, the count-in was cancelled")
             }
             endNoticeHold()
@@ -506,7 +516,7 @@ extension AppCoordinator {
             guard await selfTimer.run(seconds: Self.recordingCountInSeconds, stage: stage, capture: {}) == .finished
             else { return nil }
         } else {
-            try? await Task.sleep(for: SelfTimerController.settleDelay)
+            try? await environment.clock.sleep(for: SelfTimerController.settleDelay)
         }
 
         guard let content = await loadContent(failureTitle: RecordingEnd.failedTitle) else { return nil }
@@ -604,78 +614,6 @@ extension AppCoordinator {
         return Geometry.appKitRect(fromCG: cgFrame, primaryHeight: NSScreen.screens.first?.frame.height ?? 0)
     }
 
-    /// The launch check (design, Relaunch after a crash), after `history.load()`. Each playable file
-    /// in `tmp/Recording` moves to `pending/<id>.mp4` and gets a record kept until it is deleted
-    /// (`fileIsTemporary`, `.none`), timestamped with the file's creation date, sized from the moved
-    /// file's attributes, with its poster as the thumbnail; `Recovered a recording` posts and no
-    /// card shows. The id is the name's UUID unless a record has it. A file whose move fails stays
-    /// for the next launch. An MP4 whose GIF was saved already (`isSavedAsGIF`) is removed instead.
-    /// Before its move, a file with a mute log goes through the mute ladder with the same live steps
-    /// as the end of a recording (`RecordingRecovery.prepare`): its record is marked when the
-    /// muting failed, the body says how it went, and the log goes once the record exists. After
-    /// the loop, of what `tmp/Mute` held before it, only what belongs to a file still in
-    /// `tmp/Recording` is kept; what was written since is not touched (Decided 2026-10-24, 6).
-    func recoverRecordings() async {
-        let ext = MediaKind.video.fileExtension
-        // `tmp/Mute` is listed before the scan and the loop, which can run long after launch: the
-        // sweep never removes the log of a recording made since, even one muted before its first frame.
-        let (muteFiles, foundFiles) = await RecordingRecovery.begin(recordingDirectory: Recording.directory,
-                                                                    muteDirectory: MuteLog.directory)
-        for found in foundFiles {
-            let (source, pending) = (found.url, pendingFiles)
-            let prepared = await RecordingRecovery.prepare(found, records: history.records,
-                                                           muteDirectory: MuteLog.directory) { file, duration, intervals, lag in
-                // `prepare` runs the ladder only for a file named by its UUID, which has a log.
-                await RecordingMute.resolve(file: file, output: RecordingMute.rewriteURL(for: found.id ?? UUID()),
-                                            duration: duration, intervals: intervals, lag: lag, steps: .live)
-            }
-            guard case .recover(let unmutedIntervals, let bodySuffix, let removesLog) = prepared else {
-                let removed = await Task.detached(priority: .utility) { try FileManager.default.removeItem(at: source) }.result
-                if case .failure(let error) = removed {
-                    RecordingLog.note("Recording: \(source.lastPathComponent) was saved as a GIF and could not be removed: \(error.localizedDescription)")
-                } else {
-                    RecordingLog.note("Recording: \(source.lastPathComponent) was saved as a GIF, removed")
-                }
-                continue
-            }
-            // Read before the move, so only the rename comes between the move and the record.
-            let poster = await PosterFrame.image(of: source)
-            let id = found.id.flatMap { history.record(id: $0) == nil ? $0 : nil } ?? UUID()
-            // The size is the moved file's: after a mute step, the rewritten one's.
-            let moved = await Task.detached(priority: .utility) { () throws -> (url: URL, byteCount: Int?) in
-                let url = try pending.moveIn(source, id: id, ext: ext)
-                return (url, FileSizes.byteCount(of: url))
-            }.result
-            guard case .success(let (fileURL, byteCount)) = moved else {
-                if case .failure(let error) = moved {
-                    RecordingLog.note("Recording: \(source.lastPathComponent) could not be recovered, kept for the next launch: \(error.localizedDescription)")
-                }
-                continue
-            }
-            let size = found.facts.naturalSize ?? .zero
-            let record = CaptureRecord(id: id, timestamp: found.created, fileURL: fileURL, fileIsTemporary: true,
-                                       pixelWidth: Int(size.width.rounded()), pixelHeight: Int(size.height.rounded()),
-                                       appName: nil, uploadState: .none,
-                                       mediaKind: .video, durationSeconds: found.facts.duration, byteCount: byteCount,
-                                       unmutedIntervals: unmutedIntervals)
-            history.add(record)
-            // By the file name's UUID, not the record's id, which can be a fresh one.
-            if removesLog, let logID = found.id {
-                Recording.removeFile(at: MuteLog.url(for: logID))
-            }
-            if let poster {
-                makeThumbnail(from: poster, for: id)
-            }
-            RecordingLog.note("Recording: \(source.lastPathComponent) recovered as \(fileURL.lastPathComponent)")
-            let body = "\(fileURL.lastPathComponent), \(RecordingClock.format(found.facts.duration)). Find it in Recent Captures."
-            notifier.notifyError(bodySuffix.map { "\(body) \($0)" } ?? body, title: "Recovered a recording")
-        }
-        let recordings = Recording.directory
-        await Task.detached(priority: .utility) {
-            RecordingRecovery.sweepMuteFolder(muteFiles, recordingDirectory: recordings)
-        }.value
-    }
-
     /// After the capture lock: a kept file is handed to `saveRecording`, with `Recording stopped`
     /// when something other than the user's Stop ended it, through a GIF conversion for a GIF
     /// recording and through the mute ladder for a muted one; otherwise the recorder's notice, if
@@ -768,12 +706,13 @@ extension AppCoordinator {
                          stopNotice: RecordingNotice?, cameraNote: RecordingNotice?,
                          highlightsNote: RecordingNotice?) async {
         let reserved = recording.highlightedClicks ? ClickRingColour.reservedGIFColours : []
+        let freeBytes = environment.freeBytes
         let conversion = GIFConversion(
-            freeBytes: { RecordingLimits.freeBytes(at: Recording.directory) },
+            freeBytes: { freeBytes(Recording.directory) },
             make: { mp4, gifURL, settings, progress in
                 try await GIFMaker.make(from: mp4, to: gifURL, fps: settings.fps, maxSide: settings.effectiveMaxSide,
                                         reserving: reserved,
-                                        freeBytes: { RecordingLimits.freeBytes(at: Recording.directory) },
+                                        freeBytes: { freeBytes(Recording.directory) },
                                         progress: progress)
             },
             save: { recording, saveNotice, mode in
@@ -880,7 +819,7 @@ extension AppCoordinator {
         }
         // Decides whether the URL replaces the clipboard when the upload finishes.
         videoClipboardCounts[id] = plan.copiesFileReference
-            ? Pasteboard.copy(fileURL: fileURL) : NSPasteboard.general.changeCount
+            ? clipboard.copy(fileURL: fileURL) : clipboard.changeCount
 
         let record = CaptureRecord(id: id, timestamp: recording.startedAt, fileURL: fileURL,
                                    fileIsTemporary: plan.fileIsTemporary,
@@ -1007,4 +946,11 @@ nonisolated enum RecordingStopCommandAction: Equatable, Sendable {
     case cancelCountIn
     /// Idle or saving: no recording to stop.
     case nothing
+}
+
+/// What `record()` does after the hand-off (`AppCoordinator.recordingProceeds(started:isQuitting:cancelled:)`).
+nonisolated enum RecordingProceeds: Equatable, Sendable {
+    case start
+    /// Nothing records; `logsCancel` when a cancelled count-in stopped a start the hand-off allowed.
+    case stop(logsCancel: Bool)
 }

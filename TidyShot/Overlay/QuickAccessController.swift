@@ -375,3 +375,25 @@ final class QuickAccessController {
         }
     }
 }
+
+/// What the coordinator asks of the card stack (harness design 2.2): `QuickAccessController` in the
+/// app, a fake in the suite. `QuickAccessController.Actions` stays where it is.
+protocol QuickAccessCards: AnyObject {
+    var windowNumbers: Set<CGWindowID> { get }
+    var shownIDs: [UUID] { get }
+    var screen: NSScreen? { get }
+    var onDidClose: ((UUID, QuickAccessCloseReason) -> Void)? { get set }
+    func isShowing(recordID: UUID) -> Bool
+    func show(record: CaptureRecord, thumbnail: NSImage?, screen: NSScreen, autoCloseSeconds: Double,
+              actions: QuickAccessController.Actions)
+    func update(record: CaptureRecord)
+    func setOptimizing(_ isOptimizing: Bool, for recordID: UUID)
+    func setDownloading(_ status: DragDownloadStatus?, for recordID: UUID)
+    func setLinkWasCopied(_ linkWasCopied: Bool, for recordID: UUID)
+    func setTrimState(_ trimState: RecordingTrim.MenuState, for recordID: UUID)
+    func setThumbnail(_ thumbnail: NSImage?, for recordID: UUID)
+    func setDragFile(_ url: URL?, for recordID: UUID)
+    func close(recordID: UUID, reason: QuickAccessCloseReason)
+}
+
+extension QuickAccessController: QuickAccessCards {}

@@ -10,6 +10,14 @@ extension AppCoordinator {
         let keyTemplate: String
     }
 
+    /// What `makeDestination()` returns (harness design 2.2): the destination, where it writes and its
+    /// key template, from one configuration. A lane is made from it.
+    struct UploadTarget {
+        let destination: any Destination
+        let location: ObjectLocation
+        let keyTemplate: String
+    }
+
     var isUploading: Bool { !uploadingIDs.isEmpty }
 
     /// Posts "Upload not configured" the first time per launch only. With the default
@@ -28,9 +36,12 @@ extension AppCoordinator {
     /// The configured destination, or nil when the Upload tab is incomplete, no credentials are
     /// stored, or the keychain could not be read. "No item" is the normal not-configured case and
     /// stays silent here; any other keychain error is logged and reported once per launch.
-    func makeDestination() -> S3Destination? {
+    func makeDestination() -> UploadTarget? {
         guard let config = settings.s3Config, config.isComplete, let credentials = loadCredentials() else { return nil }
-        return S3Destination(config: config, credentials: credentials)
+        // The live destination normalizes its configuration; the lane's location and template were read from that.
+        let clean = config.normalized
+        return UploadTarget(destination: environment.makeDestination(config, credentials),
+                            location: ObjectLocation(config: clean), keyTemplate: clean.keyTemplate)
     }
 
     /// The stored credentials, or nil when there are none or the keychain could not be read
@@ -39,7 +50,7 @@ extension AppCoordinator {
         do {
             return try storedCredentials()
         } catch {
-            NSLog("Keychain read failed: \(error.localizedDescription)")
+            log("Keychain read failed: \(error.localizedDescription)")
             warnUploadNotConfiguredOnce(Self.keychainReadFailure(error))
             return nil
         }
@@ -70,12 +81,13 @@ extension AppCoordinator {
         guard let old = queue else { return }
         queue = nil
         drainingQueues.append(old)
+        let clock = environment.clock
         Task { [weak self] in
             // An upload still waiting for Clop has no job in the queue yet, so the queue can look
             // idle while one is coming. No new wait starts on a replaced lane.
             while true {
                 if (self?.clopWaitsPerLane[ObjectIdentifier(old.queue)] ?? 0) == 0, await old.queue.isIdle { break }
-                try? await Task.sleep(for: .milliseconds(500))
+                try? await clock.sleep(for: .milliseconds(500))
             }
             self?.drainingQueues.removeAll { $0.queue === old.queue }
         }
@@ -88,7 +100,7 @@ extension AppCoordinator {
     /// job goes through the live lane (`uploadingIDs`, progress, cancel, Delete and the menu bar
     /// icon), over the link's own key for a replace or under a new template key.
     func startPlannedUpload(recordID: UUID, plan: EditorUploadPlan.Plan, payload: UploadPayload,
-                            destination: S3Destination) {
+                            destination: UploadTarget) {
         history.update(id: recordID) { $0 = EditorUploadPlan.startingUpload($0, plan: plan) }
         refreshOverlay(for: recordID)
         if case .replace(let key) = plan {
@@ -98,14 +110,17 @@ extension AppCoordinator {
         }
     }
 
-    /// A queue for `destination` whose events are handled with the location they upload to.
-    private func makeLane(for destination: S3Destination) -> UploadLane {
-        let location = ObjectLocation(config: destination.config)
-        let keyTemplate = destination.config.keyTemplate
-        let queue = UploadQueue(destination: destination,
+    /// A queue for `target` whose events are handled with the location it uploads to.
+    private func makeLane(for target: UploadTarget) -> UploadLane {
+        let location = target.location
+        let keyTemplate = target.keyTemplate
+        let queue = UploadQueue(destination: target.destination,
                                 keyNamer: ObjectKeyNamer(template: keyTemplate),
-                                plan: .standard,
+                                sleep: environment.uploadSleep,
+                                plan: environment.multipartPlan,
                                 store: multipartFiles,
+                                now: environment.now,
+                                log: environment.log,
                                 events: { [weak self] event in self?.handle(event, at: location) })
         return UploadLane(queue: queue, location: location, keyTemplate: keyTemplate)
     }
@@ -120,14 +135,14 @@ extension AppCoordinator {
     /// one. With Clop on and running, Clop optimises a copy first: a PNG on its image queue, an MP4
     /// on its video queue; a GIF is never sent. A recording's file is then checked against the
     /// 625 GiB limit, and one over it is never enqueued (`refuseOversizedUpload`).
-    func startUpload(recordID: UUID, payload: UploadPayload, destination: S3Destination, fixedKey: String? = nil) {
+    func startUpload(recordID: UUID, payload: UploadPayload, destination: UploadTarget, fixedKey: String? = nil) {
         // Look the record up before marking it uploading, so a missing record never leaves an
         // id in `uploadingIDs` (and the menu bar icon spinning) with no job to clear it.
         guard let record = history.record(id: recordID) else { return }
         // A backstop: every caller a user drives has refused with its own notice already, and Retry
         // Failed Uploads skips the record. Nothing changes and nothing posts.
         if let refusal = Self.uploadRefusal(for: record, isTrimming: trimmingIDs.contains(recordID)) {
-            NSLog("%@", "Upload: refused for \(record.fileURL?.lastPathComponent ?? recordID.uuidString): \(refusal)")
+            log("Upload: refused for \(record.fileURL?.lastPathComponent ?? recordID.uuidString): \(refusal)")
             return
         }
         let lane = queue ?? makeLane(for: destination)
@@ -168,7 +183,7 @@ extension AppCoordinator {
         // A GIF uploads as made, so it never asks whether Clop runs (design, GIF, Clop).
         if !kind.isSentToClop, settings.optimiseWithClop, !loggedGIFNotSentToClop {
             loggedGIFNotSentToClop = true
-            NSLog("%@", "Clop: GIFs are not sent to Clop")
+            log("Clop: GIFs are not sent to Clop")
         }
         // A file decides on Clop in its task, after the resume decision.
         let optimisesImage = !isFile && kind.isSentToClop && settings.optimiseWithClop && clopIsRunning()
@@ -218,7 +233,7 @@ extension AppCoordinator {
                                                             source: source)
                 step = MultipartPlan.startStep(decision: decision)
                 if case .startOver(let reason, _) = decision {
-                    NSLog("%@", "Upload: \(name) \(reason.logText), starting again")
+                    log("Upload: \(name) \(reason.logText), starting again")
                 }
                 if let state = step.resume {
                     guard endUploadWait(of: recordID, token: token, clopResult: nil) else { return }
@@ -264,7 +279,7 @@ extension AppCoordinator {
                         sent = .file(try multipartFiles.keepClopCopy(clopResult, id: recordID, ext: kind.fileExtension),
                                      scope: nil)
                     } catch {
-                        NSLog("%@", "Upload: Clop's copy could not be kept for resume: \(error.localizedDescription)")
+                        log("Upload: Clop's copy could not be kept for resume: \(error.localizedDescription)")
                         clopResults[recordID] = clopResult
                     }
                 } else {
@@ -409,7 +424,7 @@ extension AppCoordinator {
     /// True when a Clop build is running. Otherwise logs why the original uploads (spec 2.7).
     private func clopIsRunning() -> Bool {
         guard ClopApp.runningBundleID() != nil else {
-            NSLog("%@", "Clop: \(ClopSkipReason.notRunning.summary), uploading the original")
+            log("Clop: \(ClopSkipReason.notRunning.summary), uploading the original")
             return false
         }
         return true
@@ -438,7 +453,7 @@ extension AppCoordinator {
                 reason = skipped
             }
         }
-        NSLog("%@", "Clop: \(reason.summary), uploading the original")
+        log("Clop: \(reason.summary), uploading the original")
         return (payload, nil)
     }
 
@@ -494,7 +509,7 @@ extension AppCoordinator {
     /// is in progress is never re-enqueued, so a retry cannot re-upload what Delete is removing.
     /// An interrupted or failed replace re-PUTs its own key, so its URL stays. A record
     /// `uploadRefusal` refuses posts `Not uploaded` with the reason instead.
-    private func retry(recordID: UUID, destination: S3Destination) {
+    private func retry(recordID: UUID, destination: UploadTarget) {
         if let refusal = history.record(id: recordID).flatMap({
             Self.uploadRefusal(for: $0, isTrimming: trimmingIDs.contains(recordID))
         }) {
@@ -510,7 +525,7 @@ extension AppCoordinator {
             return
         }
         // The location the lane writes to: the same expression `startUpload` uses for its lane.
-        let location = queue?.location ?? ObjectLocation(config: destination.config)
+        let location = queue?.location ?? destination.location
         let policy = EditorUploadPlan.retryPolicy(record: record, currentLocation: location,
                                                   others: history.records.filter { $0.id != recordID })
         let started = EditorUploadPlan.startingRetry(record, policy: policy)
@@ -596,7 +611,7 @@ extension AppCoordinator {
         switch event {
         case .started(let id, let attempt, let fraction):
             if attempt > 1 {
-                NSLog("Upload retry \(attempt) for \(id)")
+                log("Upload retry \(attempt) for \(id)")
             }
             // Every attempt sets the bar: a fresh one starts again at 0 rather than leaving the
             // failed attempt's fraction, and a resume shows its parts done at once.
@@ -664,7 +679,7 @@ extension AppCoordinator {
             // user may have copied something since.
             let replacesClipboard = !before.isTimeBased
                 || RecordingSavePlan.replacesClipboard(savedChangeCount: videoClipboardCounts.removeValue(forKey: id),
-                                                       currentChangeCount: NSPasteboard.general.changeCount)
+                                                       currentChangeCount: clipboard.changeCount)
             // The first same-key replace of this launch posts the cache note in place of the usual
             // notification, also with Show notification off, whether or not the URL was copied.
             let postsCacheNote = EditorUploadPlan.shouldPostCacheNote(prior: before.priorUpload, uploadedKey: key,
@@ -681,7 +696,7 @@ extension AppCoordinator {
                 }
             } else {
                 linkNotCopiedIDs.remove(id)
-                Pasteboard.copy(url: url)
+                clipboard.copy(url: url)
                 if postsCacheNote {
                     notifier.notify(title: "Uploaded, URL copied", body: EditorUploadPlan.cacheNote)
                 } else if settings.showNotification {
@@ -697,7 +712,7 @@ extension AppCoordinator {
             }
             // An upload of a record that has a link: the old object is untouched, so the record
             // goes back to it, and keeps the edited or trimmed file and the stale note.
-            NSLog("Upload failed, the earlier link is kept: \(message)")
+            log("Upload failed, the earlier link is kept: \(message)")
             uploadingIDs.remove(id)
             history.update(id: id) { $0 = EditorUploadPlan.applyingFailure(to: $0, message: message) }
             refreshOverlay(for: id)
@@ -723,20 +738,20 @@ extension AppCoordinator {
     private func deleteOrphanedObject(key: String, at location: ObjectLocation) {
         // A collision-prone template can give a live record the same key; never delete that.
         guard CaptureDeletion.sharedKeys([key], at: location, with: history.records).isEmpty else {
-            NSLog("Uploaded \(key) for a record that no longer exists, but another capture shares it; kept")
+            log("Uploaded \(key) for a record that no longer exists, but another capture shares it; kept")
             return
         }
         guard let credentials = loadCredentials() else {
-            NSLog("Uploaded \(key) for a record that no longer exists; no credentials to delete it")
+            log("Uploaded \(key) for a record that no longer exists; no credentials to delete it")
             return
         }
-        let destination = S3Destination(config: location.config, credentials: credentials)
+        let destination = environment.makeDestination(location.config, credentials)
         Task {
             do {
                 try await destination.delete(key: key)
-                NSLog("Deleted \(key), uploaded for a record that no longer exists")
+                log("Deleted \(key), uploaded for a record that no longer exists")
             } catch {
-                NSLog("Could not delete \(key), uploaded for a record that no longer exists: \(error.localizedDescription)")
+                log("Could not delete \(key), uploaded for a record that no longer exists: \(error.localizedDescription)")
             }
         }
     }

@@ -3,282 +3,6 @@ import Synchronization
 import Testing
 @testable import TidyShot
 
-/// Scripted destination: records calls, pretends some keys exist, fails a set number of times.
-nonisolated final class FakeDestination: Destination, Sendable {
-    struct State: Sendable {
-        var existingKeys: Set<String> = []
-        /// Errors for HEAD, one per call, in order; then HEAD answers.
-        var headFailures: [UploadError] = []
-        var failuresRemaining = 0
-        var failure: UploadError = .httpStatus(503, body: "")
-        var headKeys: [String] = []
-        var uploads: [(key: String, data: Data, contentType: String, cacheControl: String?)] = []
-        /// Every call to `upload`, including ones that throw.
-        var uploadAttempts = 0
-        /// The key of every call to `upload`, including ones that throw, in order.
-        var attemptKeys: [String] = []
-        /// This many uploads (after any scripted failures) wait a minute instead of finishing,
-        /// so a test can cancel them; the wait throws `CancellationError` when the task is cancelled.
-        var blockingUploadsRemaining = 0
-        /// This many uploads (after any scripted failures and blocking uploads) wait for
-        /// `releaseUploads(throwing:)` even when their task is cancelled, like a PUT that the server
-        /// finishes just as it is cancelled.
-        var holdingUploadsRemaining = 0
-        /// Held uploads waiting for `releaseUploads(throwing:)`.
-        var heldUploads: [CheckedContinuation<Void, any Error>] = []
-        /// Set by `releaseUploads(throwing:)`; a later held upload finishes at once with this result.
-        var heldUploadsRelease: Result<Void, any Error>?
-        /// Times a held upload's task was cancelled while it waited.
-        var heldUploadCancellations = 0
-        /// Every successful `upload(fileAt:)`, with the file it read.
-        var fileUploads: [(key: String, url: URL, contentType: String, cacheControl: String?)] = []
-        /// The file of every call to `upload(fileAt:)`, including ones that throw, in order.
-        var attemptFiles: [URL] = []
-        /// This many file uploads wait in their hash until their task is cancelled, as
-        /// `S3Signer.sha256Hex(fileAt:)` stops at its next read.
-        var blockingHashesRemaining = 0
-        /// True once a file upload is waiting in its hash.
-        var isHashing = false
-        /// What every successful attempt reports to `progress`, in order and at once.
-        var progressFractions: [Double] = [0.5, 1]
-
-        // Multipart. Each `…Failures` script throws its errors one per call, in order, then the
-        // call succeeds.
-
-        /// Every multipart call in order, as `create`, `part <n>`, `complete`, `abort`, `list`
-        /// and `size`, made before the call acts.
-        var calls: [String] = []
-        /// Called with each entry of `calls` as it is made, outside the lock.
-        var onCall: (@Sendable (String) -> Void)?
-        var createFailures: [UploadError] = []
-        /// Every Create, including ones that throw. Create `n` returns `upload-<n>`.
-        var creates: [(key: String, contentType: String, cacheControl: String?)] = []
-        /// Each part's errors, one per attempt, keyed by part number.
-        var partFailures: [Int: [UploadError]] = [:]
-        /// How long each part takes before it answers, so parts overlap.
-        var partDelay: Duration = .zero
-        /// A part cancelled in its delay takes this long more to stop, outside any cancellation,
-        /// like a request tearing down.
-        var cancelLinger: TimeInterval = 0
-        /// Every part call, including ones that throw.
-        var parts: [(uploadID: String, number: Int, size: Int)] = []
-        /// The parts that answered with an ETag.
-        var sentParts: [Int] = []
-        /// For each part call in order: how many parts had answered when it began.
-        var answeredAtStart: [Int: [Int]] = [:]
-        var partsInFlight = 0
-        var maxPartsInFlight = 0
-        var completeFailures: [UploadError] = []
-        var completes: [(key: String, uploadID: String, parts: [MultipartPart])] = []
-        var abortFailures: [UploadError] = []
-        var abortResult: MultipartAbortResult = .aborted
-        var aborts: [(key: String, uploadID: String)] = []
-        var listPartsFailures: [UploadError] = []
-        var listedParts: [MultipartPart] = []
-        var listPartsCalls: [(key: String, uploadID: String)] = []
-        var objectSizeFailures: [UploadError] = []
-        var objectSizes: [String: Int64] = [:]
-        var objectSizeKeys: [String] = []
-    }
-
-    let state: Mutex<State>
-
-    init(_ state: State = State()) {
-        self.state = Mutex(state)
-    }
-
-    func exists(key: String) async throws -> Bool {
-        let (failure, exists) = state.withLock { state in
-            state.headKeys.append(key)
-            return (Self.nextFailure(&state.headFailures), state.existingKeys.contains(key))
-        }
-        if let failure { throw failure }
-        return exists
-    }
-
-    func upload(_ data: Data, key: String, contentType: String, cacheControl: String?,
-                progress: @escaping @Sendable (Double) -> Void) async throws {
-        try await attempt(key: key, progress: progress)
-        state.withLock { $0.uploads.append((key, data, contentType, cacheControl)) }
-    }
-
-    func upload(fileAt url: URL, key: String, contentType: String, cacheControl: String?,
-                progress: @escaping @Sendable (Double) -> Void) async throws {
-        state.withLock { $0.attemptFiles.append(url) }
-        let hashBlocks = state.withLock {
-            guard $0.blockingHashesRemaining > 0 else { return false }
-            $0.blockingHashesRemaining -= 1
-            $0.isHashing = true
-            return true
-        }
-        if hashBlocks {
-            try await Task.sleep(for: .seconds(60))
-        }
-        try await attempt(key: key, progress: progress)
-        state.withLock { $0.fileUploads.append((key, url, contentType, cacheControl)) }
-    }
-
-    func download(key: String, to destination: URL) async throws {}
-
-    /// One upload attempt of either kind: the scripted failures, blocks and holds, then progress.
-    private func attempt(key: String, progress: @escaping @Sendable (Double) -> Void) async throws {
-        let failure: UploadError? = state.withLock {
-            $0.uploadAttempts += 1
-            $0.attemptKeys.append(key)
-            guard $0.failuresRemaining > 0 else { return nil }
-            $0.failuresRemaining -= 1
-            return $0.failure
-        }
-        if let failure { throw failure }
-        let blocks = state.withLock {
-            guard $0.blockingUploadsRemaining > 0 else { return false }
-            $0.blockingUploadsRemaining -= 1
-            return true
-        }
-        if blocks {
-            try await Task.sleep(for: .seconds(60))
-        }
-        let holds = state.withLock {
-            guard $0.holdingUploadsRemaining > 0 else { return false }
-            $0.holdingUploadsRemaining -= 1
-            return true
-        }
-        if holds {
-            try await withTaskCancellationHandler {
-                try await withCheckedThrowingContinuation { continuation in
-                    let release: Result<Void, any Error>? = state.withLock {
-                        if let release = $0.heldUploadsRelease { return release }
-                        $0.heldUploads.append(continuation)
-                        return nil
-                    }
-                    if let release { continuation.resume(with: release) }
-                }
-            } onCancel: {
-                state.withLock { $0.heldUploadCancellations += 1 }
-            }
-        }
-        for fraction in state.withLock({ $0.progressFractions }) {
-            progress(fraction)
-        }
-    }
-
-    /// Finishes every held upload, now and later: successfully, or by throwing `error`.
-    func releaseUploads(throwing error: (any Error)? = nil) {
-        let release: Result<Void, any Error> = error.map { .failure($0) } ?? .success(())
-        let held = state.withLock {
-            $0.heldUploadsRelease = release
-            defer { $0.heldUploads = [] }
-            return $0.heldUploads
-        }
-        for continuation in held { continuation.resume(with: release) }
-    }
-
-    func delete(key: String) async throws {}
-
-    func publicURL(for key: String) throws -> URL {
-        URL(string: "https://snap.tky.io/\(key)")!
-    }
-
-    // Multipart
-
-    /// Records `call`, runs `body` under the lock, then tells `onCall`.
-    private func record<T>(_ call: String, _ body: (inout State) -> T) -> T {
-        let (result, onCall) = state.withLock { state in
-            state.calls.append(call)
-            return (body(&state), state.onCall)
-        }
-        onCall?(call)
-        return result
-    }
-
-    /// The next scripted error of `failures`, removed from the script.
-    private static func nextFailure(_ failures: inout [UploadError]) -> UploadError? {
-        failures.isEmpty ? nil : failures.removeFirst()
-    }
-
-    func createMultipartUpload(key: String, contentType: String, cacheControl: String?) async throws -> String {
-        let (failure, count) = record("create") { state in
-            state.creates.append((key, contentType, cacheControl))
-            return (Self.nextFailure(&state.createFailures), state.creates.count)
-        }
-        if let failure { throw failure }
-        return "upload-\(count)"
-    }
-
-    func uploadPart(key: String, uploadID: String, number: Int, data: Data,
-                    progress: @escaping @Sendable (Int64) -> Void) async throws -> String {
-        let delay = record("part \(number)") { state in
-            state.parts.append((uploadID, number, data.count))
-            state.answeredAtStart[number, default: []].append(state.sentParts.count)
-            state.partsInFlight += 1
-            state.maxPartsInFlight = max(state.maxPartsInFlight, state.partsInFlight)
-            return state.partDelay
-        }
-        defer { state.withLock { $0.partsInFlight -= 1 } }
-        // Half the bytes, the wait, then the rest, so a job's fraction counts bytes in flight.
-        let half = Int64(data.count / 2)
-        progress(half)
-        if delay > .zero {
-            do {
-                try await Task.sleep(for: delay)
-            } catch {
-                let linger = state.withLock { $0.cancelLinger }
-                if linger > 0 {
-                    await withCheckedContinuation { continuation in
-                        DispatchQueue.global().asyncAfter(deadline: .now() + linger) { continuation.resume() }
-                    }
-                }
-                throw error
-            }
-        }
-        let failure: UploadError? = state.withLock { state in
-            guard var script = state.partFailures[number], !script.isEmpty else { return nil }
-            let failure = script.removeFirst()
-            state.partFailures[number] = script
-            return failure
-        }
-        if let failure { throw failure }
-        progress(Int64(data.count) - half)
-        state.withLock { $0.sentParts.append(number) }
-        return "\"etag-\(number)\""
-    }
-
-    func completeMultipartUpload(key: String, uploadID: String, parts: [MultipartPart]) async throws {
-        let failure = record("complete") { state in
-            state.completes.append((key, uploadID, parts))
-            return Self.nextFailure(&state.completeFailures)
-        }
-        if let failure { throw failure }
-    }
-
-    func abortMultipartUpload(key: String, uploadID: String) async throws -> MultipartAbortResult {
-        let (failure, result) = record("abort") { state in
-            state.aborts.append((key, uploadID))
-            return (Self.nextFailure(&state.abortFailures), state.abortResult)
-        }
-        if let failure { throw failure }
-        return result
-    }
-
-    func listParts(key: String, uploadID: String) async throws -> [MultipartPart] {
-        let (failure, parts) = record("list") { state in
-            state.listPartsCalls.append((key, uploadID))
-            return (Self.nextFailure(&state.listPartsFailures), state.listedParts)
-        }
-        if let failure { throw failure }
-        return parts
-    }
-
-    func objectSize(key: String) async throws -> Int64? {
-        let (failure, size) = record("size") { state in
-            state.objectSizeKeys.append(key)
-            return (Self.nextFailure(&state.objectSizeFailures), state.objectSizes[key])
-        }
-        if let failure { throw failure }
-        return size
-    }
-}
-
 /// Counts security-scope starts and stops, per folder, in order.
 nonisolated final class FakeSecurityScope: Sendable {
     let calls = Mutex<[String]>([])
@@ -1409,7 +1133,7 @@ struct UploadQueueTests {
     }
 
     /// A sidecar that cannot be written after Create fails the job before any part goes, with the
-    /// write's error and no log line of its own.
+    /// write's error; the new upload id is aborted at once (harness design 5.4).
     @Test func aSidecarUnwritableAtCreateFailsTheJob() async throws {
         let movie = try makeLargeMovie(byteCount: mib)
         defer { try? FileManager.default.removeItem(at: movie.folder) }
@@ -1427,7 +1151,7 @@ struct UploadQueueTests {
         try await eventually { await queue.isIdle }
 
         #expect(failures(in: log).count == 1)
-        #expect(destination.state.withLock { $0.calls } == ["create"])
+        #expect(destination.state.withLock { $0.calls } == ["create", "abort"])
         #expect(!log.events.contains { if case .uploaded = $0 { return true } else { return false } })
         #expect(lines.lines.withLock { $0 }.allSatisfy { !$0.contains("not saved") })
     }
@@ -2080,5 +1804,194 @@ struct UploadQueueTests {
 
         #expect(starts(in: log).count == 3)
         #expect(destination.state.withLock { $0.aborts.count } == 1)
+    }
+
+    /// A stored upload already gone (an Abort's 404) is logged as such, not as aborted (harness design 5.2).
+    @Test func aSinglePutJobsAbortThatFindsNothingIsLoggedAsGone() async throws {
+        let movie = try makeMovie()
+        defer { try? FileManager.default.removeItem(at: movie.folder) }
+        let id = UUID()
+        let destination = FakeDestination(.init(abortResult: .notFound))
+        let log = EventLog()
+        let lines = LogLines()
+        let queue = makeMultipartQueue(destination: destination, log: log, store: MultipartStore(directory: movie.folder),
+                                       lines: lines)
+        var job = largeJob(id, file: movie.file, byteCount: 3)
+        job.abortFirst = MultipartRef(uploadID: "old-1", key: "s/OLD.mp4", location: lane)
+
+        await queue.enqueue(job)
+        try await eventually { hasEnded(log) }
+
+        #expect(log.events.contains(.uploaded(id: id, url: templateURL, key: templateKey)))
+        #expect(destination.state.withLock { $0.aborts.map(\.uploadID) } == ["old-1"])
+        #expect(logged(lines) == ["multipart upload already gone"])
+    }
+
+    /// The multipart path's equivalent: the 404 is logged as gone and the new upload goes on.
+    @Test func aMultipartJobsAbortThatFindsNothingIsLoggedAsGone() async throws {
+        let movie = try makeLargeMovie(byteCount: mib)
+        defer { try? FileManager.default.removeItem(at: movie.folder) }
+        let id = UUID()
+        let destination = FakeDestination(.init(abortResult: .notFound))
+        let log = EventLog()
+        let lines = LogLines()
+        let queue = makeMultipartQueue(destination: destination, log: log, store: movie.store, lines: lines)
+        var job = largeJob(id, file: movie.file, byteCount: mib)
+        job.abortFirst = MultipartRef(uploadID: "old-1", key: "s/OLD.mp4", location: lane)
+
+        await queue.enqueue(job)
+        try await eventually { hasEnded(log) }
+
+        #expect(log.events.contains(.uploaded(id: id, url: templateURL, key: templateKey)))
+        #expect(destination.state.withLock { $0.aborts.map(\.uploadID) } == ["old-1"])
+        #expect(logged(lines) == ["multipart upload already gone", created("upload-1"), "multipart completed"])
+    }
+
+    /// A cancel that lands while a single PUT's stored upload is being aborted ends the job with one
+    /// `.cancelled` and nothing else: no `.started`, no upload, and no log line, as a cancelled Abort
+    /// logs nothing (harness design 5.3).
+    @Test func aCancelDuringTheSinglePutAbortDeliversCancelled() async throws {
+        let movie = try makeMovie()
+        defer { try? FileManager.default.removeItem(at: movie.folder) }
+        let id = UUID()
+        let destination = FakeDestination(.init(blockingAbortsRemaining: 1))
+        let log = EventLog()
+        let lines = LogLines()
+        let queue = makeMultipartQueue(destination: destination, log: log, store: MultipartStore(directory: movie.folder),
+                                       lines: lines)
+        var job = largeJob(id, file: movie.file, byteCount: 3)
+        job.abortFirst = MultipartRef(uploadID: "old-1", key: "s/OLD.mp4", location: lane)
+
+        await queue.enqueue(job)
+        try await eventually { destination.state.withLock { $0.calls } == ["abort"] }
+
+        #expect(await queue.cancel(recordID: id) == .stopped(reservedKey: nil))
+        #expect(log.events == [.cancelled(id: id, reservedKey: nil)])
+        #expect(destination.state.withLock { $0.uploadAttempts } == 0)
+        #expect(destination.state.withLock { $0.creates.isEmpty })
+        #expect(logged(lines).isEmpty)
+        try await eventually { await queue.isIdle }
+    }
+
+    /// An Abort that answers after the cancel is logged, and the job still ends cancelled.
+    @Test func anAbortThatAnswersAfterTheSinglePutsCancelIsLoggedAndTheJobCancels() async throws {
+        let movie = try makeMovie()
+        defer { try? FileManager.default.removeItem(at: movie.folder) }
+        let id = UUID()
+        let destination = FakeDestination(.init(holdingAbortsRemaining: 1))
+        let log = EventLog()
+        let lines = LogLines()
+        let queue = makeMultipartQueue(destination: destination, log: log, store: MultipartStore(directory: movie.folder),
+                                       lines: lines)
+        var job = largeJob(id, file: movie.file, byteCount: 3)
+        job.abortFirst = MultipartRef(uploadID: "old-1", key: "s/OLD.mp4", location: lane)
+
+        await queue.enqueue(job)
+        try await eventually { destination.state.withLock { $0.calls } == ["abort"] }
+        let cancel = Task { await queue.cancel(recordID: id) }
+        try await eventually { destination.state.withLock { $0.heldAbortCancellations } == 1 }
+        destination.releaseAborts()
+
+        #expect(await cancel.value == .stopped(reservedKey: nil))
+        #expect(log.events == [.cancelled(id: id, reservedKey: nil)])
+        #expect(destination.state.withLock { $0.uploadAttempts } == 0)
+        #expect(logged(lines) == ["multipart aborted"])
+    }
+
+    /// The multipart path's equivalent: `.started` went before the abort, and `.cancelled` follows it.
+    @Test func aCancelDuringTheMultipartAbortDeliversCancelled() async throws {
+        let movie = try makeLargeMovie(byteCount: mib)
+        defer { try? FileManager.default.removeItem(at: movie.folder) }
+        let id = UUID()
+        let destination = FakeDestination(.init(blockingAbortsRemaining: 1))
+        let log = EventLog()
+        let lines = LogLines()
+        let queue = makeMultipartQueue(destination: destination, log: log, store: movie.store, lines: lines)
+        var job = largeJob(id, file: movie.file, byteCount: mib)
+        job.abortFirst = MultipartRef(uploadID: "old-1", key: "s/OLD.mp4", location: lane)
+
+        await queue.enqueue(job)
+        try await eventually { destination.state.withLock { $0.calls } == ["abort"] }
+
+        #expect(await queue.cancel(recordID: id) == .stopped(reservedKey: nil))
+        #expect(log.events == [.started(id: id, attempt: 1, fraction: 0), .cancelled(id: id, reservedKey: nil)])
+        #expect(destination.state.withLock { $0.creates.isEmpty })
+        #expect(logged(lines).isEmpty)
+        try await eventually { await queue.isIdle }
+    }
+
+    /// The multipart path's equivalent: an Abort that answers after the cancel is logged, and `.cancelled`
+    /// follows `.started`.
+    @Test func anAbortThatAnswersAfterTheMultipartCancelIsLoggedAndTheJobCancels() async throws {
+        let movie = try makeLargeMovie(byteCount: mib)
+        defer { try? FileManager.default.removeItem(at: movie.folder) }
+        let id = UUID()
+        let destination = FakeDestination(.init(holdingAbortsRemaining: 1))
+        let log = EventLog()
+        let lines = LogLines()
+        let queue = makeMultipartQueue(destination: destination, log: log, store: movie.store, lines: lines)
+        var job = largeJob(id, file: movie.file, byteCount: mib)
+        job.abortFirst = MultipartRef(uploadID: "old-1", key: "s/OLD.mp4", location: lane)
+
+        await queue.enqueue(job)
+        try await eventually { destination.state.withLock { $0.calls } == ["abort"] }
+        let cancel = Task { await queue.cancel(recordID: id) }
+        try await eventually { destination.state.withLock { $0.heldAbortCancellations } == 1 }
+        destination.releaseAborts()
+
+        #expect(await cancel.value == .stopped(reservedKey: nil))
+        #expect(log.events == [.started(id: id, attempt: 1, fraction: 0), .cancelled(id: id, reservedKey: nil)])
+        #expect(destination.state.withLock { $0.creates.isEmpty })
+        #expect(logged(lines) == ["multipart aborted"])
+    }
+
+    /// A part the loop adds after a cancel, because the part before it finished at that moment, reads
+    /// and sends nothing: `PartSender.send` checks for the cancel first (harness design 5.4). One part
+    /// at a time, part 1 held through the cancel and then answering.
+    @Test func aPartAddedAfterACancelSendsNothing() async throws {
+        let movie = try makeLargeMovie(byteCount: mib)
+        defer { try? FileManager.default.removeItem(at: movie.folder) }
+        let destination = FakeDestination(.init(holdingPart: 1))
+        let log = EventLog()
+        let queue = makeMultipartQueue(destination: destination, log: log, store: movie.store,
+                                       plan: MultipartPlan(threshold: 1_048_576, partSize: 262_144, inFlight: 1))
+        let id = UUID()
+
+        await queue.enqueue(largeJob(id, file: movie.file, byteCount: mib))
+        try await eventually { destination.state.withLock { $0.calls }.contains("part 1") }
+        let cancel = Task { await queue.cancel(recordID: id) }
+        try await eventually { destination.state.withLock { $0.heldPartCancellations } == 1 }
+        destination.releaseParts()
+
+        #expect(await cancel.value == .stopped(reservedKey: templateKey))
+        #expect(destination.state.withLock { $0.calls }.filter { $0.hasPrefix("part") } == ["part 1"])
+        #expect(log.events.last == .cancelled(id: id, reservedKey: templateKey))
+        #expect(destination.state.withLock { $0.completes.isEmpty })
+        try await eventually { await queue.isIdle }
+    }
+
+    /// A new upload whose first sidecar cannot be written is aborted at once, best effort, so its id is
+    /// not left to the lifecycle rule; the job fails with the write's error (harness design 5.4).
+    @Test func aNewUploadWhoseFirstSidecarCannotBeWrittenIsAborted() async throws {
+        let movie = try makeLargeMovie(byteCount: mib)
+        defer { try? FileManager.default.removeItem(at: movie.folder) }
+        let store = movie.store
+        let destination = FakeDestination(.init(onCall: { call in
+            if call == "create" { Self.blockSidecarWrites(in: store) }
+        }))
+        let log = EventLog()
+        let lines = LogLines()
+        let queue = makeMultipartQueue(destination: destination, log: log, store: store, lines: lines)
+        let id = UUID()
+
+        await queue.enqueue(largeJob(id, file: movie.file, byteCount: mib))
+        try await eventually { hasEnded(log) }
+
+        #expect(destination.state.withLock { $0.calls } == ["create", "abort"])
+        #expect(destination.state.withLock { $0.aborts.map(\.uploadID) } == ["upload-1"])
+        #expect(destination.state.withLock { $0.aborts.map(\.key) } == [templateKey])
+        #expect(failures(in: log).count == 1)
+        #expect(logged(lines) == ["multipart aborted"])
+        try await eventually { await queue.isIdle }
     }
 }

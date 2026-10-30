@@ -87,7 +87,7 @@ extension AppCoordinator {
             guard let content = await loadContent() else { return }
             if let preselect {
                 guard let display = content.displays.first(where: { $0.displayID == preselect.displayID }) else {
-                    NSLog("%@", "Capture Scrolling: display \(preselect.displayID) is gone")
+                    log("Capture Scrolling: display \(preselect.displayID) is gone")
                     return
                 }
                 // The app is not activated and the panel is not made key: Start and Done are default
@@ -168,7 +168,7 @@ extension AppCoordinator {
         await withCaptureLock(coversDesktop: true) {
             guard let content = await loadContent() else { return }
             guard let display = content.displays.first(where: { $0.displayID == area.displayID }) else {
-                NSLog("%@", "URL capture-area: display \(area.displayID) is gone")
+                log("URL capture-area: display \(area.displayID) is gone")
                 return
             }
             let cards = await cardWindows()
@@ -251,7 +251,7 @@ extension AppCoordinator {
         await withCaptureLock(coversDesktop: false) {
             guard let content = await loadContent() else { return }
             guard let display = content.displays.first(where: { $0.displayID == area.displayID }) else {
-                NSLog("%@", "URL capture-text: display \(area.displayID) is gone")
+                log("URL capture-text: display \(area.displayID) is gone")
                 return
             }
             let cards = await cardWindows()
@@ -272,7 +272,7 @@ extension AppCoordinator {
         do {
             scan = try await TextRecognizer().recognize(image)
         } catch {
-            NSLog("%@", "Text recognition failed: \(error.localizedDescription)")
+            log("Text recognition failed: \(error.localizedDescription)")
             notifier.notifyError(error.localizedDescription, title: "Text not recognized")
             return
         }
@@ -281,10 +281,9 @@ extension AppCoordinator {
             notifier.notifyError(outcome.body, title: outcome.title)
             return
         }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
+        clipboard.setString(text)
         if settings.playSound {
-            SoundPlayer.playShutter()
+            environment.playShutter()
         }
         if settings.showNotification {
             notifier.notify(title: outcome.title, body: outcome.body, openURL: outcome.openURL)
@@ -361,7 +360,7 @@ extension AppCoordinator {
         guard let frozen = selector.frozenCapture(for: display.displayID) else { return nil }
         guard let image = FreezeCrop.cropped(frozen.image, selection: rect, displayFrame: display.frame,
                                              scale: frozen.scale) else {
-            NSLog("Freeze crop failed for \(rect) on display \(display.displayID); capturing live")
+            log("Freeze crop failed for \(rect) on display \(display.displayID); capturing live")
             return nil
         }
         return CaptureResult(image: image, scale: frozen.scale, target: .area(rect: rect, display: display))
@@ -381,7 +380,7 @@ extension AppCoordinator {
             let options = CaptureOptions(settings: settings, duringSelection: duringSelection)
             return try await engine.capture(target, options: options, excludingWindows: excludingWindows)
         } catch {
-            NSLog("Capture failed: \(error.localizedDescription)")
+            log("Capture failed: \(error.localizedDescription)")
             notifier.notifyError(error.localizedDescription)
             return nil
         }

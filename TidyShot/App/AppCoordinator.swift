@@ -9,9 +9,12 @@ final class AppCoordinator {
     static let shared = AppCoordinator()
 
     // MARK: Collaborators
+    /// What the coordinator was built over (harness design 2.1): `.live()` in the app, a test's world
+    /// in the suite. The collaborators below come from it, and the extension files read its closures.
+    let environment: AppEnvironment
     let engine = CaptureEngine()
-    let saveLocation = SaveLocation()
-    let settings = AppSettings.shared
+    let saveLocation: SaveLocation
+    let settings: AppSettings
     let history: HistoryStore
     /// `thumbnails` and `pending` folders next to `history.json`.
     let thumbnails: ThumbnailStore
@@ -20,10 +23,12 @@ final class AppCoordinator {
     let multipartFiles: MultipartStore
     /// Drag-out copies, `<container tmp>/Drag/<id>/` (spec 2.9).
     let dragFiles: DragFileStore
-    let credentialStore: any CredentialStore = KeychainCredentialStore()
-    let notifier = Notifier()
+    let credentialStore: any CredentialStore
+    let notifier: any Notifying
     private let permissionWindow = PermissionWindowController()
-    let overlay = QuickAccessController(settings: AppSettings.shared)
+    let overlay: any QuickAccessCards
+    /// The general pasteboard, through `Clipboard`.
+    let clipboard: any Clipboard
     @ObservationIgnored lazy var selector = SelectionController(engine: engine, settings: settings, cardWindowNumbers: { [weak self] in self?.overlay.windowNumbers ?? [] })
     @ObservationIgnored lazy var scrollCapture = ScrollCaptureController(engine: engine, settings: settings)
     /// `tidyshot://` commands (spec 2.9): held until `start()` has run, then parsed, gated and
@@ -259,18 +264,31 @@ final class AppCoordinator {
 
     // MARK: Lifecycle
 
-    init() {
-        let url = (try? HistoryStore.defaultFileURL())
-            ?? FileManager.default.temporaryDirectory.appending(path: HistoryStore.fileName)
-        history = HistoryStore(fileURL: url, retentionDays: { AppSettings.shared.historyRetentionDays })
+    init(environment: AppEnvironment = .live()) {
+        self.environment = environment
+        saveLocation = environment.saveLocation
+        settings = environment.settings
+        credentialStore = environment.credentialStore
+        notifier = environment.notifier
+        overlay = environment.overlay
+        clipboard = environment.clipboard
+        let url = environment.historyFileURL
+        // The shared settings in the app, read on each prune as before.
+        let retentionSettings = environment.settings
+        history = HistoryStore(fileURL: url, retentionDays: { retentionSettings.historyRetentionDays })
         thumbnails = ThumbnailStore(nextTo: url)
         pendingFiles = PendingFileStore(nextTo: url)
         multipartFiles = MultipartStore(nextTo: url)
-        dragFiles = DragFileStore(temporaryDirectory: FileManager.default.temporaryDirectory)
+        dragFiles = DragFileStore(temporaryDirectory: environment.temporaryDirectory)
         history.didPrune = { [weak self] records in self?.removeFiles(ofPruned: records) }
         overlay.onDidClose = { [weak self] id, reason in self?.overlayDidClose(id, reason: reason) }
         // The shown cards' Trim items follow a save folder chosen at any panel.
         saveLocation.didStoreFolder = { [weak self] in self?.refreshCardTrimStates() }
+    }
+
+    /// A coordinator log line, through the environment (`NSLog("%@", …)` in the app).
+    func log(_ message: String) {
+        environment.log(message)
     }
 
     func start() {
@@ -282,17 +300,29 @@ final class AppCoordinator {
         try? FileManager.default.removeItem(at: RecordingTrim.directory)
         notifier.setUp()
         history.load()
+        // Listed now, before any task starts, so a file written from here on is never adopted (harness
+        // design 4.2): a capture, a recovery and a URL command all write after this.
+        let pendingListed = pendingFiles.list()
         // Part lists and kept Clop copies with no state, or older than the lifecycle rule. No network.
         let multipartStates = Dictionary(history.records.compactMap { record in
             record.multipart.map { (record.id, $0.startedAt) }
         }, uniquingKeysWith: { first, _ in first })
         let multipartFiles = multipartFiles
-        Task.detached(priority: .utility) { multipartFiles.sweep(states: multipartStates, now: Date()) }
+        let now = environment.now
+        Task.detached(priority: .utility) { multipartFiles.sweep(states: multipartStates, now: now()) }
         // Records from before 2.13 have no size; those with a local file get it from the file.
         Task { await backfillByteCounts() }
-        // A recording a crash, a kill or a failed rename left in tmp/Recording is checked, not swept.
-        // The scan lists the folder first, long before a recording started now could write there.
-        Task { await recoverRecordings() }
+        // A recording a crash, a kill or a failed rename left in tmp/Recording is checked, not swept,
+        // and a capture in pending/ that no record names is adopted, never deleted. One task, so the
+        // two never interleave. tmp/Mute is listed and tmp/Recording scanned first, long before a
+        // recording started now could write there, and adopting can take seconds; then pending/ is
+        // adopted before any scanned file moves into it or is checked against the records.
+        Task {
+            let leftRecordings = await RecordingRecovery.begin(recordingDirectory: Recording.directory,
+                                                               muteDirectory: MuteLog.directory)
+            await adoptPendingFiles(pendingListed)
+            await recoverRecordings(leftRecordings)
+        }
         registerShortcuts()
         // Hide Desktop Icons stays on across launches.
         if settings.desktopIconsHidden {
@@ -463,7 +493,7 @@ final class AppCoordinator {
         recorder.quit()
         saveLocation.cancelFolderChoice()
         while recordingPhase != .idle {
-            try? await Task.sleep(for: Self.quitPollInterval)
+            try? await environment.clock.sleep(for: Self.quitPollInterval)
         }
         await notifier.waitForReleasedNotices(upTo: Self.quitNoticeWait)
     }
@@ -482,7 +512,7 @@ final class AppCoordinator {
         do {
             return try await engine.shareableContent()
         } catch {
-            NSLog("Shareable content failed: \(error.localizedDescription)")
+            log("Shareable content failed: \(error.localizedDescription)")
             if ScreenCapturePermission.isGranted {
                 notifier.notifyError("Could not list screens and windows: \(error.localizedDescription)", title: failureTitle)
             } else {

@@ -20,7 +20,7 @@ struct ConnectionTesterTests {
             default: (204, Data())
             }
         }
-        let result = await ConnectionTester.run(destination: destination(session), session: session,
+        let result = await ConnectionTester.run(destination: destination(session), keyTemplate: config.normalized.keyTemplate, session: session,
                                                 randomString: { String(repeating: "Z", count: $0) })
 
         #expect(result.probeKey == "p/tidyshot-probe-ZZZZZZZZ.txt")
@@ -45,7 +45,7 @@ struct ConnectionTesterTests {
 
     @Test func notPublicWhenGetIsForbidden() async {
         let (session, stub) = StubSession.make { request in request.httpMethod == "GET" ? (403, Data()) : (200, Data()) }
-        let result = await ConnectionTester.run(destination: destination(session), session: session)
+        let result = await ConnectionTester.run(destination: destination(session), keyTemplate: config.normalized.keyTemplate, session: session)
         #expect(result.outcome == .notPublic(status: 403))
         #expect(result.summary.contains("HTTP 403"))
         #expect(stub.requests.map(\.httpMethod) == ["PUT", "GET", "DELETE"])
@@ -55,7 +55,7 @@ struct ConnectionTesterTests {
         let (session, stub) = StubSession.make { request in
             request.httpMethod == "GET" ? (StubURLProtocol.transportFailureStatus, Data()) : (200, Data())
         }
-        let result = await ConnectionTester.run(destination: destination(session), session: session)
+        let result = await ConnectionTester.run(destination: destination(session), keyTemplate: config.normalized.keyTemplate, session: session)
         let message = URLError(.cannotFindHost).localizedDescription
         guard case .publicCheckFailed(let reported) = result.outcome else {
             Issue.record("Expected publicCheckFailed, got \(result.outcome)")
@@ -67,7 +67,7 @@ struct ConnectionTesterTests {
 
     @Test func unexpectedStatusOnPublicGetIsReportedDistinctly() async {
         let (session, _) = StubSession.make { request in request.httpMethod == "GET" ? (503, Data()) : (200, Data()) }
-        let result = await ConnectionTester.run(destination: destination(session), session: session)
+        let result = await ConnectionTester.run(destination: destination(session), keyTemplate: config.normalized.keyTemplate, session: session)
         #expect(result.outcome == .publicCheckFailed("HTTP 503"))
     }
 
@@ -75,7 +75,7 @@ struct ConnectionTesterTests {
         let (session, _) = StubSession.make { request in
             request.httpMethod == "GET" ? (200, Data("<html>parked domain</html>".utf8)) : (200, Data())
         }
-        let result = await ConnectionTester.run(destination: destination(session), session: session)
+        let result = await ConnectionTester.run(destination: destination(session), keyTemplate: config.normalized.keyTemplate, session: session)
         guard case .publicCheckFailed = result.outcome else {
             Issue.record("Expected publicCheckFailed, got \(result.outcome)")
             return
@@ -85,7 +85,7 @@ struct ConnectionTesterTests {
 
     @Test func uploadFailedWhenPutIsRejected() async {
         let (session, stub) = StubSession.make { _ in (403, Data("AccessDenied".utf8)) }
-        let result = await ConnectionTester.run(destination: destination(session), session: session)
+        let result = await ConnectionTester.run(destination: destination(session), keyTemplate: config.normalized.keyTemplate, session: session)
         #expect(result.outcome == .uploadFailed("Server returned HTTP 403: AccessDenied"))
         #expect(stub.requests.count == 1)
     }
@@ -98,7 +98,7 @@ struct ConnectionTesterTests {
             default: (403, Data("AccessDenied".utf8))
             }
         }
-        let result = await ConnectionTester.run(destination: destination(session), session: session,
+        let result = await ConnectionTester.run(destination: destination(session), keyTemplate: config.normalized.keyTemplate, session: session,
                                                 randomString: { String(repeating: "Z", count: $0) })
         #expect(result.outcome == .readable)
         #expect(result.warning == "Probe object p/tidyshot-probe-ZZZZZZZZ.txt could not be deleted; remove it by hand.")

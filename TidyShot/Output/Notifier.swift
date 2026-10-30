@@ -157,3 +157,41 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 }
+
+/// What the coordinator asks of its notifier (harness design 2.2): `Notifier` in the app, a fake in
+/// the suite. The call forms with fewer arguments are in the extension below, so no call site changes.
+protocol Notifying: AnyObject {
+    func setUp()
+    func notifySaved(fileURL: URL, title: String)
+    func notifyUploaded(url: URL, copied: Bool)
+    func notifyError(_ message: String, title: String, subtitle: String?, revealing fileURL: URL?)
+    func notify(title: String, body: String, subtitle: String?, openURL: URL?)
+    func holdNotices()
+    @discardableResult func releaseHeldNotices() -> Int
+    func waitForReleasedNotices(upTo limit: Duration) async
+}
+
+extension Notifying {
+    /// `Uploaded, URL copied`.
+    func notifyUploaded(url: URL) {
+        notifyUploaded(url: url, copied: true)
+    }
+
+    func notifyError(_ message: String, title: String = "Capture failed", subtitle: String? = nil) {
+        notifyError(message, title: title, subtitle: subtitle, revealing: nil)
+    }
+
+    func notifyError(_ message: String, title: String, revealing fileURL: URL?) {
+        notifyError(message, title: title, subtitle: nil, revealing: fileURL)
+    }
+
+    func notify(title: String, body: String, subtitle: String? = nil) {
+        notify(title: title, body: body, subtitle: subtitle, openURL: nil)
+    }
+
+    func notify(title: String, body: String, openURL: URL?) {
+        notify(title: title, body: body, subtitle: nil, openURL: openURL)
+    }
+}
+
+extension Notifier: Notifying {}

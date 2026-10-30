@@ -173,14 +173,14 @@ struct UploadSettingsView: View {
     /// Saves the form, then runs the connection test against what was saved.
     private func test() async {
         guard save() else { return }
-        guard let destination = coordinator.makeDestination() else {
+        guard let target = coordinator.makeDestination() else {
             show("Saved, but the credentials could not be read back from the keychain. Check the keychain prompt or re-enter them.",
                  isError: true)
             return
         }
         isTesting = true
         defer { isTesting = false }
-        let result = await ConnectionTester.run(destination: destination)
+        let result = await ConnectionTester.run(destination: target.destination, keyTemplate: target.keyTemplate)
         // A leaked probe object is reported on its own line under the outcome.
         let message = [result.summary, result.warning].compactMap { $0 }.joined(separator: "\n")
         show(message, isError: result.outcome != .readable || result.warning != nil)

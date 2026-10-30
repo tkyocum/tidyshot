@@ -111,9 +111,9 @@ extension AppCoordinator {
             objectClipboard: EditorObjectClipboard(
                 // An object copy is not an image: clipboardOwner is left alone. The write moves the
                 // change count, so the clipboard rule will not replace the object after a Save.
-                copy: { data in Pasteboard.copy(annotationClip: data) },
-                paste: { Pasteboard.annotationClipData() },
-                canPaste: { Pasteboard.hasAnnotationClip }),
+                copy: { [clipboard] data in clipboard.copy(annotationClip: data) },
+                paste: { [clipboard] in clipboard.annotationClipData() },
+                canPaste: { [clipboard] in clipboard.hasAnnotationClip }),
             upload: { [weak self] image, asNew in
                 await self?.editorUpload(recordID: recordID, image: image, asNew: asNew) ?? .refused
             },
@@ -209,7 +209,7 @@ extension AppCoordinator {
         // before the bucket once the file is gone. A press on a showing card stages the edit.
         removeDragFolder(recordID)
         overlay.setDragFile(nil, for: recordID)
-        let editedAt = Date()
+        let editedAt = environment.now()
         history.update(id: recordID) {
             $0.recordLocalEdit(pixelWidth: image.image.width, pixelHeight: image.image.height, at: editedAt)
             $0.byteCount = png.count
@@ -224,16 +224,16 @@ extension AppCoordinator {
     /// says why. TidyShot put it there for this record, so the record owns the clipboard and a
     /// later successful save may replace it (the clipboard rule).
     private func keepFailedEditOnClipboard(_ image: ScaledImage, png: Data?, recordID: UUID, error: any Error) async {
-        NSLog("Save over failed: \(error.localizedDescription)")
+        log("Save over failed: \(error.localizedDescription)")
         let changeCount: Int
         if let png {
-            changeCount = Pasteboard.copy(image: image.image, pngData: png, scale: image.scale)
+            changeCount = clipboard.copy(image: image.image, pngData: png, scale: image.scale)
         } else {
             // No PNG: the TIFF is the only copy, at any size, made off the main actor.
             let tiff = await Task.detached(priority: .userInitiated) {
                 Pasteboard.tiffData(of: image.image, scale: image.scale)
             }.value
-            changeCount = Pasteboard.copy(tiffData: tiff)
+            changeCount = clipboard.copy(tiffData: tiff)
         }
         clipboardOwner = EditorClipboard.Owner(recordID: recordID, changeCount: changeCount)
         notifier.notifyError("\(error.localizedDescription) The edited image is on the clipboard.", title: "Not saved")
@@ -249,6 +249,7 @@ extension AppCoordinator {
     func replaceThumbnail(for id: UUID, from image: CGImage, editedAt: Date) {
         let store = thumbnails
         let name = store.fileName(for: id, editedAt: editedAt)
+        let log = environment.log
         Task { [weak self] in
             let written = await Task.detached(priority: .utility) { () -> Bool in
                 do {
@@ -256,7 +257,7 @@ extension AppCoordinator {
                     _ = try store.write(try ThumbnailMaker.pngData(small), fileName: name)
                     return true
                 } catch {
-                    NSLog("Edited thumbnail failed: \(error.localizedDescription)")
+                    log("Edited thumbnail failed: \(error.localizedDescription)")
                     return false
                 }
             }.value
@@ -293,7 +294,7 @@ extension AppCoordinator {
                 try ImageEncoder.pngData(from: image.image, scale: image.scale)
             }.value
         } catch {
-            NSLog("Save As failed: \(error.localizedDescription)")
+            log("Save As failed: \(error.localizedDescription)")
             notifier.notifyError(error.localizedDescription, title: "Not saved")
             return false
         }
@@ -345,7 +346,7 @@ extension AppCoordinator {
                     record.fileIsTemporary = true
                 }
             } catch {
-                NSLog("Pending write failed: \(error.localizedDescription)")
+                log("Pending write failed: \(error.localizedDescription)")
                 keepOnClipboard(image, png: png, alreadyOnClipboard: false)
                 notifier.notifyError("\(error.localizedDescription) The image is on the clipboard.", title: "Not saved")
                 return .refused
@@ -358,7 +359,7 @@ extension AppCoordinator {
         let notEnqueued = EditorUploadOutcome(wroteLocally: true, enqueued: false)
         if refuseUpload(action, recordID: recordID) { return notEnqueued }
         guard let current = history.record(id: recordID) else { return notEnqueued }
-        let location = queue?.location ?? ObjectLocation(config: destination.config)
+        let location = queue?.location ?? destination.location
         let plan = EditorUploadPlan.plan(record: current, currentLocation: location,
                                          others: history.records.filter { $0.id != recordID }, asNew: asNew)
         switch plan {
@@ -409,10 +410,10 @@ extension AppCoordinator {
             }
             let others = history.records.filter { $0.id != id }
             if !CaptureDeletion.sharedKeys([ref.key], at: ref.location, with: others).isEmpty {
-                NSLog("Kept superseded \(ref.key): another capture shares it")
+                log("Kept superseded \(ref.key): another capture shares it")
                 settled.append(ref)
             } else if let reason = await deleteObjects([ref.key], at: ref.location) {
-                NSLog("Could not delete superseded \(ref.key): \(reason)")
+                log("Could not delete superseded \(ref.key): \(reason)")
             } else {
                 settled.append(ref)
             }
@@ -434,13 +435,13 @@ extension AppCoordinator {
     /// this one too.
     private func replaceClipboardIfStillOriginal(recordID: UUID, png: Data, image: ScaledImage) async {
         guard EditorClipboard.shouldReplace(owner: clipboardOwner, recordID: recordID,
-                                            currentChangeCount: NSPasteboard.general.changeCount) else { return }
+                                            currentChangeCount: clipboard.changeCount) else { return }
         let tiff = await Task.detached(priority: .userInitiated) {
             Pasteboard.companionTIFF(of: image.image, scale: image.scale)
         }.value
         guard EditorClipboard.shouldReplace(owner: clipboardOwner, recordID: recordID,
-                                            currentChangeCount: NSPasteboard.general.changeCount) else { return }
-        let changeCount = Pasteboard.copy(pngData: png, tiffData: tiff)
+                                            currentChangeCount: clipboard.changeCount) else { return }
+        let changeCount = clipboard.copy(pngData: png, tiffData: tiff)
         clipboardOwner = EditorClipboard.Owner(recordID: recordID, changeCount: changeCount)
     }
 
@@ -453,7 +454,7 @@ extension AppCoordinator {
                 (try ImageEncoder.pngData(from: image.image, scale: image.scale),
                  Pasteboard.companionTIFF(of: image.image, scale: image.scale))
             }.value
-            let changeCount = Pasteboard.copy(pngData: encoded.png, tiffData: encoded.tiff)
+            let changeCount = clipboard.copy(pngData: encoded.png, tiffData: encoded.tiff)
             clipboardOwner = EditorClipboard.Owner(recordID: recordID, changeCount: changeCount)
             if settings.showNotification {
                 let record = history.record(id: recordID)
