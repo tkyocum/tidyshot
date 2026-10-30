@@ -203,18 +203,50 @@ struct CoordinatorSaveTests {
         #expect(world.factory.askedConfigs.isEmpty)
     }
 
-    /// recording-r1 :332 (gap 5). Quit mode, for every action and with Overlay on: no folder prompt, no upload, no
-    /// card, no notice and no warning, while the clipboard rule (`RecordingSavePlan` in quit mode) and the
-    /// shutter still apply. An uploading action still reads its destination; nothing is sent (D7).
+    /// recording-r1 :332 (gap 5), in part. Quit mode, for every action and with Overlay on: no folder prompt, no
+    /// upload, no card, no notice and no warning, while the clipboard rule (`RecordingSavePlan` in quit mode) and
+    /// the shutter still apply. With no folder stored the file is kept in `pending/<id>.mp4`; an uploading record
+    /// is written as interrupted. An uploading action still reads its destination; nothing is sent (D7). By hand:
+    /// the quit itself, a folder panel open at the quit, and `.upload`'s `Upload failed` and Retry after the
+    /// relaunch.
     @Test func quitModeSkipsTheCardTheUploadAndTheNoticesForEveryAction() async throws {
         defer { world.removeAll() }
         world.settings.showOverlay = true
-        let folder = try world.storeSaveFolder()
         let coordinator = world.makeCoordinator()
         // `copyOnly` is the URL command's `action=copy`, which a recording's save ignores.
         let intents = [CaptureIntent(action: .save), CaptureIntent(action: .save, copyOnly: true),
                        CaptureIntent(action: .upload), CaptureIntent(action: .uploadOnly)]
         var expected: [FakeClipboard.Copy] = []
+
+        // Save first with no folder stored: quit mode asks for none. Gated, since a save that asked would wait on
+        // a real folder panel; the panel is then closed as Cancel, so the save returns (D31).
+        let unsaved = try makeRecording()
+        let first = Task { await save(coordinator, unsaved, CaptureIntent(action: .save), mode: .quit) }
+        let watch = TaskWatch(first)
+        do {
+            try await eventually { watch.hasReturned }
+        } catch {
+            world.saveLocation.cancelFolderChoice()
+            throw error
+        }
+        let kept = try #require(await first.value)
+        let keptFile = try #require(kept.fileURL)
+        let keptPlan = RecordingSavePlan.make(action: .save, hasDestination: true,
+                                              result: .fallback(reason: RecordingSavePlan.noFolderReason),
+                                              copyImage: world.settings.copyImageToClipboard,
+                                              alsoCopyImage: world.settings.alsoCopyImageWhenUploading, quitMode: true)
+        if keptPlan.copiesFileReference {
+            expected.append(.fileURL(keptFile))
+        }
+        #expect(world.saveLocation.currentURL == nil)
+        #expect(kept.fileIsTemporary)
+        #expect(isIn(keptFile, coordinator.pendingFiles.directory))
+        #expect(keptFile.lastPathComponent == "\(unsaved.id.uuidString).mp4")
+        #expect(exists(keptFile))
+        #expect(coordinator.history.record(id: kept.id) != nil)
+        #expect(world.clipboard.copies == expected)
+        #expect(world.shutterCount == 1)
+        let folder = try world.storeSaveFolder()
 
         for (index, intent) in intents.enumerated() {
             let recording = try makeRecording()
@@ -228,11 +260,12 @@ struct CoordinatorSaveTests {
                 expected.append(.fileURL(file))
             }
             #expect(isIn(file, intent.action == .uploadOnly ? coordinator.pendingFiles.directory : folder))
+            #expect(record.uploadState == plan.uploadState)
             #expect(world.clipboard.copies == expected)
-            #expect(world.shutterCount == index + 1)
+            #expect(world.shutterCount == index + 2)
         }
 
-        #expect(expected.count == 2)
+        #expect(expected.count == 3)
         #expect(!world.cards.calls.contains { if case .show = $0 { true } else { false } })
         #expect(world.notifier.calls.isEmpty)
         #expect(destination.state.withLock { $0.uploadAttempts } == 0)
