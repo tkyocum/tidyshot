@@ -50,6 +50,14 @@ extension AppCoordinator {
         }
     }
 
+    /// What `record()` does once the hand-off returns (harness design 3.4): it starts only with a start,
+    /// no quit and no cancelled count-in. Otherwise nothing records, and the log says why only when
+    /// the cancel stopped a start the hand-off allowed; a quit, or a hand-off that gave up, says nothing here.
+    nonisolated static func recordingProceeds(started: Bool, isQuitting: Bool, cancelled: Bool) -> RecordingProceeds {
+        guard started, !isQuitting else { return .stop(logsCancel: false) }
+        return cancelled ? .stop(logsCancel: true) : .start
+    }
+
     /// What a record function does about the microphone or the camera prompt, before the capture
     /// lock (R2 design, At the start; R3 design, Permission): with no access to ask for it goes on;
     /// with a prompt to show while another capture holds the lock it ends there, with no prompt, as
@@ -396,8 +404,10 @@ extension AppCoordinator {
         recordingCountIn = false
         // Read together with no suspension before `recorder.run`, so neither a quit nor a cancel
         // of the count-in can slip in between.
-        guard let start, !isQuitting, !recordingStartCancelled else {
-            if start != nil, !isQuitting {
+        let proceeds = Self.recordingProceeds(started: start != nil, isQuitting: isQuitting,
+                                              cancelled: recordingStartCancelled)
+        guard let start, proceeds == .start else {
+            if proceeds == .stop(logsCancel: true) {
                 RecordingLog.note("Recording: not started, the count-in was cancelled")
             }
             endNoticeHold()
@@ -1008,4 +1018,11 @@ nonisolated enum RecordingStopCommandAction: Equatable, Sendable {
     case cancelCountIn
     /// Idle or saving: no recording to stop.
     case nothing
+}
+
+/// What `record()` does after the hand-off (`AppCoordinator.recordingProceeds(started:isQuitting:cancelled:)`).
+nonisolated enum RecordingProceeds: Equatable, Sendable {
+    case start
+    /// Nothing records; `logsCancel` when a cancelled count-in stopped a start the hand-off allowed.
+    case stop(logsCancel: Bool)
 }
