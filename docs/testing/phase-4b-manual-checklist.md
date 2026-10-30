@@ -24,7 +24,9 @@ Where an item checks a link with `curl`, use a link no browser has opened. Draw 
 data.
 
 ## Toolbar and keys
-- [ ] The toolbar shows twelve tools, in order: Select, Redact, Pixelate, Blur, Rectangle, Arrow, Ellipse, Line, Pencil, Highlighter, Text and Crop, then the colour button, the options button, the zoom pop-up, Copy, Save and Upload. Each tool's tooltip names its letter: `Select (V)`, `Redact (D)`, `Pixelate (X)`, `Blur (B)`, `Rectangle (R)`, `Arrow (A)`, `Ellipse (E)`, `Line (L)`, `Pencil (P)`, `Highlighter (H)`, `Text (T)`, `Crop (C)`.
+- [x] The toolbar shows twelve tools, in order: Select, Redact, Pixelate, Blur, Rectangle, Arrow, Ellipse, Line, Pencil, Highlighter, Text and Crop, then the colour button, the options button, the zoom pop-up, Copy, Save and Upload. Each tool's tooltip names its letter: `Select (V)`, `Redact (D)`, `Pixelate (X)`, `Blur (B)`, `Rectangle (R)`, `Arrow (A)`, `Ellipse (E)`, `Line (L)`, `Pencil (P)`, `Highlighter (H)`, `Text (T)`, `Crop (C)`.
+  (obsolete: Phase 4c made it fourteen tools, with Spotlight after Blur and Counter after Text, and Phase 7c added a
+  Background button after Options; the Phase 4a toolbar line now lists the current toolbar)
 - [ ] Narrow the window as far as it goes, with a small capture and then with a long file name in the title (rename a capture to 60 characters first): every one of the twelve tools, the colour and options buttons, the zoom pop-up, Copy, Save and Upload still show, with no » overflow chevron at the right. The title truncates before any item does. Widen the window and the layout returns.
 - [ ] Repeat the narrowest-window check with the window full screen and back, and on a second display if one is attached.
 - [ ] With the canvas focused, each letter (either case) picks its tool and the toolbar follows. Typing a letter while a text is being edited types the letter and does not change the tool. A letter pressed in the middle of a drag does nothing.

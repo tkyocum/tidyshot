@@ -32,7 +32,9 @@ keeps what it has served (see Caches).
 - [ ] Over a photo or a mid-grey area the crosshair stays readable. Escape cancels.
 
 ## Annotate from the overlay
-- [ ] The overlay's right column shows Annotate (a pencil in a circle, tooltip "Annotate") above Close and Delete. The overlay is the same size as before.
+- [x] The overlay's right column shows Annotate (a pencil in a circle, tooltip "Annotate") above Close and Delete. The overlay is the same size as before.
+  (obsolete: Phase 6a moved Close to a hover badge at the top-left of the card and Phase 6b put Pin between Annotate and
+  Delete; the Phase 6a checklist checks the column)
 - [ ] "Save and copy image": capture, then Annotate. The overlay closes and the editor opens key and in front, at fit zoom, titled with the file name. It also comes to the front when Slack was frontmost.
 - [ ] "Upload and copy URL", a large capture with Network Link Conditioner on a slow profile: Annotate while the overlay shows Uploading… opens the editor at once with the subtitle `Uploading…`. Save and Upload stay greyed until the upload finishes, then turn on.
 - [ ] "Upload only, keep no local file": Annotate while uploading opens at once. Annotate after "URL copied" (the pending file is already gone) also opens at once, with no download.

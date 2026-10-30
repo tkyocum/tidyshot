@@ -32,7 +32,9 @@ write to, its public URL base (for example `https://snap.tky.io/`), and an acces
   (suite, in part: ConnectionTesterTests.notPublicWhenGetIsForbidden, .wrongBodyOn200IsNotReadable,
   .unexpectedStatusOnPublicGetIsReportedDistinctly; the test reads only `HTTP 403` in the summary, so the rest of the
   text and a real wrong domain stay by hand)
-- [ ] Random name length stepper stops at 4 and 32; the example key updates as the prefix and length change.
+- [x] Random name length stepper stops at 4 and 32; the example key updates as the prefix and length change. (obsolete:
+  the stepper and the prefix field are gone; the key template and `{random:N}` (1 to 64) replaced them, and the 4 to 32
+  clamp survives only in the Phase 2 migration)
 
 ## Capture and upload (⌃⇧3, ⌃⇧4, ⌃⇧2)
 - [ ] After-capture action "Upload and copy URL": capture, wait for the overlay checkmark, paste into Slack or Notes: a working `https://snap.tky.io/XXXXXX.png` link appears, nothing else.
@@ -48,7 +50,9 @@ write to, its public URL base (for example `https://snap.tky.io/`), and an acces
   bucket accepting the ACL and the object being public stay by hand)
 - [ ] After-capture action "Save and copy image": no upload happens, paste gives the image, Recent Captures shows the item as `Saved`.
 - [ ] Delete the "TidyShot S3 credentials" item in Keychain Access, relaunch, leave the action on "Upload and copy URL", capture twice: one "Upload not configured" notification only, and paste gives the image both times. Settings > Upload then shows empty credential fields and no red keychain error.
-- [ ] Set key prefix `shots`: new objects land under `shots/` and the URL is `https://snap.tky.io/shots/XXXXXX.png`.
+- [x] Set key prefix `shots`: new objects land under `shots/` and the URL is `https://snap.tky.io/shots/XXXXXX.png`.
+  (obsolete: the key prefix is gone; the template `shots/{random:6}` does this now, and a Phase 2 prefix migrates into a
+  template)
 - [ ] Path-style on against MinIO (`http://localhost:9000`, region `us-east-1`): upload succeeds. (suite, in part:
   S3DestinationConfigTests.pathStyleURLWithPortForMinIO, S3DestinationTests.headUsesPathStyleAndPortedHost; a real MinIO
   accepting the upload stays by hand)
@@ -61,7 +65,8 @@ write to, its public URL base (for example `https://snap.tky.io/`), and an acces
 - [ ] Auto-close happens 5 s after the upload finishes; hovering keeps it open; moving away closes it a second later.
 - [ ] Auto-close 0 keeps the panel until the X is clicked.
 - [ ] Settings > Overlay off: no panel, uploads still work.
-- [ ] A second capture replaces the panel with the new capture.
+- [x] A second capture replaces the panel with the new capture. (obsolete: with the default settings cards stack newest
+  first since Phase 6a; a new capture replaces the old one only with `Show up to 1 overlay`)
 
 ## Failures and history
 - [ ] Turn Wi-Fi off, capture: the file is saved, the overlay shows "Upload failed" with Retry, a notification appears, Recent Captures shows the item as `Failed`, nothing is on the clipboard unless "Also copy image" is on.

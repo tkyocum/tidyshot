@@ -61,9 +61,13 @@ Settings are read with `defaults read io.tky.tidyshot <key>`. The log is
 `log show --last 5m --predicate 'process == "TidyShot"'`.
 
 ## Settings and strings
-- [ ] Settings > Capture lists, after `Include window shadow` and its caption, `Hide desktop icons while capturing` (off) with the caption `Covers desktop icons and widgets with the desktop picture during area, window, fullscreen, previous-area, All-in-One and self-timer captures.`, then the `Self-timer` picker. (Fresh values: `for k in hideDesktopIconsWhileCapturing desktopIconsHidden; do defaults delete io.tky.tidyshot $k; done`, then relaunch.)
+- [x] Settings > Capture lists, after `Include window shadow` and its caption, `Hide desktop icons while capturing` (off) with the caption `Covers desktop icons and widgets with the desktop picture during area, window, fullscreen, previous-area, All-in-One and self-timer captures.`, then the `Self-timer` picker. (Fresh values: `for k in hideDesktopIconsWhileCapturing desktopIconsHidden; do defaults delete io.tky.tidyshot $k; done`, then relaunch.)
+  (obsolete: the caption is the R1 text, and Phase 7c put `Add background to window captures` and `Edit Background…`
+  between it and the Self-timer picker)
 - [ ] Settings > Shortcuts lists `Capture text:` (⌃⇧7) after `Self-timer:` and before `Restore closed overlay:`.
-- [ ] The menu bar menu reads `All-in-One  ⌃⇧1`, `Capture Area  ⌃⇧4`, `Capture Window  ⌃⇧2`, `Capture Fullscreen  ⌃⇧3`, `Capture Scrolling  ⌃⇧5`, `Capture Previous Area  ⌃⇧6`, `Self-Timer`, `Capture Text  ⌃⇧7`; a separator; Recent Captures, `Restore Closed Overlay`, Retry Failed Uploads (only after a failure), Reveal Last Capture, `Hide Desktop Icons`; a separator; the pin items when they apply, Settings…, Quit TidyShot. `Capture Text` is disabled while a capture, a countdown or a scrolling session runs; `Hide Desktop Icons` never is.
+- [x] The menu bar menu reads `All-in-One  ⌃⇧1`, `Capture Area  ⌃⇧4`, `Capture Window  ⌃⇧2`, `Capture Fullscreen  ⌃⇧3`, `Capture Scrolling  ⌃⇧5`, `Capture Previous Area  ⌃⇧6`, `Self-Timer`, `Capture Text  ⌃⇧7`; a separator; Recent Captures, `Restore Closed Overlay`, Retry Failed Uploads (only after a failure), Reveal Last Capture, `Hide Desktop Icons`; a separator; the pin items when they apply, Settings…, Quit TidyShot. `Capture Text` is disabled while a capture, a countdown or a scrolling session runs; `Hide Desktop Icons` never is.
+  (obsolete: R1 and R2 added Record Screen, Record Fullscreen, Stop Recording and the GIF items to the menu;
+  StatusMenuController.rebuild builds the current list)
 - [ ] Turn both on (the toggle, and the menu item), quit and reopen: `defaults read io.tky.tidyshot hideDesktopIconsWhileCapturing` and `desktopIconsHidden` read `1`, the toggle is on, the menu item has its checkmark and the desktop is covered again within a second of launch. Turn both off.
 
 ## Capture Text

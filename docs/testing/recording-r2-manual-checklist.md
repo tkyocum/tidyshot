@@ -190,10 +190,11 @@ prints the GIF frame count and the summed delays; `ffprobe -v error -show_entrie
 ## GIF
 Settings > General > After capture = `Save and copy image` unless a step says otherwise. Record with
 Format = GIF. ⌃⇧8 and drag an area; the bar is for GIF.
-- [ ] The bar is 208 x 44 pt with a `GIF` tag before the time and no mute button, then Stop and Cancel. The
+- [x] The bar is 208 x 44 pt with a `GIF` tag before the time and no mute button, then Stop and Cancel. The
   tag is bordered, the time counts up, and the bar is not in the file. Past 30 s the time turns orange
   (the MP4 bar turns orange at 5:00). Leave one running to `1:00:00` if you can; `RecordingPanelLayoutTests` lays
-  the bar out with `9:59:59`.
+  the bar out with `9:59:59`. (obsolete: an area or fullscreen GIF recording carries the R3 highlights and bubble
+  buttons, so its bar is 280 x 44 pt, and 208 x 44 is now only a window GIF's bar)
 - [ ] A GIF recording is made at 30 fps with no sound whatever the settings say. With `Frame rate` 60 fps and
   `Record system audio` on (set them before switching `Format` to GIF) and a sound playing, record a few
   seconds and press `Stop Making GIF` as soon as the menu shows it: the MP4 it saves has no audio track
@@ -295,10 +296,11 @@ The button shows for `capturesAudio || captureMicrophone`. Settings > Capture > 
 `Microphone` Off unless a step says otherwise, `Format` MP4; the Microphone section below mutes through a
 microphone. Play a steady sound from another app (`afplay /System/Library/Sounds/Submarine.aiff` in a
 loop, or music).
-- [ ] The bar is 208 x 44 pt with the time, the mute button (`speaker.wave.2.fill`), Stop and Cancel. With
+- [x] The bar is 208 x 44 pt with the time, the mute button (`speaker.wave.2.fill`), Stop and Cancel. With
   `Record system audio` off and no microphone the bar is 172 x 44 with no mute button, and the same for an
   MP4 whose only sound would have been a microphone dropped at the start (an input set, access denied).
-  For a GIF it is the `GIF` bar (above).
+  For a GIF it is the `GIF` bar (above). (obsolete: since R3 an area or fullscreen MP4 bar is 280 x 44 pt with sound and
+  244 x 44 without, and 208 and 172 are now a window recording's bars)
 - [ ] With another app frontmost, hover the mute button and then Cancel: the tool tips `Mute the sound` and
   `Discard the recording` show (R1's Cancel tool tip never showed before). After a press the button is
   `speaker.slash.fill` and its tip is `Unmute the sound`. Neither tip is in the video.

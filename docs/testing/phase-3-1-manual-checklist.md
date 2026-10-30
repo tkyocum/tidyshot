@@ -13,7 +13,8 @@ Recent Captures shows `Saved` or `Failed`, the submenu row shows no suffix or "�
 
 ## Menu bar
 - [ ] One TidyShot icon (the viewfinder), no Dock icon. Opening the menu leaves the frontmost app active: its name stays in the menu bar.
-- [ ] Items in order: Capture Area `⌃⇧4`, Capture Window `⌃⇧2`, Capture Fullscreen `⌃⇧3`, Recent Captures (with a chevron), Retry Failed Uploads (only with a failed upload), Reveal Last Capture, Settings… `⌘,`, Quit TidyShot `⌘Q`.
+- [x] Items in order: Capture Area `⌃⇧4`, Capture Window `⌃⇧2`, Capture Fullscreen `⌃⇧3`, Recent Captures (with a chevron), Retry Failed Uploads (only with a failed upload), Reveal Last Capture, Settings… `⌘,`, Quit TidyShot `⌘Q`.
+  (obsolete: Phases 6a, 6b, 7b, R1 and R2 added items to the menu; StatusMenuController.rebuild builds the current list)
 - [ ] Change the area shortcut in Settings > Shortcuts, reopen the menu: the title shows the new shortcut. Put it back.
 - [ ] Each capture item starts its capture. Reveal Last Capture is disabled before the first save in this launch, then reveals the file.
 - [ ] Settings… opens the Settings window in front of the frontmost app, again after closing it, and from `⌘,` while the menu is open.
