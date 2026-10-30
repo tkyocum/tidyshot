@@ -72,7 +72,8 @@ The design lists them in section 9. Write `confirm` or `overrule` and why; an ov
 - [ ] 11. `PartSender.send` checks for a cancel first; `createUpload` aborts the fresh id when the first sidecar
   write fails. (suite: UploadQueueTests.aPartAddedAfterACancelSendsNothing,
   .aNewUploadWhoseFirstSidecarCannotBeWrittenIsAborted) ______
-- [ ] 12. The 33 interpolating `NSLog` lines outside the coordinator stay. ______
+- [ ] 12. The 20 interpolating `NSLog` lines outside the coordinator stay (5.5). A `%` in an interpolated error text is
+  undefined behaviour in NSLog's format, so a crash is possible, not only a garbled line. ______
 
 ## The plan's decisions, to confirm or overrule
 

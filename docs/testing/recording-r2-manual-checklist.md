@@ -724,8 +724,8 @@ Six more, calls E to J, which the build left open. Tim answered all six on 2026-
 
 ## Regression
 - [ ] ⌃⇧1 to ⌃⇧7 behave as in the 6a, 6b and 7b checklists after a GIF and after an MP4 recording.
-- [ ] An MP4 recording with the defaults is what R1 made: `Recording saved`, the file in the save folder, the
-  172 x 44 bar with no mute button when system audio is off, Clop `Optimizing…` and a smaller object.
+- [ ] An MP4 recording with the defaults is what R1 made: `Recording saved`, the file in the save folder, the 244 x 44
+  bar (172 x 44 for a window) with no mute button when system audio is off, Clop `Optimizing…` and a smaller object.
 - [ ] A screenshot's save, upload, Retry, Delete, Save As… and Copy Image are as before; a PNG still gets
   `.png` and `image/png`.
 - [ ] Old history (a `history.json` from before R2) loads, with every record's `unmutedIntervals` empty and

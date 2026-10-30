@@ -132,11 +132,11 @@ says.
 - [ ] Select an arrow, a text, a counter and a blur that lie inside a spotlight, one at a time, by clicking on each (made before and after the spotlight): the click picks the drawing, never the spotlight. A text inside a spotlight is edited again by the Text tool's click and by Select's double-click.
   (suite: HitTesterTests.anArrowInsideASpotlightIsHitFirst, .aRedactionInsideASpotlightIsHit,
   AnnotationDocumentTests.spotlightsAreAThirdList, CanvasToolTests.textInsideASpotlightIsReEdited)
-- [ ] A click on bare image inside a spotlight picks the spotlight (so it does not deselect; Escape does). A click just outside its edge picks it too (within the 8 pt hit tolerance); one 12 or more points outside picks nothing. At ⌘1, for an ellipse spotlight at least 200 pt wide and high, a click in its bounding box's dim corner region, more than 8 pt from the corner and more than 8 pt outside the ellipse (about halfway between them), picks nothing. A click within 8 pt of the corner lands on the corner handle, which every spotlight has, so it selects the spotlight (and a drag from there resizes it).
+- [ ] A click on bare image inside a spotlight picks the spotlight (so it does not deselect; Escape does). A click just outside its edge picks it too (within the 8 pt hit tolerance); one 12 or more points outside picks nothing. At ⌘1, for an ellipse spotlight at least 200 pt wide and high, a click in its bounding box's dim corner region, more than 8 pt from the corner and more than 8 pt outside the ellipse (about halfway between them), picks nothing. A click within 8 pt of the corner lands on the corner handle, which every spotlight has, so it selects the spotlight (a drag from there moves it; once it is selected, a drag from the corner handle resizes it).
   (suite, in part: HitTesterTests.bareImageInsideASpotlightHitsItsBody, .anEllipseSpotlightIsHitInsideItsEllipseOnly,
-  .spotlightHandlesResizeItsRect, .handlesBeforeBody, EditorModelTests.selectAllAndCancelOnlyChangeSelection; the
-  closing "a drag from there resizes it" does not hold for an unselected spotlight: `SelectTool.mouseDown` resizes only
-  from the selection's handles, so that drag moves it. Fix the line to say "once selected", or check by hand)
+  .spotlightHandlesResizeItsRect, .handlesBeforeBody, EditorModelTests.selectAllAndCancelOnlyChangeSelection; a drag
+  from the corner of an unselected spotlight moving it, as the line now says, is `SelectTool.mouseDown`'s and stays by
+  hand)
 - [ ] ⌘A with an arrow made before a spotlight selects the arrow; with only a spotlight in the document it selects the spotlight.
   (suite: EditorModelTests.selectAllFallsBackToASpotlight)
 

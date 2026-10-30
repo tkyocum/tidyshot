@@ -46,7 +46,7 @@ history including at least one Phase 2 capture (made before this build).
   (obsolete: a save-folder file that cannot be removed now opens the second alert `Couldn't delete the file: <reason>`,
   and `Not deleted` is posted only for a `pending/` file)
 - [ ] Change the Upload tab's bucket (to a second bucket you can write to) and Save, then Delete… a capture uploaded before the change: the object is removed from the bucket it was uploaded to (`curl -I <old url>` gives 403 or 404), not looked for in the new one.
-- [ ] Key template `shared/{date}` and a key that cannot read objects (HEAD answers 403 for existing keys), two captures the same day: both rows point at the same key; Delete… the first: notification "Not deleted from storage" saying another capture shares this key, the row goes, and the second capture's URL still works.
+- [ ] Key template `shared/{date}` and a key that cannot read objects (HEAD answers 403 for existing keys), two captures the same day: both rows point at the same key; Delete the first from its row: notification "Not deleted from storage" saying another capture shares this key, the row goes, and the second capture's URL still works.
   (suite, in part: CoordinatorDeleteTests.aSharedKeyKeepsTheObjectAndSaysSo, S3DestinationTests.headTreats403AsMissing;
   a real key that cannot read objects answering 403 for an existing key, so that two captures land on one key, stays by
   hand)
@@ -95,7 +95,7 @@ history including at least one Phase 2 capture (made before this build).
 
 ## History hygiene
 - [ ] Retention 1 day with older captures present, then capture: older rows disappear, their files in `thumbnails/` are gone, and their files in the save folder remain; a failed upload-only capture is kept with its `pending/` file however old it is.
-- [ ] Quit, replace `history.json` with `not json`, relaunch: Recent Captures shows "No captures yet", `thumbnails/` and `pending/` are untouched, and `history.json.corrupt-<number>` exists.
+- [ ] Quit, replace `history.json` with `not json`, relaunch: `history.json.corrupt-<number>` exists and `thumbnails/` is untouched. With `pending/` empty, Recent Captures shows "No captures yet". With files in `pending/`, each readable one comes back as a row with a `Recovered a capture` (or `Recovered a recording`) notification, and only an empty or unreadable file is removed.
   (suite, in part: HistoryStoreTests.corruptFileIsSetAsideNotOverwritten, .corruptFileSetAsideSurvivesNameCollision,
   CoordinatorRecoveryTests.anEmptyHistoryAdoptsEveryOrphanAndDeletesNothing,
   .anOrphanPNGIsAdoptedWithItsSizeAThumbnailAndANotice, .aZeroByteFileIsRemoved; `start()` running the load and then the

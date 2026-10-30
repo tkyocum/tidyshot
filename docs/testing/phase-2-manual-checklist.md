@@ -48,7 +48,7 @@ write to, its public URL base (for example `https://snap.tky.io/`), and an acces
 - [ ] With "Send public-read ACL" on, uploads still succeed on a bucket that allows ACLs, and the object is public.
   (suite, in part: S3DestinationTests.aclHeaderIsSentAndSignedWhenEnabled, .fileUploadSignsCacheControlAndACL; the real
   bucket accepting the ACL and the object being public stay by hand)
-- [ ] After-capture action "Save and copy image": no upload happens, paste gives the image, Recent Captures shows the item as `Saved`.
+- [ ] After-capture action "Save and copy image": no upload happens, paste gives the image, and the Recent Captures row shows the time and size with no upload state.
 - [ ] Delete the "TidyShot S3 credentials" item in Keychain Access, relaunch, leave the action on "Upload and copy URL", capture twice: one "Upload not configured" notification only, and paste gives the image both times. Settings > Upload then shows empty credential fields and no red keychain error.
 - [x] Set key prefix `shots`: new objects land under `shots/` and the URL is `https://snap.tky.io/shots/XXXXXX.png`.
   (obsolete: the key prefix is gone; the template `shots/{random:6}` does this now, and a Phase 2 prefix migrates into a
@@ -62,7 +62,8 @@ write to, its public URL base (for example `https://snap.tky.io/`), and an acces
 - [ ] Progress ring moves during a large (fullscreen Retina) upload, then shows the checkmark and URL.
 - [ ] "Copy URL" puts the URL on the clipboard again after something else was copied.
 - [ ] Clicking the thumbnail reveals the file in Finder.
-- [ ] Auto-close happens 5 s after the upload finishes; hovering keeps it open; moving away closes it a second later.
+- [ ] Auto-close happens 5 s after the upload finishes; with the pointer over the card when the time runs out, the 5 s
+  start again; after the pointer leaves, the card closes when the current 5 s run out.
 - [ ] Auto-close 0 keeps the panel until the X is clicked.
 - [ ] Settings > Overlay off: no panel, uploads still work.
 - [x] A second capture replaces the panel with the new capture. (obsolete: with the default settings cards stack newest
@@ -74,10 +75,11 @@ write to, its public URL base (for example `https://snap.tky.io/`), and an acces
 - [ ] Recent Captures > Retry Failed Uploads retries every `Failed` item. (suite:
   CoordinatorUploadTests.retryFailedUploadsSaysOnceWithoutCredentialsAndEnqueuesWithThem,
   UploadRefusalTests.retryFailedUploadsLeavesOutMarkedAndDeletingRecords)
-- [ ] Choosing an `Uploaded` history item copies its URL; choosing a `Saved` item reveals the file.
-- [ ] Recent Captures titles contain only words, times and file names, no emoji. (suite:
-  RecentCaptureFormattingTests.nameIsTheObjectOrTheFileName, .detailIsTheRelativeTimeAndAnUnsettledState,
-  .detailIsTheTimeAndTheSize, .detailIsTheTimeTheSizeAndEachUploadState)
+- [ ] Clicking an uploaded Recent Captures row copies its URL; clicking a row that was never uploaded copies the file
+  (paste in Finder makes a copy).
+- [ ] Recent Captures rows show only the object or file name, the relative time, the size and the upload state in words,
+  no emoji. (suite: RecentCaptureFormattingTests.nameIsTheObjectOrTheFileName,
+  .detailIsTheRelativeTimeAndAnUnsettledState, .detailIsTheTimeAndTheSize, .detailIsTheTimeTheSizeAndEachUploadState)
 - [ ] Quit while an upload is in flight (slow connection or large capture), relaunch: the item shows as `Failed` (history.json has "Upload was interrupted.") and Retry works.
   (suite: HistoryStoreTests.uploadingRecordsBecomeFailedOnLoadAndPersist,
   CoordinatorUploadTests.anUploadedUploadOnlyImageMovesToItsDragFolderOnlyWithACard)

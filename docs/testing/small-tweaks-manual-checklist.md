@@ -4,8 +4,8 @@ Run this after any change to `AppCoordinator+Delete.swift`'s confirmation, `Capt
 
 ## Ask before deleting
 - [ ] Settings > General shows `Ask before deleting` after `Play sound`, on, with the caption `Delete removes the file, the upload and the Recent Captures entry. When this is off, Delete acts at once.`
-- [ ] With it on, Delete on a card, a Recent Captures row and a pin each asks first. The card menu and the row read `Delete…`.
-- [ ] Turn it off. Delete from a card, a row and a pin each act at once with no alert. The card menu and the row read `Delete`.
+- [ ] With it on, Delete on a card and on a Recent Captures row each asks first. The card menu and the row read `Delete…`.
+- [ ] Turn it off. Delete from a card and a row each act at once with no alert. The card menu and the row read `Delete`.
 - [ ] With it off, make a remote delete fail: set a wrong secret key in Settings > Upload and save without testing, then delete an uploaded capture. The second alert (`Remove it from history anyway?`) still appears. Put the key back.
 - [ ] Turn it back on for normal use, if you prefer. (suite:
   AppSettingsTests.confirmBeforeDeletingDefaultsToTrueAndPersists)
