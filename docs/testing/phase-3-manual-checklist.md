@@ -22,7 +22,8 @@ history including at least one Phase 2 capture (made before this build).
   no gallery window)
 - [x] The grid lists captures newest first with a thumbnail and a status capsule each; Phase 2 captures whose files exist get thumbnails on first display (`thumbnails/` gains files, `history.json` gains `thumbnailFileName`); a Phase 2 capture whose file was deleted shows the placeholder icon, and scrolling past it again does not make the gallery try again (no new `thumbnails/` file, no stutter).
   (obsolete: the gallery grid and status capsules are gone and Recent Captures rows replaced them; thumbnails on first
-  display and the missing-file case are checked in the Phase 3.1 checklist)
+  display are checked in the Phase 3.1 checklist, and the missing-file case (no second try) is pinned by
+  `ThumbnailProviderTests`)
 - [x] Hovering a cell highlights it and the right-hand pane shows it larger with date, `W × H px`, app, URL or status, and file path.
   (obsolete: the floating preview panel on the Recent Captures rows replaced the right-hand pane when the gallery window
   was removed)
