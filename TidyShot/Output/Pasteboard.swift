@@ -111,3 +111,60 @@ enum Pasteboard {
         return pasteboard.changeCount
     }
 }
+
+/// The general pasteboard as the coordinator uses it (harness design 2.2): `SystemClipboard` in the
+/// app, a fake in the suite. Each `copy` returns the change count after the write, as `Pasteboard`'s
+/// do. The pure helpers (`includesTIFF`, `companionTIFF`, `tiffData`) stay on `Pasteboard`.
+protocol Clipboard: AnyObject {
+    var changeCount: Int { get }
+    /// Replaces the contents with `string` as plain text (Capture Text).
+    func setString(_ string: String)
+    @discardableResult func copy(image: CGImage, pngData: Data, scale: CGFloat) -> Int
+    @discardableResult func copy(pngData: Data, tiffData: Data?) -> Int
+    @discardableResult func copy(tiffData: Data?) -> Int
+    @discardableResult func copy(fileURL: URL) -> Int
+    @discardableResult func copy(url: URL) -> Int
+    @discardableResult func copy(annotationClip data: Data) -> Int
+    func annotationClipData() -> Data?
+    var hasAnnotationClip: Bool { get }
+}
+
+/// `NSPasteboard.general`, through `Pasteboard`.
+final class SystemClipboard: Clipboard {
+    var changeCount: Int { NSPasteboard.general.changeCount }
+
+    func setString(_ string: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(string, forType: .string)
+    }
+
+    @discardableResult func copy(image: CGImage, pngData: Data, scale: CGFloat) -> Int {
+        Pasteboard.copy(image: image, pngData: pngData, scale: scale)
+    }
+
+    @discardableResult func copy(pngData: Data, tiffData: Data?) -> Int {
+        Pasteboard.copy(pngData: pngData, tiffData: tiffData)
+    }
+
+    @discardableResult func copy(tiffData: Data?) -> Int {
+        Pasteboard.copy(tiffData: tiffData)
+    }
+
+    @discardableResult func copy(fileURL: URL) -> Int {
+        Pasteboard.copy(fileURL: fileURL)
+    }
+
+    @discardableResult func copy(url: URL) -> Int {
+        Pasteboard.copy(url: url)
+    }
+
+    @discardableResult func copy(annotationClip data: Data) -> Int {
+        Pasteboard.copy(annotationClip: data)
+    }
+
+    func annotationClipData() -> Data? {
+        Pasteboard.annotationClipData()
+    }
+
+    var hasAnnotationClip: Bool { Pasteboard.hasAnnotationClip }
+}

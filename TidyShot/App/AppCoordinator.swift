@@ -9,9 +9,12 @@ final class AppCoordinator {
     static let shared = AppCoordinator()
 
     // MARK: Collaborators
+    /// What the coordinator was built over (harness design 2.1): `.live()` in the app, a test's world
+    /// in the suite. The collaborators below come from it, and the extension files read its closures.
+    let environment: AppEnvironment
     let engine = CaptureEngine()
-    let saveLocation = SaveLocation()
-    let settings = AppSettings.shared
+    let saveLocation: SaveLocation
+    let settings: AppSettings
     let history: HistoryStore
     /// `thumbnails` and `pending` folders next to `history.json`.
     let thumbnails: ThumbnailStore
@@ -20,10 +23,12 @@ final class AppCoordinator {
     let multipartFiles: MultipartStore
     /// Drag-out copies, `<container tmp>/Drag/<id>/` (spec 2.9).
     let dragFiles: DragFileStore
-    let credentialStore: any CredentialStore = KeychainCredentialStore()
-    let notifier = Notifier()
+    let credentialStore: any CredentialStore
+    let notifier: any Notifying
     private let permissionWindow = PermissionWindowController()
-    let overlay = QuickAccessController(settings: AppSettings.shared)
+    let overlay: any QuickAccessCards
+    /// The general pasteboard, through `Clipboard`.
+    let clipboard: any Clipboard
     @ObservationIgnored lazy var selector = SelectionController(engine: engine, settings: settings, cardWindowNumbers: { [weak self] in self?.overlay.windowNumbers ?? [] })
     @ObservationIgnored lazy var scrollCapture = ScrollCaptureController(engine: engine, settings: settings)
     /// `tidyshot://` commands (spec 2.9): held until `start()` has run, then parsed, gated and
@@ -259,14 +264,22 @@ final class AppCoordinator {
 
     // MARK: Lifecycle
 
-    init() {
-        let url = (try? HistoryStore.defaultFileURL())
-            ?? FileManager.default.temporaryDirectory.appending(path: HistoryStore.fileName)
-        history = HistoryStore(fileURL: url, retentionDays: { AppSettings.shared.historyRetentionDays })
+    init(environment: AppEnvironment = .live()) {
+        self.environment = environment
+        saveLocation = environment.saveLocation
+        settings = environment.settings
+        credentialStore = environment.credentialStore
+        notifier = environment.notifier
+        overlay = environment.overlay
+        clipboard = environment.clipboard
+        let url = environment.historyFileURL
+        // The shared settings in the app, read on each prune as before.
+        let retentionSettings = environment.settings
+        history = HistoryStore(fileURL: url, retentionDays: { retentionSettings.historyRetentionDays })
         thumbnails = ThumbnailStore(nextTo: url)
         pendingFiles = PendingFileStore(nextTo: url)
         multipartFiles = MultipartStore(nextTo: url)
-        dragFiles = DragFileStore(temporaryDirectory: FileManager.default.temporaryDirectory)
+        dragFiles = DragFileStore(temporaryDirectory: environment.temporaryDirectory)
         history.didPrune = { [weak self] records in self?.removeFiles(ofPruned: records) }
         overlay.onDidClose = { [weak self] id, reason in self?.overlayDidClose(id, reason: reason) }
         // The shown cards' Trim items follow a save folder chosen at any panel.
