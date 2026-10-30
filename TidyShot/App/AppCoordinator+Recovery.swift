@@ -106,12 +106,13 @@ extension AppCoordinator {
     /// muting failed, the body says how it went, and the log goes once the record exists. After
     /// the loop, of what `tmp/Mute` held before it, only what belongs to a file still in
     /// `tmp/Recording` is kept; what was written since is not touched (Decided 2026-10-24, 6).
-    func recoverRecordings() async {
+    /// `begun` is `RecordingRecovery.begin`'s listing and scan, which `start()` makes at launch,
+    /// before `adoptPendingFiles`.
+    func recoverRecordings(_ begun: (muteFiles: [URL], found: [RecordingRecovery.Found])) async {
         let ext = MediaKind.video.fileExtension
         // `tmp/Mute` is listed before the scan and the loop, which can run long after launch: the
         // sweep never removes the log of a recording made since, even one muted before its first frame.
-        let (muteFiles, foundFiles) = await RecordingRecovery.begin(recordingDirectory: Recording.directory,
-                                                                    muteDirectory: MuteLog.directory)
+        let (muteFiles, foundFiles) = begun
         for found in foundFiles {
             let (source, pending) = (found.url, pendingFiles)
             let prepared = await RecordingRecovery.prepare(found, records: history.records,

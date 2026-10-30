@@ -312,13 +312,16 @@ final class AppCoordinator {
         Task.detached(priority: .utility) { multipartFiles.sweep(states: multipartStates, now: now()) }
         // Records from before 2.13 have no size; those with a local file get it from the file.
         Task { await backfillByteCounts() }
-        // A capture in pending/ that no record names is adopted, never deleted; then a recording a
-        // crash, a kill or a failed rename left in tmp/Recording is checked, not swept. One task, so
-        // the two never interleave. The scan lists its folder first, long before a recording started
-        // now could write there.
+        // A recording a crash, a kill or a failed rename left in tmp/Recording is checked, not swept,
+        // and a capture in pending/ that no record names is adopted, never deleted. One task, so the
+        // two never interleave. tmp/Mute is listed and tmp/Recording scanned first, long before a
+        // recording started now could write there, and adopting can take seconds; then pending/ is
+        // adopted before any scanned file moves into it or is checked against the records.
         Task {
+            let leftRecordings = await RecordingRecovery.begin(recordingDirectory: Recording.directory,
+                                                               muteDirectory: MuteLog.directory)
             await adoptPendingFiles(pendingListed)
-            await recoverRecordings()
+            await recoverRecordings(leftRecordings)
         }
         registerShortcuts()
         // Hide Desktop Icons stays on across launches.
