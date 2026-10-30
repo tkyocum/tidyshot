@@ -47,6 +47,36 @@ struct CoordinatorDragOutTests {
         world.temporaryDirectory.appending(path: "Drag/.downloads", directoryHint: .isDirectory)
     }
 
+    /// A recording in `pending/` of 3 bytes, added to history: kept in TidyShot (`.none`) unless `state`
+    /// says otherwise.
+    func addPendingVideo(to coordinator: AppCoordinator,
+                         state: CaptureRecord.UploadState = .none) throws -> CaptureRecord {
+        let id = UUID()
+        let url = coordinator.pendingFiles.directory.appending(path: "\(id.uuidString).mp4")
+        try CoordinatorWorld.writeSparseFile(at: url, byteCount: 3)
+        let record = CaptureRecord(id: id, fileURL: url, fileIsTemporary: true, pixelWidth: 1600, pixelHeight: 1000,
+                                   appName: nil, uploadState: state, mediaKind: .video, durationSeconds: 10,
+                                   byteCount: 3)
+        coordinator.history.add(record)
+        return record
+    }
+
+    func exists(_ url: URL) -> Bool {
+        FileManager.default.fileExists(atPath: url.path(percentEncoded: false))
+    }
+
+    /// The file Copy File put on the clipboard, when that is the clipboard's only write.
+    var copiedFile: URL? {
+        guard world.clipboard.copies.count == 1, case .fileURL(let url) = world.clipboard.copies[0] else { return nil }
+        return url
+    }
+
+    /// The names in the record's drag folder.
+    func dragFolderNames(_ coordinator: AppCoordinator, _ id: UUID) -> [String] {
+        let path = coordinator.dragFiles.folder(for: id).path(percentEncoded: false)
+        return ((try? FileManager.default.contentsOfDirectory(atPath: path)) ?? []).filter { !$0.hasPrefix(".") }
+    }
+
     /// 1 (harness design 3.1). R4 checklist, Drag-out: a drag shows `Downloading…` with a ring.
     @Test func aDragOfAShowingUploadedRecordingStartsOneDownload() async throws {
         defer { world.removeAll() }
@@ -193,18 +223,26 @@ struct CoordinatorDragOutTests {
         #expect(try FileManager.default.contentsOfDirectory(atPath: downloadsFolder.path(percentEncoded: false)).isEmpty)
     }
 
-    /// 8 (harness design 3.1). R4 checklist, Drag-out: Wi-Fi off shows `Download failed` with the error and posts nothing;
-    /// the resume data is kept with the time the request was signed (plan Gap 16 of R4).
+    /// 8 (harness design 3.1). R4 checklist, Drag-out: Wi-Fi off shows `Download failed` with the error and posts
+    /// nothing; the resume data is kept with the time the request was signed (plan Gap 16 of R4).
+    /// recording-r4 :361 (call 16): that time is read before the first call, so a clock that moves while the
+    /// transfer runs does not change it.
     @Test func aFailureWithResumeDataKeepsItWithTheSigningTime() async throws {
         defer { world.removeAll() }
         let coordinator = world.makeCoordinator()
         let record = showingUploadedRecording(in: coordinator)
         let data = try resumeData(partial: "CFNetworkDownload_A.tmp")
         let error = failure(resumeData: data)
-        destination.state.withLock { $0.downloadOutcome = .fails(error) }
+        destination.state.withLock {
+            $0.downloadOutcome = .fails(error)
+            $0.holdsDownloads = true
+        }
         let signedAt = world.date
 
         let task = try startDownload(coordinator, record)
+        try await eventually { destination.state.withLock { $0.downloads.count } == 1 }
+        world.date = signedAt.addingTimeInterval(300)
+        destination.releaseDownloads()
 
         #expect(await task.value == nil)
         #expect(world.cards.downloads(for: record.id).last == .failed(error.localizedDescription))
@@ -401,5 +439,170 @@ struct CoordinatorDragOutTests {
         #expect(coordinator.downloadingDragIDs[record.id] == task)
         destination.releaseDownloads()
         _ = await task.value
+    }
+
+    /// recording-r1 :282, recording-r1 :334 (gap 7, the upload). Copy File on a pending video while it uploads puts
+    /// a staged copy in `Drag/<id>` on the clipboard; at `.uploaded` the pending file goes and the staged copy
+    /// stays, so the reference still pastes.
+    @Test func aCopyFileStageOfAPendingVideoOutlivesItsUpload() async throws {
+        defer { world.removeAll() }
+        destination.state.withLock { $0.holdingUploadsRemaining = 1 }
+        let coordinator = world.makeCoordinator()
+        let record = try addPendingVideo(to: coordinator, state: .failed(message: "Upload was interrupted."))
+        let pending = try #require(record.fileURL)
+        world.cards.showing.insert(record.id)
+        coordinator.retryUpload(recordID: record.id)
+        try await eventually { destination.state.withLock { $0.heldUploads.count } == 1 }
+
+        await coordinator.copyFile(recordID: record.id)
+        let staged = try #require(copiedFile)
+        #expect(staged.deletingLastPathComponent().lastPathComponent == record.id.uuidString)
+
+        destination.releaseUploads()
+        try await eventually { coordinator.history.record(id: record.id)?.uploadedKey != nil }
+        #expect(!exists(pending))
+        #expect(coordinator.history.record(id: record.id)?.fileURL == nil)
+        #expect(exists(staged))
+        #expect(dragFolderNames(coordinator, record.id) == [staged.lastPathComponent])
+    }
+
+    /// recording-r1 :283, recording-r1 :334 (gap 7, the clean-up). After the card closes, the one-minute clean-up
+    /// waits again, a minute at a time, while the clipboard still holds Copy File's reference, and removes the
+    /// copy once the clipboard has moved on.
+    @Test func theCleanUpWaitsWhileTheClipboardHoldsTheCopyFileReference() async throws {
+        defer { world.removeAll() }
+        let coordinator = world.makeCoordinator()
+        let record = try addPendingVideo(to: coordinator)
+        world.cards.showing.insert(record.id)
+        await coordinator.copyFile(recordID: record.id)
+        let staged = try #require(copiedFile)
+        let folder = coordinator.dragFiles.folder(for: record.id)
+
+        world.cards.close(recordID: record.id, reason: .user)
+        try await world.clock.run(for: .seconds(60))
+        #expect(exists(staged))
+        try await world.clock.run(for: .seconds(60))
+        #expect(exists(staged))
+
+        world.clipboard.changeCount += 1
+        try await world.clock.run(for: .seconds(60))
+        try await eventually { !exists(folder) }
+    }
+
+    /// recording-r1 :284, recording-r1 :334 (gap 7, no card). Copy File from the row of a video kept in TidyShot,
+    /// with no card showing, schedules the clean-up itself: once the clipboard has moved on, the copy goes a
+    /// minute later, though no card closed.
+    @Test func aCopyFileWithNoCardSchedulesItsOwnCleanUp() async throws {
+        defer { world.removeAll() }
+        let coordinator = world.makeCoordinator()
+        let record = try addPendingVideo(to: coordinator)
+
+        await coordinator.copyFile(recordID: record.id)
+        let staged = try #require(copiedFile)
+        #expect(exists(staged))
+        #expect(coordinator.dragCleanups[record.id] != nil)
+
+        world.clipboard.changeCount += 1
+        try await world.clock.run(for: .seconds(60))
+        try await eventually { !exists(coordinator.dragFiles.folder(for: record.id)) }
+        #expect(world.cards.closes.isEmpty)
+    }
+
+    /// recording-r1 :285. Copy File within the minute after the card closed cancels the clean-up that was due, as a
+    /// press does, and schedules its own, so the copy is still there a minute after the close. With the
+    /// clipboard unchanged the old clean-up would wait again too, so the cancel is read off its task (D11).
+    @Test func aCopyFileWithinTheMinuteReplacesTheCloseCleanUp() async throws {
+        defer { world.removeAll() }
+        let coordinator = world.makeCoordinator()
+        let record = try addPendingVideo(to: coordinator)
+        world.cards.showing.insert(record.id)
+        world.cards.close(recordID: record.id, reason: .user)
+        let due = try #require(coordinator.dragCleanups[record.id])
+        try await world.clock.run(for: .seconds(30))
+
+        await coordinator.copyFile(recordID: record.id)
+        let staged = try #require(copiedFile)
+        #expect(due.isCancelled)
+        let own = try #require(coordinator.dragCleanups[record.id])
+        #expect(own != due)
+
+        try await world.clock.run(for: .seconds(30))
+        #expect(exists(staged))
+    }
+
+    /// recording-r1 :289. With `{counter}` in Recording file name, a press on a pending video's card after Copy
+    /// File reuses the staged copy under the name it has, though the name the press works out has moved on, so
+    /// the clipboard's file still pastes.
+    @Test func aDragPressAfterCopyFileReusesTheStagedCopy() async throws {
+        defer { world.removeAll() }
+        world.settings.recordingFileNameTemplate = "Clip {counter}"
+        let coordinator = world.makeCoordinator()
+        let record = try addPendingVideo(to: coordinator)
+        world.cards.showing.insert(record.id)
+        await coordinator.copyFile(recordID: record.id)
+        let staged = try #require(copiedFile)
+        let handed = world.cards.dragFiles(for: record.id).count
+        _ = world.settings.nextCounter()
+
+        coordinator.prepareDragFile(recordID: record.id)
+        try await eventually { world.cards.dragFiles(for: record.id).count == handed + 2 }
+
+        #expect(world.cards.dragFiles(for: record.id).last??.lastPathComponent == staged.lastPathComponent)
+        #expect(dragFolderNames(coordinator, record.id) == [staged.lastPathComponent])
+    }
+
+    /// phase-6a :183. A restored upload-only card with no local file downloads quietly into its drag folder under
+    /// the key's last part (`aSIS7.png` for `shots/aSIS7.png`), posting nothing; with a copy of another name
+    /// already there, the folder ends with one file under the key's name.
+    @Test func aRestoredUploadOnlyCardsQuietDownloadIsNamedForItsKey() async throws {
+        defer { world.removeAll() }
+        let png = try CoordinatorWorld.pngData(width: 4, height: 2)
+        destination.state.withLock { $0.downloadedData = png }
+        let coordinator = world.makeCoordinator()
+        let record = CaptureRecord(fileURL: nil, pixelWidth: 4, pixelHeight: 2, appName: nil,
+                                   uploadState: .uploaded(url: URL(string: "https://snap.tky.io/shots/aSIS7.png")!,
+                                                          key: "shots/aSIS7.png"),
+                                   objectLocation: world.location)
+        coordinator.history.add(record)
+        world.cards.showing.insert(record.id)
+
+        coordinator.prepareDragFile(recordID: record.id)
+        try await eventually { world.cards.dragFiles(for: record.id).last??.lastPathComponent == "aSIS7.png" }
+        #expect(destination.state.withLock { $0.dataDownloadKeys } == ["shots/aSIS7.png"])
+        #expect(world.notifier.calls.isEmpty)
+        #expect(dragFolderNames(coordinator, record.id) == ["aSIS7.png"])
+
+        // An earlier copy under another name.
+        coordinator.removeDragFolder(record.id)
+        let folder = coordinator.dragFiles.folder(for: record.id)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try png.write(to: folder.appending(path: "Screenshot 2026-10-30.png"))
+        let handed = world.cards.dragFiles(for: record.id).count
+
+        coordinator.prepareDragFile(recordID: record.id)
+        try await eventually { world.cards.dragFiles(for: record.id).count == handed + 2 }
+        #expect(world.cards.dragFiles(for: record.id).last??.lastPathComponent == "aSIS7.png")
+        #expect(dragFolderNames(coordinator, record.id) == ["aSIS7.png"])
+    }
+
+    /// recording-r4 :291. After the card closes, the 60 s clean-up removes a downloaded drag copy, and a restored
+    /// card downloads again on its next drag.
+    @Test func theCleanUpRemovesADownloadedCopyAndALaterDragDownloadsAgain() async throws {
+        defer { world.removeAll() }
+        let coordinator = world.makeCoordinator()
+        let record = showingUploadedRecording(in: coordinator)
+        destination.state.withLock { $0.downloadOutcome = .lands(bytes: 1_000) }
+        let task = try startDownload(coordinator, record)
+        let landed = try #require(await task.value)
+        #expect(exists(landed))
+
+        world.cards.close(recordID: record.id, reason: .user)
+        try await world.clock.run(for: .seconds(60))
+        try await eventually { !exists(coordinator.dragFiles.folder(for: record.id)) }
+
+        world.cards.showing.insert(record.id)
+        let again = try startDownload(coordinator, record)
+        _ = await again.value
+        #expect(destination.state.withLock { $0.downloads.count } == 2)
     }
 }
