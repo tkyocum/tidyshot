@@ -215,7 +215,7 @@ Covered by the U1 rect step; repeat on the second display and with a window unde
   reset Camera io.tky.tidyshot`, Tim's): the log says `Recording: camera prompt from Settings deferred, a recording
   is being saved`. During a recording it still says `… a capture is running`.
 - [ ] The record shortcut during the settle delay with `Count down before recording` off records nothing and logs
-  `Recording: not started, the count-in was cancelled`.
+  `Recording: not started, the count-in was cancelled`. (suite, the rule: CoordinatorRecordingTests.recordingProceedsOnlyWhenStartedNotQuittingAndNotCancelled)
 
 ## Multipart upload (Tasks 12 and 13; after G1)
 
@@ -224,43 +224,43 @@ Each with the 300 MB and the 6 GB recording, upload-only, Clop off, then Clop on
 - [ ] The ring moves. `footprint`'s peak stays near 170 MB (6 GB, three parts in flight): ______ MB. The link plays
   through CloudFront. The key template drew one name (the key in the console is the one the card copied).
   The log has one `multipart, <n> parts of 16 MiB` line and a `multipart completed`. `multipart/` holds the sidecar
-  while it runs, and neither the sidecar nor a kept copy after `.uploaded`.
+  while it runs, and neither the sidecar nor a kept copy after `.uploaded`. (suite, in part: UploadQueueTests.theStateIsDeliveredFirstAndTheSidecarFollowsEachPart, .aTemplateKeyIsReservedOncePerUploadID, CoordinatorUploadTests.anUploadedResumeClearsItsStateSidecarAndKeptCopy)
 - [ ] A recording under 100 MiB (one byte under is not practical; a short one) still uploads as one PUT: no `multipart,`
   line.
 - [ ] Wi-Fi off for 30 seconds mid-upload: the upload resumes with no visible restart (the log may show `part <k>
-  failed, retry <try>`).
+  failed, retry <try>`). (suite, in part: UploadQueueTests.aFailingPartRetriesAloneWhileTheOthersFinish)
 - [ ] Wi-Fi off for two minutes: the upload fails with `Part <k> of <n>: …` on the card and in the row. Retry resumes at
-  the done fraction, with the bar at that fraction at once, and the log says `resumes at <done> of <n> parts`.
+  the done fraction, with the bar at that fraction at once, and the log says `resumes at <done> of <n> parts`. (suite, in part: CoordinatorUploadTests.aStoredUploadWhoseSourceMatchesResumes, .aResumesStartSetsTheBarAtItsDoneFraction)
 - [ ] Quit mid-upload and relaunch: the record shows `Upload was interrupted.`; Retry Failed Uploads resumes (the
-  log's `resumes at` line), and nothing resumes by itself at launch. `kill -9` mid-upload, relaunch, Retry resumes.
+  log's `resumes at` line), and nothing resumes by itself at launch. `kill -9` mid-upload, relaunch, Retry resumes. (suite, in part: HistoryStoreTests.interruptedMultipartUploadKeepsItsStateOnLoad, CoordinatorUploadTests.aStoredUploadWhoseSourceMatchesResumes)
 - [ ] Delete mid-upload aborts it (the AWS console, or `aws s3api list-multipart-uploads --bucket snap.tky.io`, lists no
-  incomplete upload for the key) and the key is gone. `multipart/` holds nothing for the record.
+  incomplete upload for the key) and the key is gone. `multipart/` holds nothing for the record. (suite, in part: UploadQueueTests.aCancelDuringThePartsWaitsForEveryPart, CoordinatorDeleteTests.eachUploadIsAbortedWhereItWasCreated)
 - [ ] Delete of a failed multipart upload aborts it; its confirmation counts the object (`Removes it from object
-  storage and from history.`).
+  storage and from history.`). (suite: CoordinatorDeleteTests.anAbortThatAnswers204IsSentAgain, CaptureDeletionTests)
 - [ ] Remove `s3:AbortMultipartUpload` from the key (Tim's IAM change, put back afterwards): Delete shows the second
   alert with the 403's reason and `The object stays in the bucket.`; Remove drops the record and its files, and the
-  incomplete upload is left to the lifecycle rule.
+  incomplete upload is left to the lifecycle rule. (suite, in part: CoordinatorDeleteTests.anAbortFailureAsksToRemoveFromHistory)
 - [ ] Retry a failed multipart upload after Settings > Upload names another bucket: the log says `destination changed,
-  starting again`, the new bucket gets the upload, and the old bucket lists no incomplete upload for the key.
+  starting again`, the new bucket gets the upload, and the old bucket lists no incomplete upload for the key. (suite, in part: CoordinatorUploadTests.aStoredUploadAtAnotherLocationIsAbortedThereAndStartsAgain)
 - [ ] Retry after the recording's file changed (a trim, or a Save As over it): `source changed, starting again`, and the
-  old upload is aborted first.
+  old upload is aborted first. (suite: CoordinatorUploadTests.aSourceWhoseSizeChangedStartsAgainAbortingFirst)
 - [ ] A start over whose new file is under 100 MiB (trim a failed large recording to under 100 MiB, or let Clop shrink
   it, then Retry): the log has `multipart aborted` before the single PUT, and the console lists no incomplete upload
   for the key. (Fixed in the branch: the queue's single-PUT path aborts `abortFirst`; the record's `multipart` stays
-  until `.uploaded` clears it.)
+  until `.uploaded` clears it.) (suite: UploadQueueTests.aSinglePutJobWithAnUploadToAbortAbortsItFirst)
 - [ ] `Upload Trimmed` on a 300 MB trimmed file replaces the link in parts; a failure (Wi-Fi off) keeps the old link
-  and marks it stale, and a later `Upload Trimmed` resumes when the trimmed file still matches.
+  and marks it stale, and a later `Upload Trimmed` resumes when the trimmed file still matches. (suite, in part: CoordinatorUploadTests.aFailedUploadMarksTheRecordOrReturnsItToItsLink, MultipartPlanTests.resumesWhenEverythingMatches)
 - [ ] Clop on, `Upload Trimmed` on a trimmed file over 100 MiB, fail it (Wi-Fi off for two minutes), trim again, then
-  `Upload Trimmed`: the log shows `source changed, starting again` and the link plays the second trim, not the first.
+  `Upload Trimmed`: the log shows `source changed, starting again` and the link plays the second trim, not the first. (suite, in part: CoordinatorUploadTests.anOutdatedKeptClopCopyCountsAsAChangedSource)
 - [ ] A Clop result kept in `multipart/<id>.mp4` is used by Retry (no second Clop run, `resumes at`) and is gone after
   the upload. A Clop copy that could not be kept logs `Clop's copy could not be kept for resume: <error>` and the job
-  sends from the throwaway copy.
+  sends from the throwaway copy. (suite, in part: CoordinatorUploadTests.anUploadedResumeClearsItsStateSidecarAndKeptCopy)
 - [ ] Pruning removes the sidecar and the kept copy and aborts nothing. Set After capture to `Upload and copy URL`, fail
   a large upload (Wi-Fi off), quit, set the record's `timestamp` in `history.json` to two days ago, relaunch, set
   Overlay > `Keep history for 1 days` and take a new capture: the record leaves Recent Captures, and `multipart/`
-  holds nothing for it. Put the retention back.
+  holds nothing for it. Put the retention back. (suite: CoordinatorDeleteTests.pruningRemovesTheFilesAndAsksForNoDestination)
 - [ ] The files in `multipart/` of a record with no state, or a state older than 7 days, are removed at launch (put an
-  unrelated `<uuid>.json` there, relaunch); a file whose name does not start with a UUID is left alone.
+  unrelated `<uuid>.json` there, relaunch); a file whose name does not start with a UUID is left alone. (suite, in part: MultipartStoreTests.sweepRemovalsDropsNoStateAndStatesOlderThanSevenDays, .sweepLeavesAFileNotNamedByAnID)
 - [x] The lifecycle rule is on the bucket (Setup; added 2026-10-29).
 - [ ] A recording over 625 GB is not reachable by recording; the pure rule is tested. Nothing to run.
 
@@ -270,25 +270,25 @@ With a restored card (Restore Closed Overlay, or an old record) for an uploaded 
 empty drag folder (`tmp/Drag`), and a copy of the same recording that is longer than a few seconds to download.
 - [ ] A drag of the card shows `Downloading…` with a ring, the card stays open past its auto-close, the file lands
   under the key's name in `tmp/Drag/<id>/`, and the next drag drops into Finder and Slack whole (the same bytes as the
-  bucket's object).
+  bucket's object). (suite, in part: CoordinatorDragOutTests.aDragOfAShowingUploadedRecordingStartsOneDownload, .aDownloadThatLandsIsAdoptedAndHandedToTheCard)
 - [ ] A drag held through a short download starts the session when the file lands.
 - [ ] A click on the thumbnail opens the link and downloads nothing. Neither a restored card's appearance nor Restore
   Closed Overlay downloads a video.
 - [ ] Save As… during the download waits and then saves the landed file (one GET in the log, not two).
 - [ ] Close during the download cancels it: `Drag-out download for <id> cancelled` in the log, and `tmp/Drag/<id>` and
-  `.downloads/` hold nothing.
-- [ ] Delete during the download cancels it and removes the folder.
-- [ ] The row in Recent Captures reads `Downloading` meanwhile, and its normal detail afterwards.
+  `.downloads/` hold nothing. (suite: CoordinatorDragOutTests.aCloseDuringTheTransferDropsWhatLands)
+- [ ] Delete during the download cancels it and removes the folder. (suite: CoordinatorDragOutTests.deleteCancelsARunningDownloadAndRemovesTheFolder)
+- [ ] The row in Recent Captures reads `Downloading` meanwhile, and its normal detail afterwards. (suite, in part: RecentCaptureFormattingTests.detailSaysDownloadingWhileADragDownloadRuns)
 - [ ] Wi-Fi off during the download shows `Download failed` with the error as its tool tip and no Retry button; the
   folder is empty and nothing posts. A drag soon after, with Wi-Fi back, resumes: the log shows `Drag-out download
   for <id> resumed at <fraction>` near where it stopped, not 0. A drag 14 minutes or more after the first request
-  was signed starts again from 0, with no `resumed at` line.
-- [ ] A recording marked `Sound not muted` starts no download on a drag.
+  was signed starts again from 0, with no `resumed at` line. (suite, in part: CoordinatorDragOutTests.aFailureWithResumeDataKeepsItWithTheSigningTime, .aDragWithinTheWindowResumesFromTheKeptData, .aDragPastTheWindowStartsAgainAndRemovesThePartialFile)
+- [ ] A recording marked `Sound not muted` starts no download on a drag. (suite: DragDownloadRuleTests.startsForNothingElse)
 - [ ] A disk-check refusal shows `Download failed` with `Your disk is almost full.` as its tool tip and logs `refused,
-  not enough disk space`. (A small APFS volume as the container's is a hand set-up; read the log if none is at hand.)
-- [ ] A GIF with no local file downloads too.
+  not enough disk space`. (A small APFS volume as the container's is a hand set-up; read the log if none is at hand.) (suite: CoordinatorDragOutTests.tooLittleFreeSpaceRefusesTheDownload)
+- [ ] A GIF with no local file downloads too. (suite, in part: DragDownloadRuleTests.startsForAnUploadedVideoOrGIFWithNoLocalFile)
 - [ ] A downloaded drag copy is not a local file: Copy File still needs one, and Trim downloads its own copy.
-- [ ] After the card closes, the 60 s clean-up removes the downloaded copy; a restored card downloads again.
+- [ ] After the card closes, the 60 s clean-up removes the downloaded copy; a restored card downloads again. (suite, in part: DragCleanupTests.aCardShowingTheRecordLeavesTheFolder, .noCopyFileRemovesTheFolder)
 
 ## Regression
 
@@ -368,12 +368,12 @@ say how each stands. Write `confirm` or `overrule` and why.
 
 Calls the build made that neither the design nor the gaps settled (each easy to overrule):
 - [ ] A. A multipart sidecar that cannot be written fails the job (the design's invariant that Complete never goes out
-  unless the sidecar says so), instead of a best-effort log line. ______
-- [ ] B. A kept Clop copy outdated by a later trim of the record's own file starts the upload over (`source changed`). ______
-- [ ] C. A start over whose new file is under 100 MiB aborts the stored upload before its single PUT. ______
-- [ ] D. A second `partsRejected` in a job restarts with no reason line of its own. ______
-- [ ] E. A resume sends no `.started` until it knows its done fraction. ______
-- [ ] F. Every abort of a start over or a restart is one try, not a retry loop. ______
+  unless the sidecar says so), instead of a best-effort log line. (suite: UploadQueueTests.aSidecarUnwritableAtCreateFailsTheJob, .aSidecarUnwritableDuringThePartsFailsTheJobBeforeComplete, .aNewUploadWhoseFirstSidecarCannotBeWrittenIsAborted) ______
+- [ ] B. A kept Clop copy outdated by a later trim of the record's own file starts the upload over (`source changed`). (suite: CoordinatorUploadTests.anOutdatedKeptClopCopyCountsAsAChangedSource) ______
+- [ ] C. A start over whose new file is under 100 MiB aborts the stored upload before its single PUT. (suite: UploadQueueTests.aSinglePutJobWithAnUploadToAbortAbortsItFirst) ______
+- [ ] D. A second `partsRejected` in a job restarts with no reason line of its own. (suite: UploadQueueTests.aSecondRejectedPartListRestarts) ______
+- [ ] E. A resume sends no `.started` until it knows its done fraction. (suite: CoordinatorUploadTests.aResumesStartSetsTheBarAtItsDoneFraction, UploadQueueTests.aResumeSendsOnlyTheMissingParts) ______
+- [ ] F. Every abort of a start over or a restart is one try, not a retry loop. (suite: UploadQueueTests.aJobWithAnUploadToAbortAbortsItBeforeItsCreate, .aSinglePutJobAbortsOnceAcrossItsRetries, .aSecondRejectedPartListRestarts) ______
 - [ ] G. Delete's second Abort failing fails Delete (the second alert) like the first. ______
 - [ ] H. Part reads retry from the same bytes held in memory, not reread. ______
 

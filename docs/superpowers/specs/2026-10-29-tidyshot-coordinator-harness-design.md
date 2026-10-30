@@ -31,6 +31,8 @@ A struct in `TidyShot/App/AppEnvironment.swift`, the shape `RecordingEnvironment
 | `overlay` | `any QuickAccessCards` | `QuickAccessController(settings:)` (:26) | the same, with `settings` |
 | `clipboard` | `any Clipboard` | `Pasteboard.*` and `NSPasteboard.general.changeCount` | `SystemClipboard()` |
 | `makeDestination` | `@Sendable (S3DestinationConfig, AWSCredentials) -> any Destination` | `S3Destination(config:credentials:)` at five sites | the same |
+| `multipartPlan` | `MultipartPlan` | `UploadQueue`'s default `plan` in `makeLane` | `.standard` |
+| `uploadSleep` | `UploadQueue.Sleeper` | `UploadQueue`'s default `sleep` (the lane's backoff) | `{ try await Task.sleep(for: $0) }` |
 | `freeBytes` | `@Sendable (URL) -> Int64?` | `RecordingLimits.freeBytes(at:)` (+DragOut:103, +Recording, +Trim) | the same |
 | `confirm` | `@MainActor (DeleteConfirmation) async -> Bool` | `confirmDelete` and `confirmRemoveFromHistory` (+Delete:230, :249) | the two `NSAlert` bodies, moved |
 | `playShutter` | `@MainActor () -> Void` | `SoundPlayer.playShutter()` (+Save:127, :209, +Capture:287) | the same |
@@ -46,7 +48,7 @@ What is not in the environment, on purpose: `NSWorkspace` (open, reveal; +Record
 
 Each names the members the coordinator calls today, no more, and the concrete type conforms unchanged:
 
-- **`Notifying`** (`TidyShot/Output/Notifier.swift`): `setUp()`, `notifySaved(fileURL:title:)`, `notifyUploaded(url:copied:)`, `notifyError(_:title:subtitle:openURL:)`, `notify(title:body:subtitle:openURL:)`, `holdNotices()`, `releaseHeldNotices() -> Int`, `waitForReleasedNotices(upTo:) async`. The default arguments move to protocol extensions so call sites do not change.
+- **`Notifying`** (`TidyShot/Output/Notifier.swift`): `setUp()`, `notifySaved(fileURL:title:)`, `notifyUploaded(url:copied:)`, `notifyError(_:title:subtitle:revealing:)`, `notify(title:body:subtitle:openURL:)`, `holdNotices()`, `releaseHeldNotices() -> Int`, `waitForReleasedNotices(upTo:) async`. The default arguments move to protocol extensions so call sites do not change.
 - **`QuickAccessCards`** (`TidyShot/Overlay/QuickAccessController.swift`): `windowNumbers`, `shownIDs`, `screen`, `onDidClose` (settable), `isShowing(recordID:)`, `show(record:thumbnail:screen:autoCloseSeconds:actions:)`, `update(record:)`, `setOptimizing`, `setDownloading`, `setLinkWasCopied`, `setTrimState`, `setThumbnail`, `setDragFile`, `close(recordID:reason:)`. `QuickAccessController.Actions` stays where it is.
 - **`Clipboard`** (`TidyShot/Output/Pasteboard.swift`): `changeCount`, `setString(_:)`, and the `Pasteboard` statics the coordinator calls (`copy(image:pngData:scale:)`, `copy(pngData:tiffData:)`, `copy(tiffData:)`, `copy(fileURL:)`, `copy(url:)`, `copy(annotationClip:)`, `annotationClipData()`), each returning the change count as today. `SystemClipboard` forwards to the `Pasteboard` enum and `NSPasteboard.general`; the pure helpers (`includesTIFF`, `companionTIFF`, `tiffData`) stay static.
 
@@ -104,15 +106,15 @@ Setup: a recording in a temp save folder (sparse, over a 1 MiB test threshold vi
 
 17. A stored multipart upload whose source still matches (same size and modification date) resumes: the destination sees no Create, ListParts is not needed (the sidecar lists the parts), the missing parts are sent, Complete is called; no counter is drawn (`settings.currentCounter` unchanged); `sentByteCounts[id]` is the state's `byteCount`.
 18. When the resume's `.started(fraction:)` arrives, `history.record(id).uploadState` is `.uploading(fraction: <done fraction>)` and the card got `update(record:)` with that fraction (the R4 design's "the bar at that fraction at once").
-19. A `.started(attempt: 2)` (the fake fails the first part once, `RetryPolicy` with one retry, `sleep` injected) logs `Upload retry 2 for <id>`.
-20. A stored upload at another location: the log has `Upload: <name> destination changed, starting again`, the factory was asked for the old location's config and that destination got one `abort`, and the new job carries no `abortFirst` (the new destination sees Create before any `abort`).
+19. A `.started(attempt: 2)` (a screenshot's single PUT that the fake fails once, `RetryPolicy` with one retry, `sleep` injected) logs `Upload retry 2 for <id>`.
+20. A stored upload at another location: the log has `Upload: <name> destination changed, starting again`, the factory was asked for the old location's config and that destination got two `abort`s (a 204 is repeated, test 38), and the new job carries no `abortFirst` (the new destination sees Create before any `abort`).
 21. A source whose size changed: `Upload: <name> source changed, starting again`, and the new destination sees `abort` for the stored id before `create`.
 22. A fixed key different from the stored key: `key changed, starting again`.
 23. A kept Clop copy in `multipart/` whose record file is newer than `startedAt` counts as changed (`keptCopyIsOutdated`): `source changed`.
 24. `.uploaded` for a recording whose clipboard count is unchanged since the save (`videoClipboardCounts[id] == clipboard.changeCount`): `clipboard.copy(url:)` was called, `notifyUploaded(copied: true)`, `linkNotCopiedIDs` does not hold the id. With the count moved on: no copy, `notifyUploaded(copied: false)`, `linkNotCopiedIDs` holds it.
 25. `.uploaded` clears `record.multipart`, removes the sidecar and the kept copy from `multipart/`, and stores `byteCount` as the sent size.
 26. `.uploaded` for an upload-only image with a card showing moves `pending/<id>.png` to `Drag/<id>/<key name>` and hands it to the card; with no card, the pending file is removed and `fileURL` is nil.
-27. `.failed` with no prior link marks the record `.failed(message)` and posts `Not uploaded`; with a `priorUpload` the record returns to the earlier link, `uploadIsStale` stays, and the notice reads `Upload failed. The link still shows the earlier image.`
+27. `.failed` with no prior link marks the record `.failed(message)` and posts `Upload failed` with the error; with a `priorUpload` the record returns to the earlier link, `uploadIsStale` stays, and the notice is `Not uploaded` with `Upload failed. The link still shows the earlier image.`
 28. `cancelUpload` of a record in the resume/size wait (`optimisingIDs` holds it): the token is gone, the record reads `Upload cancelled.`, the queue got no cancel.
 29. `cancelUpload` of a queued job: the lane's cancel runs, the record's `pendingObjectKey` is the reserved key, `fileUploadIDs` is empty.
 30. `destinationDidChange` moves the lane to `drainingQueues` and drops it once idle and no Clop wait remains (the clock advanced through the 500 ms poll).
@@ -134,7 +136,7 @@ Setup: a recording in a temp save folder (sparse, over a 1 MiB test threshold vi
 43. An abort failure asks `.removeFromHistory(message:informativeText:)` with the reason and `The object stays in the bucket.`; a No keeps the record and deletes no object; a Yes removes the record and its pending file.
 44. A record whose key another record shares: the object is kept, `Not deleted from storage` posts, the record goes.
 45. A pending file that cannot be removed (the folder made read-only, the `PendingFileStoreTests` idiom) keeps the record and posts `Not deleted`.
-46. `removeFiles(ofPruned:)` removes the thumbnail, the pending file, the sidecar and kept copy, closes the card with `.deleted` and asks the factory for no destination.
+46. `removeFiles(ofPruned:)` removes the thumbnail, the pending file, the sidecar and kept copy, closes no card (the code never did; D12) and asks the factory for no destination.
 47. `removeRecord` clears `optimizingVideoIDs`, `fileUploadIDs`, `videoClipboardCounts`, `linkNotCopiedIDs`, `copyFileCounts` and `dragDownloadResume` for the id.
 
 ### 3.4 `CoordinatorRecordingTests` (R4 `stop-recording` and `record-screen`; R3 Settings prompts; R1 quit)
@@ -165,10 +167,11 @@ An orphan is adopted, never deleted **(the design's call)**. The rule is the one
 - **Deciding.** `PendingRecovery.orphans(listed: [URL], recordIDs: Set<UUID>) -> [PendingRecovery.Found]` (`TidyShot/Output/PendingRecovery.swift`, `nonisolated enum`, pure): a listed file whose name is `<UUID>.<ext>` with `ext` one of `MediaKind`'s extensions and whose UUID is no record's id. Any other name is left alone. The check is by record id, not by `fileURL`, so a trim's window (the record exists, `fileURL` not yet set) and an edit kept under its own record are both kept, and a record's `fileURL` spelling never matters.
 - **Adopting.** `adoptPendingFiles(_ listed:)` in `TidyShot/App/AppCoordinator+Recovery.swift` (new; `recoverRecordings` moves there from +Recording, byte for byte, with the split design's argument). It re-reads `history.records` at adoption time and re-applies `orphans` (a record added since drops the file from the set), then for each orphan, in name order:
   - A `.png`: decoded off the main actor (`CGImageSource`, as `loadImage` does); the record is `CaptureRecord(id:, timestamp: the file's creation date, fileURL:, fileIsTemporary: true, pixelWidth:, pixelHeight:, appName: nil, uploadState: .none, byteCount:)`; `history.add`; `makeThumbnail(from:for:)`. A file that does not decode is removed and logged `Recovery: <name> could not be read, removed`.
-  - A `.mp4` or `.gif`: `VideoValidation.inspect` as `recoverRecordings` uses it; playable gets the record `recoverRecordings` builds (`mediaKind` from the extension, `durationSeconds`, `byteCount`, no `unmutedIntervals`: a file in `pending/` has been through its mute step already, if it had one), `history.add`, the poster thumbnail. Unplayable is removed and logged the same way.
-  - A zero-byte file of any kind is removed.
+  - A `.gif`: read with ImageIO (its size, first frame and the sum of its frames' delays as `durationSeconds`), since AVFoundation does not open a GIF and `VideoValidation` would find every one unplayable; the record `recoverRecordings` builds, with `mediaKind: .gif`; `history.add`; the first frame as its thumbnail. One that does not decode is removed and logged the same way.
+  - A `.mp4`: `VideoValidation.inspect` as `recoverRecordings` uses it; playable gets the record `recoverRecordings` builds (`mediaKind` from the extension, `durationSeconds`, `byteCount`, no `unmutedIntervals`: a file in `pending/` has been through its mute step already, if it had one), `history.add`, the poster thumbnail. Unplayable is removed and logged the same way.
+  - A zero-byte file of any kind is removed and logged `Recovery: <name> is empty, removed`. A removal that fails logs `Recovery: <name> <reason>, and could not be removed: <error>` (`<reason>` is `is empty` or `could not be read`) and leaves the file.
   - Each adopted file logs `Recovery: <name> recovered` and posts `Recovered a capture` / `Recovered a recording` with R1's body (`<file name>, <m:ss>. Find it in Recent Captures.`; for an image, `<file name>. Find it in Recent Captures.`), through `notifyError` as R1's recovery does, no card.
-- **Order at launch.** `start()` runs `Task { await adoptPendingFiles(listed); await recoverRecordings() }`: one task, `pending/` first, so the two recoveries never interleave and a recovery of `tmp/Recording` never sees a half-adopted file. Nothing else in `start()` moves.
+- **Order at launch.** `start()` runs one task: `RecordingRecovery.begin` (list `tmp/Mute`, scan `tmp/Recording`) first, at launch as before, then `adoptPendingFiles(listed)`, then `recoverRecordings(begun)` with the scan's result. The two recoveries never interleave, and `pending/` is adopted before any scanned file moves into it or is checked against the records. The scan runs at launch, before adopting, because adopting reads each orphan off the main actor and can take seconds while shortcuts are already registered: a scan that ran after it would list a recording started in that window and remove it as unplayable mid-write (D27). Nothing else in `start()` moves.
 - **The adopted record.** `.none`, `fileIsTemporary: true`, so `HistoryStore.pruned` keeps it (`isPendingOnly`) until the user acts: Annotate, Save As, Delete on its row; a video's Trim; an image's upload from the editor. This is what R1 gives a recovered recording, and the same stance (a file on disk is the only copy; TidyShot keeps it and says so).
 
 ### 4.3 Tests
@@ -222,7 +225,7 @@ New: `CoordinatorDragOutTests` (16), `CoordinatorUploadTests` (18), `Coordinator
 3. A `record-screen` URL still starts a selection and `urlRecordingStartPending` clears (a second `record-screen` right after the selection closes starts another): the one R4 line the harness leaves (test 53).
 4. The log lines of `stop-recording` in each phase (R4 checklist 178-186) stay as they were: the harness pins the state, not the `RecordingLog` text.
 
-And the R4 checklist lines the suite now covers are marked `(suite)` with the test's name, so Tim's remaining R4 run is shorter: lines 224-227, 230-263, 271-291 and the calls A to H, except the real bucket, CloudFront, `footprint`, the Wi-Fi toggle, the AWS console and the Clop run.
+And the R4 checklist lines the suite now covers are marked `(suite)` with the test's name, so Tim's remaining R4 run is shorter: lines 224-227, 230-263, 271-291 and the calls A to F, except the real bucket, CloudFront, `footprint`, the Wi-Fi toggle, the AWS console and the Clop run. The calls G and H stay with Tim: G's second Abort must fail after a first that answered 204, which needs a per-call `FakeDestination` script the harness does not add, and H's rereads need a read counter `readPart` does not have.
 
 ## 9. The design's calls (for Tim to overrule)
 
@@ -232,7 +235,7 @@ And the R4 checklist lines the suite now covers are marked `(suite)` with the te
 4. Every coordinator `NSLog` goes through the environment's `log`, live `NSLog("%@", …)`; `RecordingLog.note` stays (2.3).
 5. No `private` member is opened for tests; `record()` is not driven; `recordingProceeds` is extracted as a pure static (2.4, 3.4).
 6. The fifty-six tests of section 3 are this phase's set; the rest of the catalogue (editor bridge, pins, restore, Copy File, trim guards, `start()`'s sweeps) waits for a phase that needs it (Deferred).
-7. `pending/` orphans are adopted, never deleted; the check is by record id; listing is synchronous in `start()` before any task; one recovery task, `pending/` first (4.2).
+7. `pending/` orphans are adopted, never deleted; the check is by record id; listing is synchronous in `start()` before any task; one recovery task, the `tmp/Recording` scan first, then `pending/` (4.2, D27).
 8. An adopted image or recording gets `.none` and `fileIsTemporary: true`, as a recovered recording does (4.2).
 9. The three-file queue split with 24 widenings (5.1).
 10. `multipart upload already gone` for a 404 (5.2).
@@ -241,4 +244,55 @@ And the R4 checklist lines the suite now covers are marked `(suite)` with the te
 
 ## 10. Deferred
 
-Seams not added this phase (added when a test needs them): `NSWorkspace` (open, reveal), the Save As panel, `saveLocation.chooseFolder`, `ScreenCapturePermission`, `NSScreen`, `RecordingLog`, `engine.shareableContent`, the editor and Trim window controllers, `PinController`, `DesktopCoverController`, Clop's optimiser, the `tmp/` directory statics. Rules in the catalogue not tested this phase: the editor bridge, pins, Close and Restore, drag staging and Copy File, the trim gates and pass, GIF conversion bookkeeping, `showOverlay`, `saveRecording` and `finishSave` end to end, `start()`'s sweeps beyond `pending/`, `recordingPrompts` at a real start, the status icon. A `Cancel` on a downloading card and `If-None-Match` on Complete stay deferred from R4.
+Seams not added this phase (added when a test needs them): `NSWorkspace` (open, reveal), the Save As panel, `saveLocation.chooseFolder`, `ScreenCapturePermission`, `NSScreen`, `RecordingLog`, `engine.shareableContent`, the editor and Trim window controllers, `PinController`, `DesktopCoverController`, Clop's optimiser, the `tmp/` directory statics, and `ProcessInfo` activities (a test's recording upload takes the real `Uploading a recording` activity while `fileUploadIDs` is not empty). Rules in the catalogue not tested this phase: the editor bridge, pins, Close and Restore, drag staging and Copy File, the trim gates and pass, GIF conversion bookkeeping, `showOverlay`, `saveRecording` and `finishSave` end to end, `start()`'s sweeps beyond `pending/`, `recordingPrompts` at a real start, the status icon. A `Cancel` on a downloading card and `If-None-Match` on Complete stay deferred from R4.
+
+## 11. Built notes
+
+Built on `coordinator-harness` from the plan `docs/superpowers/plans/2026-10-29-coordinator-harness.md`. The suite
+reads `2169 tests in 181 suites` (R4's 2090 in 174, plus `CoordinatorWorldTests` 1, `CoordinatorDragOutTests` 16,
+`CoordinatorUploadTests` 18, `CoordinatorDeleteTests` 13, `CoordinatorRecordingTests` 9, `PendingRecoveryTests` 5,
+`CoordinatorRecoveryTests` 7, two in `PendingFileStoreTests` and eight in `UploadQueueTests`); the last run,
+after the close-out, read `2169 tests in 181 suites passed`.
+
+What was built differently from this design, each with its reason, is the plan's "Plan decisions" list,
+numbered D1 to D27; Tim's checklist (`docs/testing/coordinator-harness-manual-checklist.md`) asks him to confirm
+the three a user could see (D11, D12, D14). Sections 2.1, 2.2, 3.2 (tests 19, 20, 27), 3.3 (test 46), 4.2 and 8
+above now read as built; what they said before:
+- 2.1 had no `multipartPlan` or `uploadSleep` rows (D4: the lanes' plan and backoff, so test 19's retry does not wait).
+- 2.2 gave `notifyError(_:title:subtitle:openURL:)`; `Notifier.notifyError` takes `revealing:` (D1).
+- Test 19 failed the first part once; a part's retry sends no `.started`, so it is a single PUT's (D15).
+- Test 20 said one `abort`; `abortUploads` repeats a 204 (D13, test 38).
+- Test 27 had the titles crossed: `Upload failed` is the no-link case, `Not uploaded` the case over a link (D14).
+- Test 46 said pruning closes the card with `.deleted`; `removeFiles(ofPruned:)` never closed it (D12).
+- 4.2 read a `.gif` with `VideoValidation`, which would remove every GIF; it is read with ImageIO (D11). It named no
+  line for an empty file or a failed removal; `Recovery: <name> is empty, removed` and `Recovery: <name> <reason>, and
+  could not be removed: <error>` are logged (D11).
+- 4.2 ran `adoptPendingFiles` before the `tmp/Recording` scan; the scan runs first, at launch, so a recording started
+  while adopting runs is never listed and removed mid-write (D27). `recoverRecordings` takes `begin`'s result.
+- 9's call 7 read "one recovery task, `pending/` first"; it now reads "the `tmp/Recording` scan first, then
+  `pending/`" to match 4.2 (D27).
+- 8 said the suite covers the calls A to H; it covers A to F. G (a second Abort failing after a 204) needs a
+  per-call Abort script `FakeDestination` does not have, and H needs a read counter `readPart` does not have (D18),
+  so both stay in Tim's R4 run.
+
+The other departures, in short: `Clipboard` also has `hasAnnotationClip` (D2); the triple `makeDestination()`
+returns is `AppCoordinator.UploadTarget`, and `persist` and `finishSave` take `UploadTarget?` (D3); the Upload
+tab's connection test takes the target, so `ConnectionTester.run` takes `any Destination` and the key template
+(D19). `FakeDestination`'s download holds until released, ignoring a cancel, instead of sleeping until cancelled
+(2.4; D7). Test 28 cannot see "the queue got no cancel" (a queue cancel of a job it does not hold changes nothing),
+so it checks the lane was never given the job (D23). Test 56 cannot see `saveLocation.cancelFolderChoice()`: with no
+folder panel open it does nothing, and the panel is Deferred (D22). 5.3's multipart pair expects `.started` before
+`.cancelled`, the multipart path's order (`.started` goes before its `abortFirst`; D23). 5.4's `sendParts` test
+checks no `part n` after the cancel, not a read count (`readPart` has no counter; D18). Tests 48 and 50 cannot tell
+the coordinator's own do-nothing branches from the recorder's, which drops a stop with no run and a repeated stop
+itself, so they pin no notice and one recorder stop, and the `did nothing` log lines stay Tim's (D24). The upload
+tests keep every recording in `pending/` rather than a temp save folder (D25). `FakeDestination`'s download, part and
+Abort holds share one `HeldReleases`, and `FakeConfirm`, `HeldCameraDevices` and `TestGate` one `SingleWaiter` (D26). The suite also has
+`CoordinatorWorldTests` (one test of the harness itself), and README names the `pending/` recovery (D21).
+After the split, `UploadQueue.swift` is 326 lines (5.1 estimated about 290; 324 after the split, two more after Task 15), `UploadQueue+Multipart.swift`
+222 and `UploadQueue+Parts.swift` 232 (215 and 230 after the split). The full run prints about 40
+`mdb_txn_commit error: MDB_MAP_FULL` lines from a system cache in the test host; they predate the branch and are
+not a failure.
+
+Hand checks: section 8, in the checklist above, not yet run. The R4 checklist's covered items are marked
+`(suite: …)`.
