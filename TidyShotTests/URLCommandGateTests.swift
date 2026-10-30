@@ -7,7 +7,7 @@ struct URLCommandGateTests {
     let off = "URL commands are off. Turn them on in Settings > General."
     let refusal = " captures without a selection. Allow it in Settings > General > URL commands."
 
-    /// Every command, and with a rect where one is taken: 12 kinds, 4 of them with a rect too.
+    /// Every command, and with a rect where one is taken: 14 kinds, 5 of them with a rect too.
     var everyCommand: [URLCommand] {
         URLCommand.Kind.allCases.flatMap { kind in
             kind.takesArea ? [URLCommand(kind: kind), URLCommand(kind: kind, area: area)] : [URLCommand(kind: kind)]
@@ -15,7 +15,7 @@ struct URLCommandGateTests {
     }
 
     @Test func withURLCommandsOffEveryCommandIsRefused() {
-        #expect(everyCommand.count == 16)
+        #expect(everyCommand.count == 19)
         #expect(URLCommandGate.disabledMessage == off)
         for command in everyCommand {
             for allowSilent in [false, true] {
@@ -53,7 +53,7 @@ struct URLCommandGateTests {
     /// the user.
     @Test func commandsThatWaitForTheUserRunWithTheSecondToggleOff() {
         let waiting = everyCommand.filter { !$0.capturesWithoutSelection }
-        #expect(waiting.count == 12)
+        #expect(waiting.count == 15)
         #expect(waiting.contains(URLCommand(kind: .captureText)))
         for command in waiting {
             #expect(URLCommandGate.decision(for: command, enabled: true, allowSilent: false, sender: "Raycast") == .run)
@@ -74,6 +74,23 @@ struct URLCommandGateTests {
             #expect(URLCommandGate.decision(for: command, enabled: true, allowSilent: false) == .run)
             #expect(URLCommandGate.decision(for: command, enabled: true, allowSilent: true) == .run)
             #expect(URLCommandGate.decision(for: command, enabled: false, allowSilent: true, sender: "Raycast") == .refuse(off))
+        }
+    }
+
+    /// A rect only preselects in the recording selection, so record-screen waits for the user too.
+    /// Stop Recording captures nothing. Both need only URL commands on.
+    @Test func theRecordingCommandsNeedOnlyURLCommandsOn() {
+        let commands = [URLCommand(kind: .recordScreen), URLCommand(kind: .recordScreen, area: area),
+                        URLCommand(kind: .recordScreen, action: .upload, area: area, display: 2),
+                        URLCommand(kind: .stopRecording)]
+        for command in commands {
+            #expect(!command.capturesWithoutSelection)
+            #expect(URLCommandGate.decision(for: command, enabled: true, allowSilent: false) == .run)
+            #expect(URLCommandGate.decision(for: command, enabled: true, allowSilent: true) == .run)
+            for allowSilent in [false, true] {
+                #expect(URLCommandGate.decision(for: command, enabled: false, allowSilent: allowSilent, sender: "Raycast")
+                        == .refuse(off))
+            }
         }
     }
 

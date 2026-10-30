@@ -11,10 +11,17 @@ struct CaptureDeletionTests {
 
     func record(state: CaptureRecord.UploadState, fileURL: URL? = URL(fileURLWithPath: "/Users/tim/Desktop/Shot.png"),
                 temporary: Bool = false, location: ObjectLocation? = nil, pendingKey: String? = nil,
-                superseded: [ObjectRef] = [], prior: PriorUpload? = nil) -> CaptureRecord {
+                superseded: [ObjectRef] = [], prior: PriorUpload? = nil,
+                multipart: MultipartUploadState? = nil) -> CaptureRecord {
         CaptureRecord(fileURL: fileURL, fileIsTemporary: temporary, pixelWidth: 10, pixelHeight: 10, appName: "Safari",
                       uploadState: state, objectLocation: location, pendingObjectKey: pendingKey,
-                      supersededObjects: superseded, priorUpload: prior)
+                      supersededObjects: superseded, priorUpload: prior, multipart: multipart)
+    }
+
+    func multipartState(key: String = "rec.mp4", at place: ObjectLocation? = nil) -> MultipartUploadState {
+        MultipartUploadState(uploadID: "VXBsb2FkSWQ", key: key, location: place ?? location, partSize: 16_777_216,
+                             byteCount: 3_400_000_000, sourceModified: Date(timeIntervalSinceReferenceDate: 783_456_789),
+                             sourcePath: "/Users/tim/Movies/rec.mp4", startedAt: Date(timeIntervalSince1970: 1_792_411_000))
     }
 
     @Test func objectKeysAreTheUploadedAndThePendingKey() {
@@ -179,5 +186,52 @@ struct CaptureDeletionTests {
         #expect(CaptureDeletion.sharedKeys(["linked.png", "old.png", "moved.png", "mine.png"], at: location, with: others)
                 == ["linked.png", "old.png"])
         #expect(CaptureDeletion.sharedKeys(["moved.png", "linked.png"], at: elsewhere, with: others) == ["moved.png"])
+    }
+
+    // MARK: Multipart (R4)
+
+    @Test func abortsListTheStoredUploadOrNone() {
+        let state = multipartState()
+        let failed = record(state: .failed(message: "Part 12 of 200: Server returned HTTP 503."), location: location,
+                            pendingKey: "rec.mp4", multipart: state)
+        #expect(CaptureDeletion.aborts(for: failed) == [MultipartRef(uploadID: "VXBsb2FkSWQ", key: "rec.mp4", location: location)])
+        #expect(CaptureDeletion.aborts(for: failed) == [state.ref])
+        #expect(CaptureDeletion.aborts(for: record(state: .none)).isEmpty)
+        #expect(CaptureDeletion.aborts(for: record(state: .uploaded(url: url, key: "aB3dE9.png"), location: location)).isEmpty)
+    }
+
+    /// A failed upload may have completed on the server as the app quit, so Delete removes the
+    /// object its state names, at the state's own location.
+    @Test func objectsListTheMultipartKey() {
+        let failed = record(state: .failed(message: "Upload was interrupted."), location: nil, multipart: multipartState())
+        #expect(CaptureDeletion.objects(for: failed) == [ObjectRef(key: "rec.mp4", location: location)])
+
+        // Reserved under the same key: one object.
+        let reserved = record(state: .failed(message: "Upload was interrupted."), location: location,
+                              pendingKey: "rec.mp4", multipart: multipartState())
+        #expect(CaptureDeletion.objects(for: reserved) == [ObjectRef(key: "rec.mp4", location: location)])
+
+        // Equal to the uploaded key: once.
+        let uploaded = record(state: .uploaded(url: url, key: "rec.mp4"), location: location, multipart: multipartState())
+        #expect(CaptureDeletion.objects(for: uploaded) == [ObjectRef(key: "rec.mp4", location: location)])
+
+        // Another key or another bucket is another object, listed after the record's own.
+        let other = record(state: .uploaded(url: url, key: "aB3dE9.png"), location: location,
+                           multipart: multipartState(key: "new.mp4", at: elsewhere))
+        #expect(CaptureDeletion.objects(for: other) == [ObjectRef(key: "aB3dE9.png", location: location),
+                                                        ObjectRef(key: "new.mp4", location: elsewhere)])
+    }
+
+    @Test func sharedKeysSeeAnotherRecordsMultipartKey() {
+        let other = record(state: .failed(message: "offline"), fileURL: nil, multipart: multipartState())
+        #expect(CaptureDeletion.sharedKeys(["rec.mp4", "x.mp4"], at: location, with: [other]) == ["rec.mp4"])
+        #expect(CaptureDeletion.sharedKeys(["rec.mp4"], at: elsewhere, with: [other]).isEmpty)
+    }
+
+    @Test func confirmationCountsTheMultipartObject() {
+        let failed = record(state: .failed(message: "Upload failed."), fileURL: nil, multipart: multipartState())
+        #expect(CaptureDeletion.confirmationText(for: failed) == "Removes it from object storage and from history.")
+        let saved = record(state: .failed(message: "Upload failed."), multipart: multipartState())
+        #expect(CaptureDeletion.confirmationText(for: saved) == "Removes it from object storage, your save folder and history.")
     }
 }

@@ -176,6 +176,39 @@ struct QuickAccessModelTests {
         #expect(card.canSaveAs)
     }
 
+    /// A drag-out download over an uploaded recording with no local file says `Downloading…` with
+    /// its fraction, in place of `URL copied`.
+    @Test func aRunningDragDownloadShowsItsFraction() {
+        let card = model(.uploaded(url: link, key: "aB3dE9.mp4"), file: nil)
+        #expect(card.dragDownload == nil)
+        #expect(!card.isDownloadingForDrag)
+        card.dragDownload = .running(0.4)
+        #expect(card.status == .downloading(0.4))
+        #expect(card.isDownloadingForDrag)
+        card.dragDownload = nil
+        #expect(card.status == .urlCopied(link))
+    }
+
+    /// A failed download says `Download failed` with its error. The record stays uploaded, so the
+    /// card offers Copy URL, not Retry; the next drag tries again.
+    @Test func aFailedDragDownloadShowsTheErrorAndLeavesTheUpload() {
+        let card = model(.uploaded(url: link, key: "aB3dE9.mp4"), file: nil)
+        card.dragDownload = .failed("Server returned HTTP 403.")
+        #expect(card.status == .downloadFailed("Server returned HTTP 403."))
+        #expect(!card.isDownloadingForDrag)
+        #expect(card.record.uploadedURL == link)
+    }
+
+    /// `Sound not muted` wins over a download's status.
+    @Test func soundNotMutedWinsOverADragDownload() {
+        let card = model(.uploaded(url: link, key: "aB3dE9.mp4"), file: nil)
+        card.record.unmutedIntervals = [MuteInterval(start: 2, end: 5)]
+        card.dragDownload = .running(0.4)
+        #expect(card.status == .soundNotMuted)
+        card.dragDownload = .failed("offline")
+        #expect(card.status == .soundNotMuted)
+    }
+
     /// While a Trim pass writes the record's file, Retry, `Upload Trimmed` and Delete are disabled,
     /// as Retry and `Upload Trimmed` are while the record uploads.
     @Test func retryUploadTrimmedAndDeleteAreDisabledWhileTrimming() {

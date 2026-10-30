@@ -144,16 +144,73 @@ struct ShortcutsTests {
         #expect(AppCoordinator.refusesCapture(isCapturing: true, askingPermission: .camera))
     }
 
-    /// The URL handler's log gives the reason: a capture holding the lock wins over the prompt,
-    /// which is named.
-    @Test func aRefusedCaptureNamesTheLockBeforeThePrompt() {
-        #expect(AppCoordinator.captureRefusal(isCapturing: false, askingPermission: nil) == nil)
-        #expect(AppCoordinator.captureRefusal(isCapturing: true, askingPermission: nil) == .captureRunning)
-        #expect(AppCoordinator.captureRefusal(isCapturing: false, askingPermission: .microphone)
-                == .permissionPrompt(.microphone))
-        #expect(AppCoordinator.captureRefusal(isCapturing: false, askingPermission: .camera) == .permissionPrompt(.camera))
-        #expect(AppCoordinator.captureRefusal(isCapturing: true, askingPermission: .microphone) == .captureRunning)
-        #expect(AppCoordinator.captureRefusal(isCapturing: true, askingPermission: .camera) == .captureRunning)
+    /// The URL handler's log gives the reason (R4 design, What `record-screen` does in each phase):
+    /// a count-in or a recording first, each named, then a capture holding the lock, also while idle
+    /// or saving, then the open prompt, named.
+    @Test func aRefusedCaptureNamesTheRecordingThenTheLockThenThePrompt() {
+        for prompt in [nil, PermissionPrompt.microphone, .camera] {
+            #expect(AppCoordinator.captureRefusal(isCapturing: true, askingPermission: prompt, recordingPhase: .countIn)
+                    == .recordingStarting)
+            #expect(AppCoordinator.captureRefusal(isCapturing: true, askingPermission: prompt, recordingPhase: .recording)
+                    == .recordingRunning)
+            for phase in [RecordingPhase.idle, .saving] {
+                #expect(AppCoordinator.captureRefusal(isCapturing: true, askingPermission: prompt, recordingPhase: phase)
+                        == .captureRunning)
+            }
+        }
+        for phase in [RecordingPhase.idle, .saving] {
+            #expect(AppCoordinator.captureRefusal(isCapturing: false, askingPermission: nil, recordingPhase: phase) == nil)
+            #expect(AppCoordinator.captureRefusal(isCapturing: false, askingPermission: .microphone, recordingPhase: phase)
+                    == .permissionPrompt(.microphone))
+            #expect(AppCoordinator.captureRefusal(isCapturing: false, askingPermission: .camera, recordingPhase: phase)
+                    == .permissionPrompt(.camera))
+        }
+    }
+
+    /// `record-screen` only starts (R4 design, What `record-screen` does in each phase): idle or
+    /// while an earlier recording is saved, never with a prompt open nor while quitting.
+    @Test func aURLStartRunsOnlyIdleOrSavingWithNoPromptAndNoQuit() {
+        for phase in [RecordingPhase.idle, .saving, .countIn, .recording] {
+            let starts = phase == .idle || phase == .saving
+            #expect(AppCoordinator.recordingStartsFromURL(phase: phase, askingPermission: nil, isQuitting: false) == starts)
+            #expect(!AppCoordinator.recordingStartsFromURL(phase: phase, askingPermission: nil, isQuitting: true))
+            for prompt in [PermissionPrompt.microphone, .camera] {
+                #expect(!AppCoordinator.recordingStartsFromURL(phase: phase, askingPermission: prompt, isQuitting: false))
+                #expect(!AppCoordinator.recordingStartsFromURL(phase: phase, askingPermission: prompt, isQuitting: true))
+            }
+        }
+    }
+
+    /// `stop-recording` stops a recording and cancels a count-in, and otherwise does nothing; it
+    /// never starts one (R4 design, What `stop-recording` does in each phase).
+    @Test func stopRecordingStopsOrCancelsByPhase() {
+        #expect(AppCoordinator.recordingStopCommandAction(for: .recording) == .stop)
+        #expect(AppCoordinator.recordingStopCommandAction(for: .countIn) == .cancelCountIn)
+        #expect(AppCoordinator.recordingStopCommandAction(for: .idle) == .nothing)
+        #expect(AppCoordinator.recordingStopCommandAction(for: .saving) == .nothing)
+    }
+
+    /// The reason a deferred Settings prompt logs (R4 design, The Settings prompt's deferral
+    /// reason): an open prompt first, then a capture holding the lock (a count-in and a recording
+    /// always hold it), then a save in flight; nil when nothing defers.
+    @Test func aDeferredSettingsPromptGivesItsTrueReason() {
+        for phase in [RecordingPhase.idle, .countIn, .recording, .saving] {
+            for isCapturing in [false, true] {
+                #expect(AppCoordinator.settingsPromptDeferralReason(phase: phase, isCapturing: isCapturing,
+                                                                    askingPermission: .microphone)
+                        == "the microphone prompt is open")
+                #expect(AppCoordinator.settingsPromptDeferralReason(phase: phase, isCapturing: isCapturing,
+                                                                    askingPermission: .camera)
+                        == "the camera prompt is open")
+            }
+        }
+        for phase in [RecordingPhase.idle, .countIn, .recording, .saving] {
+            #expect(AppCoordinator.settingsPromptDeferralReason(phase: phase, isCapturing: true, askingPermission: nil)
+                    == "a capture is running")
+        }
+        #expect(AppCoordinator.settingsPromptDeferralReason(phase: .saving, isCapturing: false, askingPermission: nil)
+                == "a recording is being saved")
+        #expect(AppCoordinator.settingsPromptDeferralReason(phase: .idle, isCapturing: false, askingPermission: nil) == nil)
     }
 
     /// A record start the capture lock refuses posts only when it showed the microphone or the

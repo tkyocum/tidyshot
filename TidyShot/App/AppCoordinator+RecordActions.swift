@@ -122,11 +122,15 @@ extension AppCoordinator {
     /// A recording's Save As…: asks for a place (`.mpeg4Movie` only), then copies the movie there,
     /// never through memory. It copies, in a detached task, the local file under its scope, else
     /// the drag copy, else downloads the object with `download(key:to:)`, posting `Downloading
-    /// <key>`. An existing file the panel confirmed is replaced with `FileManager.replaceItemAt`.
-    /// `Saved` or `Not saved` posts as for an image. The record, its link, `lastCaptureURL` and
-    /// the clipboard stay as they are.
+    /// <key>`. A drag-out download running for the record is awaited first, so its file is copied
+    /// and no second GET starts. An existing file the panel confirmed is replaced with
+    /// `FileManager.replaceItemAt`. `Saved` or `Not saved` posts as for an image. The record, its
+    /// link, `lastCaptureURL` and the clipboard stay as they are.
     func saveVideoCopy(recordID: UUID) async {
         guard let target = await askSaveAsTarget(recordID: recordID) else { return }
+        if let download = downloadingDragIDs[recordID] {
+            _ = await download.value
+        }
         let record = target.record
         let url = target.url
         let local = record.fileURL.map {

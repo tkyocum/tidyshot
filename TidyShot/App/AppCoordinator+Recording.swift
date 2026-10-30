@@ -28,6 +28,28 @@ extension AppCoordinator {
         }
     }
 
+    /// Whether `record-screen` starts a recording (R4 design, What `record-screen` does in each
+    /// phase): it only starts, idle or while an earlier recording is saved, never with the
+    /// microphone or the camera prompt open nor once the app is quitting. It never cancels a
+    /// count-in nor stops a recording.
+    nonisolated static func recordingStartsFromURL(phase: RecordingPhase, askingPermission: PermissionPrompt?,
+                                                   isQuitting: Bool) -> Bool {
+        switch phase {
+        case .idle, .saving: askingPermission == nil && !isQuitting
+        case .countIn, .recording: false
+        }
+    }
+
+    /// What `stop-recording` does in each phase (R4 design): it stops a recording and cancels a
+    /// count-in, and otherwise does nothing. It never starts one.
+    nonisolated static func recordingStopCommandAction(for phase: RecordingPhase) -> RecordingStopCommandAction {
+        switch phase {
+        case .recording: .stop
+        case .countIn: .cancelCountIn
+        case .idle, .saving: .nothing
+        }
+    }
+
     /// What a record function does about the microphone or the camera prompt, before the capture
     /// lock (R2 design, At the start; R3 design, Permission): with no access to ask for it goes on;
     /// with a prompt to show while another capture holds the lock it ends there, with no prompt, as
@@ -53,6 +75,18 @@ extension AppCoordinator {
         phase == .idle && !isCapturing && askingPermission == nil ? .ask : .wait
     }
 
+    /// Why Settings' prompt waits, for its log line (R4 design, The Settings prompt's deferral
+    /// reason): an open prompt, then a capture holding the lock (a count-in and a recording always
+    /// hold it), then a recording being saved, as while a GIF converts. Nil when nothing defers,
+    /// where `settingsPromptStep` asks.
+    nonisolated static func settingsPromptDeferralReason(phase: RecordingPhase, isCapturing: Bool,
+                                                         askingPermission: PermissionPrompt?) -> String? {
+        if let askingPermission { return "the \(askingPermission.name) prompt is open" }
+        if isCapturing { return "a capture is running" }
+        if phase == .saving { return "a recording is being saved" }
+        return nil
+    }
+
     /// Settings' camera toggle and microphone pick ask for access here, not from the view (R3
     /// design, Asking from Settings), under the same rule as a start's prompt: while it is open every
     /// capture is refused and a start is ignored (`askingPermission`). While a capture, a recording
@@ -61,7 +95,9 @@ extension AppCoordinator {
     func requestAccessFromSettings(_ prompt: PermissionPrompt) async {
         switch Self.settingsPromptStep(phase: recordingPhase, isCapturing: isCapturing, askingPermission: askingPermission) {
         case .wait:
-            let reason = askingPermission.map { "the \($0.name) prompt is open" } ?? "a capture is running"
+            // Nil cannot come here: `settingsPromptStep` would have asked.
+            let reason = Self.settingsPromptDeferralReason(phase: recordingPhase, isCapturing: isCapturing,
+                                                           askingPermission: askingPermission) ?? "a capture is running"
             RecordingLog.note("Recording: \(prompt.name) prompt from Settings deferred, \(reason)")
         case .ask:
             askingPermission = prompt
@@ -96,21 +132,80 @@ extension AppCoordinator {
     private typealias RecordingEnded = (outcome: RecordingOutcome, microphoneNote: RecordingNotice?,
                                         cameraNote: RecordingNotice?, highlightsNote: RecordingNotice?)
 
-    /// Record Screen (recording design, Starting): select an area or click a window, then the
-    /// hand-off and the recording. The lock is held from the selection to the end of the recording,
-    /// and the file is saved after it. An area under 32×32 pt is refused, and no area becomes the
-    /// previous area: that is for image captures. The microphone and camera prompts, when they show,
-    /// come before the lock, and the input and the camera are resolved under it before the selection
-    /// (R2 design, At the start; R3 design, Permission). The selection cannot yet know whether a
-    /// window will be picked, so a window recording can follow a camera prompt it does not use.
+    /// Record Screen (recording design, Starting): the shortcut's toggle, then the start
+    /// (`startRecordScreen`). A count-in is cancelled and a recording stopped instead.
     func recordScreen() async {
-        guard recordShortcutStarts(), let ask = await recordingPrompts() else { return }
-        let intent = CaptureIntent.standard
+        guard recordShortcutStarts() else { return }
+        await startRecordScreen(intent: .standard, preselect: nil)
+    }
+
+    /// `record-screen` (R4 design, What `record-screen` does in each phase): it only starts, idle or
+    /// while an earlier recording is saved, through the same code as the shortcut's start, in its
+    /// own `Task`, and returns at once. The handler has already dropped it in the other phases and
+    /// with a prompt open, and logged why; quitting is logged here. A second one before the first
+    /// holds the lock is ignored (`urlRecordingStartPending`). The rect is only preselected and is
+    /// never the previous area.
+    func startRecording(intent: CaptureIntent, preselect: ScreenRect?) {
+        guard Self.recordingStartsFromURL(phase: recordingPhase, askingPermission: askingPermission,
+                                          isQuitting: isQuitting) else {
+            if isQuitting {
+                RecordingLog.note("Recording: URL start ignored, the app is quitting")
+            }
+            return
+        }
+        guard !urlRecordingStartPending else {
+            RecordingLog.note("Recording: URL start ignored, a recording is starting")
+            return
+        }
+        urlRecordingStartPending = true
+        Task { await startRecordScreen(intent: intent, preselect: preselect?.rect) }
+    }
+
+    /// `stop-recording` (R4 design, What `stop-recording` does in each phase): stops a recording,
+    /// cancels a count-in, and otherwise does nothing, with no notice. A second one during the stop
+    /// wait finds the recording ending and does nothing. Each outcome is logged with the sender.
+    func stopRecordingCommand(sender: String?) {
+        let name = sender ?? "an unknown app"
+        switch Self.recordingStopCommandAction(for: recordingPhase) {
+        case .stop:
+            if recorder.isEnding {
+                RecordingLog.note("Recording: stop-recording from \(name) did nothing, no recording is running")
+            } else {
+                recorder.stop()
+                RecordingLog.note("Recording: stop-recording from \(name) stopped the recording")
+            }
+        case .cancelCountIn:
+            // As the shortcut's cancel: the flag holds a cancel the countdown cannot see.
+            recordingStartCancelled = true
+            selfTimer.cancel()
+            RecordingLog.note("Recording: stop-recording from \(name) cancelled the count-in")
+        case .nothing:
+            RecordingLog.note("Recording: stop-recording from \(name) did nothing, no recording is running")
+        }
+    }
+
+    /// Record Screen's start, from the shortcut or `record-screen`: select an area or click a
+    /// window (`preselect`, CoreGraphics global points, shown in the selection), then the hand-off
+    /// and the recording. The lock is held from the selection to the end of the recording, and the
+    /// file is saved after it with `intent`. An area under 32×32 pt is refused, and no area becomes
+    /// the previous area: that is for image captures. The microphone and camera prompts, when they
+    /// show, come before the lock, and the input and the camera are resolved under it before the
+    /// selection (R2 design, At the start; R3 design, Permission). The selection cannot yet know
+    /// whether a window will be picked, so a window recording can follow a camera prompt it does not
+    /// use. `urlRecordingStartPending` is cleared once the lock is held or refused, or when the
+    /// prompts end the start.
+    private func startRecordScreen(intent: CaptureIntent, preselect: CGRect?) async {
+        guard let ask = await recordingPrompts() else {
+            urlRecordingStartPending = false
+            return
+        }
         var ended: RecordingEnded?
         let tookLock = await withCaptureLock(coversDesktop: true) {
+            urlRecordingStartPending = false
             guard let inputs = recordingCanStart(microphone: ask.microphone) else { return }
             guard let content = await loadContent(failureTitle: RecordingEnd.failedTitle) else { return }
-            guard let selection = await selector.select(mode: .recording, content: content) else { return }
+            guard let selection = await selector.select(mode: .recording, content: content,
+                                                        preselect: preselect) else { return }
             let target: CaptureTarget
             switch selection {
             case .area(let rect, let display):
@@ -128,6 +223,7 @@ extension AppCoordinator {
             }
             ended = await record(target, inputs: inputs)
         }
+        urlRecordingStartPending = false
         if !tookLock {
             lockRefusedStart(afterPrompt: ask.prompted)
         }
@@ -189,6 +285,9 @@ extension AppCoordinator {
                 RecordingLog.note("Recording: start ignored, the \(prompt.name) prompt is open")
             }
         case .cancelCountIn:
+            // `selfTimer.cancel()` reaches only the countdown; `record()` reads the flag before
+            // `recorder.run`, so a cancel in the settle delay or the content read holds too.
+            recordingStartCancelled = true
             selfTimer.cancel()
         case .stop:
             recorder.stop()
@@ -273,8 +372,9 @@ extension AppCoordinator {
     /// The hand-off and the recording, with the capture lock held. `recordingCountIn` is true
     /// until `recorder.run` is called or the start gives up. A kept file counts in
     /// `recordingSavesInFlight` before `recorder.close()`, so the phase goes from `.recording` to
-    /// `.saving` with nothing between. Nil when nothing started, also when a quit came during the
-    /// hand-off: `isQuitting` is read just before `recorder.run`, with no suspension between.
+    /// `.saving` with nothing between. Nil when nothing started, also when a quit or a cancel of the
+    /// count-in (`recordingStartCancelled`) came during the hand-off: both are read just before
+    /// `recorder.run`, with no suspension between.
     /// Otherwise the outcome comes back with the microphone note and R3's camera and highlights
     /// notes, read from the run and the extras before `recorder.close()`, which post after Stop.
     /// Notifications wait while `recordingPhase` is `.countIn` or `.recording`: from the hand-off's
@@ -294,7 +394,12 @@ extension AppCoordinator {
         notifier.holdNotices()
         let start = await recordingHandOff(target, inputs: inputs, extras: extras)
         recordingCountIn = false
-        guard let start, !isQuitting else {
+        // Read together with no suspension before `recorder.run`, so neither a quit nor a cancel
+        // of the count-in can slip in between.
+        guard let start, !isQuitting, !recordingStartCancelled else {
+            if start != nil, !isQuitting {
+                RecordingLog.note("Recording: not started, the count-in was cancelled")
+            }
             endNoticeHold()
             return nil
         }
@@ -894,4 +999,12 @@ nonisolated enum RecordingShortcutAction: Equatable, Sendable {
     case ignore
     case cancelCountIn
     case stop
+}
+
+/// What `stop-recording` does (`AppCoordinator.recordingStopCommandAction(for:)`).
+nonisolated enum RecordingStopCommandAction: Equatable, Sendable {
+    case stop
+    case cancelCountIn
+    /// Idle or saving: no recording to stop.
+    case nothing
 }

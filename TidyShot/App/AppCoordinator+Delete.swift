@@ -4,13 +4,14 @@ import AppKit
 extension AppCoordinator {
     /// The one delete path, shared by the overlay and Recent Captures. One confirmation, Delete or
     /// Cancel, unless General's `Ask before deleting` is off (`CaptureDeletion.asksFirst`). Delete
-    /// stops an in-flight upload, removes its objects, each from the bucket the record names for it
-    /// (`CaptureDeletion.objects(for:)`), then the local file, the thumbnail
-    /// and the record. When the storage `DELETE` fails (or there are no credentials to sign it),
-    /// or the file in the save folder cannot be removed, a second alert offers to remove the record
-    /// from history anyway, so a capture whose object or file cannot be deleted is never stuck. A local file that is already gone is not an
-    /// error; a temporary file in `pending` that cannot be removed keeps the record, with a
-    /// notification.
+    /// stops an in-flight upload, aborts its stored multipart upload (`CaptureDeletion.aborts(for:)`),
+    /// removes its objects, each from the bucket the record names for it
+    /// (`CaptureDeletion.objects(for:)`), then the local file, the thumbnail, the multipart files
+    /// and the record. When the Abort or the storage `DELETE` fails (or there are no credentials
+    /// to sign it), or the file in the save folder cannot be removed, a second alert offers to
+    /// remove the record from history anyway, so a capture whose upload, object or file cannot be
+    /// deleted is never stuck. A local file that is already gone is not an error; a temporary file
+    /// in `pending` that cannot be removed keeps the record, with a notification.
     func deleteCapture(recordID: UUID) async {
         guard !deletingIDs.contains(recordID), let record = history.record(id: recordID) else { return }
         // A Trim pass may be putting the file in place: refused before any alert (design, Write-time checks).
@@ -35,6 +36,17 @@ extension AppCoordinator {
         // or its uploaded key if the upload finished first.
         await cancelUpload(of: recordID)
         guard let current = history.record(id: recordID) else { return }
+
+        // A multipart upload the record stored is aborted before its key is deleted, at the location
+        // it was created in. One that cannot be aborted takes the second alert, as a DELETE does.
+        let name = current.fileURL?.lastPathComponent ?? recordID.uuidString
+        if let reason = await abortUploads(CaptureDeletion.aborts(for: current), name: name) {
+            if await confirmRemoveFromHistory(message: CaptureDeletion.storageFailureMessage(reason: reason),
+                                              informativeText: CaptureDeletion.storageFailureText) {
+                removeFromHistoryOnly(recordID)
+            }
+            return
+        }
 
         // The record's own keys, its prior upload and its superseded objects, one location at a
         // time: an object left by an earlier destination lives in that destination's bucket.
@@ -119,6 +131,42 @@ extension AppCoordinator {
         return nil
     }
 
+    /// Aborts each multipart upload in `refs`, signed with the credentials stored now at the location
+    /// the upload was created in, never through the current Upload settings. An Abort that answers
+    /// 204 is sent again: a part in progress may still land after an Abort, and the second one
+    /// removes it. 204 and 404 count as done. Returns nil when every upload is done, otherwise the
+    /// reason for the first failure, which is logged too. `name` is the record's file name, or its id.
+    func abortUploads(_ refs: [MultipartRef], name: String) async -> String? {
+        guard !refs.isEmpty else { return nil }
+        let stored: AWSCredentials?
+        do {
+            stored = try storedCredentials()
+        } catch {
+            NSLog("Keychain read failed: \(error.localizedDescription)")
+            let reason = Self.keychainReadFailure(error)
+            NSLog("%@", "Upload: \(name) multipart abort failed: \(reason)")
+            return reason
+        }
+        guard let credentials = stored else {
+            let reason = "No credentials are saved in Settings > Upload."
+            NSLog("%@", "Upload: \(name) multipart abort failed: \(reason)")
+            return reason
+        }
+        for ref in refs {
+            let destination = S3Destination(config: ref.location.config, credentials: credentials)
+            do {
+                if try await destination.abortMultipartUpload(key: ref.key, uploadID: ref.uploadID) == .aborted {
+                    _ = try await destination.abortMultipartUpload(key: ref.key, uploadID: ref.uploadID)
+                }
+                NSLog("%@", "Upload: \(name) multipart aborted")
+            } catch {
+                NSLog("%@", "Upload: \(name) multipart abort failed: \(error.localizedDescription)")
+                return error.localizedDescription
+            }
+        }
+        return nil
+    }
+
     /// The second alert's Remove: drops the record and its thumbnail without touching storage or a
     /// file in the save folder (the delete already cancelled any upload). It re-reads the record,
     /// which may have changed while the alert waited and was open. A temporary file in
@@ -133,8 +181,8 @@ extension AppCoordinator {
         removeRecord(id: recordID)
     }
 
-    /// Removes the record and its thumbnail, and closes the overlay, the pin and the Trim window that
-    /// show the record. The record is read again here, not taken from before the delete's awaits, and
+    /// Removes the record, its thumbnail and its multipart files, and closes the overlay, the pin and
+    /// the Trim window that show the record. The record is read again here, not taken from before the delete's awaits, and
     /// the thumbnail named for the id is removed even when the record does not name it yet: one that
     /// finished during those awaits is not left behind.
     private func removeRecord(id: UUID) {
@@ -143,6 +191,7 @@ extension AppCoordinator {
             thumbnails.remove(fileName: name)
         }
         thumbnails.remove(fileName: defaultName)
+        removeMultipartFiles(of: id)
         history.remove(id: id)
         optimizingVideoIDs.remove(id)
         fileUploadIDs.remove(id)
@@ -154,6 +203,7 @@ extension AppCoordinator {
         pins.close(recordID: id)
         // Cancels a pass before its put; Delete refuses while one writes.
         trimWindows[id]?.close()
+        // Also cancels a drag-out download and drops its resume data.
         removeDragFolder(id)
         pushEditorState(for: id)
     }
@@ -188,8 +238,8 @@ extension AppCoordinator {
         return alert.runModal() == .alertFirstButtonReturn
     }
 
-    /// The second alert, only after the storage `DELETE` failed or the file in the save folder could
-    /// not be removed: Remove (from history; what could not be deleted stays) or Cancel. It comes
+    /// The second alert, only after the Abort or the storage `DELETE` failed or the file in the save
+    /// folder could not be removed: Remove (from history; what could not be deleted stays) or Cancel. It comes
     /// after the delete's network awaits, and a main-actor continuation also runs while a menu is
     /// tracking (the main queue is served in the common run-loop modes), so the user may have
     /// opened the menu bar menu in the meantime. The alert therefore runs inside a block that the
@@ -213,8 +263,15 @@ extension AppCoordinator {
         }
     }
 
-    /// Thumbnails and temporary files of records dropped by retention, their pins and Trim windows
-    /// closed, the retained image dropped when it is theirs, and their editors told the record is gone
+    /// The record's multipart sidecar and kept Clop copy, removed off the main actor (a kept copy
+    /// can be gigabytes).
+    private func removeMultipartFiles(of id: UUID) {
+        let multipartFiles = multipartFiles
+        Task.detached(priority: .utility) { multipartFiles.remove(id: id) }
+    }
+
+    /// Thumbnails, temporary files and multipart files of records dropped by retention, their pins
+    /// and Trim windows closed, the retained image dropped when it is theirs, and their editors told the record is gone
     /// (`didPrune` runs after the store dropped them). Files in the save folder are
     /// left alone. (A record whose temporary file is its only copy, or holds an edit its link does
     /// not show yet, is never pruned.)
@@ -232,6 +289,8 @@ extension AppCoordinator {
             if record.fileIsTemporary, let fileURL = record.fileURL {
                 removePendingFile(at: fileURL, context: "after pruning")
             }
+            // The upload itself is not aborted: the bucket's lifecycle rule removes it.
+            removeMultipartFiles(of: record.id)
             forgetLatestCapture(record.id)
             pins.close(recordID: record.id)
             // Cancels a pass before its put; a put under way finishes and removes its pending file

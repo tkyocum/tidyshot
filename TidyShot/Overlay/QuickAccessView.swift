@@ -180,11 +180,11 @@ struct QuickAccessView: View {
         return model.canReveal ? ({ model.onReveal() }, "Reveal in Finder") : nil
     }
 
-    /// The card's tooltip: a failed upload's message, why a recording is only kept in TidyShot, or
-    /// why its sound was not muted (`statusContent` may not have room for the whole text).
+    /// The card's tooltip: a failed upload's or download's message, why a recording is only kept in
+    /// TidyShot, or why its sound was not muted (`statusContent` may not have room for the whole text).
     private var cardToolTip: String? {
         switch model.status {
-        case .failed(let message): message
+        case .failed(let message), .downloadFailed(let message): message
         case .kept: Self.keptText
         case .soundNotMuted: CaptureRecord.soundNotMutedBody
         default: nil
@@ -214,6 +214,18 @@ struct QuickAccessView: View {
                     .progressViewStyle(.circular)
                     .controlSize(.small)
                 Text("Uploading…")
+            }
+            Text(fileLabel)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        case .downloading(let fraction):
+            HStack(spacing: 8) {
+                ProgressView(value: fraction)
+                    .progressViewStyle(.circular)
+                    .controlSize(.small)
+                Text("Downloading…")
             }
             Text(fileLabel)
                 .font(.caption)
@@ -260,6 +272,14 @@ struct QuickAccessView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
+        case .downloadFailed:
+            Label("Download failed", systemImage: "exclamationmark.triangle.fill")
+                .foregroundStyle(.red)
+            Text(fileLabel)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
         case .saved(let name):
             Label("Saved", systemImage: "checkmark.circle.fill")
                 .foregroundStyle(.green)

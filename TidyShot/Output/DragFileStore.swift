@@ -25,6 +25,15 @@ nonisolated struct DragFileStore: Sendable {
         directory.appending(path: id.uuidString, directoryHint: .isDirectory)
     }
 
+    /// `Drag/.downloads/<uuid>`, a fresh path for a drag-out download to land at before it is
+    /// renamed into its record's folder. Makes `.downloads`; the launch `sweep` removes it with the
+    /// rest of `Drag`. Hidden, so it is never taken for a record's folder.
+    func landingURL() throws -> URL {
+        let downloads = directory.appending(path: ".downloads", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: downloads, withIntermediateDirectories: true)
+        return downloads.appending(path: UUID().uuidString)
+    }
+
     /// The file in `id`'s folder, or nil. A folder holds one file, except for a moment while two
     /// operations on it overlap; then the first by name. Hidden files (a `.DS_Store`) never count.
     func stagedFile(id: UUID) -> URL? {

@@ -106,6 +106,10 @@ nonisolated struct CaptureRecord: Codable, Identifiable, Equatable, Sendable {
     /// The muted stretches of a recording whose muting failed, so its file still holds their sound.
     /// Non-empty is the `Sound not muted` mark (`uploadBlockedReason`). Empty for every other record.
     var unmutedIntervals: [MuteInterval]
+    /// The record's multipart upload, written when Create succeeds and kept while it fails or is
+    /// cancelled, so a Retry resumes it and Delete knows what to abort and which key to remove.
+    /// Cleared when the upload finishes. Nil for every other record.
+    var multipart: MultipartUploadState?
 
     init(id: UUID = UUID(), timestamp: Date = Date(), fileURL: URL?, fileIsTemporary: Bool = false,
          thumbnailFileName: String? = nil, pixelWidth: Int, pixelHeight: Int, appName: String?,
@@ -113,7 +117,7 @@ nonisolated struct CaptureRecord: Codable, Identifiable, Equatable, Sendable {
          editedAt: Date? = nil, uploadIsStale: Bool = false,
          supersededObjects: [ObjectRef] = [], priorUpload: PriorUpload? = nil,
          mediaKind: MediaKind = .image, durationSeconds: Double? = nil, byteCount: Int? = nil,
-         unmutedIntervals: [MuteInterval] = []) {
+         unmutedIntervals: [MuteInterval] = [], multipart: MultipartUploadState? = nil) {
         self.id = id
         self.timestamp = timestamp
         self.fileURL = fileURL
@@ -133,6 +137,7 @@ nonisolated struct CaptureRecord: Codable, Identifiable, Equatable, Sendable {
         self.durationSeconds = durationSeconds
         self.byteCount = byteCount
         self.unmutedIntervals = unmutedIntervals
+        self.multipart = multipart
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -142,6 +147,7 @@ nonisolated struct CaptureRecord: Codable, Identifiable, Equatable, Sendable {
         case mediaKind, durationSeconds
         case byteCount
         case unmutedIntervals
+        case multipart
     }
 
     /// Phase 2 history files have no `fileIsTemporary`, `thumbnailFileName`, `objectLocation` or
@@ -150,7 +156,8 @@ nonisolated struct CaptureRecord: Codable, Identifiable, Equatable, Sendable {
     /// supersededObjects or priorUpload either; they decode as [] and nil. Files from before
     /// recording R1 have no `mediaKind` or `durationSeconds`; they decode as `.image` and nil. Files
     /// from before 2.13 have no `byteCount`; it decodes as nil. Files from before recording R2 have
-    /// no `unmutedIntervals`; it decodes as []. Encoding is synthesised.
+    /// no `unmutedIntervals`; it decodes as []. Files from before recording R4 have no `multipart`; it
+    /// decodes as nil. Encoding is synthesised, so a nil `multipart` writes no key.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(UUID.self, forKey: .id)
@@ -172,6 +179,7 @@ nonisolated struct CaptureRecord: Codable, Identifiable, Equatable, Sendable {
         durationSeconds = try container.decodeIfPresent(Double.self, forKey: .durationSeconds)
         byteCount = try container.decodeIfPresent(Int.self, forKey: .byteCount)
         unmutedIntervals = try container.decodeIfPresent([MuteInterval].self, forKey: .unmutedIntervals) ?? []
+        multipart = try container.decodeIfPresent(MultipartUploadState.self, forKey: .multipart)
     }
 
     var uploadedURL: URL? {

@@ -44,12 +44,6 @@ struct RecordingLimitsTests {
         #expect(RecordingLimits.asksBeforeDiscarding(elapsed: 300))
     }
 
-    @Test func singleUploadLimitIs5GiB() {
-        #expect(RecordingLimits.singleUploadBytes == 5_368_709_120)
-        #expect(RecordingLimits.fitsSingleUpload(byteCount: 5_368_709_120))
-        #expect(!RecordingLimits.fitsSingleUpload(byteCount: 5_368_709_121))
-    }
-
     @Test func constants() {
         #expect(RecordingLimits.diskCheckInterval == .seconds(5))
         #expect(RecordingLimits.cancelConfirmationSeconds == 5)

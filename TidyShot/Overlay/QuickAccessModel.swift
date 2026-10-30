@@ -19,6 +19,15 @@ nonisolated enum QuickAccessStatus: Equatable {
     case failed(String)
     /// A recording whose muting failed: kept in TidyShot and never uploaded (design, Privacy rule).
     case soundNotMuted
+    /// An uploaded recording with no local file downloads for a drag (design, Drag-out download).
+    case downloading(Double)
+    case downloadFailed(String)
+}
+
+/// A card's drag-out download: running with its fraction, or failed with its error.
+nonisolated enum DragDownloadStatus: Equatable {
+    case running(Double)
+    case failed(String)
 }
 
 /// State behind the Quick Access panel: the capture it shows and the actions its buttons run.
@@ -38,6 +47,9 @@ final class QuickAccessModel {
     @ObservationIgnored var dragFileURL: URL?
     /// True while a drag-out session from this card runs; the auto-close countdown waits meanwhile.
     @ObservationIgnored var isDraggingOut = false
+    /// The drag-out download of an uploaded recording with no local file: running, failed, or nil
+    /// for neither; set by `QuickAccessController.setDownloading(_:for:)`.
+    var dragDownload: DragDownloadStatus?
     /// The card's `Trim…` and `Upload Trimmed`, and whether a Trim pass writes the record's file
     /// (`AppCoordinator.trimMenuState(for:)`); set by `QuickAccessController.setTrimState(_:for:)`.
     /// All false until then, so neither item shows.
@@ -65,10 +77,18 @@ final class QuickAccessModel {
     @ObservationIgnored var onPrepareDrag: () -> Void = {}
     /// A drag-out session ended; true when a receiver took the file.
     @ObservationIgnored var onDragEnded: (Bool) -> Void = { _ in }
+    /// A drag past the threshold with no drag file: download an uploaded recording for it.
+    @ObservationIgnored var onDownloadForDrag: () -> Void = {}
 
     init(record: CaptureRecord, thumbnail: NSImage?) {
         self.record = record
         self.thumbnail = thumbnail
+    }
+
+    /// True while the drag-out download runs; the auto-close countdown waits meanwhile.
+    var isDownloadingForDrag: Bool {
+        if case .running = dragDownload { return true }
+        return false
     }
 
     /// True once the upload has finished (or there was none), which starts the auto-close timer.
@@ -120,6 +140,11 @@ final class QuickAccessModel {
 
     var status: QuickAccessStatus {
         if RecentCaptureFormatting.isSoundNotMuted(record) { return .soundNotMuted }
+        switch dragDownload {
+        case .running(let fraction): return .downloading(fraction)
+        case .failed(let message): return .downloadFailed(message)
+        case nil: break
+        }
         return switch record.uploadState {
         case .none:
             record.fileIsTemporary && record.hasLocalFile

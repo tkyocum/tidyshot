@@ -20,6 +20,8 @@ final class URLTargetRecorder: URLCommandTarget {
         case textAt(ScreenRect)
         case desktopIconsHidden(Bool)
         case toggleDesktopIcons
+        case startRecording(CaptureIntent, ScreenRect?)
+        case stopRecording(String?)
     }
 
     var captureRefusal: CaptureRefusal?
@@ -40,6 +42,9 @@ final class URLTargetRecorder: URLCommandTarget {
     func captureText(at area: ScreenRect) async { calls.append(.textAt(area)) }
     func setDesktopIconsHidden(_ hidden: Bool) async { calls.append(.desktopIconsHidden(hidden)) }
     func toggleDesktopIconsHidden() async { calls.append(.toggleDesktopIcons) }
+    /// Appends and returns at once, as the real one does once its `Task` is under way.
+    func startRecording(intent: CaptureIntent, preselect: ScreenRect?) { calls.append(.startRecording(intent, preselect)) }
+    func stopRecordingCommand(sender: String?) { calls.append(.stopRecording(sender)) }
 }
 
 /// The notices a handler posted.
@@ -191,7 +196,8 @@ struct URLCommandHandlerTests {
 
     /// Never queued behind a running capture, nor while the microphone or the camera prompt is open
     /// (each sets `captureRefusal`); a scrolling session is never advanced by a URL.
-    @Test(arguments: [CaptureRefusal.captureRunning, .permissionPrompt(.microphone), .permissionPrompt(.camera)])
+    @Test(arguments: [CaptureRefusal.captureRunning, .recordingStarting, .recordingRunning,
+                      .permissionPrompt(.microphone), .permissionPrompt(.camera)])
     func captureCommandsAreDroppedWhileCapturesAreRefused(reason: CaptureRefusal) async throws {
         settings.urlCommandsAllowSilent = true
         target.captureRefusal = reason
@@ -209,15 +215,19 @@ struct URLCommandHandlerTests {
         #expect(target.calls == [.restore, .desktopIconsHidden(true), .desktopIconsHidden(false), .toggleDesktopIcons])
     }
 
-    /// The dropped command's log line says why (R2 design, Decided 2026-10-24, 9): a burst's later
-    /// capture command, a running capture, or a prompt alone, named; nil when nothing drops it.
+    /// The dropped command's log line says why (R2 design, Decided 2026-10-24, 9; R4 design): a
+    /// burst's later capture command, a running capture, a count-in or a recording, or a prompt
+    /// alone, named; nil when nothing drops it.
     @Test func theLogSaysWhyACaptureCommandWasDropped() {
         #expect(URLCommandHandler.dropReason(busy: false, refusal: nil) == nil)
         #expect(URLCommandHandler.dropReason(busy: false, refusal: .captureRunning) == "a capture is running")
+        #expect(URLCommandHandler.dropReason(busy: false, refusal: .recordingStarting) == "a recording is starting")
+        #expect(URLCommandHandler.dropReason(busy: false, refusal: .recordingRunning) == "a recording is running")
         #expect(URLCommandHandler.dropReason(busy: false, refusal: .permissionPrompt(.microphone))
                 == "the microphone prompt is open")
         #expect(URLCommandHandler.dropReason(busy: false, refusal: .permissionPrompt(.camera)) == "the camera prompt is open")
         #expect(URLCommandHandler.dropReason(busy: true, refusal: nil) == "a queued capture command ran first")
+        #expect(URLCommandHandler.dropReason(busy: true, refusal: .recordingRunning) == "a queued capture command ran first")
         #expect(URLCommandHandler.dropReason(busy: true, refusal: .permissionPrompt(.microphone))
                 == "a queued capture command ran first")
         #expect(URLCommandHandler.dropReason(busy: true, refusal: .permissionPrompt(.camera))
@@ -255,6 +265,102 @@ struct URLCommandHandlerTests {
         // Once started, URLs run as they come again.
         try await send(handler, "tidyshot://capture-fullscreen")
         #expect(target.calls == [.window(standard), .restore, .fullscreen(standard)])
+    }
+
+    /// `record-screen` reaches `startRecording` with the action's intent (R4 design, Parameters):
+    /// none takes the setting, `upload` is upload-only in Tim's mode, `save` saves.
+    @Test func recordScreenStartsWithTheActionsIntent() async throws {
+        let handler = await makeHandler()
+        for string in ["record-screen", "record-screen?action=upload", "record-screen?action=save"] {
+            try await send(handler, "tidyshot://\(string)")
+        }
+        try await send(handler, "tidyshot://record-screen", from: nil)
+        #expect(target.calls == [.startRecording(standard, nil), .startRecording(standard, nil),
+                                 .startRecording(CaptureIntent(action: .save, sender: "Raycast"), nil),
+                                 .startRecording(CaptureIntent(action: .uploadOnly), nil)])
+        #expect(log.notices.isEmpty)
+    }
+
+    /// A rect is resolved as for every command and preselected; it needs only the first switch.
+    @Test func recordScreenWithARectPassesTheResolvedRect() async throws {
+        let handler = await makeHandler()
+        try await send(handler, "tidyshot://record-screen?x=100&y=100&width=200&height=50")
+        try await send(handler, "tidyshot://record-screen?x=10&y=10&width=300&height=200&display=2&action=save")
+        // Clipped to display 1's right edge, still 32 pt wide.
+        try await send(handler, "tidyshot://record-screen?x=1888&y=0&width=100&height=100")
+        let small = ScreenRect(rect: CGRect(x: 100, y: 930, width: 200, height: 50), displayID: 1)
+        let second = ScreenRect(rect: CGRect(x: 1930, y: 590, width: 300, height: 200), displayID: 2)
+        let edge = ScreenRect(rect: CGRect(x: 1888, y: 980, width: 32, height: 100), displayID: 1)
+        #expect(target.calls == [.startRecording(standard, small),
+                                 .startRecording(CaptureIntent(action: .save, sender: "Raycast"), second),
+                                 .startRecording(standard, edge)])
+        #expect(log.notices.isEmpty)
+    }
+
+    /// A rect under 32 × 32 pt, after clipping to its display, could never record: refused before
+    /// the target (R4 design, Parameters).
+    @Test func recordScreenRefusesARectUnder32Points() async throws {
+        let handler = await makeHandler()
+        for string in ["record-screen?x=0&y=0&width=31&height=200", "record-screen?x=0&y=0&width=200&height=31",
+                       "record-screen?x=1900&y=0&width=100&height=100", "record-screen?x=0&y=1060&width=100&height=100"] {
+            try await send(handler, "tidyshot://\(string)")
+        }
+        try await send(handler, "tidyshot://record-screen?x=0&y=0&width=10&height=10", from: nil)
+        #expect(target.calls.isEmpty)
+        let message = "The area must be at least 32 by 32 points to record."
+        #expect(log.notices == Array(repeating: notice(message), count: 4) + [notice(message, from: nil)])
+    }
+
+    /// `record-screen` is a capture: dropped while captures are refused, with no notice.
+    @Test(arguments: [CaptureRefusal.captureRunning, .recordingStarting, .recordingRunning,
+                      .permissionPrompt(.microphone), .permissionPrompt(.camera)])
+    func recordScreenIsDroppedWhileCapturesAreRefused(reason: CaptureRefusal) async throws {
+        target.captureRefusal = reason
+        let handler = await makeHandler()
+        try await send(handler, "tidyshot://record-screen")
+        try await send(handler, "tidyshot://record-screen?x=0&y=0&width=200&height=200&action=save")
+        #expect(target.calls.isEmpty)
+        #expect(log.notices.isEmpty)
+    }
+
+    /// `stop-recording` captures nothing: it reaches the target under every refusal, with the
+    /// cleaned sender, or nil for an unknown one.
+    @Test(arguments: [nil, CaptureRefusal.captureRunning, .recordingStarting, .recordingRunning,
+                      .permissionPrompt(.microphone), .permissionPrompt(.camera)])
+    func stopRecordingReachesTheTargetUnderEveryRefusal(reason: CaptureRefusal?) async throws {
+        target.captureRefusal = reason
+        let handler = await makeHandler()
+        try await send(handler, "tidyshot://stop-recording")
+        try await send(handler, "tidyshot://stop-recording", from: nil)
+        try await send(handler, "tidyshot://stop-recording", from: "\u{202E}")
+        try await send(handler, "tidyshot://stop-recording?action=copy&x=1", from: "Key\u{0}board\u{202E} Maestro")
+        #expect(target.calls == [.stopRecording("Raycast"), .stopRecording(nil), .stopRecording(nil),
+                                 .stopRecording("Keyboard Maestro")])
+        #expect(log.notices.isEmpty)
+    }
+
+    /// In a launch burst `record-screen` is the first capture command: a later capture command is
+    /// dropped as today, and `stop-recording` is never dropped and runs after the start, which
+    /// returned at once (R4 design, Names).
+    @Test func aBurstStartsThenStopsAndDropsALaterCapture() async throws {
+        let handler = await makeHandler(ready: false)
+        try await send(handler, "tidyshot://record-screen")
+        try await send(handler, "tidyshot://capture-area")
+        try await send(handler, "tidyshot://stop-recording")
+        try await send(handler, "tidyshot://record-screen?action=save")
+        await handler.ready()
+        #expect(target.calls == [.startRecording(standard, nil), .stopRecording("Raycast")])
+        #expect(log.notices.isEmpty)
+    }
+
+    /// A capture command first in a burst drops a later `record-screen`, as any later capture.
+    @Test func aBurstDropsRecordScreenAfterACapture() async throws {
+        let handler = await makeHandler(ready: false)
+        try await send(handler, "tidyshot://capture-window")
+        try await send(handler, "tidyshot://record-screen")
+        try await send(handler, "tidyshot://stop-recording")
+        await handler.ready()
+        #expect(target.calls == [.window(standard), .stopRecording("Raycast")])
     }
 
     @Test func theQueueHoldsAtMostEightURLs() async throws {

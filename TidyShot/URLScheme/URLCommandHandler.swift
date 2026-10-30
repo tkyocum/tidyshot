@@ -4,6 +4,10 @@ import Foundation
 nonisolated enum CaptureRefusal: Equatable, Sendable {
     /// Another capture holds the capture lock.
     case captureRunning
+    /// A recording's count-in (its whole hand-off) holds the capture lock.
+    case recordingStarting
+    /// A recording runs, its stop wait included, and holds the capture lock.
+    case recordingRunning
     /// A record start or Settings waits on the microphone or the camera prompt, and no capture
     /// holds the lock.
     case permissionPrompt(PermissionPrompt)
@@ -27,6 +31,11 @@ protocol URLCommandTarget: AnyObject {
     func captureText(at area: ScreenRect) async
     func setDesktopIconsHidden(_ hidden: Bool) async
     func toggleDesktopIconsHidden() async
+    /// Starts Record Screen in its own task and returns at once (R4 design, Names), so the handler
+    /// and a launch burst never wait on a recording. `preselect` is shown in the selection.
+    func startRecording(intent: CaptureIntent, preselect: ScreenRect?)
+    /// Stops the recording or cancels its count-in, and otherwise does nothing; it logs the outcome.
+    func stopRecordingCommand(sender: String?)
 }
 
 /// A notification the URL scheme posts. The subtitle names the sending app when it is known.
@@ -50,6 +59,8 @@ final class URLCommandHandler {
     }
 
     static let noticeTitle = "TidyShot URL command"
+    /// `record-screen`'s refusal of a rect under 32 × 32 pt after clipping (R4 design, Parameters).
+    static let recordingAreaTooSmallMessage = "The area must be at least 32 by 32 points to record."
     /// URLs held before `ready()`. A cold launch from a URL brings one; more is a flood.
     static let queueLimit = 8
 
@@ -98,12 +109,14 @@ final class URLCommandHandler {
     }
 
     /// Why a capture command is dropped, for its log line, or nil when it runs: `busy` (a queued
-    /// capture command ran first), then the target's refusal (a running capture, or the microphone
-    /// or the camera prompt alone).
+    /// capture command ran first), then the target's refusal (a running capture, a recording's
+    /// count-in or the recording, or the microphone or the camera prompt alone).
     static func dropReason(busy: Bool, refusal: CaptureRefusal?) -> String? {
         if busy { return "a queued capture command ran first" }
         switch refusal {
         case .captureRunning: return "a capture is running"
+        case .recordingStarting: return "a recording is starting"
+        case .recordingRunning: return "a recording is running"
         case .permissionPrompt(let prompt): return "the \(prompt.name) prompt is open"
         case nil: return nil
         }
@@ -157,6 +170,11 @@ final class URLCommandHandler {
                 return false
             }
         }
+        // A rect that could never record is not shown in the selection (R4 design, Parameters).
+        if command.kind == .recordScreen, let placement, !RecordingConfiguration.isLargeEnough(placement.rect) {
+            refuse(Self.recordingAreaTooSmallMessage, url: url, sender: sender)
+            return false
+        }
         NSLog("%@", "URL command from \(sender ?? "an unknown app"): \(url.absoluteString)")
         let intent = CaptureIntent(urlAction: command.action, setting: settings.afterCaptureAction, sender: sender)
         switch command.kind {
@@ -178,6 +196,8 @@ final class URLCommandHandler {
             } else {
                 await target.captureText()
             }
+        case .recordScreen: target.startRecording(intent: intent, preselect: placement)
+        case .stopRecording: target.stopRecordingCommand(sender: sender)
         case .restoreRecentlyClosed: await target.restoreClosedOverlay()
         case .hideDesktopIcons: await target.setDesktopIconsHidden(true)
         case .showDesktopIcons: await target.setDesktopIconsHidden(false)

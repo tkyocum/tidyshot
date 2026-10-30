@@ -151,4 +151,34 @@ struct S3DestinationConfigTests {
         #expect(!config.effectivePathStyle)
         #expect(try config.objectURL(for: "abc.png").absoluteString == "https://snaptky.s3.us-east-1.amazonaws.com/abc.png")
     }
+
+    /// The URL's query is the canonical query, so what is sent and what is signed cannot disagree.
+    @Test(arguments: [
+        [(name: "uploads", value: "")],
+        [(name: "partNumber", value: "7"), (name: "uploadId", value: "a/b~c")],
+        [(name: "uploadId", value: "2~Ab+c/d=")],
+    ])
+    func objectURLWithQueryCarriesTheCanonicalQuery(query: [(name: String, value: String)]) throws {
+        var dotted = aws
+        dotted.bucket = "snap.tky.io"
+        let components = try #require(URLComponents(url: try dotted.objectURL(for: "r/Recording.mp4", query: query),
+                                                    resolvingAgainstBaseURL: false))
+        #expect(components.percentEncodedQuery == S3Signer.canonicalQuery(query))
+        #expect(components.percentEncodedPath == "/snap.tky.io/r/Recording.mp4")
+        #expect(components.queryItems?.map { [$0.name, $0.value ?? ""] } == query.sorted { $0.name < $1.name }.map { [$0.name, $0.value] })
+    }
+
+    @Test func objectURLWithQuerySpelledOut() throws {
+        var dotted = aws
+        dotted.bucket = "snap.tky.io"
+        let url = try dotted.objectURL(for: "r/Recording.mp4", query: [(name: "partNumber", value: "7"),
+                                                                        (name: "uploadId", value: "a/b~c")])
+        #expect(url.absoluteString == "https://s3.us-west-2.amazonaws.com/snap.tky.io/r/Recording.mp4?partNumber=7&uploadId=a%2Fb~c")
+    }
+
+    @Test func objectURLWithoutQueryHasNone() throws {
+        #expect(try aws.objectURL(for: "aSIS7.png").query() == nil)
+        #expect(try aws.objectURL(for: "aSIS7.png", query: []).query() == nil)
+        #expect(try aws.objectURL(for: "aSIS7.png", query: []) == aws.objectURL(for: "aSIS7.png"))
+    }
 }

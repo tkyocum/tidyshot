@@ -15,11 +15,17 @@ enum SelectionOutcome: Equatable {
     /// `.area`, `.scrolling`, `.allInOne`, `.selfTimer` and `.recording` take a dragged rect of at least 2 by 2; a click (no
     /// drag, or a tiny one) picks the highlighted window when there is one; `.window` ignores drags
     /// and only picks the highlight. With neither, the selection is cancelled. All-in-One asks
-    /// only for a press that does not start on its rect.
-    static func resolve(mode: SelectionMode, dragRect: CGRect?, hasHighlight: Bool) -> SelectionOutcome {
+    /// only for a press that does not start on its rect. In `.recording`, `clickInPreset` (a URL
+    /// command's preset rect, when the press and the release were both inside it) is recorded
+    /// on a click, before the window rule; every other mode ignores it.
+    static func resolve(mode: SelectionMode, dragRect: CGRect?, hasHighlight: Bool,
+                        clickInPreset: CGRect? = nil) -> SelectionOutcome {
         if mode != .window, let rect = dragRect,
            rect.width >= minimumDragSide, rect.height >= minimumDragSide {
             return .area(rect)
+        }
+        if mode == .recording, let clickInPreset {
+            return .area(clickInPreset)
         }
         return hasHighlight ? .window : .cancel
     }

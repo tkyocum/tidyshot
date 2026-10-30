@@ -1,7 +1,8 @@
 import Foundation
 
 /// PUT, HEAD, GET and DELETE Object over URLSession with SigV4 headers. Works with AWS S3,
-/// Cloudflare R2, Backblaze B2 and MinIO, which all speak the same four requests.
+/// Cloudflare R2, Backblaze B2 and MinIO, which all speak the same four requests. The multipart
+/// calls are in `S3Destination+Multipart.swift`.
 nonisolated struct S3Destination: Destination {
     let config: S3DestinationConfig
     let credentials: AWSCredentials
@@ -135,7 +136,7 @@ nonisolated struct S3Destination: Destination {
 
     /// The first 64 KiB of an error response saved to a file. An S3 error body is far smaller, and
     /// `excerpt` keeps only 200 characters, so a large body from elsewhere is never read whole.
-    private static func errorBody(at url: URL) -> Data {
+    static func errorBody(at url: URL) -> Data {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return Data() }
         defer { try? handle.close() }
         return (try? handle.read(upToCount: 64 * 1024)) ?? Data()
@@ -154,17 +155,26 @@ nonisolated struct S3Destination: Destination {
     }
 
     /// Builds the request for `key` and signs it with a payload hash worked out already (a file's,
-    /// from `S3Signer.sha256Hex(fileAt:)`). `host` and `x-amz-content-sha256` are always signed;
-    /// `extraHeaders` are signed too. Visible for tests.
+    /// from `S3Signer.sha256Hex(fileAt:)`). Visible for tests.
     func signedRequest(method: String, key: String, payloadHash: String,
                        extraHeaders: [(name: String, value: String)]) throws -> URLRequest {
-        let url = try config.objectURL(for: key)
+        try signedRequest(method: method, key: key, query: [], payloadHash: payloadHash, extraHeaders: extraHeaders)
+    }
+
+    /// Builds the request for `key` with `query` (decoded pairs) and signs it with `payloadHash`.
+    /// The URL's query and the canonical query both come from `query`, so they cannot disagree.
+    /// `host` and `x-amz-content-sha256` are always signed; `extraHeaders` are signed too.
+    /// Visible for tests.
+    func signedRequest(method: String, key: String, query: [(name: String, value: String)], payloadHash: String,
+                       extraHeaders: [(name: String, value: String)]) throws -> URLRequest {
+        let url = try config.objectURL(for: key, query: query)
         var headers = extraHeaders
         headers.append((name: "host", value: config.hostHeader(for: url)))
         headers.append((name: "x-amz-content-sha256", value: payloadHash))
 
         let signed = S3Signer.sign(
-            S3Signer.Request(method: method, path: config.objectPath(for: key), headers: headers, payloadHash: payloadHash),
+            S3Signer.Request(method: method, path: config.objectPath(for: key), query: query, headers: headers,
+                             payloadHash: payloadHash),
             credentials: credentials, region: config.region, date: now())
 
         var request = URLRequest(url: url)
@@ -180,7 +190,7 @@ nonisolated struct S3Destination: Destination {
         return request
     }
 
-    private static func httpResponse(_ response: URLResponse) throws -> HTTPURLResponse {
+    static func httpResponse(_ response: URLResponse) throws -> HTTPURLResponse {
         guard let http = response as? HTTPURLResponse else { throw UploadError.noHTTPResponse }
         return http
     }
@@ -188,7 +198,7 @@ nonisolated struct S3Destination: Destination {
     /// The error for a non-success response. Redirects are never followed (see
     /// `UploadProgressDelegate`), so a 3xx with a `Location` names where the server pointed,
     /// which usually means the endpoint or region is wrong.
-    private static func failure(_ http: HTTPURLResponse, bodyText: String) -> UploadError {
+    static func failure(_ http: HTTPURLResponse, bodyText: String) -> UploadError {
         let status = http.statusCode
         if (300..<400).contains(status), let location = http.value(forHTTPHeaderField: "Location") {
             return .httpStatus(status, body: "redirected to \(location.prefix(200)); check the endpoint and region")
@@ -204,7 +214,7 @@ nonisolated struct S3Destination: Destination {
     /// must only ever read `<Code>` and `<Message>`; never add `<CanonicalRequest>`,
     /// `<StringToSign>` or any other element to it. A body without a usable `<Code>` falls back
     /// to its first 200 characters.
-    private static func excerpt(_ body: Data) -> String {
+    static func excerpt(_ body: Data) -> String {
         let text = String(decoding: body, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
         if let code = elementText("Code", in: text) {
             let summary = elementText("Message", in: text).map { "\(code): \($0)" } ?? code

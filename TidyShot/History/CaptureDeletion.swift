@@ -48,6 +48,8 @@ nonisolated enum CaptureDeletion {
     ///   Phase 3 does not know its bucket);
     /// - the prior upload at its location, so the link's object is found while an editor upload
     ///   runs over it and after a quit or crash interrupted that upload;
+    /// - the multipart upload's key at its own location, since a Complete may have made the object
+    ///   before a quit, a crash or a cancel (a DELETE of a key that does not exist is harmless);
     /// - the superseded objects, old keys left by an Upload as New or by an upload after the
     ///   destination changed.
     static func objects(for record: CaptureRecord) -> [ObjectRef] {
@@ -58,12 +60,21 @@ nonisolated enum CaptureDeletion {
         if let prior = record.priorUpload {
             candidates.append(ObjectRef(key: prior.key, location: prior.location))
         }
+        if let multipart = record.multipart {
+            candidates.append(ObjectRef(key: multipart.key, location: multipart.location))
+        }
         candidates += record.supersededObjects
         var objects: [ObjectRef] = []
         for object in candidates where !objects.contains(object) {
             objects.append(object)
         }
         return objects
+    }
+
+    /// The multipart uploads Delete aborts before it removes the objects: the record's stored
+    /// upload, or none.
+    static func aborts(for record: CaptureRecord) -> [MultipartRef] {
+        record.multipart.map { [$0.ref] } ?? []
     }
 
     /// `objects` grouped by location, in order of first appearance, with each group's keys in

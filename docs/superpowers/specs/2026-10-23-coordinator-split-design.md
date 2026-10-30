@@ -458,6 +458,25 @@ Captures; no pause.
   point for code outside the family is `requestAccessFromSettings(_:)`, used by `CaptureSettingsView`
   (the microphone pick and the bubble toggle). It is a new member, not a widened one, so the surface
   check, which lists widened members, needs no change. No member was widened from `private`.
+- **R4 (URL record commands, multipart upload, video drag-out).** `+Recording`: the URL entry points
+  `startRecording(intent:preselect:)` and `stopRecordingCommand(sender:)`, the start-only `startRecordScreen`
+  that `recordScreen()` calls after its toggle, the start-cancel flag's checks in `record()` and the Settings
+  deferral reason. `+Upload`: multipart's events in `handle`, the resume decision in `startUpload` and the Clop
+  copy kept for a resume. `+Delete`: `abortUploads` and the removal of the sidecar and the kept copy in
+  `removeRecord` and `removeFiles(ofPruned:)`, and the cancel of a drag-out download through `removeDragFolder`.
+  `+DragOut`: `downloadDragFile(recordID:)` and `cancelDragDownload(_:)`. `+RecordActions`: Save As… waits for a
+  running download. `+Overlay`: `downloadForDrag` in `overlayActions` and the cancel in `overlayDidClose`; the
+  card's download status lives on its model and is set through `QuickAccessController.setDownloading(_:for:)`, not
+  pushed in `pushCardFlags` (R4 design, Built notes, Gap 17). New stored state is in the class body under its
+  area's group: `recordingStartCancelled` and `urlRecordingStartPending` (Recording), `downloadingDragIDs`,
+  `dragDownloadResume` and `downloadingVideoIDs` (Drag-out; `downloadingDragIDs` carries the `//` line naming
+  `+Overlay` and `+Delete` as its other writers). `multipartFiles: MultipartStore` is a collaborator beside
+  `pendingFiles`, not state. The entry points for code outside the family are the two `URLCommandTarget` routes the
+  URL handler calls, `startRecording(intent:preselect:)` and `stopRecordingCommand(sender:)`; the surface check's
+  list of widened members takes both names. `RecentCapturesMenu` also reads `downloadingVideoIDs`, as it reads
+  `optimizingVideoIDs`. No member was widened from `private`. Three new members are internal, not private,
+  because another file of the family calls them: `downloadDragFile(recordID:)` and `cancelDragDownload(_:)`
+  (`+Overlay`) and `abortUploads(_:name:)` (`+Upload`, for a destination change).
 - **Parallel work.** GIF (`+Recording`, `+Upload`), the microphone (`+Recording`) and Trim
   (`+Trim`, `+Overlay`, `+Delete`) can be built on separate branches that rarely touch the same file.
 

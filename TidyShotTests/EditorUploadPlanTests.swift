@@ -169,6 +169,24 @@ struct EditorUploadPlanTests {
         #expect(restored.priorUpload == nil)
     }
 
+    /// A failed multipart replace returns to the old link, and the stored upload stays so a later
+    /// `Upload Trimmed` can resume it.
+    @Test func failedMultipartReplaceKeepsItsState() {
+        var original = uploaded(at: here)
+        original.uploadIsStale = true
+        var started = EditorUploadPlan.startingUpload(original, plan: planned(original, to: here))
+        let state = MultipartUploadState(uploadID: "VXBsb2FkSWQ", key: key, location: here, partSize: 16_777_216,
+                                         byteCount: 3_400_000_000,
+                                         sourceModified: Date(timeIntervalSinceReferenceDate: 783_456_789.1234567),
+                                         sourcePath: "/Users/tim/Movies/rec.mp4", startedAt: Date(timeIntervalSince1970: 1_792_411_000))
+        started.multipart = state
+        let restored = EditorUploadPlan.applyingFailure(to: started, message: "Part 12 of 200: Server returned HTTP 503.")
+        #expect(restored.uploadState == .uploaded(url: link, key: key))
+        #expect(restored.uploadIsStale)
+        #expect(restored.priorUpload == nil)
+        #expect(restored.multipart == state)
+    }
+
     @Test func failureWithoutPriorUploadMarksFailed() {
         let first = EditorUploadPlan.startingUpload(record(.none, at: nil), plan: .newObject(supersede: nil, notice: nil))
         #expect(first.priorUpload == nil)

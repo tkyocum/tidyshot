@@ -1491,6 +1491,32 @@ struct RecordingControllerTests {
         controller.close()
     }
 
+    /// `isEnding` (plan Gap 5): false before Stop and while recording, true from Stop through the
+    /// stop wait while `isRunning` still holds, and false once the run has returned.
+    @Test func isEndingHoldsFromStopUntilTheRunReturns() async throws {
+        let driver = FakeRecordingDriver(log: world.log)
+        driver.finishTiming = .never
+        let chrome = FakeRecordingChrome(log: world.log)
+        let (controller, run) = await begin(areaRequest, driver: driver, chrome: chrome)
+        #expect(!controller.isEnding)
+        driver.send(.recordingStarted)
+        await world.advance(by: .seconds(2))
+        #expect(controller.isRunning)
+        #expect(!controller.isEnding)
+
+        controller.stop()
+        #expect(controller.isEnding)
+        await world.advance(by: .zero)
+        #expect(controller.isRunning)
+        #expect(controller.isEnding)
+
+        driver.send(.recordingFinished)
+        _ = await run.value
+        #expect(!controller.isRunning)
+        #expect(!controller.isEnding)
+        controller.close()
+    }
+
     @Test func aStreamErrorWaitsForTheOutputToFinish() async throws {
         let driver = FakeRecordingDriver(log: world.log)
         driver.finishTiming = .never

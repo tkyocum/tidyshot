@@ -58,7 +58,7 @@ nonisolated struct RecordingSavePlan: Equatable, Sendable {
     static let noFolderReason = "No folder was chosen."
     static let notSavedTitle = "Not saved to a folder"
     static let oversizedNotice = RecordingNotice(
-        title: "Not uploaded", body: "The recording is larger than 5 GB, too large to upload in one piece.")
+        title: "Not uploaded", body: "The recording is larger than 625 GB, too large to upload.")
     /// What quit mode writes for an upload it does not start.
     static let interruptedUploadMessage = "Upload was interrupted."
     static let uploadNotConfiguredWarning =
