@@ -91,10 +91,9 @@ nonisolated final class FakeDestination: Destination, Sendable {
         /// When true, each drag-out download waits for `releaseDownloads()`, even when its task is
         /// cancelled, like a transfer that finishes just as it is cancelled.
         var holdsDownloads = false
-        var heldDownloads: [CheckedContinuation<Void, Never>] = []
-        var downloadsReleased = false
+        let downloadHold = HeldReleases()
         /// Times a held download's task was cancelled while it waited.
-        var downloadCancellations = 0
+        var downloadCancellations: Int { downloadHold.cancellations }
         /// The last drag-out download's progress callback, for a fraction that comes after its end.
         var downloadProgress: (@Sendable (Double) -> Void)?
         /// What `download(key:)` returns, and the keys it was asked for.
@@ -105,18 +104,16 @@ nonisolated final class FakeDestination: Destination, Sendable {
         /// This part waits for `releaseParts()` before it reports anything, even when its task is
         /// cancelled, then answers.
         var holdingPart: Int?
-        var heldParts: [CheckedContinuation<Void, Never>] = []
-        var partsReleased = false
-        var heldPartCancellations = 0
+        let partHold = HeldReleases()
+        var heldPartCancellations: Int { partHold.cancellations }
         /// This many Aborts wait a minute instead of answering; the wait throws `CancellationError`
         /// when the task is cancelled.
         var blockingAbortsRemaining = 0
         /// This many Aborts (after any blocking ones) wait for `releaseAborts()` even when their task
         /// is cancelled, then answer.
         var holdingAbortsRemaining = 0
-        var heldAborts: [CheckedContinuation<Void, Never>] = []
-        var abortsReleased = false
-        var heldAbortCancellations = 0
+        let abortHold = HeldReleases()
+        var heldAbortCancellations: Int { abortHold.cancellations }
     }
 
     /// How a drag-out download ends.
@@ -174,25 +171,12 @@ nonisolated final class FakeDestination: Destination, Sendable {
 
     func download(key: String, to landing: URL, expectedBytes: Int64?, resumeData: Data?,
                   progress: @escaping @Sendable (Double) -> Void) async throws {
-        let holds = state.withLock { state in
+        let hold = state.withLock { state in
             state.downloads.append((key, resumeData))
             state.downloadProgress = progress
-            return state.holdsDownloads
+            return state.holdsDownloads ? state.downloadHold : nil
         }
-        if holds {
-            await withTaskCancellationHandler {
-                await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                    let released = state.withLock { state in
-                        if state.downloadsReleased { return true }
-                        state.heldDownloads.append(continuation)
-                        return false
-                    }
-                    if released { continuation.resume() }
-                }
-            } onCancel: {
-                state.withLock { $0.downloadCancellations += 1 }
-            }
-        }
+        await hold?.hold()
         let (fractions, outcome) = state.withLock { ($0.downloadFractions, $0.downloadOutcome) }
         for fraction in fractions {
             progress(fraction)
@@ -207,12 +191,7 @@ nonisolated final class FakeDestination: Destination, Sendable {
 
     /// Lets every held download go on, now and later.
     func releaseDownloads() {
-        let held = state.withLock { state in
-            state.downloadsReleased = true
-            defer { state.heldDownloads = [] }
-            return state.heldDownloads
-        }
-        for continuation in held { continuation.resume() }
+        state.withLock { $0.downloadHold }.release()
     }
 
     /// Calls the last download's progress callback, after the download has ended.
@@ -317,20 +296,8 @@ nonisolated final class FakeDestination: Destination, Sendable {
             return state.partDelay
         }
         defer { state.withLock { $0.partsInFlight -= 1 } }
-        if state.withLock({ $0.holdingPart == number }) {
-            await withTaskCancellationHandler {
-                await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                    let released = state.withLock { state in
-                        if state.partsReleased { return true }
-                        state.heldParts.append(continuation)
-                        return false
-                    }
-                    if released { continuation.resume() }
-                }
-            } onCancel: {
-                state.withLock { $0.heldPartCancellations += 1 }
-            }
-        }
+        let hold = state.withLock { $0.holdingPart == number ? $0.partHold : nil }
+        await hold?.hold()
         // Half the bytes, the wait, then the rest, so a job's fraction counts bytes in flight.
         let half = Int64(data.count / 2)
         progress(half)
@@ -361,12 +328,7 @@ nonisolated final class FakeDestination: Destination, Sendable {
 
     /// Lets the held part, and a later one with its number, answer.
     func releaseParts() {
-        let held = state.withLock { state in
-            state.partsReleased = true
-            defer { state.heldParts = [] }
-            return state.heldParts
-        }
-        for continuation in held { continuation.resume() }
+        state.withLock { $0.partHold }.release()
     }
 
     func completeMultipartUpload(key: String, uploadID: String, parts: [MultipartPart]) async throws {
@@ -378,43 +340,26 @@ nonisolated final class FakeDestination: Destination, Sendable {
     }
 
     func abortMultipartUpload(key: String, uploadID: String) async throws -> MultipartAbortResult {
-        let (failure, result, blocks, holds) = record("abort") { state in
+        let (failure, result, blocks, hold) = record("abort") { state in
             state.aborts.append((key, uploadID))
             let blocks = state.blockingAbortsRemaining > 0
             if blocks { state.blockingAbortsRemaining -= 1 }
             let holds = !blocks && state.holdingAbortsRemaining > 0
             if holds { state.holdingAbortsRemaining -= 1 }
-            return (Self.nextFailure(&state.abortFailures), state.abortResult, blocks, holds)
+            return (Self.nextFailure(&state.abortFailures), state.abortResult, blocks,
+                    holds ? state.abortHold : nil)
         }
         if blocks {
             try await Task.sleep(for: .seconds(60))
         }
-        if holds {
-            await withTaskCancellationHandler {
-                await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                    let released = state.withLock { state in
-                        if state.abortsReleased { return true }
-                        state.heldAborts.append(continuation)
-                        return false
-                    }
-                    if released { continuation.resume() }
-                }
-            } onCancel: {
-                state.withLock { $0.heldAbortCancellations += 1 }
-            }
-        }
+        await hold?.hold()
         if let failure { throw failure }
         return result
     }
 
     /// Lets every held Abort answer, now and later.
     func releaseAborts() {
-        let held = state.withLock { state in
-            state.abortsReleased = true
-            defer { state.heldAborts = [] }
-            return state.heldAborts
-        }
-        for continuation in held { continuation.resume() }
+        state.withLock { $0.abortHold }.release()
     }
 
     func listParts(key: String, uploadID: String) async throws -> [MultipartPart] {
@@ -433,5 +378,46 @@ nonisolated final class FakeDestination: Destination, Sendable {
         }
         if let failure { throw failure }
         return size
+    }
+}
+
+/// The hold the download, part and Abort holds share: `hold()` waits for `release()` even when its
+/// task is cancelled, like a request the server finishes just as it is cancelled, and counts each
+/// cancel. Once released, a later hold ends at once.
+nonisolated final class HeldReleases: Sendable {
+    private struct State {
+        var waiting: [CheckedContinuation<Void, Never>] = []
+        var released = false
+        var cancellations = 0
+    }
+
+    private let state = Mutex(State())
+
+    /// Times a hold's task was cancelled while it waited.
+    var cancellations: Int { state.withLock { $0.cancellations } }
+
+    func hold() async {
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                let released = state.withLock { state in
+                    if state.released { return true }
+                    state.waiting.append(continuation)
+                    return false
+                }
+                if released { continuation.resume() }
+            }
+        } onCancel: {
+            state.withLock { $0.cancellations += 1 }
+        }
+    }
+
+    /// Ends every hold, now and later.
+    func release() {
+        let held = state.withLock { state in
+            state.released = true
+            defer { state.waiting = [] }
+            return state.waiting
+        }
+        for continuation in held { continuation.resume() }
     }
 }

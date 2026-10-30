@@ -200,39 +200,21 @@ final class FakeConfirm {
     private(set) var asked: [DeleteConfirmation] = []
     var answers: [Bool] = []
     var holds = false
-    private var waiter: (id: Int, continuation: CheckedContinuation<Bool, Never>)?
-    private var nextID = 0
+    private let held = SingleWaiter(cancelled: false,
+                                    secondEntry: "FakeConfirm was asked again while a question was held")
 
-    var isWaiting: Bool { waiter != nil }
+    var isWaiting: Bool { held.isWaiting }
 
     func confirm(_ question: DeleteConfirmation) async -> Bool {
         asked.append(question)
         guard holds else { return answers.isEmpty ? true : answers.removeFirst() }
-        guard waiter == nil else {
-            Issue.record("FakeConfirm was asked again while a question was held")
-            return false
-        }
-        guard !Task.isCancelled else { return false }
-        let id = nextID
-        nextID += 1
-        return await withTaskCancellationHandler {
-            await withCheckedContinuation { waiter = (id, $0) }
-        } onCancel: {
-            Task { @MainActor in self.resume(false, id: id) }
-        }
+        return await held.wait()
     }
 
     /// Answers the held question; later ones come from `answers`.
     func answer(_ yes: Bool) {
         holds = false
-        resume(yes, id: nil)
-    }
-
-    /// Resumes the held question: any one when `id` is nil, otherwise only the one it names.
-    private func resume(_ yes: Bool, id: Int?) {
-        guard let waiter, id == nil || waiter.id == id else { return }
-        self.waiter = nil
-        waiter.continuation.resume(returning: yes)
+        held.resume(yes)
     }
 }
 
@@ -322,10 +304,10 @@ final class ThrowingCredentialStore: CredentialStore {
 final class HeldCameraDevices: CameraDevices {
     var currentAccess = CameraAccess.notDetermined
     private(set) var requestCount = 0
-    private var waiter: (id: Int, continuation: CheckedContinuation<Bool, Never>)?
-    private var nextID = 0
+    private let prompt = SingleWaiter(cancelled: false,
+                                      secondEntry: "HeldCameraDevices was asked again while its prompt was open")
 
-    var isAsking: Bool { waiter != nil }
+    var isAsking: Bool { prompt.isWaiting }
 
     func list() -> [CameraDevice] { [] }
     func preferred() -> CameraDevice? { nil }
@@ -333,30 +315,12 @@ final class HeldCameraDevices: CameraDevices {
 
     func requestAccess() async -> Bool {
         requestCount += 1
-        guard waiter == nil else {
-            Issue.record("HeldCameraDevices was asked again while its prompt was open")
-            return false
-        }
-        guard !Task.isCancelled else { return false }
-        let id = nextID
-        nextID += 1
-        return await withTaskCancellationHandler {
-            await withCheckedContinuation { waiter = (id, $0) }
-        } onCancel: {
-            Task { @MainActor in self.resume(false, id: id) }
-        }
+        return await prompt.wait()
     }
 
     func answer(_ granted: Bool) {
         currentAccess = granted ? .authorized : .denied
-        resume(granted, id: nil)
-    }
-
-    /// Resumes the open prompt: any one when `id` is nil, otherwise only the one it names.
-    private func resume(_ granted: Bool, id: Int?) {
-        guard let waiter, id == nil || waiter.id == id else { return }
-        self.waiter = nil
-        waiter.continuation.resume(returning: granted)
+        prompt.resume(granted)
     }
 }
 
@@ -364,35 +328,62 @@ final class HeldCameraDevices: CameraDevices {
 /// cancelled ends, so a suite's time limit can end it. A second wait while one is open is recorded
 /// as an issue and ends at once.
 final class TestGate {
-    private var waiter: (id: Int, continuation: CheckedContinuation<Void, Never>)?
-    private var nextID = 0
+    private let gate = SingleWaiter(cancelled: (),
+                                    secondEntry: "TestGate was entered again while a wait was open")
 
-    var isWaiting: Bool { waiter != nil }
+    var isWaiting: Bool { gate.isWaiting }
 
     func wait() async {
-        guard waiter == nil else {
-            Issue.record("TestGate was entered again while a wait was open")
-            return
-        }
-        guard !Task.isCancelled else { return }
-        let id = nextID
-        nextID += 1
-        await withTaskCancellationHandler {
-            await withCheckedContinuation { waiter = (id, $0) }
-        } onCancel: {
-            Task { @MainActor in self.release(id: id) }
-        }
+        await gate.wait()
     }
 
     func open() {
-        release(id: nil)
+        gate.resume(())
+    }
+}
+
+/// The one wait the held fakes share. `wait()` holds until `resume(_:)`; a wait whose task is
+/// cancelled ends with `cancelled`, so a suite's time limit can end it. A second wait while one is
+/// held is a fault in the code under test: it records `secondEntry` as an issue and returns
+/// `cancelled` at once, so the test fails instead of hanging.
+final class SingleWaiter<Value: Sendable> {
+    private let cancelled: Value
+    private let secondEntry: String
+    private var waiter: (id: Int, continuation: CheckedContinuation<Value, Never>)?
+    private var nextID = 0
+
+    init(cancelled: Value, secondEntry: String) {
+        self.cancelled = cancelled
+        self.secondEntry = secondEntry
     }
 
-    /// Ends the open wait: any one when `id` is nil, otherwise only the one it names.
-    private func release(id: Int?) {
+    var isWaiting: Bool { waiter != nil }
+
+    func wait() async -> Value {
+        guard waiter == nil else {
+            Issue.record(Comment(rawValue: secondEntry))
+            return cancelled
+        }
+        guard !Task.isCancelled else { return cancelled }
+        let id = nextID
+        nextID += 1
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { waiter = (id, $0) }
+        } onCancel: {
+            Task { @MainActor in self.resume(self.cancelled, id: id) }
+        }
+    }
+
+    /// Ends the held wait with `value`, if one is held.
+    func resume(_ value: Value) {
+        resume(value, id: nil)
+    }
+
+    /// Ends the held wait: any one when `id` is nil, otherwise only the one it names.
+    private func resume(_ value: Value, id: Int?) {
         guard let waiter, id == nil || waiter.id == id else { return }
         self.waiter = nil
-        waiter.continuation.resume()
+        waiter.continuation.resume(returning: value)
     }
 }
 
