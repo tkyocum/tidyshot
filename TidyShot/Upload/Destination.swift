@@ -18,6 +18,12 @@ nonisolated protocol Destination: Sendable {
     /// Downloads the object at `key` into a file at `destination`, replacing any file there. A
     /// failure leaves `destination` as it was. Never loads the object into memory.
     func download(key: String, to destination: URL) async throws
+    /// GET Object into memory (Copy Image, a restored card's drag file). A 404 is an error.
+    func download(key: String) async throws -> Data
+    /// The drag-out download (`S3Destination+Download.swift`): a GET that lands at `landing`, with
+    /// progress, replayed from `resumeData` when it is given.
+    func download(key: String, to landing: URL, expectedBytes: Int64?, resumeData: Data?,
+                  progress: @escaping @Sendable (Double) -> Void) async throws
     /// Removes the object at `key`. Used by Delete (the capture's object, and any key its
     /// cancelled upload had reserved), by the cleanup of an object uploaded for a record that no
     /// longer exists, and by the connection test to remove its probe object.

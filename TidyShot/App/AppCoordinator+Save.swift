@@ -137,7 +137,7 @@ extension AppCoordinator {
     /// `saveRecording` (`finishSave`). Returns nil when the file could not be written; the writer
     /// has then notified and left the image on the clipboard (`alreadyOnClipboard` says it is there
     /// already). Any other clipboard write is the caller's.
-    private func persist(png: Data, image: ScaledImage, action: AfterCaptureAction, destination: S3Destination?,
+    private func persist(png: Data, image: ScaledImage, action: AfterCaptureAction, destination: UploadTarget?,
                          alreadyOnClipboard: Bool, captureDisplayID: CGDirectDisplayID) async -> CaptureRecord? {
         // The object key is not named here: `startUpload` names it when the upload starts.
         let id = UUID()
@@ -199,7 +199,7 @@ extension AppCoordinator {
     /// `upload` is given; one that cannot be made fails the upload as a retry does. With
     /// `awaitsThumbnail` (quit mode) it returns once the thumbnail is written.
     func finishSave(_ record: CaptureRecord, image: CGImage?, scale: CGFloat, captureDisplayID: CGDirectDisplayID,
-                            notConfiguredWarning: String?, showsCard: Bool, upload destination: S3Destination?,
+                            notConfiguredWarning: String?, showsCard: Bool, upload destination: UploadTarget?,
                             payload: () throws -> UploadPayload, notification: SaveNotification,
                             awaitsThumbnail: Bool = false) async {
         if let notConfiguredWarning {

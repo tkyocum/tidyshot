@@ -120,7 +120,7 @@ extension AppCoordinator {
         guard let credentials = stored else {
             return "No credentials are saved in Settings > Upload."
         }
-        let destination = S3Destination(config: location.config, credentials: credentials)
+        let destination = environment.makeDestination(location.config, credentials)
         for key in keys {
             do {
                 try await destination.delete(key: key)
@@ -153,7 +153,7 @@ extension AppCoordinator {
             return reason
         }
         for ref in refs {
-            let destination = S3Destination(config: ref.location.config, credentials: credentials)
+            let destination = environment.makeDestination(ref.location.config, credentials)
             do {
                 if try await destination.abortMultipartUpload(key: ref.key, uploadID: ref.uploadID) == .aborted {
                     _ = try await destination.abortMultipartUpload(key: ref.key, uploadID: ref.uploadID)

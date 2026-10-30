@@ -120,6 +120,11 @@ nonisolated final class FakeDestination: Destination, Sendable {
 
     func download(key: String, to destination: URL) async throws {}
 
+    func download(key: String) async throws -> Data { Data() }
+
+    func download(key: String, to landing: URL, expectedBytes: Int64?, resumeData: Data?,
+                  progress: @escaping @Sendable (Double) -> Void) async throws {}
+
     /// One upload attempt of either kind: the scripted failures, blocks and holds, then progress.
     private func attempt(key: String, progress: @escaping @Sendable (Double) -> Void) async throws {
         let failure: UploadError? = state.withLock {

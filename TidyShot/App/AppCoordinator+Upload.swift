@@ -10,6 +10,14 @@ extension AppCoordinator {
         let keyTemplate: String
     }
 
+    /// What `makeDestination()` returns (harness design 2.2): the destination, where it writes and its
+    /// key template, from one configuration. A lane is made from it.
+    struct UploadTarget {
+        let destination: any Destination
+        let location: ObjectLocation
+        let keyTemplate: String
+    }
+
     var isUploading: Bool { !uploadingIDs.isEmpty }
 
     /// Posts "Upload not configured" the first time per launch only. With the default
@@ -28,9 +36,12 @@ extension AppCoordinator {
     /// The configured destination, or nil when the Upload tab is incomplete, no credentials are
     /// stored, or the keychain could not be read. "No item" is the normal not-configured case and
     /// stays silent here; any other keychain error is logged and reported once per launch.
-    func makeDestination() -> S3Destination? {
+    func makeDestination() -> UploadTarget? {
         guard let config = settings.s3Config, config.isComplete, let credentials = loadCredentials() else { return nil }
-        return S3Destination(config: config, credentials: credentials)
+        // The live destination normalizes its configuration; the lane's location and template were read from that.
+        let clean = config.normalized
+        return UploadTarget(destination: environment.makeDestination(config, credentials),
+                            location: ObjectLocation(config: clean), keyTemplate: clean.keyTemplate)
     }
 
     /// The stored credentials, or nil when there are none or the keychain could not be read
@@ -88,7 +99,7 @@ extension AppCoordinator {
     /// job goes through the live lane (`uploadingIDs`, progress, cancel, Delete and the menu bar
     /// icon), over the link's own key for a replace or under a new template key.
     func startPlannedUpload(recordID: UUID, plan: EditorUploadPlan.Plan, payload: UploadPayload,
-                            destination: S3Destination) {
+                            destination: UploadTarget) {
         history.update(id: recordID) { $0 = EditorUploadPlan.startingUpload($0, plan: plan) }
         refreshOverlay(for: recordID)
         if case .replace(let key) = plan {
@@ -98,14 +109,17 @@ extension AppCoordinator {
         }
     }
 
-    /// A queue for `destination` whose events are handled with the location they upload to.
-    private func makeLane(for destination: S3Destination) -> UploadLane {
-        let location = ObjectLocation(config: destination.config)
-        let keyTemplate = destination.config.keyTemplate
-        let queue = UploadQueue(destination: destination,
+    /// A queue for `target` whose events are handled with the location it uploads to.
+    private func makeLane(for target: UploadTarget) -> UploadLane {
+        let location = target.location
+        let keyTemplate = target.keyTemplate
+        let queue = UploadQueue(destination: target.destination,
                                 keyNamer: ObjectKeyNamer(template: keyTemplate),
-                                plan: .standard,
+                                sleep: environment.uploadSleep,
+                                plan: environment.multipartPlan,
                                 store: multipartFiles,
+                                now: environment.now,
+                                log: environment.log,
                                 events: { [weak self] event in self?.handle(event, at: location) })
         return UploadLane(queue: queue, location: location, keyTemplate: keyTemplate)
     }
@@ -120,7 +134,7 @@ extension AppCoordinator {
     /// one. With Clop on and running, Clop optimises a copy first: a PNG on its image queue, an MP4
     /// on its video queue; a GIF is never sent. A recording's file is then checked against the
     /// 625 GiB limit, and one over it is never enqueued (`refuseOversizedUpload`).
-    func startUpload(recordID: UUID, payload: UploadPayload, destination: S3Destination, fixedKey: String? = nil) {
+    func startUpload(recordID: UUID, payload: UploadPayload, destination: UploadTarget, fixedKey: String? = nil) {
         // Look the record up before marking it uploading, so a missing record never leaves an
         // id in `uploadingIDs` (and the menu bar icon spinning) with no job to clear it.
         guard let record = history.record(id: recordID) else { return }
@@ -494,7 +508,7 @@ extension AppCoordinator {
     /// is in progress is never re-enqueued, so a retry cannot re-upload what Delete is removing.
     /// An interrupted or failed replace re-PUTs its own key, so its URL stays. A record
     /// `uploadRefusal` refuses posts `Not uploaded` with the reason instead.
-    private func retry(recordID: UUID, destination: S3Destination) {
+    private func retry(recordID: UUID, destination: UploadTarget) {
         if let refusal = history.record(id: recordID).flatMap({
             Self.uploadRefusal(for: $0, isTrimming: trimmingIDs.contains(recordID))
         }) {
@@ -510,7 +524,7 @@ extension AppCoordinator {
             return
         }
         // The location the lane writes to: the same expression `startUpload` uses for its lane.
-        let location = queue?.location ?? ObjectLocation(config: destination.config)
+        let location = queue?.location ?? destination.location
         let policy = EditorUploadPlan.retryPolicy(record: record, currentLocation: location,
                                                   others: history.records.filter { $0.id != recordID })
         let started = EditorUploadPlan.startingRetry(record, policy: policy)
@@ -730,7 +744,7 @@ extension AppCoordinator {
             NSLog("Uploaded \(key) for a record that no longer exists; no credentials to delete it")
             return
         }
-        let destination = S3Destination(config: location.config, credentials: credentials)
+        let destination = environment.makeDestination(location.config, credentials)
         Task {
             do {
                 try await destination.delete(key: key)

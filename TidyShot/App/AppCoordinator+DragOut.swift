@@ -105,7 +105,7 @@ extension AppCoordinator {
             NSLog("Drag-out download for \(recordID) refused, not enough disk space")
             return
         }
-        let source: (key: String, destination: S3Destination)
+        let source: (key: String, destination: any Destination)
         let landing: URL
         do {
             source = try downloadSource(of: record, title: nil)

@@ -423,7 +423,7 @@ extension AppCoordinator {
             notifier.notifyError(Self.uploadNotConfiguredBody, title: "Upload not configured")
             return
         }
-        let location = queue?.location ?? ObjectLocation(config: destination.config)
+        let location = queue?.location ?? destination.location
         let plan = EditorUploadPlan.plan(record: record, currentLocation: location,
                                          others: history.records.filter { $0.id != id }, asNew: false)
         if case .refuse(let reason) = plan {

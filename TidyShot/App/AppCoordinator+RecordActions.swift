@@ -259,14 +259,14 @@ extension AppCoordinator {
     /// signed with the credentials stored now. Posts `Downloading <key>` under `title` when
     /// notifications are on; a nil title downloads quietly (a restored card's drag file). Images
     /// download into memory (`downloadImage`), a recording to a file (`saveVideoCopy`).
-    func downloadSource(of record: CaptureRecord, title: String?) throws -> (key: String, destination: S3Destination) {
+    func downloadSource(of record: CaptureRecord, title: String?) throws -> (key: String, destination: any Destination) {
         guard let key = record.uploadedKey else { throw CopyImageError.nothingToCopy }
         guard let location = record.objectLocation else { throw CopyImageError.unknownLocation }
         guard let credentials = loadCredentials() else { throw UploadError.notConfigured }
         if let title, settings.showNotification {
             notifier.notify(title: title, body: "Downloading \(key)")
         }
-        return (key, S3Destination(config: location.config, credentials: credentials))
+        return (key, environment.makeDestination(location.config, credentials))
     }
 
     func reveal(recordID: UUID) {

@@ -35,12 +35,13 @@ nonisolated struct ConnectionTestResult: Sendable, Equatable {
 nonisolated enum ConnectionTester {
     static let probeBody = Data("TidyShot connection test\n".utf8)
 
-    static func run(destination: S3Destination,
+    static func run(destination: any Destination,
+                    keyTemplate: String,
                     session: URLSession = .shared,
                     randomString: @escaping @Sendable (Int) -> String = FileNamer.randomString) async -> ConnectionTestResult {
         // The probe goes into the folder real uploads would use right now, so a bucket policy
         // scoped to that folder is tested too.
-        let namer = ObjectKeyNamer(template: destination.config.keyTemplate, randomString: randomString)
+        let namer = ObjectKeyNamer(template: keyTemplate, randomString: randomString)
         let folder = ObjectKeyNamer.folder(of: namer.makeKey(ext: "txt", context: TemplateContext()))
         let key = (folder.isEmpty ? "" : folder + "/") + "tidyshot-probe-\(randomString(8)).txt"
         do {
@@ -83,7 +84,7 @@ nonisolated enum ConnectionTester {
 
     /// Deletes the probe object. Returns a warning instead of throwing, so a leaked probe is
     /// reported without hiding the outcome of the test itself.
-    private static func deleteProbe(_ key: String, destination: S3Destination) async -> String? {
+    private static func deleteProbe(_ key: String, destination: any Destination) async -> String? {
         do {
             try await destination.delete(key: key)
             return nil

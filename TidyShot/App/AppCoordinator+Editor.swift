@@ -358,7 +358,7 @@ extension AppCoordinator {
         let notEnqueued = EditorUploadOutcome(wroteLocally: true, enqueued: false)
         if refuseUpload(action, recordID: recordID) { return notEnqueued }
         guard let current = history.record(id: recordID) else { return notEnqueued }
-        let location = queue?.location ?? ObjectLocation(config: destination.config)
+        let location = queue?.location ?? destination.location
         let plan = EditorUploadPlan.plan(record: current, currentLocation: location,
                                          others: history.records.filter { $0.id != recordID }, asNew: asNew)
         switch plan {
