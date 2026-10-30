@@ -173,7 +173,8 @@ may be off for all of them; the first must be on.
   drag anywhere draws a new area and records that. A click outside it on a highlighted window records that window.
   Escape cancels. The rect is not remembered as the previous area (Capture Previous Area is unchanged).
 - [ ] `?x=…&width=20&height=20` (under 32 by 32 pt, or clipped to it by the display's edge) posts `The area must be at
-  least 32 by 32 points to record.` and shows no selection.
+  least 32 by 32 points to record.` and shows no selection. (suite:
+  URLCommandHandlerTests.recordScreenRefusesARectUnder32Points)
 - [ ] The Record Screen shortcut with no preset is unchanged: no rect, the same selection.
 - [ ] `open 'tidyshot://stop-recording'` during the selection does nothing (the selection stays; Escape cancels it);
   the log says `… did nothing, no recording is running`. During the count-in with `Count down before recording` on:
@@ -199,6 +200,8 @@ may be off for all of them; the first must be on.
   has finished (a cold launch). A cold launch from a burst of `record-screen` then `stop-recording` (a macro that sends
   both): the start runs, the stop logs `did nothing` at once, and the selection stays.
 - [ ] With the first URL switch off, both commands post `URL commands are off. Turn them on in Settings > General.`
+  (suite: URLCommandGateTests.theRecordingCommandsNeedOnlyURLCommandsOn, .withURLCommandsOffEveryCommandIsRefused,
+  URLCommandHandlerTests.withURLCommandsOffEveryURLIsRefusedAlike)
 
 ## The preset rect (Task 4)
 
@@ -226,7 +229,8 @@ Each with the 300 MB and the 6 GB recording, upload-only, Clop off, then Clop on
   The log has one `multipart, <n> parts of 16 MiB` line and a `multipart completed`. `multipart/` holds the sidecar
   while it runs, and neither the sidecar nor a kept copy after `.uploaded`. (suite, in part: UploadQueueTests.theStateIsDeliveredFirstAndTheSidecarFollowsEachPart, .aTemplateKeyIsReservedOncePerUploadID, CoordinatorUploadTests.anUploadedResumeClearsItsStateSidecarAndKeptCopy)
 - [ ] A recording under 100 MiB (one byte under is not practical; a short one) still uploads as one PUT: no `multipart,`
-  line.
+  line. (suite: UploadQueueTests.aFileOneByteUnderTheThresholdUsesTheSinglePUT,
+  MultipartPlanTests.usesAtTheThresholdForAFile, .standardPlanAndLimits)
 - [ ] Wi-Fi off for 30 seconds mid-upload: the upload resumes with no visible restart (the log may show `part <k>
   failed, retry <try>`). (suite, in part: UploadQueueTests.aFailingPartRetriesAloneWhileTheOthersFinish)
 - [ ] Wi-Fi off for two minutes: the upload fails with `Part <k> of <n>: …` on the card and in the row. Retry resumes at
@@ -236,10 +240,14 @@ Each with the 300 MB and the 6 GB recording, upload-only, Clop off, then Clop on
 - [ ] Delete mid-upload aborts it (the AWS console, or `aws s3api list-multipart-uploads --bucket snap.tky.io`, lists no
   incomplete upload for the key) and the key is gone. `multipart/` holds nothing for the record. (suite, in part: UploadQueueTests.aCancelDuringThePartsWaitsForEveryPart, CoordinatorDeleteTests.eachUploadIsAbortedWhereItWasCreated)
 - [ ] Delete of a failed multipart upload aborts it; its confirmation counts the object (`Removes it from object
-  storage and from history.`). (suite: CoordinatorDeleteTests.anAbortThatAnswers204IsSentAgain, CaptureDeletionTests)
+  storage and from history.`). (suite: CoordinatorDeleteTests.anAbortThatAnswers204IsSentAgain,
+  .anAbortFailureAsksToRemoveFromHistory, CaptureDeletionTests.confirmationCountsTheMultipartObject,
+  .abortsListTheStoredUploadOrNone)
 - [ ] Remove `s3:AbortMultipartUpload` from the key (Tim's IAM change, put back afterwards): Delete shows the second
   alert with the 403's reason and `The object stays in the bucket.`; Remove drops the record and its files, and the
-  incomplete upload is left to the lifecycle rule. (suite, in part: CoordinatorDeleteTests.anAbortFailureAsksToRemoveFromHistory)
+  incomplete upload is left to the lifecycle rule. (suite, in part:
+  CoordinatorDeleteTests.anAbortFailureAsksToRemoveFromHistory, CaptureDeletionTests.alertTexts; the real IAM 403's
+  text, the alert itself and the sidecar's removal on Remove stay by hand)
 - [ ] Retry a failed multipart upload after Settings > Upload names another bucket: the log says `destination changed,
   starting again`, the new bucket gets the upload, and the old bucket lists no incomplete upload for the key. (suite, in part: CoordinatorUploadTests.aStoredUploadAtAnotherLocationIsAbortedThereAndStartsAgain)
 - [ ] Retry after the recording's file changed (a trim, or a Save As over it): `source changed, starting again`, and the
@@ -262,7 +270,10 @@ Each with the 300 MB and the 6 GB recording, upload-only, Clop off, then Clop on
 - [ ] The files in `multipart/` of a record with no state, or a state older than 7 days, are removed at launch (put an
   unrelated `<uuid>.json` there, relaunch); a file whose name does not start with a UUID is left alone. (suite, in part: MultipartStoreTests.sweepRemovalsDropsNoStateAndStatesOlderThanSevenDays, .sweepLeavesAFileNotNamedByAnID)
 - [x] The lifecycle rule is on the bucket (Setup; added 2026-10-29).
-- [ ] A recording over 625 GB is not reachable by recording; the pure rule is tested. Nothing to run.
+- [ ] A recording over 625 GB is not reachable by recording; the pure rule is tested. Nothing to run. (suite, in part:
+  MultipartPlanTests.fitsUpTo625GiB, .partSizeIsNilAbove625GiB, RecordingSavePlanTests.oversizedNotice,
+  .oversizedSaveFolderFileStays, .oversizedPendingFileMovesIntoTheSaveFolder; the coordinator's `refuseOversizedUpload`
+  has no test, and the line already says nothing to run)
 
 ## Drag-out of an uploaded recording with no local file (Task 16)
 
@@ -299,42 +310,86 @@ empty drag folder (`tmp/Drag`), and a copy of the same recording that is longer 
 - [ ] The existing URL commands (`capture-area` with and without a rect, `capture-window`, `toggle-desktop-icons`)
   behave as before, including the second switch's four commands.
 - [ ] An R3 recording with the bubble and click highlights, a GIF and a Trim behave as in their checklists.
-- [ ] Quit TidyShot with nothing recording or uploading: it quits at once.
+- [ ] Quit TidyShot with nothing recording or uploading: it quits at once. (suite:
+  QuitHoldTests.idleWithNoUnsavedEditorDoesNotHold)
 
 ## The design's 29 calls, to confirm or overrule
 
 The R4 design lists them at its end (`## The design's calls`). Write `confirm` or `overrule` and why; an overrule goes
 in the design's built notes.
-- [ ] 1. `record-screen` keeps CleanShot's name and parameters; `stop-recording` is TidyShot's own, with no alias. ______
-- [ ] 2. `record-screen` takes `action=upload|save` only. ______
-- [ ] 3. A rect under 32 by 32 pt is refused with `The area must be at least 32 by 32 points to record.` ______
+- [ ] 1. `record-screen` keeps CleanShot's name and parameters; `stop-recording` is TidyShot's own, with no alias.
+  (suite: URLCommandTests.theRecordingCommandsParseFromTheHostAndThePath,
+  .recordScreenTakesTheActionTheRectAndTheDisplay, .scrollingCaptureIsCleanShotsNameForCaptureScrolling) ______
+- [ ] 2. `record-screen` takes `action=upload|save` only. (suite:
+  URLCommandTests.recordScreenRefusesTheActionsARecordingCannotDo, .theActionsEachKindTakes) ______
+- [ ] 3. A rect under 32 by 32 pt is refused with `The area must be at least 32 by 32 points to record.` (suite:
+  URLCommandHandlerTests.recordScreenRefusesARectUnder32Points) ______
 - [ ] 4. A rect is preselected and only a click inside it records; no key does; the first switch is enough. ______
-- [ ] 5. `startRecording` returns once the start is under way. ______
+- [ ] 5. `startRecording` returns once the start is under way. (suite:
+  URLCommandHandlerTests.aBurstStartsThenStopsAndDropsALaterCapture) ______
 - [ ] 6. Recording notices do not name the URL's sender. ______
-- [ ] 7. `CaptureRefusal` gains `.recordingStarting` and `.recordingRunning`, with their log reasons. ______
-- [ ] 8. A `record-screen` during `.saving` starts a new recording. ______
-- [ ] 9. `stop-recording` cancels a count-in, and a cancelled count-in never records. ______
-- [ ] 10. `stop-recording` with nothing to stop posts no notice. ______
-- [ ] 11. Multipart from 100 MiB, for every `.file` payload. ______
-- [ ] 12. Parts of 16 MiB, raised from 156.25 GiB, capped at 64 MiB; 625 GiB refused. ______
-- [ ] 13. Three parts in flight per job. ______
-- [ ] 14. Parts are read into `Data` and sent with `upload(for:from:)`. ______
-- [ ] 15. Each request retries on its own; a multipart job is not retried as a whole; at most two restarts. ______
+- [ ] 7. `CaptureRefusal` gains `.recordingStarting` and `.recordingRunning`, with their log reasons. (suite:
+  ShortcutsTests.aRefusedCaptureNamesTheRecordingThenTheLockThenThePrompt,
+  URLCommandHandlerTests.theLogSaysWhyACaptureCommandWasDropped,
+  .captureCommandsAreDroppedWhileCapturesAreRefused) ______
+- [ ] 8. A `record-screen` during `.saving` starts a new recording. (suite, in part:
+  ShortcutsTests.aURLStartRunsOnlyIdleOrSavingWithNoPromptAndNoQuit,
+  .aRefusedCaptureNamesTheRecordingThenTheLockThenThePrompt; the coordinator starting a recording from `.saving` has no
+  test) ______
+- [ ] 9. `stop-recording` cancels a count-in, and a cancelled count-in never records. (suite:
+  CoordinatorRecordingTests.stopRecordingDuringACountInCancelsIt, .theStartCancelResetsOnlyWhenACountInBegins,
+  .recordingProceedsOnlyWhenStartedNotQuittingAndNotCancelled) ______
+- [ ] 10. `stop-recording` with nothing to stop posts no notice. (suite:
+  CoordinatorRecordingTests.stopRecordingWhileIdleOrSavingChangesNothing) ______
+- [ ] 11. Multipart from 100 MiB, for every `.file` payload. (suite: MultipartPlanTests.usesAtTheThresholdForAFile,
+  .neverUsesForData, .standardPlanAndLimits, UploadQueueTests.aFileAtTheThresholdGoesMultipart) ______
+- [ ] 12. Parts of 16 MiB, raised from 156.25 GiB, capped at 64 MiB; 625 GiB refused. (suite:
+  MultipartPlanTests.partSizeIsTheBaseUpTo10000Parts, .partSizeIsRaisedToAWholeMiBAbove10000Parts,
+  .partSizeIsNilAbove625GiB, .fitsUpTo625GiB) ______
+- [ ] 13. Three parts in flight per job. (suite: UploadQueueTests.partsAreSentThreeAtATimeInPartOrder,
+  MultipartPlanTests.standardPlanAndLimits) ______
+- [ ] 14. Parts are read into `Data` and sent with `upload(for:from:)`. (suite, in part:
+  UploadQueueTests.readPartReadsItsRange, MultipartRequestsTests.everyPayloadHashIsTheBodysHash; the send through
+  `upload(for:from:)` is a code read) ______
+- [ ] 15. Each request retries on its own; a multipart job is not retried as a whole; at most two restarts. (suite:
+  UploadQueueTests.aFailingPartRetriesAloneWhileTheOthersFinish, .aPartOutOfTriesFailsTheJob,
+  .createRetriesUnderThePolicy, .completeRetriesUnderThePolicy, .listPartsRetriesUnderThePolicy,
+  .anUploadIDGoneOnEveryCreateFailsAfterTwoRestarts, MultipartPlanTests.standardPlanAndLimits) ______
 - [ ] 16. Clop's result is kept in `multipart/<id>.mp4`, and a Retry whose source still matches resumes from it without
   Clop. ______
-- [ ] 17. The card and row show no part count, only the byte fraction. ______
+- [ ] 17. The card and row show no part count, only the byte fraction. (suite:
+  QuickAccessModelTests.uploadingShowsTheFraction,
+  RecentCaptureFormattingTests.detailIsTheTimeTheSizeAndEachUploadState,
+  UploadQueueTests.theFractionCountsInFlightBytesAndEndsAtOne) ______
 - [ ] 18. No upload resumes by itself at launch. ______
-- [ ] 19. The launch sweep aborts nothing and drops the state files of a state older than 7 days. ______
-- [ ] 20. Pruning aborts nothing; the lifecycle rule covers it. ______
+- [ ] 19. The launch sweep aborts nothing and drops the state files of a state older than 7 days. (suite, in part:
+  MultipartStoreTests.sweepRemovalsDropsNoStateAndStatesOlderThanSevenDays,
+  .sweepRemovalsKeepsAStateExactlySevenDaysOldAndListsOnlyFileIDs, .sweepLeavesOnlyTheFilesOfAStateYoungerThanSevenDays;
+  `start()` running the sweep at launch is not driven) ______
+- [ ] 20. Pruning aborts nothing; the lifecycle rule covers it. (suite:
+  CoordinatorDeleteTests.pruningRemovesTheFilesAndAsksForNoDestination) ______
 - [ ] 21. No ListMultipartUploads sweep; the lifecycle rule is the backstop. ______
 - [ ] 22. The drag-out download starts at the drag threshold, not on the press, and has no menu item. ______
-- [ ] 23. A GIF with no local file downloads as a video does. ______
-- [ ] 24. The download uses the signed GET, not the public URL. ______
-- [ ] 25. The row's detail reads `Downloading` during it. ______
-- [ ] 26. No Cancel button; closing the card cancels. ______
-- [ ] 27. `Download failed` has no Retry button; the next drag retries. ______
-- [ ] 28. A failed download's resume data is used for 14 minutes after signing (G2). ______
-- [ ] 29. A download is refused unless the disk has the file's size plus 1 GB free. ______
+- [ ] 23. A GIF with no local file downloads as a video does. (suite, in part:
+  DragDownloadRuleTests.startsForAnUploadedVideoOrGIFWithNoLocalFile; a GIF's download landing has no coordinator test,
+  as on line 289) ______
+- [ ] 24. The download uses the signed GET, not the public URL. (suite:
+  DragDownloadTests.aChunkedBodyReportsRisingFractionsAndLands,
+  CoordinatorDragOutTests.aDragOfAShowingUploadedRecordingStartsOneDownload) ______
+- [ ] 25. The row's detail reads `Downloading` during it. (suite:
+  RecentCaptureFormattingTests.detailSaysDownloadingWhileADragDownloadRuns) ______
+- [ ] 26. No Cancel button; closing the card cancels. (suite, in part:
+  CoordinatorDragOutTests.aCloseDuringTheTransferDropsWhatLands, .aFailureAfterACancelKeepsNothing; that the card has no
+  Cancel control is a view read) ______
+- [ ] 27. `Download failed` has no Retry button; the next drag retries. (suite:
+  QuickAccessModelTests.aFailedDragDownloadShowsTheErrorAndLeavesTheUpload,
+  CoordinatorDragOutTests.aDragWithinTheWindowResumesFromTheKeptData) ______
+- [ ] 28. A failed download's resume data is used for 14 minutes after signing (G2). (suite:
+  DragDownloadRuleTests.usesResumeDataForUnderFourteenMinutes,
+  CoordinatorDragOutTests.aDragWithinTheWindowResumesFromTheKeptData,
+  .aDragPastTheWindowStartsAgainAndRemovesThePartialFile) ______
+- [ ] 29. A download is refused unless the disk has the file's size plus 1 GB free. (suite:
+  DragDownloadRuleTests.hasRoomForTheFileAndOneGB, CoordinatorDragOutTests.tooLittleFreeSpaceRefusesTheDownload) ______
 
 ## The eighteen gaps, to confirm or overrule
 
@@ -342,22 +397,36 @@ The plan filled these where the design was silent, or changed a form while keepi
 say how each stands. Write `confirm` or `overrule` and why.
 - [ ] 1. `MultipartPart` lives in `MultipartXML.swift`, so the probes' build line holds it. Internal. ______
 - [ ] 2. `MultipartRequests` builds no path; the app and the probes each take their own. Internal. ______
-- [ ] 3. The job carries its source (`UploadJob.multipartSource`); the queue never needs the lane's location. Internal. ______
-- [ ] 4. The queue logs through an injected closure. Internal. ______
+- [ ] 3. The job carries its source (`UploadJob.multipartSource`); the queue never needs the lane's location. Internal.
+  (suite, in part: UploadQueueTests.aFileAtTheThresholdGoesMultipart; that the queue holds no location of its own is a
+  code read) ______
+- [ ] 4. The queue logs through an injected closure. Internal. (suite, in part:
+  UploadQueueTests.aFailingPartRetriesAloneWhileTheOthersFinish, .aMultipartJobsAbortThatFindsNothingIsLoggedAsGone; the
+  coordinator passing `environment.log` is a code read) ______
 - [ ] 5. `RecordingController.isEnding`, so a second `stop-recording` during the stop wait logs `did nothing`. Check: U1's
   second stop. ______
-- [ ] 6. `recordingStartCancelled` is reset in `recordingCountIn`'s `didSet`. Internal. ______
-- [ ] 7. The download has its own delegate (`DragDownloadDelegate`). Internal. ______
-- [ ] 8. `multipartFiles` is a collaborator beside `pendingFiles`. Internal. ______
+- [ ] 6. `recordingStartCancelled` is reset in `recordingCountIn`'s `didSet`. Internal. (suite:
+  CoordinatorRecordingTests.theStartCancelResetsOnlyWhenACountInBegins) ______
+- [ ] 7. The download has its own delegate (`DragDownloadDelegate`). Internal. (suite:
+  DragDownloadTests.theFileIsAtTheLandingPathWhenTheCallReturns, .aCompletionBeforeStartIsKeptForStart,
+  .aTaskCancelledBeforeStartStillResumes, .resumeDataContinuesWithARangeRequest) ______
+- [ ] 8. `multipartFiles` is a collaborator beside `pendingFiles`. Internal. (suite:
+  MultipartStoreTests.theFolderIsMultipartNextToTheHistoryAndFilesAreNamedByID) ______
 - [ ] 9. A resumed template job that must draw a new key names it with a counter of 0. Tim's template has no
   `{counter}`. ______
-- [ ] 10. The preset click reaches `SelectionOutcome.resolve` as `clickInPreset: CGRect?`. Internal. ______
+- [ ] 10. The preset click reaches `SelectionOutcome.resolve` as `clickInPreset: CGRect?`. Internal. (suite:
+  SelectionOutcomeTests.recordingModeClickInThePresetRecordsIt, .otherModesIgnoreThePresetClick) ______
 - [ ] 11. The card's drag view asks for the download once per press. Check: Wi-Fi off, hold the drag: one request. ______
 - [ ] 12. The card's download state is `QuickAccessModel.dragDownload`; `Download failed` uses
   `exclamationmark.triangle.fill` in red, as `Upload failed` does. ______
-- [ ] 13. `S3Destination`'s `httpResponse`, `failure`, `excerpt` (and `errorBody`) are internal. Internal. ______
-- [ ] 14. `MultipartAbortResult` (`.aborted` for 204, `.notFound` for 404). Internal. ______
-- [ ] 15. `DragFileStore.landingURL()` makes `Drag/.downloads/<uuid>`. Internal. ______
+- [ ] 13. `S3Destination`'s `httpResponse`, `failure`, `excerpt` (and `errorBody`) are internal. Internal. (suite, in
+  part: S3DestinationTests.errorBodyIsSummarisedFromS3XML, .errorBodyIsTruncatedWhenNotXML; the members' access level is
+  a code read) ______
+- [ ] 14. `MultipartAbortResult` (`.aborted` for 204, `.notFound` for 404). Internal. (suite:
+  S3DestinationTests.abortGives204Then404,
+  CoordinatorDeleteTests.anAbortThatFindsNothingIsNotRepeatedAndLogsItGone) ______
+- [ ] 15. `DragFileStore.landingURL()` makes `Drag/.downloads/<uuid>`. Internal. (suite:
+  DragFileStoreTests.landingURLIsAFreshPathInTheDownloadsFolder) ______
 - [ ] 16. Resume data travels in the error with `signedAt` read before the first call (G2). ______
 - [ ] 17. The drag-out download's form differs from the design's wording: the card's status lives on its model and is set
   directly, not pushed in `pushCardFlags`; two files the design's list does not name; the call is

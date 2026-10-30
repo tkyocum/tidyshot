@@ -95,7 +95,7 @@ The sandbox only lets TidyShot read a save-folder file after a relaunch if the u
 
 ## Starting, stopping and the panel
 Settings > General > After capture = `Save and copy image` unless a step says otherwise.
-- [ ] Area: ⌃⇧8 and drag. The dashed frame outlines the area; the badge counts 3, 2, 1 over it; the panel is a bar of about 172 x 44 pt beside the area with `0:00`, `Stop` and `Cancel`. The elapsed time counts up each second from the first frame. The menu bar icon is `record.circle`, and the menu's first item is `Stop Recording  ⌃⇧8`, with `Record Screen` and `Record Fullscreen` gone and every capture item greyed. Settings, Recent Captures and the Quit item still work.
+- [ ] Area: ⌃⇧8 and drag. The dashed frame outlines the area; the badge counts 3, 2, 1 over it; the panel is a bar of about 244 x 44 pt (280 with sound) beside the area with `0:00`, the highlights and bubble buttons, `Stop` and `Cancel`. The elapsed time counts up each second from the first frame. The menu bar icon is `record.circle`, and the menu's first item is `Stop Recording  ⌃⇧8`, with `Record Screen` and `Record Fullscreen` gone and every capture item greyed. Settings, Recent Captures and the Quit item still work.
 - [ ] Neither the frame, the panel nor the count-in badge is in the file. The covers (below) are.
 - [ ] Window: ⌃⇧8 and click a window. The count-in frames the window, there is no dashed frame during the recording, and the panel sits beside the window's starting frame and does not follow the window.
 - [ ] Fullscreen: Record Fullscreen from the menu, with the pointer on the second display. The display under the pointer records, the badge is centred on it with no frame, and the panel is at the bottom centre of its visible frame, a little above the Dock or the screen edge.
@@ -120,16 +120,24 @@ Settings > General > After capture = `Save and copy image` unless a step says ot
 ## Covers
 - [ ] Hide desktop icons while capturing on, an icon on the desktop, a widget if you use them. Record an area over the desktop: the icons and widgets are hidden for the whole recording, and the covers are in the video as the desktop picture. While recording, clicking the desktop does nothing; a window above it takes clicks as usual.
 - [ ] A window recording with Hide desktop icons while capturing on and the persistent `Hide Desktop Icons` menu item off: the covers go as soon as the selection returns the window, and the bare desktop takes clicks during the recording (the window is the only thing in the picture, so the covers would add nothing).
-- [ ] The same with the persistent item on: its covers stay up through the window recording and afterwards.
+- [ ] The same with the persistent item on: its covers stay up through the window recording and afterwards. (suite, in
+  part: DesktopCoverReasonsTests.theEndOfACaptureLeavesPersistent, .captureAndPersistentTogether; the controller keeping
+  the covers up through a real window recording stays by hand)
 - [ ] The covers are gone after Stop, after Cancel and after a cancelled count-in, with the persistent item off.
 - [ ] A recording started with the setting off shows the icons.
 
 ## Cancel
 - [ ] Cancel before 5 s: the recording is discarded at once, with no alert, no file in the save folder, no record and no notification. `tmp/Recording` is empty.
+  (suite: RecordingControllerTests.cancelUnderFiveSecondsRemovesTheFileWithoutAsking,
+  RecordingEndTests.discardingCancelRemovesAPlayableFileAndPostsNothing)
 - [ ] Cancel from 5 s: the alert `Discard this recording?` / `<m:ss> of recording will be deleted.` shows with `Save` (the default) and `Discard`. The alert is not in the file. While it is up the lock and the covers stay.
 - [ ] `Save` saves the recording as a Stop would. Return in the alert does the same. `Discard` removes it: no file, no record, no notification.
-- [ ] Cancel at about 4.9 s and 5.0 s on a stopwatch: just under discards at once, at 5 s it asks.
+- [ ] Cancel at about 4.9 s and 5.0 s on a stopwatch: just under discards at once, at 5 s it asks. (suite:
+  RecordingLimitsTests.cancelAsksFromFiveSeconds,
+  RecordingControllerTests.cancelUnderFiveSecondsRemovesTheFileWithoutAsking,
+  .cancelFromFiveSecondsAsksAfterTheWaitAndSaveKeepsTheFileAsStopDoes)
 - [ ] While the alert is up, the recording has already stopped (the file is finished before you answer), so what you read in the alert is the length the file will have.
+  (suite: RecordingControllerTests.cancelFromFiveSecondsAsksAfterTheWaitAndSaveKeepsTheFileAsStopDoes)
 
 ## Window changes
 The rules hold whatever these show: a window that is minimised, hidden or on another Space keeps recording, and only a closed window ends the recording. These probes show what ScreenCaptureKit actually does. Run each, do the changes one at a time (about 8 s apart), and write down what is printed.
@@ -248,7 +256,10 @@ Each row for an `Upload and copy URL` recording (`.upload`) and a `Save and copy
 
 - [ ] In every row TidyShot quits, with no hang and no extra prompt. With a save folder, the file is in the folder; `.upload` shows `Upload failed` with `Upload was interrupted.` in Recent Captures after the relaunch, and Retry uploads it. With no folder, or with the panel open at the quit, the file is in `pending/<id>.mp4` with a record (`Kept in TidyShot`), not in `tmp/Recording`. No card and no notification show during the quit. The shutter and the clipboard rule still apply.
 - [ ] Quit with the folder panel open: the quit closes the panel as its Cancel button would (the first real test that `cancel(nil)` closes a sandboxed open panel), and the file takes the `pending` path. Write down what the panel did: ______
-- [ ] Quit during the count-in records nothing: no file, no record, no panel.
+- [ ] Quit during the count-in records nothing: no file, no record, no panel. (suite, in part:
+  CoordinatorRecordingTests.recordingProceedsOnlyWhenStartedNotQuittingAndNotCancelled,
+  .aQuitCancelsTheCountInStopsTheRecordingAndWaitsForTheNotices; `record()` is not driven, so no file, no record and no
+  panel stay by hand)
 - [ ] Quit with an unsaved editor open and a recording: the editor's save sheet comes first. Cancel in the sheet cancels the quit and the recording runs on. Choosing Save or Don't Save then stops and saves the recording.
 - [ ] A Cancel's question held by a quit: with an unsaved editor open, record for more than 5 s, quit (the editor's save sheet is up), press Cancel on the panel, then answer the sheet. The quit finishes and the recording is saved in quit mode, not discarded, and it does not hang waiting for the discard question.
 - [ ] A second quit during a held quit does nothing (no second reply).
@@ -270,12 +281,20 @@ Use `Upload only, keep no local file` for the first and `Upload and copy URL` fo
 - [ ] The upload never loads the file into memory: with Activity Monitor open, TidyShot's memory stays near its idle size during a 1 GB upload.
 - [ ] Delete (and confirm) during the upload cancels it and removes the file, the record and any object already uploaded. Delete during `Optimizing…` cancels at once, and `tmp/Clop` is empty afterwards.
 - [ ] R4 changed this (was: refused over 5 GiB). A recording over 625 GB is refused (`Not uploaded` / `The recording is larger than 625 GB, too large to upload.`) and the record is kept as `.none`. This cannot be recorded by hand in reasonable time; `RecordingLimitsTests`, `MultipartPlanTests` and `RecordingSavePlanTests` cover the boundary and the plans, and the hand check is skipped.
+  (suite, in part: MultipartPlanTests.partSizeIsNilAbove625GiB, RecordingSavePlanTests.oversizedNotice,
+  .oversizedSaveFolderFileStays, .oversizedPendingFileMovesIntoTheSaveFolder; the coordinator's `refuseOversizedUpload`
+  has no test, and the line's hand check is already skipped)
 
 ## Clipboard after the upload
 - [ ] Settings > General > After capture = `Upload only, keep no local file`. Record, Stop, and while the upload runs copy some text in another app. When it finishes, the text is still on the clipboard, `Uploaded` posts with the URL as its body and `Click to copy the link.` as its subtitle, the card says `Uploaded`, and a click on the notification copies the link without opening it.
 - [ ] With nothing copied in between, the URL replaces the clipboard, `Uploaded, URL copied` posts, and the card says `URL copied`.
+  (suite, in part: CoordinatorUploadTests.anUploadedRecordingReplacesTheClipboardOnlyWhileItHoldsWhatTheSaveLeft,
+  QuickAccessModelTests.uploadedSaysWhetherTheLinkWasCopied; the title `Uploaded, URL copied` is the live notifier's and
+  stays by hand)
 - [ ] With `Upload and copy URL` and `Also copy image` on, the clipboard holds the file reference meanwhile and the URL after, as long as nothing else was copied.
 - [ ] Retry an interrupted upload after a relaunch (TidyShot has no count for it): the clipboard counts as changed, so the upload finishes with `Uploaded` and the clipboard is left alone.
+  (suite: RecordingSavePlanTests.urlReplacesTheClipboardOnlyWhenItIsUnchanged,
+  CoordinatorUploadTests.anUploadedRecordingReplacesTheClipboardOnlyWhileItHoldsWhatTheSaveLeft)
 - [ ] Screenshots keep today's behaviour: their URL always replaces the clipboard.
 
 ## Copy File
@@ -296,6 +315,9 @@ Settings > General > Optimization > `Optimize images and videos with Clop` on, C
 - [ ] Cleanup. `ls $C/tmp/Clop` is empty after an optimised upload, after a failed upload (Wi-Fi off, wait for `Failed`), and after a Delete during optimisation. A Retry runs Clop again from the original.
 - [ ] Clop off: the original uploads and the card never says `Optimizing…`. Clop not running (quit it): the original uploads, TidyShot does not launch Clop, and the `Clop:` line reads `Clop: Clop is not running, uploading the original`.
 - [ ] With the `tmp` volume short of space (not testable by hand), the line `Clop: not enough free space, uploading the original` is read from the code and its test.
+  (suite, in part: ClopOptimiserTests.notEnoughFreeSpaceSkipsClop; the test asserts the outcome
+  `.original(.notEnoughSpace)` only, so the log text `Clop: not enough free space, uploading the original`
+  (ClopOptimiser.swift:29, logged at AppCoordinator+Upload.swift:456) stays a code read)
 
 ## Cards and Recent Captures
 - [ ] A card, with a local file: the poster with the badge and the duration (`0:42` form), click opens the file in QuickTime (tool tip `Open`), the side column has only Delete (no Annotate, no Pin to screen), and the right-click menu has `Copy URL` (once uploaded), `Copy File`, `Save As…`, `Reveal in Finder`, `Close` and `Delete…`, and no Copy Image, Annotate or Pin to Screen.
@@ -303,6 +325,8 @@ Settings > General > Optimization > `Optimize images and videos with Clop` on, C
 - [ ] A card for a temporary file with `.none` shows `Kept in TidyShot` and `Not in your save folder. Use Save As… to keep a copy.`, not a green `Saved`. Get one by cancelling the folder panel (see Save folder problems). A click on its poster opens the `pending` file in QuickTime.
 - [ ] Recent Captures: the row shows the poster with the badge, a `film` symbol for a video with no stored thumbnail, `· Optimizing…` while Clop runs; the hover preview shows the stored thumbnail at its own size; there is no Annotate and no Copy Image button.
 - [ ] Annotate and Pin are absent everywhere for a video: the card, its menu, the row and the Recent Captures menus. (`Videos cannot be annotated.` is a safety net that nothing in the UI reaches.)
+  (suite: QuickAccessModelTests.aVideoHasCopyFileInPlaceOfTheImageActions,
+  RecentCaptureFormattingTests.aVideoHasNoImageActions)
 - [ ] Save As… from the card. To a new file: a copy appears, `Saved` posts. Over an existing file, on the same volume and on `/Volumes/RecOff`: the file is replaced (the replacement-folder step must work under the sandbox across volumes; write down what happened: ______). With no local file and no drag copy: `Saving a copy…` / `Downloading <key>` posts and the download lands in the file.
 - [ ] Drag a card with a local file into Finder and Slack or Mail: the file `Recording ….mp4` arrives. A second press, the click that opens the file, and the drag itself copy a large file across volumes once (watch `tmp/Drag`).
 - [ ] R4 changed this (was: cannot be dragged). Dragging an uploaded video with no local file and no drag copy downloads it first, with progress on its card (see `recording-r4-manual-checklist.md`); Restoring its card still starts no download.
@@ -322,25 +346,33 @@ Settings > Upload with no complete destination (or clear the credentials with Fo
 - [ ] No save folder set, `Save and copy image`: the folder panel opens after Stop. Cancel it: `Not saved to a folder` posts with `No folder was chosen. TidyShot keeps the recording. Use Save As… on its card.`, the file is in `pending`, the card says `Kept in TidyShot`, and the clipboard has a reference to the pending file. For `Upload and copy URL` the second sentence is `The recording uploads without a local copy.`
 - [ ] A save folder that is gone since the launch (detach `/Volumes/RecOff` while TidyShot runs), a read-only folder (`chmod a-w`) and a full volume (a small disk image filled up) each give the same fallback with the error's description, never a lost file. Write down the descriptions: ______
 - [ ] A clash: set Recording file name to `Clip` and record twice into the same folder. The second file is `Clip 2.mp4` and the first is untouched. Put the template back.
+  (suite, in part: SaveLocationMoveTests.aClashGetsTheNextNumber; that `saveRecording` places a recording named by the
+  template through it is a code read and stays by hand)
 
 ## The nine gaps, to confirm or overrule
 The plan filled these where the design was silent; each was built as written. Write `confirm` or `overrule` and why, then copy the result to the design's Built notes.
 - [ ] 1. Free space: `tmp/Recording` is created just before the 2 GB check; a fresh container is checked too; a folder that cannot be created gives `Recording failed`; an unreadable free-space value counts as enough, with a log line; the 2 GB check runs before the selection overlay, so a full disk refuses before you select. (Hand check: none possible; read it from `RecordingLimitsTests`.) ______
 - [ ] 2. Extra parameters: `saveRecording(_:intent:stopNotice:mode:)` and `optimisedVideo(at:duration:scope:)`. Internal; nothing to see. ______
 - [ ] 3. Counter: for a recording's upload, `{counter}` is drawn after the 625 GB check (R4; was 5 GiB), just before the enqueue. With `{counter}` in the key template, two recordings uploaded in a row get consecutive keys, and a recording deleted during `Optimizing…` leaves no gap (a refused upload would not either; that cannot be reached by hand). ______
-- [ ] 4. Fallbacks: `.upload` with no destination falls back exactly as `.save` (a forced file reference, `.none`); a `.save` fallback's clipboard reference points at the pending file; over 625 GB (R4; was 5 GiB), where the file is decides: a pending file moves into the save folder and a save-folder file stays. ______
+- [ ] 4. Fallbacks: `.upload` with no destination falls back exactly as `.save` (a forced file reference, `.none`); a `.save` fallback's clipboard reference points at the pending file; over 625 GB (R4; was 5 GiB), where the file is decides: a pending file moves into the save folder and a save-folder file stays.
+  (suite: RecordingSavePlanTests.uploadWithNoDestinationFallsBackAsSave, .saveFallbackKeepsTheRecordingInPending,
+  .oversizedSaveFolderFileStays, .oversizedPendingFileMovesIntoTheSaveFolder) ______
 - [ ] 5. Quit mode skips only the folder prompt, Clop, the upload, the card, the notifications and the not-configured warning; the clipboard rule and the shutter still apply. ______
 - [ ] 6. Strings: `<reason> The recording is still at <path>.` when even the rename failed (not reachable by hand); `Recovered a recording` reads `<file name>, <m:ss>. Find it in Recent Captures.` and shows no card; the recovered record's time is the file's creation date. ______
 - [ ] 7. Copy File's drag copy outlives the upload and the card: a pending video's staged copy is kept at `.uploaded`, and `scheduleDragCleanup` waits again while the clipboard still holds the reference, then removes the copy once the clipboard has moved on. A Copy File with no card schedules the same clean-up. (See Copy File.) ______
-- [ ] 8. Panel geometry: a 172 x 44 pt bar; the fullscreen panel sits `ScrollPanelGeometry.gap` above the bottom of the visible frame. Is the bar the right size and place? ______
-- [ ] 9. Start races: the quit hold's count-in phase covers the whole hand-off, so a quit between the selection and the first frame records nothing; a window or display that goes between the hand-off's last read and the driver's own read gives `Recording failed` / `The window is no longer on screen.` or `The display is no longer connected.` ______
+- [ ] 8. Panel geometry: 172 x 44 pt for a window recording without sound, 244 x 44 for an area or fullscreen one (R3); the fullscreen panel sits `ScrollPanelGeometry.gap` above the bottom of the visible frame. Is the bar the right size and place? ______
+- [ ] 9. Start races: the quit hold's count-in phase covers the whole hand-off, so a quit between the selection and the first frame records nothing; a window or display that goes between the hand-off's last read and the driver's own read gives `Recording failed` / `The window is no longer on screen.` or `The display is no longer connected.`
+  (suite: QuitHoldTests.everyRecordingPhaseButIdleHolds,
+  CoordinatorRecordingTests.recordingProceedsOnlyWhenStartedNotQuittingAndNotCancelled,
+  RecordingControllerTests.aStartThatThrowsFailsWithItsDescriptionAndNoFile, .startErrorsSayWhatWentWrong) ______
 
 ## Regression
 - [ ] ⌃⇧1 to ⌃⇧7 behave as in the 6a, 6b and 7b checklists after a recording, with and without Hide desktop icons.
 - [ ] A screenshot's save, upload, Retry, Delete, Save As… and Copy Image are as before; a PNG still gets `.png` and `image/png`.
-- [ ] Old history (a `history.json` from before R1) loads, with every record an image.
+- [ ] Old history (a `history.json` from before R1) loads, with every record an image. (suite:
+  CaptureRecordTests.historyWithoutMediaKindDecodesAsImages)
 - [ ] The Recent Captures menu opens at once with a video among the rows.
-- [ ] Quit TidyShot with nothing recording: it quits at once.
+- [ ] Quit TidyShot with nothing recording: it quits at once. (suite: QuitHoldTests.idleWithNoUnsavedEditorDoesNotHold)
 
 ## Observations
 Write these into the design's Probes section (and the Built notes for the gaps):

@@ -123,7 +123,9 @@ Reading a recording's frame at a time: `ffmpeg -ss <s> -i <file>.mp4 -frames:v 1
   open it: `Unknown camera (not connected)`. Plug it in and the plain name returns. Write down what the list
   showed: ______
 - [ ] `defaults read io.tky.tidyshot recordingCamera` is `default` for System Default and the camera's id for a
-  pick, and `recordingCameraName` its name.
+  pick, and `recordingCameraName` its name. (suite: CameraChoiceTests.aPickOfSystemDefaultStoresIt,
+  .aPickOfAListedCameraStoresItsListedName, .aStoredChoiceGivesBackTheTwoSettings,
+  AppSettingsTests.r3RecordingSettingsPersistUnderTheirKeys)
 - [ ] The entitlements and the keys. `codesign -d --entitlements -` on the Release build lists R2's entitlements
   (`app-sandbox`, `device.audio-input`, `files.bookmarks.app-scope`, `files.user-selected.read-write`,
   `network.client`, the mach-lookup exception) plus `com.apple.security.device.camera` and nothing else new.
@@ -210,7 +212,9 @@ unplug: ______ iPhone lock: ______ Out of range: ______ Another app: ______
 - [ ] Another app takes the camera (Photo Booth) and lets it go. What the bubble did, and what the log and the
   note said: ______
 - [ ] Only one camera note posts per recording: with `Recorded with <name>` already posted at the start (the
-  chosen camera unplugged before Record), a loss later posts nothing more.
+  chosen camera unplugged before Record), a loss later posts nothing more. (suite:
+  CameraNoteTests.aLossAfterAStartNotePostsNothingMore,
+  CameraChoiceTests.aMissingDeviceTakesThePreferredCameraAndSaysSo)
 - [ ] Turn camera access off in System Settings during a recording (Tim's step). It behaves as a loss
   (the design's rule); write down what the system did to the session and what posted: ______
 - [ ] The bubble turned off from the bar logs no loss and posts no note, and its indicator light goes off at
@@ -314,8 +318,14 @@ Brio's light). Check the log has no `camera lost` line for any of them.
 ## The bar's two buttons
 - [ ] An area or fullscreen MP4 with no sound has a 244 x 44 pt bar: the time, `cursorarrow` (highlights),
   `video.slash.fill` (bubble), Stop, Cancel. With sound (system audio on, or a microphone) or for a GIF it is
-  280 x 44. A GIF bar has the `GIF` tag first. `9:59:59` fits every bar (the layout tests check it).
-- [ ] A window recording's bar is 172 or 208 pt with neither R3 button.
+  280 x 44. A GIF bar has the `GIF` tag first. `9:59:59` fits every bar (the layout tests check it). (suite:
+  RecordingPanelLayoutTests.areaAndFullscreenBarsAre244And280PointsWide, .theButtonsRunFromTheTimeToCancel,
+  .theGIFTagTakesTheMuteButtonsPlaceBeforeTheTime, .aTimePastAnHourFitsTheTimeFrame,
+  RecordingControllerTests.aRequestWithoutExtrasShowsR2sBars,
+  RecordingConfigurationTests.theMuteButtonShowsOnlyForSystemAudioOrTheMicrophone)
+- [ ] A window recording's bar is 172 or 208 pt with neither R3 button. (suite, in part:
+  RecordingPanelLayoutTests.theBarsAre172And208PointsWide, RecordingControllerTests.aRequestWithoutExtrasShowsR2sBars;
+  that the hand-off gives a window recording no extras is not driven and stays by hand)
 - [ ] With the toggles on, the symbols read `cursorarrow.rays` and `video.fill`; off, `cursorarrow` and
   `video.slash.fill`. Tool tips (another app frontmost, hover): `Stop highlighting clicks` / `Highlight
   clicks`, `Hide the webcam bubble` / `Show the webcam bubble`. VoiceOver labels are the same for highlights and
@@ -330,9 +340,15 @@ Brio's light). Check the log has no `camera lost` line for any of them.
   bubble button shows `video.slash.fill`, is disabled, and its tool tip is `Camera access is off for
   TidyShot.` or `No camera is connected.`. With access never asked (after `tccutil reset Camera`), the tool tip
   is `Turn on Show webcam bubble in Settings to allow the camera.` With the toggle off and access allowed, the
-  button works and turns the bubble on from the bar.
+  button works and turns the bubble on from the bar. (suite, in part: BubbleButtonStateTests.accessOffSaysSo,
+  .noCameraSaysSo, .notDeterminedAsksForSettings, .enabledWithACameraAuthorizedAccessAndAFilmedWindow,
+  RecordingControllerTests.theBubbleStartsOffAndDisabledWithTheToggleOnAndNoCamera,
+  RecordingPanelLayoutTests.theBubbleButtonShowsItsStateAndSaysWhatAPressDoes; the hand-off building the state from the
+  real camera and access is not driven and stays by hand)
 - [ ] With the bubble toggle off at the start and the bar pressed on, then Stop: a note posts only if something
-  went wrong. With the toggle off and the bar never pressed, no camera note posts, whatever the access.
+  went wrong. With the toggle off and the bar never pressed, no camera note posts, whatever the access. (suite:
+  CameraNoteTests.noNoteWhenWantedAndAllWentWell, .noNoteWhenTheBubbleWasNeverWanted,
+  RecordingControllerTests.aBubblePressOnMarksTheBubbleWanted, .theSummaryAndTheKeptRecordingFollowThePresses)
 - [ ] A lookup miss (`Not available for this recording`, `Recorded without click highlights` / `The click
   highlights could not be filmed.`) cannot be forced by hand; the controller's tests pin it. Skip and write
   `skipped`: ______
@@ -352,21 +368,29 @@ every 5 s with a few drags and right-clicks.
 - [ ] A 10 fps GIF: a quick click in about 5 frames, rings keep their colour. ______ frames
 - [ ] With only the bubble on, the face shows (posterised, as R2 said of photos), the GIF is larger than one
   without the bubble, and merges no frames. Write down the sizes with and without: ______ / ______ MB
-- [ ] With highlights off the palette is R2's: `GIFMakerTests` pin it; no step.
+- [ ] With highlights off the palette is R2's: `GIFMakerTests` pin it; no step. (suite:
+  GIFMakerTests.noReservedColoursLeavesTheRingColoursOut, GIFPaletteBuilderTests.noReservedColoursIsR2sPalette)
 - [ ] A GIF of a still screen with the bubble off is small as in R2 (the regression below).
 
 ## Notes after Stop
 Each posts after the save's own notification and after `Recording stopped` and the microphone note, never
 during the count-in or the recording, and nothing in quit mode.
 - [ ] The chosen camera unplugged before Record, another camera present: `Recorded with <default name>` / `<name>
-  is not connected.` With no camera at all: `Recorded without the webcam bubble` / `No camera is connected.`
-- [ ] Camera access denied: `Recorded without the webcam bubble` / `Camera access is off for TidyShot.`
+  is not connected.` With no camera at all: `Recorded without the webcam bubble` / `No camera is connected.` (suite, in
+  part: CameraChoiceTests.aMissingDeviceTakesThePreferredCameraAndSaysSo,
+  .aMissingDeviceWithNoCameraTakesNoneAndNamesIt, .systemDefaultWithNoCameraTakesNone, .theStrings; the note posting
+  after Stop through `saveRecording` is not driven and stays by hand)
+- [ ] Camera access denied: `Recorded without the webcam bubble` / `Camera access is off for TidyShot.` (suite, in part:
+  CameraChoiceTests.accessNotAuthorizedTakesNoCameraAndGivesTheAccessNote, CameraNoteTests.theStartsNoteWhenWanted; the
+  note posting after Stop through `saveRecording` is not driven and stays by hand)
 - [ ] The camera lost mid-recording: `Camera lost` (the Camera loss section).
 - [ ] A start with the toggle on and a camera that cannot start (not forceable by hand): `Recorded without the
   webcam bubble` / `The camera could not be started.` Skip and write `skipped`: ______
 - [ ] A note and a microphone note together: the order is the save's notification, `Recording stopped`, the
   microphone note, the camera note, then the highlights note. Write down the order you saw: ______
-- [ ] No camera note posts when the bubble toggle was off and the bar never pressed.
+- [ ] No camera note posts when the bubble toggle was off and the bar never pressed. (suite:
+  CameraNoteTests.noNoteWhenTheBubbleWasNeverWanted,
+  RecordingControllerTests.theSummaryAndTheKeptRecordingFollowThePresses)
 
 ## Budget (G5)
 The bubble at Medium, a 720p30 camera, one minute of Record Fullscreen with steady clicking about once a
@@ -406,26 +430,43 @@ The plan filled these where the design was silent; each was built as written (th
 `confirm` or `overrule` and why, then copy the result to the design's built notes.
 - [ ] 1. The camera resolve takes no toggle and runs at every start, so the bar can turn the bubble on; the note
   posts only when the bubble was wanted. ______
-- [ ] 2. A window recording drops the camera and its note at the hand-off. ______
+- [ ] 2. A window recording drops the camera and its note at the hand-off. (suite:
+  CameraChoiceTests.aWindowRecordingDropsTheCameraAndItsNote,
+  .anAreaOrFullscreenRecordingKeepsTheCameraAndItsNote) ______
 - [ ] 3. One R3 snapshot per recording: the bubble reads its toggles at the count-in, and the hand-off copies
   them, so Settings changes during the count-in do not reach the run. Check: change `Bubble size` in Settings
   during a recording: it does not apply until the next. ______
 - [ ] 4. The filmed features are `bubble` and `highlights`, and a missing window disables its button. Internal. ______
-- [ ] 5. The controller makes the monitors a first-frame rule (`monitoring`). Internal. ______
-- [ ] 6. The notes read the controller's summary after the recording ends. Internal. ______
+- [ ] 5. The controller makes the monitors a first-frame rule (`monitoring`). Internal. (suite:
+  RecordingControllerTests.aBubblePressBeforeTheFirstFrameAppliesAtOnceAndAHighlightsPressAtIt,
+  .theTogglesFlipAndReachTheChrome) ______
+- [ ] 6. The notes read the controller's summary after the recording ends. Internal. (suite, in part:
+  RecordingControllerTests.theSummaryAndTheKeptRecordingFollowThePresses, .theSummaryResetsAtTheNextRun,
+  .highlightsMissedAfterTheFirstFrameAreNotUsed; `record()` reading the summary before `recorder.close()` is not
+  driven) ______
 - [ ] 7. The recording's clock times the camera's log lines and the loss note. ______
 - [ ] 8. A Settings prompt (the camera's, and now the microphone's) is deferred while a capture or a recording runs,
-  and blocks captures while open. ______
+  and blocks captures while open. (suite: CoordinatorRecordingTests.aSettingsPromptAsksOnlyWhenNothingElseRuns,
+  .anOpenPromptRefusesCapturesUntilItIsAnswered, ShortcutsTests.aSettingsPromptWaitsWhileACaptureRecordingOrPromptRuns,
+  .aCaptureIsRefusedWhileAnotherRunsOrAPromptIsOpen) ______
 - [ ] 9. The prompts' order and log lines are as the Camera prompt section says. ______
-- [ ] 10. A local mouse-down draws only on the bubble; local drags and ups pass from any TidyShot window. ______
-- [ ] 11. A second down for a held button ends that ring first. ______
+- [ ] 10. A local mouse-down draws only on the bubble; local drags and ups pass from any TidyShot window. (suite:
+  ClickHighlighterTests.aLocalEventPasses) ______
+- [ ] 11. A second down for a held button ends that ring first. (suite:
+  ClickHighlightRuleTests.aSecondDownOfAHeldButtonEndsTheOldRingFirst, .aSecondDownOutsideEndsTheOldRingOnly) ______
 - [ ] 12. `System Default` is the system's preferred camera when it is one of the three listed types, else the
   first listed camera. On Tim's Mac this is the iPhone (`TKY Camera`), so the Brio has to be chosen. ______
-- [ ] 13. The recorded rects come from one pure function. Internal. ______
+- [ ] 13. The recorded rects come from one pure function. Internal. (suite:
+  RecordingExtrasPlaceTests.anAreaOnThePrimaryDisplay, .fullscreenUsesTheVisibleFrameAndHasNoRingArea,
+  .anAreaOnASecondDisplayLeftOfAndBelowThePrimary, .fullscreenOnASecondDisplay, .anAreaAcrossTheDisplaysEdgeIsCutToIt,
+  .anAreaOffTheDisplayPutsTheBubbleInTheVisibleFrame) ______
 - [ ] 14. Only a drag's end writes the bubble's place; a size step writes only the size (Tim's ruling,
   2026-10-27). ______
-- [ ] 15. With no 720p preset the session uses the format closest to 1280 x 720 that reaches 30 fps. Internal. ______
-- [ ] 16. The ring's colours live in `ClickRingColour`, with the reserved GIF colours. Internal. ______
+- [ ] 15. With no 720p preset the session uses the format closest to 1280 x 720 that reaches 30 fps. Internal. (suite:
+  CameraSessionTests.takes720pAt30OverLargerAndSmallerFormats, .skipsA720pThatReachesOnly15fps,
+  .nothingWhenNoFormatReaches30, .theSmallerOfTwoAtTheSameDistance) ______
+- [ ] 16. The ring's colours live in `ClickRingColour`, with the reserved GIF colours. Internal. (suite:
+  ClickHighlightRuleTests.theColoursComponentsAndGIFColours, GIFMakerTests.reservedRingColoursLeadTheGlobalTable) ______
 - [ ] 17. The click spike is Debug only and compiled out of Release. Check: the `strings` step above prints 0. ______
 
 Calls the build made that the design did not settle (each easy to overrule):
@@ -438,7 +479,8 @@ Calls the build made that the design did not settle (each easy to overrule):
 - [ ] E. A failed start counts as a loss in the run state, so a later reconnect shows the picture again
   (Task 11). ______
 - [ ] F. The ring's grow eases out and its fade is linear (Task 10). ______
-- [ ] G. After a loss the preview is hidden and the symbol shows on the grey (Task 11). ______
+- [ ] G. After a loss the preview is hidden and the symbol shows on the grey (Task 11). (suite:
+  WebcamBubblePanelTests.aLossShowsTheSymbolOnGrey, .aLossWhileHiddenShowsOnlyOnceThePictureIsBack) ______
 
 The design's 27 calls (Tim's to overrule) are listed at the end of the R3 design; overrule one there.
 
@@ -452,7 +494,7 @@ The design's 27 calls (Tim's to overrule) are listed at the end of the R3 design
   checklist after the `askingPermission` rename.
 - [ ] Settings > Capture > Recording's R2 rows are unchanged and the new rows sit after `Count down before
   recording`.
-- [ ] Quit TidyShot with nothing recording: it quits at once.
+- [ ] Quit TidyShot with nothing recording: it quits at once. (suite: QuitHoldTests.idleWithNoUnsavedEditorDoesNotHold)
 
 ## Observations
 Write these into the R3 design's Probes section and built notes:

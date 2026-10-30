@@ -17,7 +17,9 @@ with `curl -sO <url>`; `sips -g dpiWidth -g pixelWidth <file>` reads its resolut
 Clop version (Clop > About); the fixtures come from 3.6.2.
 
 ## Settings and build
-- [ ] Settings > General has an `Images` section between its first section and `URL commands`: the toggle `Optimize images with Clop` (off by default) and the caption `Clop is an image optimizer that greatly reduces file size. Clop keeps its own copy of each image it optimizes.` With Clop installed there is no link.
+- [x] Settings > General has an `Images` section between its first section and `URL commands`: the toggle `Optimize images with Clop` (off by default) and the caption `Clop is an image optimizer that greatly reduces file size. Clop keeps its own copy of each image it optimizes.` With Clop installed there is no link.
+  (obsolete: the recording design renamed the section `Optimization` and its toggle `Optimize images and videos with
+  Clop`, with a new caption)
 - [ ] The toggle takes effect without Save: turn it on, close Settings with no Save, and `defaults read io.tky.tidyshot optimiseWithClop` reads `1`; the next upload is optimised. Turn it off again and the next upload is not.
 - [ ] Clop not installed (move Clop out of Applications, or run on a Mac without it): the toggle is greyed, and `Get Clop` follows the caption and opens https://lowtechguys.com/clop. Quit and reopen Settings with Clop installed: the toggle is enabled again.
 - [ ] `codesign -d --entitlements - .build-rel/Build/Products/Release/TidyShot.app` shows `app-sandbox`, `files.bookmarks.app-scope`, `files.user-selected.read-write`, `network.client` and `temporary-exception.mach-lookup.global-name` with exactly `com.lowtechguys.Clop.optimisationService` and `com.lowtechguys.Clop-setapp.optimisationService`, and no `get-task-allow`.
