@@ -147,25 +147,27 @@ extension UploadQueue {
     /// Sends one multipart job's parts: each reads its bytes, then sends them, retrying under
     /// `policy`. Runs in the job's task group, off the queue's actor.
     private nonisolated struct PartSender: Sendable {
-        var destination: any Destination
-        var policy: RetryPolicy
-        var sleep: Sleeper
-        var log: Logger
+        let destination: any Destination
+        let policy: RetryPolicy
+        let sleep: Sleeper
+        let log: Logger
         /// For the log: the file's name.
-        var name: String
-        var file: URL
-        var key: String
-        var uploadID: String
-        var partSize: Int64
-        var byteCount: Int64
-        var count: Int
-        var progress: MultipartProgress
+        let name: String
+        let file: URL
+        let key: String
+        let uploadID: String
+        let partSize: Int64
+        let byteCount: Int64
+        let count: Int
+        let progress: MultipartProgress
         /// The job's throttled `.progress` events.
-        var report: @Sendable (Double) -> Void
+        let report: @Sendable (Double) -> Void
 
         /// Part `number`, sent. Any failure is thrown as a `PartFailure`.
         @concurrent func send(_ number: Int) async throws -> MultipartPart {
             do {
+                // A part the loop adds after a cancel reads and sends nothing (harness design 5.4).
+                try Task.checkCancellation()
                 let range = MultipartPlan.range(ofPart: number, partSize: partSize, byteCount: byteCount)
                 let data = try await UploadQueue.readPart(of: file, range: range)
                 let progress = progress

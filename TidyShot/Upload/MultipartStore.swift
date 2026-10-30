@@ -110,7 +110,7 @@ nonisolated struct MultipartStore: Sendable {
         } catch let error as CocoaError where error.code == .fileNoSuchFile {
             return
         } catch {
-            NSLog("Could not remove \(url.lastPathComponent) from the multipart folder: \(error.localizedDescription)")
+            NSLog("%@", "Could not remove \(url.lastPathComponent) from the multipart folder: \(error.localizedDescription)")
         }
     }
 }

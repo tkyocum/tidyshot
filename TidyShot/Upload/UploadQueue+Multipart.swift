@@ -157,7 +157,14 @@ extension UploadQueue {
                                          startedAt: now())
         let target = MultipartTarget(key: key, uploadID: uploadID, partSize: partSize, byteCount: source.byteCount)
         var sidecar = MultipartSidecar(uploadID: uploadID, completeSent: false, parts: [])
-        try pass.store.writeSidecar(sidecar, id: job.id)
+        do {
+            try pass.store.writeSidecar(sidecar, id: job.id)
+        } catch {
+            // The new upload id is stored nowhere yet: abort it now, best effort, rather than leave it to
+            // the bucket's lifecycle rule (harness design 5.4).
+            await abortUpload(key: key, uploadID: uploadID, name: pass.name)
+            throw error
+        }
         await events(.multipartStarted(id: job.id, state: state))
         log("Upload: \(pass.name) multipart, \(target.count) parts of \(Self.mebibytes(partSize)) MiB, upload id \(uploadID)")
         try await sendParts(Array(1..<(target.count + 1)), of: target, sidecar: &sidecar, pass)

@@ -1151,7 +1151,7 @@ struct UploadQueueTests {
         try await eventually { await queue.isIdle }
 
         #expect(failures(in: log).count == 1)
-        #expect(destination.state.withLock { $0.calls } == ["create"])
+        #expect(destination.state.withLock { $0.calls } == ["create", "abort"])
         #expect(!log.events.contains { if case .uploaded = $0 { return true } else { return false } })
         #expect(lines.lines.withLock { $0 }.allSatisfy { !$0.contains("not saved") })
     }
@@ -1938,6 +1938,55 @@ struct UploadQueueTests {
         #expect(await cancel.value == .stopped(reservedKey: nil))
         #expect(log.events == [.started(id: id, attempt: 1, fraction: 0), .cancelled(id: id, reservedKey: nil)])
         #expect(destination.state.withLock { $0.creates.isEmpty })
+        #expect(logged(lines) == ["multipart aborted"])
+    }
+
+    /// A part the loop adds after a cancel, because the part before it finished at that moment, reads
+    /// and sends nothing: `PartSender.send` checks for the cancel first (harness design 5.4). One part
+    /// at a time, part 1 held through the cancel and then answering.
+    @Test func aPartAddedAfterACancelSendsNothing() async throws {
+        let movie = try makeLargeMovie(byteCount: mib)
+        defer { try? FileManager.default.removeItem(at: movie.folder) }
+        let destination = FakeDestination(.init(holdingPart: 1))
+        let log = EventLog()
+        let queue = makeMultipartQueue(destination: destination, log: log, store: movie.store,
+                                       plan: MultipartPlan(threshold: 1_048_576, partSize: 262_144, inFlight: 1))
+        let id = UUID()
+
+        await queue.enqueue(largeJob(id, file: movie.file, byteCount: mib))
+        try await eventually { destination.state.withLock { $0.calls }.contains("part 1") }
+        let cancel = Task { await queue.cancel(recordID: id) }
+        try await eventually { destination.state.withLock { $0.heldPartCancellations } == 1 }
+        destination.releaseParts()
+
+        #expect(await cancel.value == .stopped(reservedKey: templateKey))
+        #expect(destination.state.withLock { $0.calls }.filter { $0.hasPrefix("part") } == ["part 1"])
+        #expect(log.events.last == .cancelled(id: id, reservedKey: templateKey))
+        #expect(destination.state.withLock { $0.completes.isEmpty })
+        try await eventually { await queue.isIdle }
+    }
+
+    /// A new upload whose first sidecar cannot be written is aborted at once, best effort, so its id is
+    /// not left to the lifecycle rule; the job fails with the write's error (harness design 5.4).
+    @Test func aNewUploadWhoseFirstSidecarCannotBeWrittenIsAborted() async throws {
+        let movie = try makeLargeMovie(byteCount: mib)
+        defer { try? FileManager.default.removeItem(at: movie.folder) }
+        let store = movie.store
+        let destination = FakeDestination(.init(onCall: { call in
+            if call == "create" { Self.blockSidecarWrites(in: store) }
+        }))
+        let log = EventLog()
+        let lines = LogLines()
+        let queue = makeMultipartQueue(destination: destination, log: log, store: store, lines: lines)
+        let id = UUID()
+
+        await queue.enqueue(largeJob(id, file: movie.file, byteCount: mib))
+        try await eventually { hasEnded(log) }
+
+        #expect(destination.state.withLock { $0.calls } == ["create", "abort"])
+        #expect(destination.state.withLock { $0.aborts.map(\.uploadID) } == ["upload-1"])
+        #expect(destination.state.withLock { $0.aborts.map(\.key) } == [templateKey])
+        #expect(failures(in: log).count == 1)
         #expect(logged(lines) == ["multipart aborted"])
     }
 }
