@@ -142,6 +142,18 @@ final class CoordinatorWorld {
         defaults.removePersistentDomain(forName: suiteName)
     }
 
+    /// `<root>/Saved/`, stored as the save location's folder (`SaveLocation.store`, where Settings >
+    /// General's Choose… lands), so a save-folder file is reached as in the app: a recording moves
+    /// there, Delete removes from there, and an upload reads from there under the folder's scope. The
+    /// folder panel is never built. Store it before anything a test drives asks for the folder.
+    @discardableResult
+    func storeSaveFolder() throws -> URL {
+        let folder = root.appending(path: "Saved", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try saveLocation.store(folder)
+        return folder
+    }
+
     /// A sparse file of `byteCount` bytes at `url`, its folder made.
     static func writeSparseFile(at url: URL, byteCount: Int64) throws {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
