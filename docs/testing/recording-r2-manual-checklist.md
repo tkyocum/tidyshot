@@ -198,7 +198,9 @@ Format = GIF. ⌃⇧8 and drag an area; the bar is for GIF.
   `Record system audio` on (set them before switching `Format` to GIF) and a sound playing, record a few
   seconds and press `Stop Making GIF` as soon as the menu shows it: the MP4 it saves has no audio track
   (`afinfo` prints no `aac` line), and the log line's `Recording: starting …` reads `30 fps` and `microphone
-  off`.
+  off`. (suite, in part: RecordingConfigurationTests.aGIFRecordingNeverCapturesAudioAndRecordsAt30FPS,
+  .aGIFRecordingNeverCapturesTheMicrophone, MicrophoneChoiceTests.aGIFStartTreatsAnyStoredMicrophoneAsOff; `afinfo` on a
+  real file and the `Recording: starting …` log line stay by hand)
 - [ ] Stop after about 10 s of scrolling text (a long web page scrolled at a steady pace) at the defaults
   (15 fps, 1280 px). The status menu shows a disabled `Making GIF… <n> %` and, under it, `Stop Making GIF`
   while it converts; no card, row or `Recording saved` appears until it is done. Then one card with the
@@ -212,14 +214,20 @@ Format = GIF. ⌃⇧8 and drag an area; the bar is for GIF.
 - [ ] Timing. `magick identify` on the 15 fps GIF gives delays of 7, 6, 7 cs, and the summed delay is
   `round(F × 100 / 15)` for its `F` output frames (155 frames is 1033 cs), so within a frame of the
   recording's length: 10 s is about 1000 cs, not the 1050 that a 7 cs delay on every frame would give. At 10
-  and 20 fps the delays are 10 and 5. Write down one: ______
+  and 20 fps the delays are 10 and 5. Write down one: (suite, in part:
+  GIFEncoderTests.delaysAreWholeCentisecondsSummingToTheLength,
+  GIFMakerTests.theDelaysSumToTheOutputFramesAndTheGIFLoops; writing down one real GIF's delays stays by hand) ______
 - [ ] Merging. Record 10 s of a mostly static screen (a clock ticking, nothing else) at the defaults. The
   GIF is far smaller than the scrolling one and has far fewer GIF frames than 150, with long delays on the
   held stretches. Write down the frames and the size: ______ frames, ______ MB (the spike's mostly static
-  3 s area: 0.31 MB, smaller than its MP4).
+  3 s area: 0.31 MB, smaller than its MP4). (suite, in part:
+  GIFEncoderTests.delaysAreWholeCentisecondsSummingToTheLength, GIFMakerTests.aGapIsOneFrameWhoseDelaySpansIt,
+  .aLongHeldStretchIsSplitAtTheMaximumDelay; a real GIF's frame count and size stay by hand)
 - [ ] `Full size` on a Retina area larger than 4096 px on its long side is capped at 4096 px (R1's cap).
   Record a 2560 x 1440 pt area on the 5K display at `Full size` for 10 s: the GIF is 4096 x 2304 or smaller,
-  and plays.
+  and plays. (suite, in part: AppSettingsTests.fullSizeGIFsKeepTheRecordingCap,
+  GIFMakerTests.aSmallSourceIsNeverUpscaledAndFullSizeKeepsUpTo4096,
+  RecordingConfigurationTests.outputSizeCapsTheLongerSideAt4096; a real 5K recording and the GIF playing stay by hand)
 - [ ] Colour. Record each for 10 s at the defaults and look zoomed: (a) a photo gallery, (b) a playing video,
   (c) dark mode with a terminal and an editor, (d) a low-contrast UI (grey on grey), (e) a wallpaper gradient
   with a window dragged over it, (f) a colourful popup shown for under a second (a notification banner with
@@ -252,7 +260,11 @@ Format = GIF. ⌃⇧8 and drag an area; the bar is for GIF.
   enough disk space to make the GIF. The recording was saved as an MP4.` posts, the MP4 is saved with its
   record, and no `<id>.gif` is left in `tmp/Recording`. Delete both filler files at once. (The mid-write
   check at every 32 MB cannot be forced by hand; `GIFFileSinkTests` cover it.) Write down whether you ran
-  it: ______
+  it: (suite, in part: GIFConversionTests.underOneGBFreeNeverMakesAndSavesTheMP4,
+  .runningOutOfSpaceMidWriteGivesTheSameNotice,
+  RecordingControllerTests.underOneGigabyteAtAFiveSecondTickEndsTheRecording,
+  GIFFileSinkTests.lessThan1GBFreeAtA32MBBoundaryThrows; the optional full-disk run and the write-down stay by
+  hand) ______
 - [ ] Conversion times. Record 30 s and 60 s at 15 fps and 1280 px of scrolling text, of a mostly static
   screen and of colour-heavy content, and 30 s at `Full size` of the colour-heavy content. Write down each
   time against the recording's length: ______ (the spike took 3.8 s for 10.3 s of text at 1280 px, 4.2 s
@@ -301,14 +313,21 @@ loop, or music).
   with `AVAudioConverter` and opens no audio queue. The reader's own decode waited 90 s on coreaudiod on
   Tim's Mac (built notes, The suite's time); a wait of more than a few seconds here goes to Tim.
 - [ ] Press mute in the first second (the button is live as soon as the bar shows): the first stretch starts
-  at 0. Press it before the first frame if you can.
+  at 0. Press it before the first frame if you can. (suite:
+  RecordingControllerTests.aPressBeforeTheFirstFrameOpensAtZero)
 - [ ] With Clop on and `Upload and copy URL`, the same recording: the uploaded link plays in Safari and in
   Chrome with the muted stretches silent and later sound in sync. (Clop took a muted fixture from 14 MB to
   4.8 MB and kept it silent in the probe.) Write down the sizes before and after: ______ MB, ______ MB
-- [ ] A recording never muted leaves no log and its audio is untouched (`ls $C/tmp/Mute` is empty).
+- [ ] A recording never muted leaves no log and its audio is untouched (`ls $C/tmp/Mute` is empty). (suite, in part:
+  RecordingControllerTests.aRecordingNeverMutedHasNoLog, MuteLogWriterTests.aWriterNeverGivenALogWritesNothing; the
+  controller test cancels its recording, so for a kept recording with no mute stretches, `endRecording` skipping the
+  mute ladder (AppCoordinator+Recording.swift:636) is not driven and "its audio is untouched" stays by hand)
 - [ ] **(Debug)** `open -n --stderr … <Debug app> --args -MuteFailure apply`, then mute a stretch and Stop:
   `Sound removed` / `Muting failed, so the recording has no sound.` posts, the file has no audio track
-  (`afinfo` shows none), and the log has `Recording: mute failed: It failed on purpose (-MuteFailure).`
+  (`afinfo` shows none), and the log has `Recording: mute failed: It failed on purpose (-MuteFailure).` (suite, in part:
+  RecordingMuteTests.aFailedApplyRemovesTheSoundInstead, .muteFailureWrapsTheSteps, .soundRemovedHasTheDesignsText,
+  .stripAudioKeepsTheVideoAndDropsTheSound; `muteAndSave` posting the notice, the Debug build's `-MuteFailure` and the
+  `mute failed` log line stay by hand)
 - [ ] **(Debug)** `--args -MuteFailure both`, for each of Save with a folder set, Save with no folder,
   Upload and Upload only: no folder panel opens, the file is in `pending/` and not in the save folder,
   nothing uploads, the clipboard is unchanged, `Sound not muted` / `Muting failed. The recording is kept in
@@ -327,9 +346,12 @@ loop, or music).
   before the launch's recovery began, so a recording made while it still runs keeps its log (Decided
   2026-10-24, 6); that timing cannot be forced by hand, and `RecordingRecoveryTests` cover it.
 - [ ] A mute that cannot start for want of space cannot be run by hand; `RecordingMuteTests` cover the
-  `Recording: mute skipped, not enough disk space` path.
+  `Recording: mute skipped, not enough disk space` path. (suite:
+  RecordingMuteTests.tooLittleRoomIsNotMutedWithoutEitherStep)
 - [ ] A discarded muted recording leaves no log: mute for a second, press Cancel past 5 s and Discard;
-  `ls $C/tmp/Mute $C/tmp/Recording` shows both empty.
+  `ls $C/tmp/Mute $C/tmp/Recording` shows both empty. (suite:
+  RecordingControllerTests.aDiscardRemovesTheMuteLogOnceTheWriterHasFinished,
+  .cancelFromFiveSecondsWithDiscardRemovesTheFileAndPostsNothing)
 
 ## Microphone
 `Format` MP4 and an input chosen in Settings > Capture > `Microphone` unless a step says otherwise; the
@@ -360,16 +382,24 @@ selection overlay or the count-in, and the stream's `Recording: starting …` li
 - [ ] A start refused by the capture lock after its prompt posts `Screen recording` / `The recording did not
   start because another capture was running.` and logs `Recording: not started after the microphone prompt,
   another capture was running`. It cannot be forced by hand: captures are refused while the prompt is up, so
-  the lock is free when it is answered (`ShortcutsTests` pins the notice and the rule).
+  the lock is free when it is answered (`ShortcutsTests` pins the notice and the rule). (suite, in part:
+  ShortcutsTests.aRefusedStartPostsOnlyAfterAPrompt; the `Recording: not started after the microphone prompt …` log line
+  is not read by any test)
 - [ ] With access undecided (`tccutil reset Microphone io.tky.tidyshot`) and another capture under way (a
   screenshot's area selection, its self-timer countdown, a scrolling capture): a Record press shows no
   prompt, starts nothing and logs nothing; the capture goes on. Once it is done, a Record press prompts.
 - [ ] The chosen input unplugged before the recording (or the RODE AI-1 chosen while unplugged): the recording
   uses the default input, and `Recorded with <default input name>` / `<name> is not connected.` posts after
-  Stop. With no input at all: `Recorded without the microphone` / `No microphone is connected.`
+  Stop. With no input at all: `Recorded without the microphone` / `No microphone is connected.` (suite:
+  MicrophoneChoiceTests.aMissingDeviceRecordsTheDefaultInputAndSaysSo,
+  .aMissingDeviceWithNoInputRecordsNoMicrophoneAndNamesIt, .systemDefaultWithNoInputRecordsNoMicrophone,
+  RecordingNoticeOrderTests.theSavesNoticeThenRecordingStoppedThenTheMicrophoneNote)
 - [ ] A GIF with a microphone set, once with access denied and once with the input unplugged: no prompt, no
   microphone note after Stop, and the start's log reads `mute lag 0.300 s (no microphone)` and `microphone
-  off`.
+  off`. (suite, in part: MicrophoneChoiceTests.aGIFStartTreatsAnyStoredMicrophoneAsOff,
+  .aGIFStartWithAMissingDeviceRecordsNoMicrophoneAndPostsNothing, .aGIFRecordingDropsTheResolvedInputAndItsNote,
+  .onlyAnMP4WithAMicrophoneSetAsksWhileAccessIsNotDetermined,
+  MicrophoneLatencyTests.noInputReadsNothingAndTakesTheNoMicrophoneLag; the start's log text stays by hand)
 - [ ] Access turned off, and the input unplugged, during a recording: what ScreenCaptureKit does (the stream
   stops, the output fails, or the file goes on with silence), whether the file is saved and plays, and the
   `Recording stopped` body (`The microphone was disconnected.` or `Microphone access is off for TidyShot.`).
@@ -403,7 +433,9 @@ answer, so a banner from the count-in, which stays up about 5 s, is not filmed.
   then a second recording started while its card says `Uploading`. `Uploaded, URL copied` posts after the
   second recording's Stop, not during it.
 - [ ] A notice outside a recording still posts at once: a screenshot's `Screenshot saved` (Show
-  notification on), and a recording's `Recording saved` after its save when no other recording runs.
+  notification on), and a recording's `Recording saved` after its save when no other recording runs. (suite, in part:
+  NoticeHoldTests.aNoticeAskedForWhileNotHoldingPostsAtOnce; the coordinator's own posts after a screenshot's save and
+  `saveRecording` are not driven and stay by hand)
 - [ ] Quit during the second recording of the first check: the held GIF notice posts as the recording
   ends, before TidyShot quits, and the second recording's own notices do not (quit mode).
 - [ ] A quick quit, where nothing else holds the quit. Start the second recording while the first's GIF
@@ -418,7 +450,9 @@ answer, so a banner from the count-in, which stays up about 5 s, is not filmed.
 The export is built to the amended design (a start between keyframes re-encodes with TidyShot's own pass,
 a start on one passes through), and the window, the pass and the wiring landed with it (H2).
 - [ ] `Trim…` shows in the card's menu and the Recent Captures row actions (`scissors`) for MP4 recordings only,
-  not for a GIF; it is disabled while the record uploads or is being deleted.
+  not for a GIF; it is disabled while the record uploads or is being deleted. (suite:
+  RecordingTrimTests.trimShowsForMP4RecordingsOnly, .canTrimIsFalseWhileUploadingDeletingOrTrimming,
+  .menuStateHidesBothForAGIF, QuickAccessModelTests.trimShowsOnlyForAVideoAndIsDisabledWhileUploadingOrDeleting)
 - [ ] The window: one per record (a second `Trim…` brings it forward); its title is the save-folder file's
   name, or `Recording <time>` for a file inside TidyShot; it opens at the recording's size, or smaller to
   fit the screen; the trim bar (yellow handles, `Trim` and `Cancel`) appears by itself once the file has
@@ -464,7 +498,9 @@ a start on one passes through), and the window, the pass and the wiring landed w
   volume's replacement folder, stage a temporary file in the save folder itself under the scope and
   `replaceItemAt` from there. Write down what happened: ______
 - [ ] Retry a failed upload while its Trim window is open, then Save: `Not trimmed` / `This capture is still
-  uploading.`, and the uploaded object still matches the local file.
+  uploading.`, and the uploaded object still matches the local file. (suite, in part:
+  RecordingTrimTests.aRecordThatStartsUploadingAfterTheWindowOpenedIsRefused,
+  .writePlanRefusesADeletedDeletingOrUploadingRecord; comparing the bucket's object with the local file stays by hand)
 - [ ] Delete the record while its Trim window is open: the window closes, and nothing reappears in the save
   folder or `pending/`.
 - [ ] Settings > Upload during a Save and Upload's `Trimming…` (a 4K re-encode is long enough): save another
@@ -475,11 +511,16 @@ a start on one passes through), and the window, the pass and the wiring landed w
 - [ ] During a slow Save to the other volume (a long recording): Retry, `Upload Trimmed` and Delete are
   disabled or refused with `This capture is being trimmed.` (`Not deleted` / `This capture is being trimmed.
   Delete it when the trim finishes.`), and once the put finishes the file plays trimmed and Delete works.
-- [ ] Close the Trim window of an upload-only record: `tmp/Trim/<id>.mp4` is gone.
+- [ ] Close the Trim window of an upload-only record: `tmp/Trim/<id>.mp4` is gone. (suite, in part:
+  RecordingTrimTests.closingAWindowRemovesOnlyItsRecordsWorkFiles; `trimWindowDidClose` calling it is behind the Trim
+  window seam and stays by hand)
 - [ ] An upload-only video whose card was dragged before the trim: after Save and Upload, drag-out and Save
-  As… give the trimmed video, and `tmp/Drag/<id>` holds the trimmed file, not the old copy.
+  As… give the trimmed video, and `tmp/Drag/<id>` holds the trimmed file, not the old copy. (suite, in part:
+  DragFileStoreTests.aCopyIsHandedOutOnlyWhenItMatchesTheRecordsFileNow, .aChangedSourceIsCopiedAgain; `finishTrimWrite`
+  removing the drag folder, the drag-out and Save As stay by hand)
 - [ ] A `Sound not muted` record: Trim then Save leaves its muted stretches silent and clears the mark; after
-  that Upload works.
+  that Upload works. (suite: RecordingTrimTests.aMarkedRecordsTrimHasItsMutedStretchesSilent,
+  .aMarkedRecordCanBeTrimmed, CaptureRecordTests.aTrimsWriteRecordsTheTrimmedFile)
 - [ ] A trim from a keyframe (a passthrough) keeps at most two AAC packets (2,048 sample frames) of audio
   before the start, hidden by the edit list; more goes back to Tim (Probe 5). A fixture test checks the
   bound; this checks it on real recordings.
@@ -610,18 +651,30 @@ came out). Write `confirm` or `overrule` and why, then copy the result to the de
   stopped`, then the microphone note. `GIF not made` and `Sound removed` always post in normal mode, whatever
   Show notification says. Nothing posts in quit mode (D below). ______
 - [ ] 3. `Recording.recoveryURL` is the MP4 for a GIF: when the GIF cannot leave `tmp/Recording`, `Not saved to a
-  folder` names the MP4's path. (Not reachable by hand.) ______
+  folder` names the MP4's path. (Not reachable by hand.) (suite:
+  GIFConversionTests.onSuccessTheGIFIsSavedAndTheMP4RemovedOnlyAfterTheRecordExists,
+  .whenTheGIFIsLeftInTmpTheGIFIsRemovedAndTheMP4Stays) ______
 - [ ] 4. Testable steps: `GIFConversion`, `RecordingRecovery.prepare` and `sweepMuteFolder`, and `RecordingMute.resolve`
-  with its output URL and duration. Internal; nothing to see. ______
+  with its output URL and duration. Internal; nothing to see. (suite:
+  GIFConversionTests.makeReadsTheMP4AndWritesTheGIFBesideIt,
+  .onSuccessTheGIFIsSavedAndTheMP4RemovedOnlyAfterTheRecordExists, .onFailureTheMP4IsSavedAsAVideoWithGIFNotMade,
+  RecordingRecoveryTests.aFoundFileWithALogComesBackMutedAndItsLogIsRemoved, .aListedFileWithNoRecordingIsSwept,
+  RecordingMuteTests.applyThenReplaceIsMuted, .soundThatIsNotAACThrowsAndTheLadderRemovesIt) ______
 - [ ] 5. The GIF menu items come first in the status menu, after `Stop Recording` when one runs, then a
   separator; the percentage is rounded down and held at 99 % until the conversion has saved. ______
 - [ ] 6. Microphone devices come through `MicrophoneDevices` (list, default, access, request). Settings reads
-  its own `LiveMicrophoneDevices`, the recorder's loss reason the coordinator's. ______
+  its own `LiveMicrophoneDevices`, the recorder's loss reason the coordinator's. (suite, in part:
+  MicrophoneChoiceTests.aMicrophoneStartReadsTheAccessFirstAndListsTheInputsOnlyWithIt,
+  RecordingControllerTests.theAppSaysWhichWayTheMicrophoneWasLost; which live object Settings reads is a code
+  read) ______
 - [ ] 7. Microphone loss mid-recording: the controller asks `microphoneLossReason` on `.outputFailed` and
   `.streamStopped`, giving `The microphone was disconnected.` or `Microphone access is off for TidyShot.`
-  (the Microphone section's mid-recording step). ______
+  (the Microphone section's mid-recording step). (suite: RecordingControllerTests.anErrorWhileTheMicrophoneIsLostSaysSo,
+  .anErrorWithNoMicrophoneAsksNothing, .theAppSaysWhichWayTheMicrophoneWasLost) ______
 - [ ] 8. The mute log is `tmp/Mute/<id>.json`, created by the first write, made at the first toggle; a
-  recording never muted has none. ______
+  recording never muted has none. (suite: RecordingMuteTests.theLogAndTheRewriteLiveInTmpMute,
+  RecordingControllerTests.aRecordingNeverMutedHasNoLog,
+  MuteLogWriterTests.theDefaultWriteMakesTheFolderAndWritesTheLog, .aWriterNeverGivenALogWritesNothing) ______
 - [ ] 9. Trim: the download posts `Downloading <key>` under `Opening the recording…`; `Trim…`, the sheet and `Upload
   Trimmed` read `hasUploadDestination` (built); the method is decided on the source before the mute step; a
   quit does not wait for a Trim pass; `trimWindows`, `openingTrimIDs` (the build's), `trimPasses` and
@@ -646,7 +699,7 @@ Four more where the build made a call the design did not settle. Tim confirmed a
   URL copied` would be untrue there). confirm (Tim, 2026-10-24)
 - [x] D. A recording that ends with nothing kept (`.nothing`) no longer posts `Recording failed` while TidyShot quits;
   R1 posted it. In quit mode no notice posts at all (`RecordingNoticeOrder.afterStop(… quitMode:)`).
-  confirm (Tim, 2026-10-24)
+  confirm (Tim, 2026-10-24) (suite: RecordingNoticeOrderTests.quitModeGivesNothing)
 
 Six more, calls E to J, which the build left open. Tim answered all six on 2026-10-24 (design, Decided
 2026-10-24, 8 to 11, and the line after them); E, I and J are built, F, G and H kept as built:
@@ -654,12 +707,16 @@ Six more, calls E to J, which the build left open. Tim answered all six on 2026-
   or runs and posts after its Stop. Built (Notices during a recording, above). (Tim, 2026-10-24)
 - [x] F. A close during a passthrough's put lets the pass finish, its upload included. Kept as built (Trim).
   (Tim, 2026-10-24)
-- [x] G. A re-encode holds its last frame to the range's end. Kept as built. (Tim, 2026-10-24)
+- [x] G. A re-encode holds its last frame to the range's end. Kept as built. (Tim, 2026-10-24) (suite:
+  RecordingTrimTests.aReencodeHoldsItsLastFrameToTheRangesEnd)
 - [x] H. A range with no frame to show posts `Not trimmed` / `The recording could not be read.` Kept as built
-  (Trim, the still-screen check). (Tim, 2026-10-24)
+  (Trim, the still-screen check). (Tim, 2026-10-24) (suite:
+  RecordingTrimTests.aReencodeWithNoFrameToShowThrowsAndLeavesNoOutput,
+  .aFullDiskReadsDiskFullAndOtherErrorsTheirOwnText)
 - [x] I. Captures are blocked while the microphone prompt is open, and a start the lock still refuses after it
   posts `Screen recording` / `The recording did not start because another capture was running.` Built
-  (Microphone). (Tim, 2026-10-24)
+  (Microphone). (Tim, 2026-10-24) (suite: ShortcutsTests.aCaptureIsRefusedWhileAnotherRunsOrAPromptIsOpen,
+  .aRefusedStartPostsOnlyAfterAPrompt, CoordinatorRecordingTests.anOpenPromptRefusesCapturesUntilItIsAnswered)
 - [x] J. The card shows the row's placeholder when the trimmed file's first frame cannot be read. Built
   (Trim). (Tim, 2026-10-24)
 
@@ -670,9 +727,11 @@ Six more, calls E to J, which the build left open. Tim answered all six on 2026-
 - [ ] A screenshot's save, upload, Retry, Delete, Save As… and Copy Image are as before; a PNG still gets
   `.png` and `image/png`.
 - [ ] Old history (a `history.json` from before R2) loads, with every record's `unmutedIntervals` empty and
-  every R1 video still a video (the `isVideo` to `isTimeBased` rename).
+  every R1 video still a video (the `isVideo` to `isTimeBased` rename). (suite:
+  CaptureRecordTests.historyWithoutUnmutedIntervalsDecodesEmpty, .historyWithoutMediaKindDecodesAsImages,
+  .videoRecordRoundTrips, .everyKindButAnImageIsTimeBased)
 - [ ] The Recent Captures menu opens at once with a GIF, a video and a screenshot among the rows.
-- [ ] Quit TidyShot with nothing recording: it quits at once.
+- [ ] Quit TidyShot with nothing recording: it quits at once. (suite: QuitHoldTests.idleWithNoUnsavedEditorDoesNotHold)
 - [ ] Delete (and confirm) a GIF: the file, the record and any uploaded object go.
 
 ## Observations

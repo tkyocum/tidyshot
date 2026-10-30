@@ -7,7 +7,8 @@ Run this after any change to `AppCoordinator+Delete.swift`'s confirmation, `Capt
 - [ ] With it on, Delete on a card, a Recent Captures row and a pin each asks first. The card menu and the row read `Delete…`.
 - [ ] Turn it off. Delete from a card, a row and a pin each act at once with no alert. The card menu and the row read `Delete`.
 - [ ] With it off, make a remote delete fail: set a wrong secret key in Settings > Upload and save without testing, then delete an uploaded capture. The second alert (`Remove it from history anyway?`) still appears. Put the key back.
-- [ ] Turn it back on for normal use, if you prefer.
+- [ ] Turn it back on for normal use, if you prefer. (suite:
+  AppSettingsTests.confirmBeforeDeletingDefaultsToTrueAndPersists)
 
 ## Sizes in Recent Captures
 - [ ] A screenshot row reads `<time> · <size>`, for example `2 minutes ago · 412 KB`. The middle dot has a space either side. The size matches Finder's for the file, or the uploaded object's size.

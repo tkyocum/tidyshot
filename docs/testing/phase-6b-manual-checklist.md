@@ -45,6 +45,8 @@ with `defaults read io.tky.tidyshot <key>`.
 - [ ] Settings > Capture has a `Self-timer` picker with `3 seconds`, `5 seconds` (selected) and `10 seconds`, after the three toggles.
 - [ ] The menu bar menu reads `All-in-One  ⌃⇧1`, `Capture Area  ⌃⇧4`, `Capture Window  ⌃⇧2`, `Capture Fullscreen  ⌃⇧3`, `Capture Scrolling  ⌃⇧5`, `Capture Previous Area  ⌃⇧6`, `Self-Timer`; a separator; Recent Captures, `Restore Closed Overlay`, Retry Failed Uploads (only after a failure), Reveal Last Capture; a separator; `Unlock Pinned Screenshots` and `Close Pinned Screenshots` only when they apply; Settings…, Quit TidyShot. Every capture item is disabled while a capture, a countdown or a scrolling session runs.
 - [ ] Settings persist: set the aspect lock on (All-in-One toolbar), the timer to 10 seconds, and both URL toggles the other way, quit and reopen: `defaults read io.tky.tidyshot <key>` reads `1`, `10`, `0`, `1` for `allInOneAspectLock`, `selfTimerSeconds`, `urlCommandsEnabled`, `urlCommandsAllowSilent`, and the panes show the same. Set them back.
+  (suite: AppSettingsTests.allInOneAspectLockDefaultsOffAndPersists, .selfTimerSecondsDefaultsToFiveAndPersists,
+  .urlCommandSettingsRoundTripThroughASecondInstance)
 
 ## All-in-One
 - [ ] No stored area (`defaults delete io.tky.tidyshot lastAreaRect`, relaunch): ⌃⇧1 opens like Capture Scrolling's selection: crosshair, loupe, and the window under the pointer highlighted.
@@ -56,6 +58,9 @@ with `defaults read io.tky.tidyshot <key>`.
 - [ ] Type 640 into `W` and press Return: the width becomes 640, growing from the top-left corner, clamped at the display edge; nothing is captured, and a second Return captures. A value larger than the room (or one that makes the rect poke out of the display) is clamped or moves the rect inside the display, and the field then shows the size the rect really has, not what you typed. The same for `H`. Tab moves between the two fields.
 - [ ] Lock on (`lock` shown): a corner or edge drag keeps the ratio the rect had when the lock was turned on; typing W changes H and the other way. Lock off (`lock.open`) frees it. The lock is remembered across launches. With two displays, turn the lock on over one, then draw a rect on the other: the lock is still on there, and the toolbar's symbol agrees.
 - [ ] Toolbar placement: a rect near the bottom of the display puts the toolbar above it; a rect that fills the display puts it inside its bottom edge; a rect at the left or right edge keeps the toolbar on screen; a rect at the top of a notched display never puts it under the notch or the menu bar.
+  (suite, in part: AllInOneToolbarPlacementTests.belowTheSelectionAndCentred, .aboveWhenThereIsNoRoomBelow,
+  .insideTheBottomEdgeWhenNeitherFits, .clampedToTheScreensSides; the notch inset read from a real screen's
+  `safeAreaInsets` stays by hand)
 - [ ] Capture (button, Return with no field editing, or a double-click inside): the area is saved by the after-capture action, the card appears, and ⌃⇧6 captures the same area again. The toolbar, handles and dimming are not in the image.
 - [ ] Window: the clicked window with transparent corners (and the shadow, when `Include window shadow` is on). Fullscreen: the overlay goes first, then the rect's display is captured with no dimming, handles, toolbar or Quick Access card in it. Scrolling: the scrolling panel opens on the rect; a rect under 100 pt tall is refused with `Select an area at least 100 points tall.` Timer: the self-timer countdown runs on the rect, then captures it.
 - [ ] Cancel and Escape (also with a field focused but not editing) close the overlay with nothing captured. While a field is being edited, Return applies the value (the field shows the real size afterwards, even when it was clamped) and Escape drops what you typed, shows the rect's real size again and leaves the field; neither captures or cancels, and a second Escape cancels. ⌘-Tab to another app and back: the overlay is still up (focus loss does not cancel, as in the other modes) and Escape cancels it.
@@ -101,22 +106,34 @@ with `defaults read io.tky.tidyshot <key>`.
 ## URL scheme: commands
 URL commands on, the silent toggle on for this section.
 - [ ] `t capture-area`: the selection opens; the capture follows the after-capture action. `t capture-window`: window mode. `t capture-fullscreen`: the display under the pointer, at once. `t capture-previous-area`: the last area again, at once.
+  (suite, in part: URLCommandHandlerTests.everyCommandReachesItsCaptureFunction; what each capture then does (the
+  selection, window mode, the display under the pointer, the previous area) is the hotkey path's and stays by hand)
 - [ ] `t all-in-one`: All-in-One with the last area preselected. `t 'all-in-one?x=0&y=0&width=500&height=400'`: All-in-One with that rect preselected at the bottom-left of the display under the pointer, adjustable; Escape leaves the stored previous area unchanged.
 - [ ] A URL-opened All-in-One needs a touch before a key captures: run `sleep 3; open 'tidyshot://all-in-one?action=copy&x=0&y=0&width=500&height=400'` in Terminal and keep pressing Return in a TextEdit window as the overlay appears: nothing is captured (no shutter, the clipboard unchanged), the arrows still move the rect and Escape still cancels. Again, then click once inside the rect (or change W, or toggle the lock): Return now captures. A double-click inside the rect as the first touch arms without capturing; a second double-click captures. The same with `t all-in-one` (no rect, previous area preselected). ⌃⇧1 and the menu's All-in-One on the previous area capture on Return at once, as before.
-- [ ] `t self-timer`: the self-timer selection, then the countdown.
+- [ ] `t self-timer`: the self-timer selection, then the countdown. (suite, in part:
+  URLCommandHandlerTests.everyCommandReachesItsCaptureFunction; the self-timer selection and countdown stay by hand)
 - [ ] `t capture-scrolling`: the scrolling selection. `t 'scrolling-capture?x=0&y=0&width=600&height=800'`: no selection; the dashed frame and the panel open on that rect, TidyShot is not made the active app and the panel does not take the keyboard, so a Return typed in the frontmost app does nothing; nothing is captured until you click Start (or press ⌃⇧5). Escape (global) cancels. Leave it unstarted: after 60 seconds the frame and the panel go by themselves, nothing is saved, and ⌃⇧4 works again. A session started within the minute is not cut short. A cancelled session leaves Previous Area as it was; a finished one sets it to the rect. A rect under 100 pt tall posts `Select an area at least 100 points tall.`
-- [ ] `t restore-recently-closed`: the last closed card comes back, as the menu item does.
+- [ ] `t restore-recently-closed`: the last closed card comes back, as the menu item does. (suite, in part:
+  URLCommandHandlerTests.everyCommandReachesItsCaptureFunction, ClosedOverlaysTests.newestFirst,
+  .popSkipsDeletedAndShownIds; the card coming back is `restoreClosedOverlay` behind the screen seam and stays by hand)
 - [ ] The path forms work too: `open 'tidyshot:capture-window'` and `open 'tidyshot:///capture-window'`; and `t CAPTURE-WINDOW`.
-- [ ] Hotkeys and menu items behave as before: the after-capture action, no extra notification, no subtitle.
+  (suite: URLCommandTests.everyCommandParsesFromThePath, .theSchemeTheCommandAndTheNamesIgnoreCase)
+- [ ] Hotkeys and menu items behave as before: the after-capture action, no extra notification, no subtitle. (suite, in
+  part: CaptureIntentTests.standardIsTheGeneralSettingWithNothingAfter; that the hotkeys and the menu pass `.standard`
+  is a code read, and the capture itself stays by hand)
 
 ## URL scheme: actions
 Use `capture-window` (click a window each time).
-- [ ] No `action`: the after-capture action in General.
+- [ ] No `action`: the after-capture action in General. (suite:
+  CaptureIntentTests.noActionIsTheAfterCaptureActionInGeneral,
+  URLCommandHandlerTests.everyCommandReachesItsCaptureFunction)
 - [ ] `action=upload` with General set to `Save and copy image`: saved, uploaded, URL on the clipboard. With `Upload only, keep no local file`: uploaded with no file in the save folder.
 - [ ] `action=save` under `Upload only`: saved in the save folder, the image copied (with General's copy toggle on), no upload.
 - [ ] `action=copy`: the image is on the clipboard (Preview > New from Clipboard), and nothing else: no file in the save folder or `pending`, no card, no Recent Captures row, no upload; the shutter sound plays (with Play sound on); `Image copied` shows the pixel size with the subtitle `From <sender>`. With Show notification off, no notification. The newest card's Annotate still opens its own capture.
 - [ ] `action=annotate`: the after-capture action runs, then the editor opens on the new capture and its card closes. `action=pin`: the action runs, then a pin opens and the card stays.
 - [ ] `action=UPLOAD` works like `upload`. `action=print` posts `Unknown action “print”. Use upload, save, copy, annotate or pin.`
+  (suite: URLCommandTests.everyActionParsesOnEveryCaptureCommand, .anUnknownOrEmptyActionIsAnError,
+  .errorMessagesAreTheSpecStrings)
 
 ## URL scheme: rect coordinates
 Silent toggle on. Coordinates are points from the display's bottom-left corner (as in CleanShot).
@@ -124,13 +141,21 @@ Silent toggle on. Coordinates are points from the display's bottom-left corner (
 - [ ] With the display's size in points W x H (System Settings > Displays, "looks like"), `x=W-300&y=H-200&width=300&height=200` captures the top-right corner with the menu bar clock.
 - [ ] `&display=1` captures on the main display whatever the pointer; `&display=2` on the second (`NSScreen.screens` order), also when it is above or to the left of the main one. `&display=3` with two displays posts `There is no display 3.`
 - [ ] A rect running past the display edge is clipped to it (`x=-100&y=-100&width=400&height=300` gives 300 x 200). A rect fully off the display (`x=99999&y=0&width=10&height=10`) posts `The area leaves less than a point on display 1.`
+  (suite: URLCommandGeometryTests.aRectPartlyOffItsDisplayIsClipped, .aRectThatLeavesLessThanAPointIsOutside,
+  URLCommandHandlerTests.errorsArePostedAndRunNothing)
 - [ ] A `capture-area` URL rect becomes the previous area: ⌃⇧6 captures it again. A `capture-scrolling` rect becomes it only once the stitched image is saved (see URL scheme: commands).
 - [ ] Show cursor on: the pointer is in a URL rect capture when it lies inside the rect.
 
 ## URL scheme: security
 - [ ] Silent toggle off (default): `t 'capture-fullscreen?action=copy'`, `t capture-previous-area` and `t 'capture-area?x=0&y=0&width=100&height=100&action=copy'` capture nothing and leave the clipboard as it was (copy some text first; `pbpaste` prints it before and after, and `osascript -e 'clipboard info'` lists no image type after). Each posts `TidyShot URL command` with `<command> from <sender> captures without a selection. Allow it in Settings > General > URL commands.` and the subtitle `From <sender>` (no ` from …` and no subtitle when the sender is unknown).
+  (suite: URLCommandHandlerTests.silentCommandsAreRefusedByDefaultNamingTheSender,
+  URLCommandGateTests.theRefusalNamesTheSenderWhenItIsKnown)
 - [ ] Silent toggle off: `capture-area` without a rect, `capture-window`, `all-in-one` with and without a rect, `self-timer`, and `capture-scrolling` with and without a rect all still run, because each waits for your drag, click or Start.
+  (suite: URLCommandGateTests.commandsThatWaitForTheUserRunWithTheSecondToggleOff,
+  URLCommandHandlerTests.commandsThatWaitForTheUserRunWithSilentCapturesOff)
 - [ ] Master toggle off: every command above, `restore-recently-closed`, and `t nonsense` post `URL commands are off. Turn them on in Settings > General.` and do nothing.
+  (suite: URLCommandHandlerTests.withURLCommandsOffEveryURLIsRefusedAlike,
+  URLCommandGateTests.withURLCommandsOffEveryCommandIsRefused)
 - [ ] From Safari and Chrome, open `~/Desktop/p6b/links.html` and click each link: the browser asks whether to open TidyShot; after you allow it, the silent links are refused naming the browser, and the others run. Write down whether Chrome offers "Always allow".
 - [ ] Raycast: a Quicklink to `tidyshot://capture-area?action=upload` runs. Keyboard Maestro: an Open URL action for `tidyshot://capture-fullscreen?action=copy` is refused with the toggle off and runs with it on. Shortcuts: an Open URLs action for `tidyshot://capture-window` runs.
 - [ ] Fill in the sender each source produces (the notification's subtitle and the log line):
@@ -147,15 +172,23 @@ Silent toggle on. Coordinates are points from the display's bottom-left corner (
 ## URL scheme: hostile input
 Both toggles on. Each line posts the error named and captures nothing; nothing crashes.
 - [ ] `t 'capture-area?x=1e3&y=0&width=10&height=10'`, `width=nan`, `width=inf`, `width=0x10`, `width=+5`, `width=-5`, `width=0`, `x=99999999999999999999`, `x=100001`, and a missing `height`: `x, y, width and height must be given together, as numbers, with width and height above 0.`
+  (suite: URLCommandTests.onlyPlainDecimalsAreNumbers, .widthAndHeightMustBeAboveZero,
+  .hugeAndOverlongNumbersAreRefused, .theRectValuesComeTogetherOrNotAtAll, .errorMessagesAreTheSpecStrings)
 - [ ] `t 'capture-area?action=upload&action=copy'` and `t 'capture-area?action=copy&ACTION=copy'`: `“action” is given more than once.`
+  (suite: URLCommandTests.aRepeatedParameterIsAnError, .errorMessagesAreTheSpecStrings)
 - [ ] `t 'capture-fullscreen?action=upload%26action%3Dcopy'`: `Unknown action “upload&action=copy”. …`, not a copy. `t 'capture%2Dwindow'` runs Capture Window (percent-encoding is decoded first, and the gate sees the decoded command: `t 'capture%2Dfullscreen'` is refused with the silent toggle off).
+  (suite: URLCommandTests.percentEncodingIsDecodedBeforeMatching,
+  URLCommandHandlerTests.silentCommandsAreRefusedByDefaultNamingTheSender)
 - [ ] `t 'capture-area?action=%25@%25n%25s'`: `Unknown action “%@%n%s”. …`; the log shows `%@%n%s` as plain text. `t 'capture-area?action=%E2%80%AEdaolpu'`: the notification shows `daolpu` with no reversed text. A 200-character action is cut at 40 characters with `…`.
 - [ ] `t 'capture-area?display=7'` with no rect opens the normal selection (display counts only with a rect); `t 'capture-area?display=abc'` posts `There is no display abc.`
 - [ ] Unknown commands, including CleanShot's file-path ones: `t pin`, `t 'open-annotate?filepath=/etc/hosts'`, `t 'add-quick-access-overlay?filepath=/tmp/x.png'`, `t open-settings`: `Unknown command “…”.` No file is read (no sandbox prompt, nothing in the log about the path).
-- [ ] Unknown parameters are ignored: `t 'capture-window?foo=1&filepath=/etc/hosts'` runs Capture Window.
+  (suite: URLCommandTests.anUnknownCommandIsAnError, .errorMessagesAreTheSpecStrings)
+- [ ] Unknown parameters are ignored: `t 'capture-window?foo=1&filepath=/etc/hosts'` runs Capture Window. (suite:
+  URLCommandTests.parametersACommandDoesNotTakeAreIgnored, .noActionLeavesItToTheAfterCaptureSetting)
 
 ## URL scheme: launch, queue and busy
 - [ ] Cold launch with the silent toggle off: quit TidyShot, `t capture-fullscreen`: TidyShot starts, then posts the refusal; nothing is captured.
+  (suite: URLCommandHandlerTests.urlsWaitUntilTheAppHasStartedThenRunInOrder)
 - [ ] While a selection is open (⌃⇧4, not released), while a self-timer counts, and during a scrolling session before and after Start: `t capture-fullscreen`, `t capture-area` and `t capture-scrolling` do nothing and post nothing (the log reads `dropped, a capture is running`); the scrolling session neither starts nor finishes. `t restore-recently-closed` still restores a card.
 - [ ] `for i in 1 2 3; do t capture-window; done`: one window selection opens; the other two are dropped.
 - [ ] Several URLs waiting for a cold launch: quit TidyShot, then `open 'tidyshot://capture-window' 'tidyshot://capture-area' 'tidyshot://restore-recently-closed'`. TidyShot starts, one window selection opens (only the first capture command runs; the log reads `a queued capture command ran first` for the second), and the restore still happens. With the silent toggle off, a refused `capture-fullscreen` ahead of a `capture-window` does not stop the window selection from opening.

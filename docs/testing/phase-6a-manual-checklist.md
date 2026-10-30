@@ -75,6 +75,8 @@ and Notes. Quit other apps that take drops.
 - [ ] Settings > Shortcuts lists `Capture area:`, `Capture window:`, `Capture fullscreen:`, `Capture scrolling:`, `Capture previous area:` (⌃⇧6) and `Restore closed overlay:` (empty). Change `Capture previous area:` to another combination, confirm the new keys work and ⌃⇧6 does not, then reset it. Set a combination for `Restore closed overlay:` for the restore section and clear it at the end.
 - [ ] The menu bar menu lists Capture Area, Capture Window, Capture Fullscreen, Capture Scrolling, `Capture Previous Area  ⌃⇧6`, a separator, Recent Captures, `Restore Closed Overlay`, Retry Failed Uploads (only after a failure), Reveal Last Capture, a separator, Settings…, Quit TidyShot. The capture items are disabled while a capture or a scrolling session runs.
 - [ ] Settings persist: change each of the five settings (`Show on` to `Main display`, `Show up to` 3, `Close after dragging out` off, freeze on, shadow on), quit and reopen, and check the panes still show them. `defaults read io.tky.tidyshot <key>` reads `main`, `3`, `0`, `1`, `1` for `overlayDisplay`, `overlayMaxCards`, `overlayCloseAfterDrag`, `freezeScreen` and `windowShadow` (one key per call; a key never changed does not exist yet, which is the default). Set them back afterwards.
+  (suite: AppSettingsTests.overlayStackSettingsDefaultAndPersist, .overlayCloseAfterDragDefaultsOnAndPersists,
+  .freezeScreenDefaultsOffAndPersists, .windowShadowDefaultsOffAndPersists)
 
 ## The cursor (bug fix)
 Before this phase, with `Show cursor in screenshots` on, an area or window capture contained TidyShot's own crosshair at the mouse-up point. Test with it on, then off, with `Freeze screen while selecting` off.
@@ -157,10 +159,15 @@ Bind `Restore closed overlay:` to a combination for this section.
 - [ ] With the stack on the second display, restore: the card joins that stack. With no card showing, restore puts the card on the pointer's display (`Display of the capture` and `Display with the pointer`) or the main display (`Main display`).
 - [ ] Delete a capture from its card, and open the editor from another card: neither can be restored. When only those were closed, `Restore Closed Overlay` is disabled. A card whose delete is under way (the confirmation accepted, an upload being cancelled and the storage `DELETE` still running; Network Link Conditioner on `100% Loss` slows it) is not restorable in that window either: the menu item stays disabled and the shortcut does nothing. Open the editor from Recent Captures on a capture whose card is already closed: its card is no longer restorable.
 - [ ] Close four cards one after the other and restore four times: they come back newest-closed first. A fifth restore does nothing and the menu item is disabled.
+  (suite, in part: ClosedOverlaysTests.repeatedRestoresWalkBack, .hasRestorableMatchesPop; the coordinator's
+  `restoreClosedOverlay` showing the card and the menu item's enabled state stay by hand, behind the screen seam)
 - [ ] Restore walks back through the closed list even when the stack is full. Set `Show up to` 2 and take four captures A, B, C, D: C and D show, A and B are closed (pushed out). Restore: B comes back and C, the oldest card, closes to make room. Restore again: A comes back, then the cards pushed out by the restores follow (C, then D), and a card on screen is never the one restored. Each restore adds one card at the corner and, at a full stack, closes one at the far end, which can be restored later.
 - [ ] The list holds ten: set `Show up to` 1 and take twelve captures (each closes the one before as pushed out), so the first and second are closed but only the ten newest closed stay on the list. Restore ten times: ten different cards come back, newest closed first, and the first capture's card is not among them. (The restores keep going round the cards they push out; that is the walk-back above, not a bug.)
 - [ ] A card showing is not restored a second time: with the newest closed record's card already on screen, restore skips it and brings back the next one.
-- [ ] Delete a closed card's capture from Recent Captures: restore skips it.
+  (suite, in part: ClosedOverlaysTests.popSkipsDeletedAndShownIds; the coordinator passing the shown cards to it, and
+  the restore itself, stay by hand)
+- [ ] Delete a closed card's capture from Recent Captures: restore skips it. (suite, in part:
+  ClosedOverlaysTests.popSkipsDeletedAndShownIds; the coordinator's record check and the restore itself stay by hand)
 - [ ] A restored card's Annotate opens the editor from the file or, for an uploaded upload-only capture, from the bucket (the same as the Annotate button in Recent Captures).
 - [ ] Quit and reopen: the list is empty and the menu item is disabled. Recent Captures still holds everything.
 
@@ -211,6 +218,7 @@ Keep another app (Safari) frontmost while you click the card.
 - [ ] The rect survives a relaunch. A window capture and a fullscreen capture do not change it. A Capture Scrolling area (at least 100 pt tall, window or drag) replaces it; a refused scrolling area (under 100 pt) does not.
 - [ ] On a two-display setup: capture an area on the second display, press ⌃⇧6 (it captures there, at that display's scale), unplug the display and press ⌃⇧6: `The previous area is not on a connected display.` titled `No previous area`. Plug it in again: ⌃⇧6 works again, so the stored rect was not shrunk.
 - [ ] A stored area that lies partly beyond a display's edge after a resolution change is clipped to the display and captured.
+  (suite: PreviousAreaTests.aRectPartlyOffItsDisplayIsClippedToIt, .aRectBetweenTwoDisplaysGoesToTheOneHoldingItsCentre)
 - [ ] An area that leaves less than 1 point on its display is reported as not on a connected display, not captured at zero size: with TidyShot quit, `defaults write io.tky.tidyshot lastAreaRect -data "$(printf '{"x":-0.4,"y":100,"width":1.2,"height":200}' | xxd -p | tr -d '\n')"` (a strip whose centre is on the main display's left edge, with 0.8 pt of it on the display; this needs the main display's left edge at x 0), reopen and press ⌃⇧6: `The previous area is not on a connected display.` titled `No previous area`, and no capture. Then `defaults delete io.tky.tidyshot lastAreaRect` again.
 - [ ] The menu item is disabled while a capture or a scrolling session runs, and ⌃⇧6 does nothing then.
 - [ ] Freeze does not apply: with freeze on, ⌃⇧6 still captures live (put the counter page under the stored area and check the counter in the image is not frozen from earlier).

@@ -26,10 +26,14 @@ history including at least one Phase 2 capture (made before this build).
 - [ ] Delete… on a Phase 2 capture that was uploaded: the alert says the uploaded object stays in the bucket; Delete removes the row and the file, and `curl -I <url>` still gives 200.
 - [ ] Delete… while offline on an uploaded capture: notification "Not deleted" and the row stays; back online, Delete… works.
 - [ ] Network Link Conditioner at 100% packet loss, Delete… on an uploaded capture, choose Delete, then choose Delete… on the same capture again (gallery) and click its trash button (overlay) while the request hangs: no second alert appears.
+  (suite: CoordinatorDeleteTests.deleteAsksOnceAndASecondDeleteWhileItAsksAsksNothing)
 - [ ] Forget Credentials, then Delete… on an uploaded capture: notification "Not deleted" telling you to save credentials or choose Remove from History Only, and the row stays; Delete… again and choose "Remove from History Only": the row and thumbnail go, the object (`curl -I <url>` gives 200) and the file in the save folder stay. Re-enter the credentials.
 - [ ] Make the local file undeletable (`chflags uchg <file>` on a Saved capture), Delete…: notification "Not deleted" naming the file and the reason, and the row stays; `chflags nouchg <file>`, Delete… works.
 - [ ] Change the Upload tab's bucket (to a second bucket you can write to) and Save, then Delete… a capture uploaded before the change: the object is removed from the bucket it was uploaded to (`curl -I <old url>` gives 403 or 404), not looked for in the new one.
 - [ ] Key template `shared/{date}` and a key that cannot read objects (HEAD answers 403 for existing keys), two captures the same day: both rows point at the same key; Delete… the first: notification "Not deleted from storage" saying another capture shares this key, the row goes, and the second capture's URL still works.
+  (suite, in part: CoordinatorDeleteTests.aSharedKeyKeepsTheObjectAndSaysSo, S3DestinationTests.headTreats403AsMissing;
+  a real key that cannot read objects answering 403 for an existing key, so that two captures land on one key, stays by
+  hand)
 - [ ] Retry Upload on a Failed capture with the network restored turns the capsule Uploaded and copies the URL.
 - [ ] The window remembers its size and position across close and reopen; Escape and ⌘W close it.
 - [ ] With the window open, a new capture appears at the top with its thumbnail and its capsule goes Uploading, then Uploaded.
@@ -45,17 +49,24 @@ history including at least one Phase 2 capture (made before this build).
 - [ ] Settings > General, "Upload only, keep no local file": the caption appears; with no save folder chosen, a capture shows no folder prompt, the overlay goes to "URL copied", pasting gives the URL, `pending/` is empty afterwards, the Recent Captures row shows the object name (`aSIS7x.png`) and its photo button still copies the image, "Reveal Last Capture" is disabled.
 - [ ] Wi-Fi off, capture: overlay "Upload failed" with Retry, `pending/<UUID>.png` exists; Wi-Fi on, Retry Failed Uploads in the menu (or the overlay's Retry): Uploaded, and the pending file is gone.
 - [ ] Wi-Fi off, capture in upload-only, then set retention to 1 day and wait past it (or change the record's `timestamp` in `history.json` to two days ago before relaunching) and take another capture: the failed upload-only row and its `pending/` file are still there.
+  (suite: HistoryStoreTests.pruningKeepsUploadOnlyCapturesThatWereNeverUploaded,
+  CoordinatorDeleteTests.pruningRemovesTheFilesAndAsksForNoDestination)
 - [ ] Forget Credentials, then capture in upload-only: one "Upload not configured" notification, the image is on the clipboard, the row is Failed and the pending file stays; re-enter credentials, Retry Failed Uploads: Uploaded.
 - [ ] "Also copy image" on: paste gives the image until the upload finishes, then the URL.
 
 ## Key templates
 - [ ] After updating from Phase 2 with prefix `shots` and length 8 saved, Settings > Upload shows `shots/{random:8}`; after Save, `defaults read ~/Library/Containers/io.tky.tidyshot/Data/Library/Preferences/io.tky.tidyshot.plist s3DestinationConfig` contains `keyTemplate` and no `keyPrefix` or `keyLength`.
+  (suite, in part: S3DestinationConfigTests.phase2PrefixAndLengthMigrateToTemplate, .roundTripsThroughJSON,
+  ObjectKeyNamerTests.migratedTemplateFromPhase2Settings; the Upload tab showing the template stays by hand, and the
+  line's `defaults read` cannot show encoded data: use the `plutil … | base64 -D` form from the Phase 3.1 checklist)
 - [ ] Template `shots/{year}/{month}/{hostname}-{random:8}`: the example updates as you type; Save; capture: the URL is `https://snap.tky.io/shots/2026/10/<hostname>-XXXXXXXX.png` with the hostname lowercased, without `.local`, and only `a-z`, `0-9`, `.` and `-` in it (an `_` in the Mac's host name shows as `-`).
 - [ ] Template `{date}/{hostname}`: the orange warning appears and says the template has no {random} or {counter}, so captures can produce the same key and only the HEAD check keeps a capture from overwriting an earlier object; Save works; two captures on the same day: the second fails with "Could not find an unused object key after 5 tries." and keeps its file for retry.
 - [ ] Settings > Upload with the warning showing: the tab is taller than the 800-point window and scrolls, and scrolling reaches everything down to the Save buttons.
 - [ ] Template `my shots/{random}`: red message `" " is not allowed…`; Save shows "Key template: …" and does not save. Template `{foo}`: red `{foo} is not a token.`
 - [ ] Save and Test Connection with a folder template: the result is exactly "Upload and public read both work."; afterwards the bucket has no `tidyshot-probe-*.txt` under that folder. With a key or bucket policy that allows writes only under that folder, the test still succeeds. (`ConnectionTesterTests` checks which folder the probe key goes into; do not watch the bucket listing during the test.)
 - [ ] File name template `{year}-{month}-{day} {hostname}` names local files as expected; the default template still gives `Screenshot 2026-10-19 at 11.56.03.png`.
+  (suite, in part: FileNamerTests.yearMonthDayAndHostnameTokens, .defaultTemplateMatchesSystemStyle; that a real save
+  names its file from the template stays by hand)
 - [ ] A retried failed upload lands under the capture's own date folder, not today's; with `{counter}` in the key template, the retry's key has a newly drawn counter value, and an upload-only capture taken before a destination existed gets a real counter (not 0) when it is retried.
 
 ## Forget credentials
@@ -65,3 +76,7 @@ history including at least one Phase 2 capture (made before this build).
 ## History hygiene
 - [ ] Retention 1 day with older captures present, then capture: older rows disappear, their files in `thumbnails/` are gone, and their files in the save folder remain; a failed upload-only capture is kept with its `pending/` file however old it is.
 - [ ] Quit, replace `history.json` with `not json`, relaunch: Recent Captures shows "No captures yet", `thumbnails/` and `pending/` are untouched, and `history.json.corrupt-<number>` exists.
+  (suite, in part: HistoryStoreTests.corruptFileIsSetAsideNotOverwritten, .corruptFileSetAsideSurvivesNameCollision,
+  CoordinatorRecoveryTests.anEmptyHistoryAdoptsEveryOrphanAndDeletesNothing,
+  .anOrphanPNGIsAdoptedWithItsSizeAThumbnailAndANotice, .aZeroByteFileIsRemoved; `start()` running the load and then the
+  adoption at launch is not driven, and `thumbnails/` left untouched and the menu's `No captures yet` stay by hand)
