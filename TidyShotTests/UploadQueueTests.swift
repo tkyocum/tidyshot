@@ -1844,4 +1844,100 @@ struct UploadQueueTests {
         #expect(log.events.contains(.uploaded(id: id, url: templateURL, key: templateKey)))
         #expect(logged(lines) == ["multipart upload already gone", created("upload-1"), "multipart completed"])
     }
+
+    /// A cancel that lands while a single PUT's stored upload is being aborted ends the job with one
+    /// `.cancelled` and nothing else: no `.started`, no upload, and no log line, as a cancelled Abort
+    /// logs nothing (harness design 5.3).
+    @Test func aCancelDuringTheSinglePutAbortDeliversCancelled() async throws {
+        let movie = try makeMovie()
+        defer { try? FileManager.default.removeItem(at: movie.folder) }
+        let id = UUID()
+        let destination = FakeDestination(.init(blockingAbortsRemaining: 1))
+        let log = EventLog()
+        let lines = LogLines()
+        let queue = makeMultipartQueue(destination: destination, log: log, store: MultipartStore(directory: movie.folder),
+                                       lines: lines)
+        var job = largeJob(id, file: movie.file, byteCount: 3)
+        job.abortFirst = MultipartRef(uploadID: "old-1", key: "s/OLD.mp4", location: lane)
+
+        await queue.enqueue(job)
+        try await eventually { destination.state.withLock { $0.calls } == ["abort"] }
+
+        #expect(await queue.cancel(recordID: id) == .stopped(reservedKey: nil))
+        #expect(log.events == [.cancelled(id: id, reservedKey: nil)])
+        #expect(destination.state.withLock { $0.uploadAttempts } == 0)
+        #expect(destination.state.withLock { $0.creates.isEmpty })
+        #expect(logged(lines).isEmpty)
+        try await eventually { await queue.isIdle }
+    }
+
+    /// An Abort that answers after the cancel is logged, and the job still ends cancelled.
+    @Test func anAbortThatAnswersAfterTheSinglePutsCancelIsLoggedAndTheJobCancels() async throws {
+        let movie = try makeMovie()
+        defer { try? FileManager.default.removeItem(at: movie.folder) }
+        let id = UUID()
+        let destination = FakeDestination(.init(holdingAbortsRemaining: 1))
+        let log = EventLog()
+        let lines = LogLines()
+        let queue = makeMultipartQueue(destination: destination, log: log, store: MultipartStore(directory: movie.folder),
+                                       lines: lines)
+        var job = largeJob(id, file: movie.file, byteCount: 3)
+        job.abortFirst = MultipartRef(uploadID: "old-1", key: "s/OLD.mp4", location: lane)
+
+        await queue.enqueue(job)
+        try await eventually { destination.state.withLock { $0.calls } == ["abort"] }
+        let cancel = Task { await queue.cancel(recordID: id) }
+        try await eventually { destination.state.withLock { $0.heldAbortCancellations } == 1 }
+        destination.releaseAborts()
+
+        #expect(await cancel.value == .stopped(reservedKey: nil))
+        #expect(log.events == [.cancelled(id: id, reservedKey: nil)])
+        #expect(destination.state.withLock { $0.uploadAttempts } == 0)
+        #expect(logged(lines) == ["multipart aborted"])
+    }
+
+    /// The multipart path's equivalent: `.started` went before the abort, and `.cancelled` follows it.
+    @Test func aCancelDuringTheMultipartAbortDeliversCancelled() async throws {
+        let movie = try makeLargeMovie(byteCount: mib)
+        defer { try? FileManager.default.removeItem(at: movie.folder) }
+        let id = UUID()
+        let destination = FakeDestination(.init(blockingAbortsRemaining: 1))
+        let log = EventLog()
+        let lines = LogLines()
+        let queue = makeMultipartQueue(destination: destination, log: log, store: movie.store, lines: lines)
+        var job = largeJob(id, file: movie.file, byteCount: mib)
+        job.abortFirst = MultipartRef(uploadID: "old-1", key: "s/OLD.mp4", location: lane)
+
+        await queue.enqueue(job)
+        try await eventually { destination.state.withLock { $0.calls } == ["abort"] }
+
+        #expect(await queue.cancel(recordID: id) == .stopped(reservedKey: nil))
+        #expect(log.events == [.started(id: id, attempt: 1, fraction: 0), .cancelled(id: id, reservedKey: nil)])
+        #expect(destination.state.withLock { $0.creates.isEmpty })
+        #expect(logged(lines).isEmpty)
+        try await eventually { await queue.isIdle }
+    }
+
+    @Test func anAbortThatAnswersAfterTheMultipartCancelIsLoggedAndTheJobCancels() async throws {
+        let movie = try makeLargeMovie(byteCount: mib)
+        defer { try? FileManager.default.removeItem(at: movie.folder) }
+        let id = UUID()
+        let destination = FakeDestination(.init(holdingAbortsRemaining: 1))
+        let log = EventLog()
+        let lines = LogLines()
+        let queue = makeMultipartQueue(destination: destination, log: log, store: movie.store, lines: lines)
+        var job = largeJob(id, file: movie.file, byteCount: mib)
+        job.abortFirst = MultipartRef(uploadID: "old-1", key: "s/OLD.mp4", location: lane)
+
+        await queue.enqueue(job)
+        try await eventually { destination.state.withLock { $0.calls } == ["abort"] }
+        let cancel = Task { await queue.cancel(recordID: id) }
+        try await eventually { destination.state.withLock { $0.heldAbortCancellations } == 1 }
+        destination.releaseAborts()
+
+        #expect(await cancel.value == .stopped(reservedKey: nil))
+        #expect(log.events == [.started(id: id, attempt: 1, fraction: 0), .cancelled(id: id, reservedKey: nil)])
+        #expect(destination.state.withLock { $0.creates.isEmpty })
+        #expect(logged(lines) == ["multipart aborted"])
+    }
 }
