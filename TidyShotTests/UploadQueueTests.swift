@@ -832,6 +832,8 @@ struct UploadQueueTests {
         #expect(destination.state.withLock { $0.parts.map(\.uploadID) } == Array(repeating: "upload-1", count: 4))
         #expect(destination.state.withLock { $0.parts.map(\.size) } == Array(repeating: 262_144, count: 4))
         #expect(partNumbers(destination) == [1, 2, 3, 4])
+        let zeros = FakeDestination.digest(Data(count: 262_144))
+        #expect(destination.state.withLock { $0.partDigests.map(\.digest) } == Array(repeating: zeros, count: 4))
         let completes = destination.state.withLock { $0.completes }
         #expect(completes.map(\.key) == [templateKey])
         #expect(completes.map(\.uploadID) == ["upload-1"])

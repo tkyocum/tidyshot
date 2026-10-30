@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Synchronization
 @testable import TidyShot
@@ -63,6 +64,9 @@ nonisolated final class FakeDestination: Destination, Sendable {
         var parts: [(uploadID: String, number: Int, size: Int)] = []
         /// The parts that answered with an ETag.
         var sentParts: [Int] = []
+        /// Every part call, including ones that throw, with the SHA-256 of the bytes it was given
+        /// (`FakeDestination.digest`), so a test can see which bytes a retry sent.
+        var partDigests: [(number: Int, digest: String)] = []
         /// For each part call in order: how many parts had answered when it began.
         var answeredAtStart: [Int: [Int]] = [:]
         var partsInFlight = 0
@@ -99,8 +103,12 @@ nonisolated final class FakeDestination: Destination, Sendable {
         /// What `download(key:)` returns, and the keys it was asked for.
         var downloadedData = Data("object".utf8)
         var dataDownloadKeys: [String] = []
-        /// Every `delete(key:)`, in order.
+        /// Errors for `download(key:)`, one per call, in order; then it returns `downloadedData`.
+        var dataDownloadFailures: [any Error & Sendable] = []
+        /// Every `delete(key:)`, in order, including ones that throw.
         var deletedKeys: [String] = []
+        /// Errors for `delete(key:)`, one per call, in order; then it succeeds.
+        var deleteFailures: [UploadError] = []
         /// This part waits for `releaseParts()` before it reports anything, even when its task is
         /// cancelled, then answers.
         var holdingPart: Int?
@@ -163,10 +171,13 @@ nonisolated final class FakeDestination: Destination, Sendable {
     func download(key: String, to destination: URL) async throws {}
 
     func download(key: String) async throws -> Data {
-        state.withLock { state in
+        let (failure, data) = state.withLock { state -> ((any Error & Sendable)?, Data) in
             state.dataDownloadKeys.append(key)
-            return state.downloadedData
+            let failure = state.dataDownloadFailures.isEmpty ? nil : state.dataDownloadFailures.removeFirst()
+            return (failure, state.downloadedData)
         }
+        if let failure { throw failure }
+        return data
     }
 
     func download(key: String, to landing: URL, expectedBytes: Int64?, resumeData: Data?,
@@ -253,7 +264,11 @@ nonisolated final class FakeDestination: Destination, Sendable {
     }
 
     func delete(key: String) async throws {
-        state.withLock { $0.deletedKeys.append(key) }
+        let failure = state.withLock { state -> UploadError? in
+            state.deletedKeys.append(key)
+            return Self.nextFailure(&state.deleteFailures)
+        }
+        if let failure { throw failure }
     }
 
     func publicURL(for key: String) throws -> URL {
@@ -277,6 +292,11 @@ nonisolated final class FakeDestination: Destination, Sendable {
         failures.isEmpty ? nil : failures.removeFirst()
     }
 
+    /// The SHA-256 of `data` in lowercase hex.
+    static func digest(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
     func createMultipartUpload(key: String, contentType: String, cacheControl: String?) async throws -> String {
         let (failure, count) = record("create") { state in
             state.creates.append((key, contentType, cacheControl))
@@ -288,8 +308,10 @@ nonisolated final class FakeDestination: Destination, Sendable {
 
     func uploadPart(key: String, uploadID: String, number: Int, data: Data,
                     progress: @escaping @Sendable (Int64) -> Void) async throws -> String {
+        let digest = Self.digest(data)
         let delay = record("part \(number)") { state in
             state.parts.append((uploadID, number, data.count))
+            state.partDigests.append((number, digest))
             state.answeredAtStart[number, default: []].append(state.sentParts.count)
             state.partsInFlight += 1
             state.maxPartsInFlight = max(state.maxPartsInFlight, state.partsInFlight)
