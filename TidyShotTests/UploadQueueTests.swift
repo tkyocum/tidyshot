@@ -1805,4 +1805,43 @@ struct UploadQueueTests {
         #expect(starts(in: log).count == 3)
         #expect(destination.state.withLock { $0.aborts.count } == 1)
     }
+
+    /// A stored upload already gone (an Abort's 404) is logged as such, not as aborted (harness design 5.2).
+    @Test func aSinglePutJobsAbortThatFindsNothingIsLoggedAsGone() async throws {
+        let movie = try makeMovie()
+        defer { try? FileManager.default.removeItem(at: movie.folder) }
+        let id = UUID()
+        let destination = FakeDestination(.init(abortResult: .notFound))
+        let log = EventLog()
+        let lines = LogLines()
+        let queue = makeMultipartQueue(destination: destination, log: log, store: MultipartStore(directory: movie.folder),
+                                       lines: lines)
+        var job = largeJob(id, file: movie.file, byteCount: 3)
+        job.abortFirst = MultipartRef(uploadID: "old-1", key: "s/OLD.mp4", location: lane)
+
+        await queue.enqueue(job)
+        try await eventually { hasEnded(log) }
+
+        #expect(log.events.contains(.uploaded(id: id, url: templateURL, key: templateKey)))
+        #expect(destination.state.withLock { $0.aborts.map(\.uploadID) } == ["old-1"])
+        #expect(logged(lines) == ["multipart upload already gone"])
+    }
+
+    @Test func aMultipartJobsAbortThatFindsNothingIsLoggedAsGone() async throws {
+        let movie = try makeLargeMovie(byteCount: mib)
+        defer { try? FileManager.default.removeItem(at: movie.folder) }
+        let id = UUID()
+        let destination = FakeDestination(.init(abortResult: .notFound))
+        let log = EventLog()
+        let lines = LogLines()
+        let queue = makeMultipartQueue(destination: destination, log: log, store: movie.store, lines: lines)
+        var job = largeJob(id, file: movie.file, byteCount: mib)
+        job.abortFirst = MultipartRef(uploadID: "old-1", key: "s/OLD.mp4", location: lane)
+
+        await queue.enqueue(job)
+        try await eventually { hasEnded(log) }
+
+        #expect(log.events.contains(.uploaded(id: id, url: templateURL, key: templateKey)))
+        #expect(logged(lines) == ["multipart upload already gone", created("upload-1"), "multipart completed"])
+    }
 }

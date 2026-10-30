@@ -157,8 +157,10 @@ extension AppCoordinator {
             do {
                 if try await destination.abortMultipartUpload(key: ref.key, uploadID: ref.uploadID) == .aborted {
                     _ = try await destination.abortMultipartUpload(key: ref.key, uploadID: ref.uploadID)
+                    log("Upload: \(name) multipart aborted")
+                } else {
+                    log("Upload: \(name) multipart upload already gone")
                 }
-                log("Upload: \(name) multipart aborted")
             } catch {
                 log("Upload: \(name) multipart abort failed: \(error.localizedDescription)")
                 return error.localizedDescription

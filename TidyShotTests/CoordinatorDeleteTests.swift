@@ -98,6 +98,20 @@ struct CoordinatorDeleteTests {
         #expect(world.logLines == ["Upload: Recording.mp4 multipart aborted"])
     }
 
+    /// 39 (harness design 3.3 and 5.2). An Abort that answers 404 is not sent again, counts as done, and is
+    /// logged as gone.
+    @Test func anAbortThatFindsNothingIsNotRepeatedAndLogsItGone() async {
+        defer { world.removeAll() }
+        destination.state.withLock { $0.abortResult = .notFound }
+        let coordinator = world.makeCoordinator()
+
+        let reason = await coordinator.abortUploads([ref(at: world.location)], name: "Recording.mp4")
+
+        #expect(reason == nil)
+        #expect(destination.state.withLock { $0.aborts.count } == 1)
+        #expect(world.logLines == ["Upload: Recording.mp4 multipart upload already gone"])
+    }
+
     /// 40 (harness design 3.3). A failed Abort is the reason at once; a later upload is not tried.
     @Test func aFailedAbortStopsAtOnce() async {
         defer { world.removeAll() }

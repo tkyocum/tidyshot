@@ -212,12 +212,14 @@ actor UploadQueue {
         }
     }
 
-    /// Aborts an upload the job no longer uses, in one try. A failure is logged and the job goes on;
-    /// the bucket's lifecycle rule removes what is left.
+    /// Aborts an upload the job no longer uses, in one try. A 404 means nothing was left, and is logged
+    /// as such. A failure is logged and the job goes on; the bucket's lifecycle rule removes what is left.
     func abortUpload(key: String, uploadID: String, name: String) async {
         do {
-            _ = try await destination.abortMultipartUpload(key: key, uploadID: uploadID)
-            log("Upload: \(name) multipart aborted")
+            switch try await destination.abortMultipartUpload(key: key, uploadID: uploadID) {
+            case .aborted: log("Upload: \(name) multipart aborted")
+            case .notFound: log("Upload: \(name) multipart upload already gone")
+            }
         } catch {
             guard !Task.isCancelled else { return }
             log("Upload: \(name) multipart abort failed: \(error.localizedDescription)")
