@@ -352,7 +352,7 @@ extension AppCoordinator {
             notifier.notifyError(notice.body, title: notice.title)
             return nil
         }
-        let freeBytes = RecordingLimits.freeBytes(at: Recording.directory)
+        let freeBytes = environment.freeBytes(Recording.directory)
         if freeBytes == nil {
             RecordingLog.note("Recording: the free space of tmp/Recording could not be read, recording anyway")
         }
@@ -506,7 +506,7 @@ extension AppCoordinator {
             guard await selfTimer.run(seconds: Self.recordingCountInSeconds, stage: stage, capture: {}) == .finished
             else { return nil }
         } else {
-            try? await Task.sleep(for: SelfTimerController.settleDelay)
+            try? await environment.clock.sleep(for: SelfTimerController.settleDelay)
         }
 
         guard let content = await loadContent(failureTitle: RecordingEnd.failedTitle) else { return nil }
@@ -768,12 +768,13 @@ extension AppCoordinator {
                          stopNotice: RecordingNotice?, cameraNote: RecordingNotice?,
                          highlightsNote: RecordingNotice?) async {
         let reserved = recording.highlightedClicks ? ClickRingColour.reservedGIFColours : []
+        let freeBytes = environment.freeBytes
         let conversion = GIFConversion(
-            freeBytes: { RecordingLimits.freeBytes(at: Recording.directory) },
+            freeBytes: { freeBytes(Recording.directory) },
             make: { mp4, gifURL, settings, progress in
                 try await GIFMaker.make(from: mp4, to: gifURL, fps: settings.fps, maxSide: settings.effectiveMaxSide,
                                         reserving: reserved,
-                                        freeBytes: { RecordingLimits.freeBytes(at: Recording.directory) },
+                                        freeBytes: { freeBytes(Recording.directory) },
                                         progress: progress)
             },
             save: { recording, saveNotice, mode in
@@ -880,7 +881,7 @@ extension AppCoordinator {
         }
         // Decides whether the URL replaces the clipboard when the upload finishes.
         videoClipboardCounts[id] = plan.copiesFileReference
-            ? Pasteboard.copy(fileURL: fileURL) : NSPasteboard.general.changeCount
+            ? clipboard.copy(fileURL: fileURL) : clipboard.changeCount
 
         let record = CaptureRecord(id: id, timestamp: recording.startedAt, fileURL: fileURL,
                                    fileIsTemporary: plan.fileIsTemporary,

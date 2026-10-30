@@ -50,7 +50,7 @@ extension AppCoordinator {
         do {
             return try storedCredentials()
         } catch {
-            NSLog("Keychain read failed: \(error.localizedDescription)")
+            log("Keychain read failed: \(error.localizedDescription)")
             warnUploadNotConfiguredOnce(Self.keychainReadFailure(error))
             return nil
         }
@@ -81,12 +81,13 @@ extension AppCoordinator {
         guard let old = queue else { return }
         queue = nil
         drainingQueues.append(old)
+        let clock = environment.clock
         Task { [weak self] in
             // An upload still waiting for Clop has no job in the queue yet, so the queue can look
             // idle while one is coming. No new wait starts on a replaced lane.
             while true {
                 if (self?.clopWaitsPerLane[ObjectIdentifier(old.queue)] ?? 0) == 0, await old.queue.isIdle { break }
-                try? await Task.sleep(for: .milliseconds(500))
+                try? await clock.sleep(for: .milliseconds(500))
             }
             self?.drainingQueues.removeAll { $0.queue === old.queue }
         }
@@ -141,7 +142,7 @@ extension AppCoordinator {
         // A backstop: every caller a user drives has refused with its own notice already, and Retry
         // Failed Uploads skips the record. Nothing changes and nothing posts.
         if let refusal = Self.uploadRefusal(for: record, isTrimming: trimmingIDs.contains(recordID)) {
-            NSLog("%@", "Upload: refused for \(record.fileURL?.lastPathComponent ?? recordID.uuidString): \(refusal)")
+            log("Upload: refused for \(record.fileURL?.lastPathComponent ?? recordID.uuidString): \(refusal)")
             return
         }
         let lane = queue ?? makeLane(for: destination)
@@ -182,7 +183,7 @@ extension AppCoordinator {
         // A GIF uploads as made, so it never asks whether Clop runs (design, GIF, Clop).
         if !kind.isSentToClop, settings.optimiseWithClop, !loggedGIFNotSentToClop {
             loggedGIFNotSentToClop = true
-            NSLog("%@", "Clop: GIFs are not sent to Clop")
+            log("Clop: GIFs are not sent to Clop")
         }
         // A file decides on Clop in its task, after the resume decision.
         let optimisesImage = !isFile && kind.isSentToClop && settings.optimiseWithClop && clopIsRunning()
@@ -232,7 +233,7 @@ extension AppCoordinator {
                                                             source: source)
                 step = MultipartPlan.startStep(decision: decision)
                 if case .startOver(let reason, _) = decision {
-                    NSLog("%@", "Upload: \(name) \(reason.logText), starting again")
+                    log("Upload: \(name) \(reason.logText), starting again")
                 }
                 if let state = step.resume {
                     guard endUploadWait(of: recordID, token: token, clopResult: nil) else { return }
@@ -278,7 +279,7 @@ extension AppCoordinator {
                         sent = .file(try multipartFiles.keepClopCopy(clopResult, id: recordID, ext: kind.fileExtension),
                                      scope: nil)
                     } catch {
-                        NSLog("%@", "Upload: Clop's copy could not be kept for resume: \(error.localizedDescription)")
+                        log("Upload: Clop's copy could not be kept for resume: \(error.localizedDescription)")
                         clopResults[recordID] = clopResult
                     }
                 } else {
@@ -423,7 +424,7 @@ extension AppCoordinator {
     /// True when a Clop build is running. Otherwise logs why the original uploads (spec 2.7).
     private func clopIsRunning() -> Bool {
         guard ClopApp.runningBundleID() != nil else {
-            NSLog("%@", "Clop: \(ClopSkipReason.notRunning.summary), uploading the original")
+            log("Clop: \(ClopSkipReason.notRunning.summary), uploading the original")
             return false
         }
         return true
@@ -452,7 +453,7 @@ extension AppCoordinator {
                 reason = skipped
             }
         }
-        NSLog("%@", "Clop: \(reason.summary), uploading the original")
+        log("Clop: \(reason.summary), uploading the original")
         return (payload, nil)
     }
 
@@ -610,7 +611,7 @@ extension AppCoordinator {
         switch event {
         case .started(let id, let attempt, let fraction):
             if attempt > 1 {
-                NSLog("Upload retry \(attempt) for \(id)")
+                log("Upload retry \(attempt) for \(id)")
             }
             // Every attempt sets the bar: a fresh one starts again at 0 rather than leaving the
             // failed attempt's fraction, and a resume shows its parts done at once.
@@ -678,7 +679,7 @@ extension AppCoordinator {
             // user may have copied something since.
             let replacesClipboard = !before.isTimeBased
                 || RecordingSavePlan.replacesClipboard(savedChangeCount: videoClipboardCounts.removeValue(forKey: id),
-                                                       currentChangeCount: NSPasteboard.general.changeCount)
+                                                       currentChangeCount: clipboard.changeCount)
             // The first same-key replace of this launch posts the cache note in place of the usual
             // notification, also with Show notification off, whether or not the URL was copied.
             let postsCacheNote = EditorUploadPlan.shouldPostCacheNote(prior: before.priorUpload, uploadedKey: key,
@@ -695,7 +696,7 @@ extension AppCoordinator {
                 }
             } else {
                 linkNotCopiedIDs.remove(id)
-                Pasteboard.copy(url: url)
+                clipboard.copy(url: url)
                 if postsCacheNote {
                     notifier.notify(title: "Uploaded, URL copied", body: EditorUploadPlan.cacheNote)
                 } else if settings.showNotification {
@@ -711,7 +712,7 @@ extension AppCoordinator {
             }
             // An upload of a record that has a link: the old object is untouched, so the record
             // goes back to it, and keeps the edited or trimmed file and the stale note.
-            NSLog("Upload failed, the earlier link is kept: \(message)")
+            log("Upload failed, the earlier link is kept: \(message)")
             uploadingIDs.remove(id)
             history.update(id: id) { $0 = EditorUploadPlan.applyingFailure(to: $0, message: message) }
             refreshOverlay(for: id)
@@ -737,20 +738,20 @@ extension AppCoordinator {
     private func deleteOrphanedObject(key: String, at location: ObjectLocation) {
         // A collision-prone template can give a live record the same key; never delete that.
         guard CaptureDeletion.sharedKeys([key], at: location, with: history.records).isEmpty else {
-            NSLog("Uploaded \(key) for a record that no longer exists, but another capture shares it; kept")
+            log("Uploaded \(key) for a record that no longer exists, but another capture shares it; kept")
             return
         }
         guard let credentials = loadCredentials() else {
-            NSLog("Uploaded \(key) for a record that no longer exists; no credentials to delete it")
+            log("Uploaded \(key) for a record that no longer exists; no credentials to delete it")
             return
         }
         let destination = environment.makeDestination(location.config, credentials)
         Task {
             do {
                 try await destination.delete(key: key)
-                NSLog("Deleted \(key), uploaded for a record that no longer exists")
+                log("Deleted \(key), uploaded for a record that no longer exists")
             } catch {
-                NSLog("Could not delete \(key), uploaded for a record that no longer exists: \(error.localizedDescription)")
+                log("Could not delete \(key), uploaded for a record that no longer exists: \(error.localizedDescription)")
             }
         }
     }

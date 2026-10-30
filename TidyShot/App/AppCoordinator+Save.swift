@@ -45,17 +45,17 @@ extension AppCoordinator {
                  copyImageNow ? Pasteboard.companionTIFF(of: image.image, scale: image.scale) : nil)
             }.value
         } catch {
-            NSLog("Encode failed: \(error.localizedDescription)")
+            log("Encode failed: \(error.localizedDescription)")
             // Never drop a capture: without PNG data the clipboard still gets the image as TIFF.
             let tiff = await Task.detached(priority: .userInitiated) {
                 Pasteboard.tiffData(of: image.image, scale: image.scale)
             }.value
-            Pasteboard.copy(tiffData: tiff)
+            clipboard.copy(tiffData: tiff)
             notifier.notifyError(error.localizedDescription)
             return nil
         }
         let png = encoded.png
-        let copiedChangeCount: Int? = copyImageNow ? Pasteboard.copy(pngData: png, tiffData: encoded.tiff) : nil
+        let copiedChangeCount: Int? = copyImageNow ? clipboard.copy(pngData: png, tiffData: encoded.tiff) : nil
 
         guard let record = await persist(png: png, image: image, action: action, destination: destination,
                                          alreadyOnClipboard: copyImageNow,
@@ -91,7 +91,7 @@ extension AppCoordinator {
             let fits = BackgroundLayout.make(contentSize: CGSize(width: content.width, height: content.height),
                                              style: style, scale: scale) != nil
             let reason = fits ? "no bitmap could be made" : "the window is too large for a background"
-            NSLog("Background: \(reason), keeping the window capture")
+            log("Background: \(reason), keeping the window capture")
             return result
         }
         return CaptureResult(image: composed, scale: scale, target: result.target)
@@ -115,16 +115,16 @@ extension AppCoordinator {
              Pasteboard.companionTIFF(of: image.image, scale: image.scale))
         }.value
         if let png = encoded.png {
-            Pasteboard.copy(pngData: png, tiffData: encoded.tiff)
+            clipboard.copy(pngData: png, tiffData: encoded.tiff)
         } else {
             // As `save` does when the PNG fails: the TIFF alone, so the capture is not lost.
             let tiff = await Task.detached(priority: .userInitiated) {
                 Pasteboard.tiffData(of: image.image, scale: image.scale)
             }.value
-            Pasteboard.copy(tiffData: tiff)
+            clipboard.copy(tiffData: tiff)
         }
         if settings.playSound {
-            SoundPlayer.playShutter()
+            environment.playShutter()
         }
         if settings.showNotification {
             notifier.notify(title: "Image copied", body: "\(image.image.width) × \(image.image.height) px",
@@ -206,7 +206,7 @@ extension AppCoordinator {
             warnUploadNotConfiguredOnce(notConfiguredWarning)
         }
         if settings.playSound {
-            SoundPlayer.playShutter()
+            environment.playShutter()
         }
         history.add(record)
         let thumbnail = image.map { makeThumbnail(from: $0, for: record.id) }
@@ -251,7 +251,7 @@ extension AppCoordinator {
             let name = FileNamer(template: settings.fileNameTemplate).name(counter: counter)
             return try saveLocation.write(png, baseName: name, ext: "png", in: folder)
         } catch {
-            NSLog("Save failed: \(error.localizedDescription)")
+            log("Save failed: \(error.localizedDescription)")
             keepOnClipboard(image, png: png, alreadyOnClipboard: alreadyOnClipboard)
             notifier.notifyError("\(error.localizedDescription) The image is on the clipboard.", title: "Not saved")
             return nil
@@ -264,7 +264,7 @@ extension AppCoordinator {
         do {
             return try pendingFiles.write(png, id: id, ext: "png")
         } catch {
-            NSLog("Pending write failed: \(error.localizedDescription)")
+            log("Pending write failed: \(error.localizedDescription)")
             keepOnClipboard(image, png: png, alreadyOnClipboard: alreadyOnClipboard)
             notifier.notifyError("\(error.localizedDescription) The image is on the clipboard.", title: "Not saved")
             return nil
@@ -275,7 +275,7 @@ extension AppCoordinator {
     /// `clipboardOwner`: no record was made for this image.
     func keepOnClipboard(_ image: ScaledImage, png: Data, alreadyOnClipboard: Bool) {
         if !alreadyOnClipboard {
-            Pasteboard.copy(image: image.image, pngData: png, scale: image.scale)
+            clipboard.copy(image: image.image, pngData: png, scale: image.scale)
         }
     }
 
@@ -287,13 +287,14 @@ extension AppCoordinator {
     @discardableResult
     func makeThumbnail(from image: CGImage, for id: UUID) -> Task<Void, Never> {
         let store = thumbnails
+        let log = environment.log
         return Task { [weak self] in
             let name = await Task.detached(priority: .utility) { () -> String? in
                 do {
                     guard let small = ThumbnailMaker.thumbnail(from: image) else { return nil }
                     return try store.write(try ThumbnailMaker.pngData(small), id: id)
                 } catch {
-                    NSLog("Thumbnail failed: \(error.localizedDescription)")
+                    log("Thumbnail failed: \(error.localizedDescription)")
                     return nil
                 }
             }.value

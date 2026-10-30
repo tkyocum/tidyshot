@@ -9,13 +9,13 @@ extension AppCoordinator {
     func copyLinkOrFile(recordID: UUID) {
         guard let record = history.record(id: recordID) else { return }
         if let url = record.linkURL {
-            Pasteboard.copy(url: url)
+            clipboard.copy(url: url)
         } else if record.uploadBlockedReason != nil {
             return
         } else if record.isTimeBased {
             Task { await copyFile(recordID: recordID) }
         } else if let fileURL = record.fileURL {
-            Pasteboard.copy(fileURL: fileURL)
+            clipboard.copy(fileURL: fileURL)
         }
     }
 
@@ -30,15 +30,15 @@ extension AppCoordinator {
         guard let record = history.record(id: recordID), record.isTimeBased, record.uploadBlockedReason == nil,
               let fileURL = record.fileURL else { return }
         guard record.fileIsTemporary else {
-            Pasteboard.copy(fileURL: fileURL)
+            clipboard.copy(fileURL: fileURL)
             return
         }
         // Otherwise a clean-up due for a closed card could remove the copy this stage reuses.
         dragCleanups.removeValue(forKey: recordID)?.cancel()
         if let staged = await stageVideoDragFile(recordID: recordID) {
-            copyFileCounts[recordID] = Pasteboard.copy(fileURL: staged)
+            copyFileCounts[recordID] = clipboard.copy(fileURL: staged)
         } else {
-            NSLog("Copy File: \(fileURL.lastPathComponent) could not be staged")
+            log("Copy File: \(fileURL.lastPathComponent) could not be staged")
         }
         // No card close will schedule the copy's clean-up.
         if !overlay.isShowing(recordID: recordID) {
@@ -56,10 +56,11 @@ extension AppCoordinator {
             let accessing = scope?.startAccessingSecurityScopedResource() ?? false
             if FileManager.default.fileExists(atPath: fileURL.path(percentEncoded: false)) {
                 // The scope is held until the default app has the file.
+                let log = environment.log
                 NSWorkspace.shared.open(fileURL, configuration: NSWorkspace.OpenConfiguration()) { _, error in
                     if accessing { scope?.stopAccessingSecurityScopedResource() }
                     if let error {
-                        NSLog("Could not open \(fileURL.lastPathComponent): \(error.localizedDescription)")
+                        log("Could not open \(fileURL.lastPathComponent): \(error.localizedDescription)")
                     }
                 }
                 return
@@ -75,7 +76,7 @@ extension AppCoordinator {
     /// its row's button is disabled.
     func copyLink(recordID: UUID) {
         guard let url = history.record(id: recordID)?.linkURL else { return }
-        Pasteboard.copy(url: url)
+        clipboard.copy(url: url)
     }
 
     /// Copy Image: the PNG and TIFF (`Pasteboard.companionTIFF`) on the clipboard, from the local file when it can be read;
@@ -93,7 +94,7 @@ extension AppCoordinator {
                 return (true, Pasteboard.companionTIFF(of: decoded.image, scale: decoded.scale))
             }.value
             guard converted.decoded else { throw CopyImageError.notAnImage }
-            Pasteboard.copy(pngData: png, tiffData: converted.tiff)
+            clipboard.copy(pngData: png, tiffData: converted.tiff)
             if settings.showNotification {
                 // Read again: an upload that finished during the copy has given the record its key.
                 let current = history.record(id: recordID) ?? record
@@ -199,7 +200,7 @@ extension AppCoordinator {
         NSApplication.shared.activate(ignoringOtherApps: true)
         guard await panel.begin() == .OK, let url = panel.url else { return nil }
         guard let record = history.record(id: recordID) else {
-            NSLog("Save As: \(recordID) was deleted while the panel was open")
+            log("Save As: \(recordID) was deleted while the panel was open")
             return nil
         }
         return (record, url)
@@ -303,7 +304,7 @@ extension AppCoordinator {
         do {
             try await write()
         } catch {
-            NSLog("Save As failed: \(error.localizedDescription)")
+            log("Save As failed: \(error.localizedDescription)")
             notifier.notifyError(error.localizedDescription, title: "Not saved")
             return false
         }
@@ -319,7 +320,7 @@ extension AppCoordinator {
     /// drag copy keeps one name from press to press.
     func saveAsSuggestion(recordID: UUID) -> EditorNaming.SaveAsSuggestion {
         let record = history.record(id: recordID)
-        let startedAt = record?.timestamp ?? Date()
+        let startedAt = record?.timestamp ?? environment.now()
         return EditorNaming.saveAsSuggestion(
             for: record, saveFolder: saveLocation.currentURL,
             namer: FileNamer(template: settings.fileNameTemplate),

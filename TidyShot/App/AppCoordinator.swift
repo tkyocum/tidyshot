@@ -286,6 +286,11 @@ final class AppCoordinator {
         saveLocation.didStoreFolder = { [weak self] in self?.refreshCardTrimStates() }
     }
 
+    /// A coordinator log line, through the environment (`NSLog("%@", …)` in the app).
+    func log(_ message: String) {
+        environment.log(message)
+    }
+
     func start() {
         // Drag copies from the last run, also after a crash.
         dragFiles.sweep()
@@ -300,7 +305,8 @@ final class AppCoordinator {
             record.multipart.map { (record.id, $0.startedAt) }
         }, uniquingKeysWith: { first, _ in first })
         let multipartFiles = multipartFiles
-        Task.detached(priority: .utility) { multipartFiles.sweep(states: multipartStates, now: Date()) }
+        let now = environment.now
+        Task.detached(priority: .utility) { multipartFiles.sweep(states: multipartStates, now: now()) }
         // Records from before 2.13 have no size; those with a local file get it from the file.
         Task { await backfillByteCounts() }
         // A recording a crash, a kill or a failed rename left in tmp/Recording is checked, not swept.
@@ -476,7 +482,7 @@ final class AppCoordinator {
         recorder.quit()
         saveLocation.cancelFolderChoice()
         while recordingPhase != .idle {
-            try? await Task.sleep(for: Self.quitPollInterval)
+            try? await environment.clock.sleep(for: Self.quitPollInterval)
         }
         await notifier.waitForReleasedNotices(upTo: Self.quitNoticeWait)
     }
@@ -495,7 +501,7 @@ final class AppCoordinator {
         do {
             return try await engine.shareableContent()
         } catch {
-            NSLog("Shareable content failed: \(error.localizedDescription)")
+            log("Shareable content failed: \(error.localizedDescription)")
             if ScreenCapturePermission.isGranted {
                 notifier.notifyError("Could not list screens and windows: \(error.localizedDescription)", title: failureTitle)
             } else {

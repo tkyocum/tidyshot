@@ -84,7 +84,7 @@ extension AppCoordinator {
             }
             overlay.setDragFile(url, for: recordID)
         } catch {
-            NSLog("Drag-out download for \(recordID) failed: \(error.localizedDescription)")
+            log("Drag-out download for \(recordID) failed: \(error.localizedDescription)")
         }
     }
 
@@ -100,9 +100,9 @@ extension AppCoordinator {
               DragDownloadRule.starts(record: record, hasDragFile: dragFiles.stagedFile(id: recordID) != nil,
                                       isRunning: downloadingDragIDs[recordID] != nil) else { return }
         guard DragDownloadRule.hasRoom(byteCount: record.byteCount,
-                                       freeBytes: RecordingLimits.freeBytes(at: dragFiles.directory)) else {
+                                       freeBytes: environment.freeBytes(dragFiles.directory)) else {
             overlay.setDownloading(.failed(RecordingLimits.diskFullText), for: recordID)
-            NSLog("Drag-out download for \(recordID) refused, not enough disk space")
+            log("Drag-out download for \(recordID) refused, not enough disk space")
             return
         }
         let source: (key: String, destination: any Destination)
@@ -112,7 +112,7 @@ extension AppCoordinator {
             landing = try dragFiles.landingURL()
         } catch {
             overlay.setDownloading(.failed(error.localizedDescription), for: recordID)
-            NSLog("Drag-out download for \(recordID) failed: \(error.localizedDescription)")
+            log("Drag-out download for \(recordID) failed: \(error.localizedDescription)")
             return
         }
         let name = DragFileName.name(for: record, suggestion: saveAsSuggestion(recordID: recordID))
@@ -120,7 +120,7 @@ extension AppCoordinator {
         let expectedBytes = record.byteCount.map(Int64.init)
         // Resume data replays the first request and its signature, so a resume keeps that request's
         // time. Past the window, or with none, the download starts again with a new signature.
-        let now = Date()
+        let now = environment.now()
         let kept = dragDownloadResume.removeValue(forKey: recordID)
         let resume = kept.flatMap { DragDownloadRule.usesResumeData(signedAt: $0.signedAt, now: now) ? $0 : nil }
         if let kept, resume == nil { removePartialDownload(kept.data) }
@@ -133,7 +133,7 @@ extension AppCoordinator {
                 guard let self, self.downloadingVideoIDs.contains(recordID) else { return }
                 if let resumeLog, !resumeLog.logged {
                     resumeLog.logged = true
-                    NSLog("Drag-out download for \(recordID) resumed at \(String(format: "%.4f", fraction))")
+                    self.log("Drag-out download for \(recordID) resumed at \(String(format: "%.4f", fraction))")
                 }
                 self.overlay.setDownloading(.running(fraction), for: recordID)
             }
@@ -175,7 +175,7 @@ extension AppCoordinator {
                 try? FileManager.default.removeItem(at: landing)
                 // A fraction queued before the cancel can have put the ring back.
                 overlay.setDownloading(nil, for: recordID)
-                NSLog("Drag-out download for \(recordID) cancelled")
+                log("Drag-out download for \(recordID) cancelled")
                 return nil
             }
             do {
@@ -191,7 +191,7 @@ extension AppCoordinator {
             // The download leaves nothing at `landing` when it throws.
             guard !Task.isCancelled else {
                 overlay.setDownloading(nil, for: recordID)
-                NSLog("Drag-out download for \(recordID) cancelled")
+                log("Drag-out download for \(recordID) cancelled")
                 return nil
             }
             if let data = (error as? URLError)?.downloadTaskResumeData {
@@ -199,7 +199,7 @@ extension AppCoordinator {
             }
             failure = error
         }
-        NSLog("Drag-out download for \(recordID) failed: \(failure.localizedDescription)")
+        log("Drag-out download for \(recordID) failed: \(failure.localizedDescription)")
         overlay.setDownloading(.failed(failure.localizedDescription), for: recordID)
         return nil
     }
@@ -216,8 +216,10 @@ extension AppCoordinator {
     /// Resume data that will not be used leaves URLSession's partial file in the temporary folder,
     /// which for a long recording can be gigabytes.
     private func removePartialDownload(_ resumeData: Data) {
+        let temporaryDirectory = environment.temporaryDirectory
         Task.detached(priority: .utility) {
-            guard let partial = DragDownloadRule.partialFile(in: resumeData) else { return }
+            guard let partial = DragDownloadRule.partialFile(in: resumeData, temporaryDirectory: temporaryDirectory)
+            else { return }
             try? FileManager.default.removeItem(at: partial)
         }
     }
@@ -239,7 +241,7 @@ extension AppCoordinator {
             overlay.setDragFile(kept, for: record.id)
             return true
         } catch {
-            NSLog("Could not keep \(fileURL.lastPathComponent) for drag-out: \(error.localizedDescription)")
+            log("Could not keep \(fileURL.lastPathComponent) for drag-out: \(error.localizedDescription)")
             return false
         }
     }
@@ -258,13 +260,14 @@ extension AppCoordinator {
     /// moved on; the launch sweep is the backstop (Gap 7).
     func scheduleDragCleanup(_ id: UUID) {
         dragCleanups[id]?.cancel()
+        let clock = environment.clock
         dragCleanups[id] = Task { [weak self] in
-            try? await Task.sleep(for: Self.dragCleanupDelay)
+            try? await clock.sleep(for: Self.dragCleanupDelay)
             guard !Task.isCancelled, let self else { return }
             self.dragCleanups[id] = nil
             switch Self.dragCleanupStep(isShowing: self.overlay.isShowing(recordID: id),
                                         copyFileCount: self.copyFileCounts[id],
-                                        changeCount: NSPasteboard.general.changeCount) {
+                                        changeCount: clipboard.changeCount) {
             case .leave: break
             case .waitAgain: self.scheduleDragCleanup(id)
             case .remove: self.removeDragFolder(id)

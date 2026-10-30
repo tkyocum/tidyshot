@@ -68,7 +68,7 @@ extension AppCoordinator {
                 try await destination.download(key: key, to: fileURL)
             }.value
         } catch {
-            NSLog("%@", "Trim: the download for \(id) failed: \(error.localizedDescription)")
+            log("Trim: the download for \(id) failed: \(error.localizedDescription)")
             notifier.notifyError(RecordingTrim.failureText(for: error), title: RecordingTrim.notTrimmedTitle)
             return
         }
@@ -206,7 +206,7 @@ extension AppCoordinator {
         do {
             trimmed = try await RecordingTrim.exportForSave(
                 source, id: id, range: range, method: method, unmutedIntervals: unmutedIntervals,
-                freeBytes: { RecordingLimits.freeBytes(at: RecordingTrim.directory) },
+                freeBytes: { [freeBytes = environment.freeBytes] in freeBytes(RecordingTrim.directory) },
                 progress: { fraction in
                     Task { @MainActor in controller.setProgress(fraction) }
                 })
@@ -291,7 +291,7 @@ extension AppCoordinator {
             refreshOverlay(for: id)
         }
         if let failure {
-            NSLog("%@", "Trim: \(id) was not trimmed: \(failure.localizedDescription)")
+            log("Trim: \(id) was not trimmed: \(failure.localizedDescription)")
             notifier.notifyError(RecordingTrim.failureText(for: failure), title: RecordingTrim.notTrimmedTitle)
         }
         controller.close()
@@ -304,7 +304,7 @@ extension AppCoordinator {
     /// untrimmed video; the card refreshed; and the thumbnail made again from the new file. `length`
     /// and `byteCount` are the trimmed file's, 0 when unreadable.
     private func finishTrimWrite(id: UUID, length: TimeInterval, byteCount: Int64, range: CMTimeRange, pendingFile: URL?) {
-        let editedAt = Date()
+        let editedAt = environment.now()
         history.update(id: id) { record in
             record.recordTrimWrite(length: length, byteCount: byteCount, rangeDuration: range.duration.seconds,
                                    pendingFile: pendingFile, at: editedAt)
@@ -441,7 +441,7 @@ extension AppCoordinator {
         if case .newObject(_, let notice?) = plan {
             notifier.notify(title: "New link", body: notice)
         }
-        videoClipboardCounts[id] = NSPasteboard.general.changeCount
+        videoClipboardCounts[id] = clipboard.changeCount
         trimmingIDs.remove(id)
         startPlannedUpload(recordID: id, plan: plan, payload: payload, destination: destination)
     }

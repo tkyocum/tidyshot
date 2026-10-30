@@ -29,7 +29,7 @@ extension AppCoordinator {
             refreshOverlay(for: recordID)
         }
         if CaptureDeletion.asksFirst(confirmBeforeDeleting: settings.confirmBeforeDeleting) {
-            guard confirmDelete(of: record) else { return }
+            guard await environment.confirm(.delete(record)) else { return }
         }
 
         // After this the record holds any key the cancelled job had reserved (`pendingObjectKey`),
@@ -41,8 +41,8 @@ extension AppCoordinator {
         // it was created in. One that cannot be aborted takes the second alert, as a DELETE does.
         let name = current.fileURL?.lastPathComponent ?? recordID.uuidString
         if let reason = await abortUploads(CaptureDeletion.aborts(for: current), name: name) {
-            if await confirmRemoveFromHistory(message: CaptureDeletion.storageFailureMessage(reason: reason),
-                                              informativeText: CaptureDeletion.storageFailureText) {
+            if await environment.confirm(.removeFromHistory(message: CaptureDeletion.storageFailureMessage(reason: reason),
+                                                            informativeText: CaptureDeletion.storageFailureText)) {
                 removeFromHistoryOnly(recordID)
             }
             return
@@ -60,8 +60,8 @@ extension AppCoordinator {
             let shared = CaptureDeletion.sharedKeys(group.keys, at: group.location, with: others)
             sharedKeys += shared
             if let reason = await deleteObjects(group.keys.filter { !shared.contains($0) }, at: group.location) {
-                if await confirmRemoveFromHistory(message: CaptureDeletion.storageFailureMessage(reason: reason),
-                                                  informativeText: CaptureDeletion.storageFailureText) {
+                if await environment.confirm(.removeFromHistory(message: CaptureDeletion.storageFailureMessage(reason: reason),
+                                                                informativeText: CaptureDeletion.storageFailureText)) {
                     removeFromHistoryOnly(recordID)
                 }
                 return
@@ -81,7 +81,7 @@ extension AppCoordinator {
                     // trying Delete again would fail on this file every time: offer to drop the
                     // record and leave the file where it is.
                     let message = CaptureDeletion.fileFailureMessage(reason: error.localizedDescription)
-                    if await confirmRemoveFromHistory(message: message, informativeText: CaptureDeletion.fileFailureText) {
+                    if await environment.confirm(.removeFromHistory(message: message, informativeText: CaptureDeletion.fileFailureText)) {
                         removeFromHistoryOnly(recordID)
                         notifyKept(sharedKeys)
                     }
@@ -114,7 +114,7 @@ extension AppCoordinator {
         do {
             stored = try storedCredentials()
         } catch {
-            NSLog("Keychain read failed: \(error.localizedDescription)")
+            log("Keychain read failed: \(error.localizedDescription)")
             return Self.keychainReadFailure(error)
         }
         guard let credentials = stored else {
@@ -142,14 +142,14 @@ extension AppCoordinator {
         do {
             stored = try storedCredentials()
         } catch {
-            NSLog("Keychain read failed: \(error.localizedDescription)")
+            log("Keychain read failed: \(error.localizedDescription)")
             let reason = Self.keychainReadFailure(error)
-            NSLog("%@", "Upload: \(name) multipart abort failed: \(reason)")
+            log("Upload: \(name) multipart abort failed: \(reason)")
             return reason
         }
         guard let credentials = stored else {
             let reason = "No credentials are saved in Settings > Upload."
-            NSLog("%@", "Upload: \(name) multipart abort failed: \(reason)")
+            log("Upload: \(name) multipart abort failed: \(reason)")
             return reason
         }
         for ref in refs {
@@ -158,9 +158,9 @@ extension AppCoordinator {
                 if try await destination.abortMultipartUpload(key: ref.key, uploadID: ref.uploadID) == .aborted {
                     _ = try await destination.abortMultipartUpload(key: ref.key, uploadID: ref.uploadID)
                 }
-                NSLog("%@", "Upload: \(name) multipart aborted")
+                log("Upload: \(name) multipart aborted")
             } catch {
-                NSLog("%@", "Upload: \(name) multipart abort failed: \(error.localizedDescription)")
+                log("Upload: \(name) multipart abort failed: \(error.localizedDescription)")
                 return error.localizedDescription
             }
         }
@@ -217,49 +217,11 @@ extension AppCoordinator {
             try pendingFiles.remove(fileURL)
             return true
         } catch {
-            NSLog("Could not remove \(fileURL.lastPathComponent) \(context): \(error.localizedDescription)")
+            log("Could not remove \(fileURL.lastPathComponent) \(context): \(error.localizedDescription)")
             if let failureTitle {
                 notifier.notifyError("Could not delete \(fileURL.lastPathComponent): \(error.localizedDescription)", title: failureTitle)
             }
             return false
-        }
-    }
-
-    /// The confirmation: Delete or Cancel (Escape). The app is activated first so the alert appears
-    /// in front even when it was triggered from the non-activating overlay panel or the menu.
-    private func confirmDelete(of record: CaptureRecord) -> Bool {
-        let alert = NSAlert()
-        alert.messageText = CaptureDeletion.confirmationMessage
-        alert.informativeText = CaptureDeletion.confirmationText(for: record)
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "Delete").hasDestructiveAction = true
-        alert.addButton(withTitle: "Cancel")
-        NSApplication.shared.activate(ignoringOtherApps: true)
-        return alert.runModal() == .alertFirstButtonReturn
-    }
-
-    /// The second alert, only after the Abort or the storage `DELETE` failed or the file in the save
-    /// folder could not be removed: Remove (from history; what could not be deleted stays) or Cancel. It comes
-    /// after the delete's network awaits, and a main-actor continuation also runs while a menu is
-    /// tracking (the main queue is served in the common run-loop modes), so the user may have
-    /// opened the menu bar menu in the meantime. The alert therefore runs inside a block that the
-    /// run loop performs only in its default mode, which is not entered while a menu tracks, so
-    /// `runModal()` never starts inside a menu's tracking loop (resuming first and running the
-    /// alert afterwards would leave one main-queue turn in which tracking could begin).
-    private func confirmRemoveFromHistory(message: String, informativeText: String) async -> Bool {
-        await withCheckedContinuation { (done: CheckedContinuation<Bool, Never>) in
-            RunLoop.main.perform(inModes: [.default]) {
-                MainActor.assumeIsolated {
-                    let alert = NSAlert()
-                    alert.messageText = message
-                    alert.informativeText = informativeText
-                    alert.alertStyle = .warning
-                    alert.addButton(withTitle: "Remove").hasDestructiveAction = true
-                    alert.addButton(withTitle: "Cancel")
-                    NSApplication.shared.activate(ignoringOtherApps: true)
-                    done.resume(returning: alert.runModal() == .alertFirstButtonReturn)
-                }
-            }
         }
     }
 
