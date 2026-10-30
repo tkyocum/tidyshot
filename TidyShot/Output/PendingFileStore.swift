@@ -44,4 +44,11 @@ nonisolated struct PendingFileStore: Sendable {
             return
         }
     }
+
+    /// The folder's files, hidden ones skipped; nothing when the folder is missing. The launch step lists
+    /// once, before any task starts (harness design 4.2).
+    func list() -> [URL] {
+        (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil,
+                                                      options: .skipsHiddenFiles)) ?? []
+    }
 }
