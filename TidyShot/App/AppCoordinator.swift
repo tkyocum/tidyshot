@@ -300,6 +300,9 @@ final class AppCoordinator {
         try? FileManager.default.removeItem(at: RecordingTrim.directory)
         notifier.setUp()
         history.load()
+        // Listed now, before any task starts, so a file written from here on is never adopted (harness
+        // design 4.2): a capture, a recovery and a URL command all write after this.
+        let pendingListed = pendingFiles.list()
         // Part lists and kept Clop copies with no state, or older than the lifecycle rule. No network.
         let multipartStates = Dictionary(history.records.compactMap { record in
             record.multipart.map { (record.id, $0.startedAt) }
@@ -309,9 +312,14 @@ final class AppCoordinator {
         Task.detached(priority: .utility) { multipartFiles.sweep(states: multipartStates, now: now()) }
         // Records from before 2.13 have no size; those with a local file get it from the file.
         Task { await backfillByteCounts() }
-        // A recording a crash, a kill or a failed rename left in tmp/Recording is checked, not swept.
-        // The scan lists the folder first, long before a recording started now could write there.
-        Task { await recoverRecordings() }
+        // A capture in pending/ that no record names is adopted, never deleted; then a recording a
+        // crash, a kill or a failed rename left in tmp/Recording is checked, not swept. One task, so
+        // the two never interleave. The scan lists its folder first, long before a recording started
+        // now could write there.
+        Task {
+            await adoptPendingFiles(pendingListed)
+            await recoverRecordings()
+        }
         registerShortcuts()
         // Hide Desktop Icons stays on across launches.
         if settings.desktopIconsHidden {
