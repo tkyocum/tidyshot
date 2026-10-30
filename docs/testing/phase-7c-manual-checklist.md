@@ -68,6 +68,7 @@ capture of 800 x 1200 pt is 1600 x 2400 px, and its canvas is 1792 x 2592 px.
 ## Settings and strings
 - [ ] Settings > Capture lists, after `Hide desktop icons while capturing` and its caption, the toggle `Add background to window captures` (off), the caption `Puts each window capture on the background below, as the editor's Background tool would.` and an `Edit Background…` button.
 - [ ] `defaults read io.tky.tidyshot windowBackground` reads `0` (or does not exist) on a fresh install. Turn the toggle on: it reads `1`. Quit and reopen: the toggle is still on. Turn it off.
+  (suite: AppSettingsTests.windowBackgroundDefaultsOffAndPersists)
 - [ ] `Edit Background…` opens a sheet on the Settings window: the swatch grid, the `Padding` and `Corner Radius` sliders, `Shadow`, `Aspect Ratio`, and a `Done` button. The sheet opens with the default style: Sunset (swatch 1) ringed, Padding 48 pt, Corner Radius 12 pt, Shadow on, Aspect Ratio Auto.
 - [ ] The toolbar in the editor has a `Background` button (the `rectangle.inset.filled` symbol) after Options, with the tool tip `Background`.
 
@@ -75,9 +76,11 @@ capture of 800 x 1200 pt is 1600 x 2400 px, and its canvas is 1792 x 2592 px.
 - [ ] The `Done` button closes the sheet and leaves the Settings window open on the Capture tab. Return does the same (it is the default button). Reopen: the style is as you left it.
 - [ ] `Done` also closes the sheet after you have opened the colour panel from the Solid Colour swatch, and after you have used `Choose Image…` (cancel the open panel too).
 - [ ] Change the style in the sheet (swatch, both sliders, Shadow, Aspect Ratio), close it and read the style: `defaults read io.tky.tidyshot backgroundStyle` prints a data blob, not JSON, so use `defaults export io.tky.tidyshot - | plutil -extract backgroundStyle raw -o - - | base64 -d` (or, on the plist itself, `plutil -extract backgroundStyle raw -o - ~/Library/Containers/io.tky.tidyshot/Data/Library/Preferences/io.tky.tidyshot.plist | base64 -d`). It prints JSON that matches. Quit and reopen: the sheet shows the same style.
+  (suite: AppSettingsTests.backgroundStyleIsStoredAsJSONAndRoundTrips)
 - [ ] A slider moves live and every value shows in points (`48 pt`). Padding stops at 0 and 160, Corner Radius at 0 and 40.
 - [ ] Hover each of the twelve gradient swatches: the tool tip is its name, in order Sunset, Ocean, Grape, Peach, Mint, Midnight, Sky, Flamingo, Forest, Lemon, Slate, Berry. Then come `Desktop Picture`, `Solid Colour` and `Custom Image`. Five swatches a row, fifteen in all. The chosen one has an accent ring, and only one at a time.
-- [ ] The Aspect Ratio picker lists `Auto`, `1:1`, `4:3`, `3:2`, `16:10` and `16:9`.
+- [ ] The Aspect Ratio picker lists `Auto`, `1:1`, `4:3`, `3:2`, `16:10` and `16:9`. (suite:
+  BackgroundStyleTests.aspectTitlesAndRatios)
 
 ## The editor's popover
 Open any capture in the editor, click Background.
@@ -90,9 +93,13 @@ Open any capture in the editor, click Background.
 
 ## Slider drags and undo
 - [ ] Drag Padding from 48 to 120 pt in one drag, watching the preview follow the drag. Edit > Undo reads `Undo Background`; one ⌘Z returns to 48 pt (not to a value part way), and ⇧⌘Z goes back to 120 pt. Same for Corner Radius.
+  (suite, in part: EditorBackgroundExportTests.toggleAndStyleChangeAreEachOneUndoStep; the slider handing its drag to
+  the draft and its release to one commit is view wiring with no test, for Padding and Corner Radius alike, and stays by
+  hand)
 - [ ] A drag cut short by the popover closing: start a Padding drag, hold the button, press Escape or click outside the popover (if it closes under a held drag). The new padding is kept as one step: one ⌘Z undoes it. Write down what happened if the popover does not close under a held drag.
 - [ ] A swatch click, the Shadow toggle and an Aspect Ratio change are each one step. Make one of each, then ⌘Z three times: they undo in reverse, one at a time.
 - [ ] Solid colour: choose the Solid Colour swatch (one step), then drag in the colour panel through several colours. All the colour changes with nothing between them are one step: one ⌘Z returns to the fill before the first of them. Pick Padding, then another colour: that colour is a new step.
+  (suite: EditorBackgroundExportTests.solidColourRunIsOneUndoStep)
 - [ ] Undo then redo with the popover open: the popover's controls follow (the ring moves, the sliders move).
 - [ ] After an undo that removes the background, the popover's switch is off.
 - [ ] The editor is dirty after any of these (the title shows the edited mark) and clean after Save.
@@ -109,11 +116,17 @@ Settings > Capture > Edit Background…, or the editor's popover.
 - [ ] Before any image is stored, the Custom Image swatch shows a `photo` symbol, tool tip `Choose Image…`. Clicking it opens an open panel that lists images. Cancel: nothing changes.
 - [ ] Choose `large.png` (12,000 x 8,000). The fill becomes the custom image, aspect-filled and centred (the white cross is in the middle, the quadrants cut off at the sides or the top). The swatch shows a small picture of it and a small `Choose Image…` button appears under the grid. `custom.png` is in the folder above, and `sips -g pixelWidth custom.png` reads 6000 (scaled down to 6,000 px on the long side).
 - [ ] Choose `portrait.png` (800 x 2,400): the fill shows its middle part, scaled up to cover the canvas. Write down how soft it looks on a large canvas.
-- [ ] Choose `wide.png` (3,000 x 300) with a portrait capture: the cross sits in the middle.
+- [ ] Choose `wide.png` (3,000 x 300) with a portrait capture: the cross sits in the middle. (suite:
+  BackgroundCompositorTests.fillImageIsDrawnAspectFillAndCentred)
 - [ ] An undecodable file: choose `fake.png`. A notification `Not a usable image` with `fake.png` as its body is posted (even with Show notification off), and nothing changes: the fill, the swatch and `custom.png` are as they were. Try it with no image stored yet: the swatch stays on the photo symbol.
 - [ ] Re-choosing the custom image while it is the fill refreshes the preview. In the editor, with Custom Image the fill, choose a different file with `Choose Image…`: the preview shows the new picture at once, with no other change to the style. Do it again with the same file name after editing the file in place.
-- [ ] Quit and reopen: the stored image is still the swatch, and still the fill.
+- [ ] Quit and reopen: the stored image is still the swatch, and still the fill. (suite:
+  CustomBackgroundStoreTests.storesTheImageAsCustomPNGAndReadsItBack,
+  AppSettingsTests.backgroundStyleIsStoredAsJSONAndRoundTrips)
 - [ ] Delete `custom.png` in Finder while the style is Custom Image: the next export (or window capture) draws Sunset instead and nothing fails.
+  (suite, in part: BackgroundCompositorTests.nilFillImageDrawsPresetZero,
+  CustomBackgroundStoreTests.emptyUntilAnImageIsStored; an export or window capture reading the real store after the
+  file is gone stays by hand)
 - [ ] A window capture with the setting on and Custom Image, then a window capture after choosing another image: each uses the image current at that moment.
 
 ## Desktop picture
@@ -127,19 +140,31 @@ Settings > Capture > Edit Background…, or the editor's popover.
 ## Padding, corner radius and shadow
 With the 1200 x 800 pt landscape capture in the editor, then export with Save As… and check the file with `sips`.
 - [ ] Padding 48: the file is 2592 x 1792 px. Padding 0: 2400 x 1600 px, the capture fills the canvas edge to edge. Padding 160: 3040 x 2240 px. On a 1x display the padding is in points one for one: a 1200 x 800 px capture gives 1296 x 896 at 48.
+  (suite: BackgroundLayoutTests.paddingAtOneX, .paddingAtTwoX,
+  EditorBackgroundExportTests.solidBackgroundExportHasTheLayoutsSizeAndFill)
 - [ ] Corner Radius 0: the capture's corners are square. Corner Radius 40: they are clearly round (80 px in the file), and the fill shows in the corners. The default 12 is a soft round.
+  (suite: BackgroundLayoutTests.radiusScalesWithTheCapture,
+  BackgroundCompositorTests.roundedClipLeavesTheCornerToTheFill)
 - [ ] A very small capture (about 40 x 40 pt) with Corner Radius 40: the radius is capped at half the shorter side, so the capture becomes a circle or pill, not an inverted shape.
+  (suite: BackgroundLayoutTests.radiusIsCappedAtHalfTheShorterSide)
 - [ ] Shadow on: a soft shadow under and slightly below the capture (offset 8 pt down, blur 24 pt, black at 35 %), visible on a light fill. Shadow off: none. With Padding 0 the shadow is cut off by the canvas edge.
+  (suite, in part: BackgroundCompositorTests.shadowDarkensTheFillBelowTheContent, .shadowIsOffsetDownNotUp; the shadow's
+  soft look and its cut-off at Padding 0 stay by hand)
 - [ ] A window capture with transparent corners (Include window shadow off, the corners are transparent either way): the shadow follows the window's own round corners, and the fill shows through the transparent corners with no dark fringe.
 - [ ] The saved file at Padding 48, radius 12: open in Preview and zoom to a corner: the edge is smooth (anti-aliased), with no hairline of the old image outside the round corner.
 
 ## Aspect ratio
 For the 1200 x 800 pt capture (2400 x 1600 px), Padding 48 (a 2592 x 1792 px minimum canvas). Export each with Save As… and read the size.
-- [ ] Auto: 2592 x 1792.
+- [ ] Auto: 2592 x 1792. (suite: BackgroundLayoutTests.autoKeepsTheMinimumCanvas, .paddingAtTwoX)
 - [ ] 1:1: 2592 x 2592 (the height grows). 4:3: 2592 x 1944. 3:2: 2688 x 1792 (the width grows). 16:10: 2868 x 1792. 16:9: 3186 x 1792.
-- [ ] The capture is centred in each: equal space left and right, and above and below (to a pixel).
+  (suite: BackgroundLayoutTests.eachRatioGrowsTheHeightOfWideContent, .contentNarrowerThanTheRatioGrowsTheWidth,
+  .paddingCountsBeforeTheRatio)
+- [ ] The capture is centred in each: equal space left and right, and above and below (to a pixel). (suite:
+  BackgroundLayoutTests.oddSizesCentreWithTheOriginRoundedDown, .contentNarrowerThanTheRatioGrowsTheWidth)
 - [ ] For the portrait capture (800 x 1200 pt, 1600 x 2400 px; minimum canvas 1792 x 2592), the ratio is inverted: 1:1 2592 x 2592, 4:3 1944 x 2592, 3:2 1792 x 2688, 16:10 1792 x 2868, 16:9 1792 x 3186.
-- [ ] A capture already wider than 16:9 (a wide strip, say 1600 x 200 pt): 16:9 grows its height, not its width.
+  (suite: BackgroundLayoutTests.portraitContentInvertsTheRatio)
+- [ ] A capture already wider than 16:9 (a wide strip, say 1600 x 200 pt): 16:9 grows its height, not its width. (suite:
+  BackgroundLayoutTests.eachRatioGrowsTheHeightOfWideContent)
 - [ ] The preview matches the export for every ratio: the canvas in the editor has the same proportions as the saved file, and the fill covers it all.
 - [ ] Aspect Ratio changes while Zoom to fit is on: the canvas refits to the window.
 
@@ -161,6 +186,7 @@ For the 1200 x 800 pt capture (2400 x 1600 px), Padding 48 (a 2592 x 1792 px min
 
 ## Crop then background
 - [ ] Crop a capture to a part (Crop tool, Return), then turn the background on. The canvas frames the crop, not the whole capture, and nothing outside the crop shows. Save As…: the file is the crop plus padding (for a 1000 x 600 pt crop at 2x and padding 48: 2192 x 1392 px).
+  (suite: EditorBackgroundExportTests.backgroundFramesTheCrop, .shownBackgroundFramesTheCropInImagePixels)
 - [ ] Background first, then crop: the crop's handles work on the whole capture while the Crop tool is open; after applying, the background re-frames the crop. Undo the crop: back to the whole capture, with the background still on.
 - [ ] Aspect Ratio 16:9 with a crop: the ratio applies to the crop's size.
 
@@ -191,7 +217,8 @@ Settings > Capture > `Add background to window captures` on, with a style you ca
 
 ## Toolbar width
 - [ ] Open the editor and drag its left or right edge in as far as it will go. The toolbar shows every item, including `Background`, with no overflow chevron (`»`) at the right. Its minimum width is 1062 pt. On a 1280 pt wide display (or after switching to that resolution) the window opens no wider than 90 % of the display and still shows every item.
-- [ ] A small capture (200 x 100 px) opens the editor at the toolbar's width, not narrower.
+- [ ] A small capture (200 x 100 px) opens the editor at the toolbar's width, not narrower. (suite:
+  EditorWindowGeometryTests.initialSizeUsesTheToolbarMinimum, EditorToolbarTests.measuredToolbarFitsASmallDisplay)
 
 ## Regression
 - [ ] With the setting off and the editor's background off, a window capture, an area capture and an edit's Save are as before: the same sizes, no padding.

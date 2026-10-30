@@ -61,9 +61,13 @@ Settings are read with `defaults read io.tky.tidyshot <key>`. The log is
 `log show --last 5m --predicate 'process == "TidyShot"'`.
 
 ## Settings and strings
-- [ ] Settings > Capture lists, after `Include window shadow` and its caption, `Hide desktop icons while capturing` (off) with the caption `Covers desktop icons and widgets with the desktop picture during area, window, fullscreen, previous-area, All-in-One and self-timer captures.`, then the `Self-timer` picker. (Fresh values: `for k in hideDesktopIconsWhileCapturing desktopIconsHidden; do defaults delete io.tky.tidyshot $k; done`, then relaunch.)
+- [x] Settings > Capture lists, after `Include window shadow` and its caption, `Hide desktop icons while capturing` (off) with the caption `Covers desktop icons and widgets with the desktop picture during area, window, fullscreen, previous-area, All-in-One and self-timer captures.`, then the `Self-timer` picker. (Fresh values: `for k in hideDesktopIconsWhileCapturing desktopIconsHidden; do defaults delete io.tky.tidyshot $k; done`, then relaunch.)
+  (obsolete: the caption is the R1 text, and Phase 7c put `Add background to window captures` and `Edit Background…`
+  between it and the Self-timer picker)
 - [ ] Settings > Shortcuts lists `Capture text:` (⌃⇧7) after `Self-timer:` and before `Restore closed overlay:`.
-- [ ] The menu bar menu reads `All-in-One  ⌃⇧1`, `Capture Area  ⌃⇧4`, `Capture Window  ⌃⇧2`, `Capture Fullscreen  ⌃⇧3`, `Capture Scrolling  ⌃⇧5`, `Capture Previous Area  ⌃⇧6`, `Self-Timer`, `Capture Text  ⌃⇧7`; a separator; Recent Captures, `Restore Closed Overlay`, Retry Failed Uploads (only after a failure), Reveal Last Capture, `Hide Desktop Icons`; a separator; the pin items when they apply, Settings…, Quit TidyShot. `Capture Text` is disabled while a capture, a countdown or a scrolling session runs; `Hide Desktop Icons` never is.
+- [x] The menu bar menu reads `All-in-One  ⌃⇧1`, `Capture Area  ⌃⇧4`, `Capture Window  ⌃⇧2`, `Capture Fullscreen  ⌃⇧3`, `Capture Scrolling  ⌃⇧5`, `Capture Previous Area  ⌃⇧6`, `Self-Timer`, `Capture Text  ⌃⇧7`; a separator; Recent Captures, `Restore Closed Overlay`, Retry Failed Uploads (only after a failure), Reveal Last Capture, `Hide Desktop Icons`; a separator; the pin items when they apply, Settings…, Quit TidyShot. `Capture Text` is disabled while a capture, a countdown or a scrolling session runs; `Hide Desktop Icons` never is.
+  (obsolete: R1 and R2 added Record Screen, Record Fullscreen, Stop Recording and the GIF items to the menu;
+  StatusMenuController.rebuild builds the current list)
 - [ ] Turn both on (the toggle, and the menu item), quit and reopen: `defaults read io.tky.tidyshot hideDesktopIconsWhileCapturing` and `desktopIconsHidden` read `1`, the toggle is on, the menu item has its checkmark and the desktop is covered again within a second of launch. Turn both off.
 
 ## Capture Text
@@ -78,10 +82,18 @@ Copy some text first, so you can tell when the clipboard changes.
 - [ ] Show notification off, Play sound off: a paragraph is copied with no notification and no sound.
 - [ ] Freeze screen on: open Safari's History menu, press ⌃⇧7 and select the menu's items. The menu text is copied (the frozen picture is read). Freeze off: the same menu closes when the overlay opens.
 - [ ] A click without a drag: press ⌃⇧7 and click a TextEdit window with a few lines in it, without dragging. The overlay closes and nothing is copied, as in Capture Area.
+  (suite, in part: SelectionOutcomeTests.areaModeCancelsOnAClickOrATinyDrag; `captureText()` stopping before `copyText`
+  on a cancelled selection is a code read, and the overlay closing stays by hand)
 - [ ] ⌃⇧6 after a Capture Text captures the previous image area, not the text selection.
 - [ ] URL command, no rect: `t capture-text` opens the selection with the silent toggle off; the result is the same as ⌃⇧7. `t 'capture-text?action=upload'` behaves the same (action is ignored).
+  (suite: URLCommandHandlerTests.commandsThatWaitForTheUserRunWithSilentCapturesOff,
+  .everyCommandReachesItsCaptureFunction, URLCommandTests.parametersACommandDoesNotTakeAreIgnored,
+  .everyCaptureButCaptureTextTakesAnAction)
 - [ ] URL command, with a rect: with the silent toggle off, `t 'capture-text?x=0&y=0&width=600&height=300'` posts `capture-text from <sender> captures without a selection. Allow it in Settings > General > URL commands.` and leaves the clipboard alone. With it on, the rect (bottom-left of the display under the pointer; put text there) is read at once, with no overlay and no pointer in the image. `&display=2` reads the second display.
 - [ ] While a selection is open (⌃⇧4 held), `t capture-text` does nothing (`dropped, a capture is running` in the log).
+  (suite, in part: URLCommandHandlerTests.captureCommandsAreDroppedWhileCapturesAreRefused,
+  .theLogSaysWhyACaptureCommandWasDropped, ShortcutsTests.aRefusedCaptureNamesTheRecordingThenTheLockThenThePrompt; the
+  `dropped, a capture is running` line goes to NSLog, which no test reads, so the log stays by hand)
 - [ ] Cold first run: restart the Mac, start TidyShot, ⌃⇧7 a paragraph. Write down how long until `Text copied` (the probe saw 24 s). While it waits, ⌃⇧4 works: the capture lock is not held during recognition. A second ⌃⇧7 afterwards takes a fraction of a second.
 
 ## Hide desktop icons while capturing
@@ -103,7 +115,12 @@ Settings > Capture > `Hide desktop icons while capturing` on. Watch the desktop 
 ## Hide Desktop Icons until turned off
 - [ ] Menu > `Hide Desktop Icons`: the icons and widgets disappear on every display and the item has a checkmark. Choose it again: they come back, no checkmark.
 - [ ] With it on, take each capture kind: the covers stay after the capture ends. With `Hide desktop icons while capturing` also on, the end of a capture does not uncover the desktop.
+  (suite, in part: DesktopCoverReasonsTests.theEndOfACaptureLeavesPersistent, .captureAndPersistentTogether;
+  `DesktopCoverController.hide` acting on the reasons, and the covers staying after each capture kind, stay by hand)
 - [ ] With it on, start a Self-Timer countdown with `Hide desktop icons while capturing` on, then `t show-desktop-icons` during the countdown: the covers stay until the capture is taken, then go.
+  (suite, in part: DesktopCoverReasonsTests.persistentOffDuringACaptureKeepsTheCoversUntilTheCaptureEnds,
+  URLCommandHandlerTests.captureCommandsAreDroppedWhileCapturesAreRefused; the controller acting on the reasons during a
+  real countdown stays by hand)
 - [ ] Space switch: switch to the Space with the other wallpaper. The cover follows (it is on every Space) and shows the new Space's picture within a moment (it may show the old one for about 100 ms). Switch back.
 - [ ] Wallpaper change: change the wallpaper in System Settings. Write down when the cover shows the new picture. It is captured again on a Space switch, a display change, wake and every 10 minutes, not on the change itself, so switching Space and back shows the new one.
 - [ ] Dynamic wallpaper: leave it on over a change of the picture (or 10 minutes); the cover keeps up.
@@ -120,8 +137,13 @@ With `Hide Desktop Icons` on.
 ## URL commands
 - [ ] `t hide-desktop-icons`: covered, the menu item checked. `t show-desktop-icons`: uncovered, unchecked. `t toggle-desktop-icons` twice: covered, then uncovered. `defaults read io.tky.tidyshot desktopIconsHidden` follows each.
 - [ ] With the silent toggle off, all three run (they capture nothing). With Allow URL commands off, each posts `URL commands are off. Turn them on in Settings > General.` and changes nothing.
-- [ ] `t 'hide-desktop-icons?action=upload&x=1'`: parameters are ignored; it runs.
-- [ ] While a selection is open (⌃⇧4 held), `t toggle-desktop-icons` still runs.
+  (suite: URLCommandGateTests.theDesktopIconCommandsNeedOnlyURLCommandsOn,
+  URLCommandHandlerTests.withURLCommandsOffEveryURLIsRefusedAlike, .commandsThatWaitForTheUserRunWithSilentCapturesOff)
+- [ ] `t 'hide-desktop-icons?action=upload&x=1'`: parameters are ignored; it runs. (suite:
+  URLCommandTests.theDesktopIconCommandsParseAndIgnoreParameters,
+  URLCommandHandlerTests.everyCommandReachesItsCaptureFunction)
+- [ ] While a selection is open (⌃⇧4 held), `t toggle-desktop-icons` still runs. (suite:
+  URLCommandHandlerTests.captureCommandsAreDroppedWhileCapturesAreRefused)
 
 ## The failure notification
 - [ ] Without Screen Recording: quit TidyShot, `tccutil reset ScreenCapture io.tky.tidyshot`, open TidyShot (the permission window shows), close the permission window, then choose `Hide Desktop Icons`: the permission window shows again, no `Desktop icons still showing` is posted, and the icons stay. Choose it off and on again: nothing more in this launch. Relaunch, turn on `Hide desktop icons while capturing` and press ⌃⇧3: the permission window shows, nothing is captured, and no `Desktop icons still showing` is posted. Grant Screen Recording again afterwards (and relaunch).

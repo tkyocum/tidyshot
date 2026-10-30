@@ -32,12 +32,18 @@ keeps what it has served (see Caches).
 - [ ] Over a photo or a mid-grey area the crosshair stays readable. Escape cancels.
 
 ## Annotate from the overlay
-- [ ] The overlay's right column shows Annotate (a pencil in a circle, tooltip "Annotate") above Close and Delete. The overlay is the same size as before.
+- [x] The overlay's right column shows Annotate (a pencil in a circle, tooltip "Annotate") above Close and Delete. The overlay is the same size as before.
+  (obsolete: Phase 6a moved Close to a hover badge at the top-left of the card and Phase 6b put Pin between Annotate and
+  Delete; the Phase 6a checklist checks the column)
 - [ ] "Save and copy image": capture, then Annotate. The overlay closes and the editor opens key and in front, at fit zoom, titled with the file name. It also comes to the front when Slack was frontmost.
 - [ ] "Upload and copy URL", a large capture with Network Link Conditioner on a slow profile: Annotate while the overlay shows Uploading… opens the editor at once with the subtitle `Uploading…`. Save and Upload stay greyed until the upload finishes, then turn on.
 - [ ] "Upload only, keep no local file": Annotate while uploading opens at once. Annotate after "URL copied" (the pending file is already gone) also opens at once, with no download.
+  (suite, in part: EditorInputTests.retainedWinsForLatestCapture; the coordinator keeping `latestCapture` through an
+  upload-only upload, so the record's id is the retained one, is not driven and stays by hand)
 - [ ] Annotate a capture whose editor is already open (from its Recent Captures row): that window comes forward and no second window opens.
-- [ ] Editors on two captures: the second opens 22 points down and to the right of the first, on screen.
+- [ ] Editors on two captures: the second opens 22 points down and to the right of the first, on screen. (suite, in
+  part: EditorWindowGeometryTests.cascadeOffsetsAndStaysOnScreen; that it cascades from the front editor
+  (`NSApp.orderedWindows`) stays by hand)
 
 ## Annotate from Recent Captures
 Each row has four buttons: Annotate (the pencil, tooltip "Annotate"), Copy URL, Copy Image and
@@ -53,15 +59,25 @@ frontmost.
 - [ ] Stale retained image: with the overlay on, take capture A (leave its overlay open), then take capture B. Open the editor on A from its Recent Captures row: it shows A's pixels, not B's. Then delete a row whose overlay is still open: that overlay closes, and Annotate on a different row still opens the right capture.
 
 ## Tools
-- [ ] The toolbar shows, in order: the tools (Select, Redact, Pixelate, Blur, Rectangle, Arrow), the colour button, the options button, the zoom pop-up, Copy, Save (a downward arrow) and a prominent Upload (a cloud with an up arrow). Copy, Save and Upload are plain buttons with no menus; their tooltips read `Copy the image (⌘C)`, `Save (⌘S)` and `Upload and copy the link (⌘U)`. Each tool's tooltip names its letter.
+- [ ] The toolbar shows, in order: the fourteen tools (Select, Redact, Pixelate, Blur, Spotlight, Rectangle, Arrow, Ellipse, Line, Pencil, Highlighter, Text, Counter, Crop), the colour button, the options button, the Background button, the zoom pop-up, Copy, Save (a downward arrow) and a prominent Upload (a cloud with an up arrow). Copy, Save and Upload are plain buttons with no menus; their tooltips read `Copy the image (⌘C)`, `Save (⌘S)` and `Upload and copy the link (⌘U)`. Each tool's tooltip names its letter.
 - [ ] Narrow the window as far as it goes, with a small capture and with a long file name in the title: every toolbar item still shows, with no » overflow chevron at the right.
 - [ ] With the canvas focused, `V` `D` `X` `B` `R` `A` pick Select, Redact, Pixelate, Blur, Rectangle and Arrow, and the toolbar follows.
 - [ ] Redact: a drag makes a black box. Shift makes a square and Option draws from the centre; pressing or releasing either mid-drag changes the box without moving the mouse. Escape mid-drag drops the box. A click without a drag adds nothing. The new box is selected.
+  (suite: CanvasToolTests.transientUpdatesDuringDrag, .shiftViaFlagsChangedSquares, .optionDrawsFromCentre,
+  .commitOnMouseUpOnly, .tinyDragDiscarded, .newShapeSelected, EditorModelTests.selectAllAndCancelOnlyChangeSelection,
+  EditorPaletteTests.standardDefaultsAreRedBlackFourEightTen)
 - [ ] Pixelate: a drag makes a mosaic of equal squares, 10 points by default. A second region over the same text, offset by a few pixels, has squares that line up with the first. The options slider (6 to 32 pt) changes a selected mosaic live.
-- [ ] Blur: a drag blurs the area. The options slider (4 to 24 pt) changes a selected blur live.
+- [ ] Blur: a drag blurs the area. The options slider (4 to 24 pt) changes a selected blur live. (suite:
+  EditorModelTests.sliderBurstOnSelectedBlurIsOneStep, RedactionRendererTests.blurTileEqualsFullImageBlurCrop,
+  EditorPaletteTests.standardDefaultsAreRedBlackFourEightTen)
 - [ ] Rectangle: red and 4 pt by default, the stroke inside the dragged box. Keys `1` to `6` set 2, 3, 4, 6, 8 and 12 pt on the selection and on the tool.
-- [ ] Arrow: the tail is where the drag starts and the head where it ends; Shift snaps it to 45 degrees.
+- [ ] Arrow: the tail is where the drag starts and the head where it ends; Shift snaps it to 45 degrees. (suite:
+  CanvasToolTests.arrowShiftSnaps45, ArrowGeometryTests.headSymmetricAboutShaft)
 - [ ] Select: a click on an arrow drawn over a blur picks the arrow; a click on the blur away from the arrow picks the blur (dashed outline). A drag moves the selection and Shift locks the move to one axis. Boxes have 8 handles and arrows 2; dragging a handle resizes. A click on empty space deselects. Delete removes the selection. `←` moves it one image pixel, `⇧←` ten. Escape deselects and never closes the window.
+  (suite, in part: CanvasToolTests.selectPicksTopmost, .moveCommitsOnceWithDelta, .shiftLocksMoveAxis,
+  .handleDragResizes, .clickEmptyDeselects, HitTesterTests.resizedByEachOfEightHandles, .arrowEndpointHandlesMoveEnds,
+  EditorModelTests.deleteSelectionCommitsOnce, .selectAllAndCancelOnlyChangeSelection,
+  KeyRoutingTests.nudgeOneOrTenPixels; the dashed outline's look stays by hand)
 - [ ] `⌘.` behaves like Escape: during a drag it abandons the drag, and otherwise it deselects. It never closes the window.
 - [ ] The colour button shows the current colour as a filled circle. Its popover has ten swatches (black, red, orange, yellow, green, teal, blue, purple, pink, white) and a colour picker without opacity. A swatch recolours the selection and the active tool. With Redact active it sets the redact colour, and the shape colour stays.
 - [ ] Choose blue and 8 pt, close the editor and open another: Rectangle starts blue at 8 pt. Quit and relaunch: still blue at 8 pt. Set red and 4 pt again.
@@ -70,21 +86,40 @@ frontmost.
 Do these on the 2x display and again on a 1x display (an external non-Retina display, or a
 resolution without HiDPI); skip the 1x run if neither is available and say so.
 - [ ] "Save and copy image": capture a Terminal window with three lines of made-up secret. Annotate, Redact the first line, Pixelate the second, Blur the third, ⌘S. Open the saved PNG in Preview and zoom in until single pixels show (about 400%): the redaction is solid black to its edges with no trace of text along its border, the mosaic is uniform squares, and the blur is unreadable.
+  (suite, in part: RedactionExportTests.redactRegionHoldsOnlyFillAfterPNGRoundTrip,
+  .pixelateRegionIsBlockUniformAndDiffersFromSource, .blurRegionDiffersFromSource; the suite runs at scale 2 only, so
+  the 1x display run and judging the blur unreadable stay by hand)
 - [ ] `sips -g pixelWidth -g pixelHeight -g dpiWidth <file>`: the same pixel size as before the edit, and `dpiWidth` 144 on the 2x display, 72 on the 1x display.
+  (suite, in part: ImageEncoderTests.retinaScaleWrites144DPI, .standardScaleWrites72DPI,
+  RedactionExportTests.outsideEffectsEqualBaseAndScaleIsTwo; that a real 1x capture saves at scale 1 stays by hand)
 - [ ] Redact one word. Draw a Blur that covers half of the redaction and a second Blur that only touches its edge. ⌘S, and at 400% in the saved PNG both blurs show grey and black from the redaction but no letter shapes from under it.
-- [ ] Move the redaction: the blur over it follows at once.
-- [ ] A window capture (`⌃⇧2`) with a redaction keeps its transparent rounded corners in the saved PNG.
+  (suite: RedactionExportTests.blurOverRedactLeaksNoSourcePixel, RedactionRendererTests.blurOverEarlierRedactBlursBlack,
+  .blurNextToRedactSamplesRedactInMargin)
+- [ ] Move the redaction: the blur over it follows at once. (suite:
+  RedactionTileCacheTests.movingEarlierEffectRerendersOverlappingLater)
+- [ ] A window capture (`⌃⇧2`) with a redaction keeps its transparent rounded corners in the saved PNG. (suite:
+  RedactionRendererTests.alphaZeroCornerStaysZero, EditorFlattenerTests.alphaZeroCornerKept)
 
 ## Undo
 - [ ] Draw a redaction, a mosaic and a rectangle: ⌘Z three times removes them newest first, and ⇧⌘Z three times brings them back.
+  (suite: EditorModelTests.twoCommitsTwoUndos, .undoRestoresSnapshotAndRedoReapplies,
+  KeyRoutingTests.shortcutTableMatchesExpectedChords)
 - [ ] Select the rectangle, press `→` ten times and `⇧↓` three times, then ⌘Z once: it is back where it started. ⇧⌘Z moves it again.
+  (suite: EditorModelTests.coalescedNudgesAreOneStep, .undoRestoresSnapshotAndRedoReapplies,
+  KeyRoutingTests.nudgeOneOrTenPixels)
 - [ ] Nudge one shape, click another and nudge that: the first ⌘Z undoes only the second shape's nudges, the next ⌘Z the first shape's.
-- [ ] Drag the radius slider of a selected blur for a few seconds: one ⌘Z restores the radius.
+  (suite: EditorModelTests.differentCoalescingKeyStartsNewStep, .coalescedNudgesAreOneStep)
+- [ ] Drag the radius slider of a selected blur for a few seconds: one ⌘Z restores the radius. (suite:
+  EditorModelTests.sliderBurstOnSelectedBlurIsOneStep)
 - [ ] Zoom in, change the tool, and with nothing selected change the colour, then ⌘Z: only the last edit is undone; zoom, tool and colour stay.
-- [ ] After an edit the close button shows the unsaved dot; undoing back to the opened state clears it.
+  (suite: EditorModelTests.selectionAndZoomNotUndone, .applyColorToSelectionIsUndoable)
+- [ ] After an edit the close button shows the unsaved dot; undoing back to the opened state clears it. (suite, in part:
+  EditorModelTests.hasUnsavedChangesFollowsMarkSavedAndUndo; the window's dot following the model stays by hand)
 
 ## Zoom on a 5K capture
 - [ ] `⌃⇧3` on the 2x display (5120 by 2820 pixels on a 2560 by 1410 point screen), then Annotate: the window fits on the screen with the whole picture showing.
+  (suite: EditorWindowGeometryTests.clampedToNinetyPercent, CanvasTransformTests.fittingNeverExceedsNaturalSize,
+  .fittingCentres)
 - [ ] ⌘1 shows the picture at its natural point size and ⌘0 fits it again. ⌘= and ⌘- zoom around the window centre. The zoom pop-up's Fit, 50 %, 100 %, 200 % and 400 % each work.
 - [ ] Pinch and ⌘-scroll zoom around the pointer, and scrolling pans. Zoom stops at a limit each way and the picture never vanishes.
 - [ ] At 400% pixels are hard-edged squares, redactions and mosaics are crisp, and panning shows no seams, stripes or blank tiles.
@@ -123,6 +158,9 @@ resolution without HiDPI); skip the 1x run if neither is available and say so.
 - [ ] Capture uploaded with "Upload and copy URL": Redact, then the Upload button. The editor closes at once with no unsaved-changes sheet, and the row shows the upload running. When it finishes the clipboard holds the same URL as before, the link shows the redaction, and the file in the save folder shows it too.
 - [ ] Upload-only capture that finished uploading: Redact, ⌘U. The editor closes, and when the upload finishes the link to paste is on the clipboard and shows the redaction.
 - [ ] `curl -sI <url>` after that replace includes `cache-control: no-cache`; for a capture that was never replaced there is no `cache-control` line.
+  (suite, in part: UploadQueueTests.fixedKeyPassesCacheControl, S3DestinationTests.cacheControlHeaderIsSignedWhenSet,
+  .noCacheControlByDefault; `startUpload` building the replace with `no-cache` has no test, and what `curl` sees on the
+  real bucket stays by hand)
 - [ ] Another uploaded capture whose link was never opened: edit, then Upload as New (⌥⌘U; it has no button). The editor closes, a new URL on the clipboard shows the edit, `curl -I <old url>` gives 403 or 404, and the row's link button copies the new URL.
 - [ ] Saved capture never uploaded: ⌥⌘U beeps. ⌘U uploads it for the first time, closes the editor and copies a new link.
 - [ ] Interrupted replace keeps Upload as New: after the "Quit during a replace" item below, relaunch (the row shows "· Upload failed" and its link still copies). Annotate on that row: Upload as New stays enabled and ⌥⌘U uploads to a new key, copies the new link and deletes the old object (`curl -I <old url>` gives 403 or 404).
@@ -152,8 +190,10 @@ resolution without HiDPI); skip the 1x run if neither is available and say so.
 - [ ] With changes, ⌘W (or the close button) shows a sheet: `Do you want to save the changes made to “<title>”?`, `Your changes will be lost if you don’t save them.`, and Save, Cancel and Don’t Save. Cancel keeps the window. Don’t Save (or ⌘D) closes it and leaves the file as it was. Save writes the file and closes.
 - [ ] On an upload-only capture that finished uploading, the first button reads Save; it opens the save panel, and the window closes once the PNG is written. Cancel in the panel keeps the window open with its changes.
 - [ ] While the capture uploads (slow profile, Annotate on the overlay during the upload) or after its row's Delete, the first button reads Save As… and opens the save panel.
+  (suite, in part: EditorSaveTargetTests.closeSheetSaveButton; the button opening the save panel stays by hand)
 - [ ] Quit TidyShot from the menu with a changed editor: the sheet appears on it. Cancel: TidyShot keeps running and the editor stays open. Quit again, Don’t Save: TidyShot quits.
-- [ ] Quit with only unchanged editors open: TidyShot quits at once.
+- [ ] Quit with only unchanged editors open: TidyShot quits at once. (suite:
+  QuitHoldTests.idleWithNoUnsavedEditorDoesNotHold)
 - [ ] The green button takes the editor full screen and back.
 
 ## History pruning (do this last)

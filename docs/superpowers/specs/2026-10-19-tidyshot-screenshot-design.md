@@ -1447,7 +1447,7 @@ Two changes Tim asked for after testing recording R1. They are on the branch `sm
 
 **Ask before deleting.**
 - **Setting.** General gets `Ask before deleting`, on by default, stored as `AppSettings.confirmBeforeDeleting` (key `confirmBeforeDeleting`, default true). It sits after `Play sound`, with the caption `Delete removes the file, the upload and the Recent Captures entry. When this is off, Delete acts at once.`
-- **Off.** `deleteCapture(recordID:)` skips `confirmDelete(of:)`: the card's, pin's and row's Delete then act at once.
+- **Off.** `deleteCapture(recordID:)` skips `confirmDelete(of:)`: the card's and row's Delete then act at once.
 - **Unchanged.** The second alert (`confirmRemoveFromHistory`), which appears only after the storage `DELETE` failed or a save-folder file could not be removed, still appears. It asks what to do about something that could not be deleted, which a routine confirmation does not cover.
 - **No other gate.** Nothing else reads the setting; retention pruning never asked and still does not.
 - **Labels.** The card's menu item and the row's button read `Delete…` while Delete asks first and `Delete` when it acts at once (`CaptureDeletion.actionTitle(confirmBeforeDeleting:)`).

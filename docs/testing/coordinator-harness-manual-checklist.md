@@ -40,32 +40,54 @@ Read the log with
 ## The design's calls, to confirm or overrule
 
 The design lists them in section 9. Write `confirm` or `overrule` and why; an overrule goes in its built notes.
-- [ ] 1. `AppEnvironment` as one struct with `.live()` and `init(environment:)`; `shared` unchanged. ______
-- [ ] 2. `Notifying`, `QuickAccessCards`, `Clipboard` and `DeleteConfirmation`; the live types conform unchanged. ______
+- [ ] 1. `AppEnvironment` as one struct with `.live()` and `init(environment:)`; `shared` unchanged. (suite, in part:
+  CoordinatorWorldTests.aCoordinatorOverTheWorldKeepsToTheWorld; that `.live()` and `shared` are unchanged stays a code
+  read) ______
+- [ ] 2. `Notifying`, `QuickAccessCards`, `Clipboard` and `DeleteConfirmation`; the live types conform unchanged.
+  (suite, in part: CoordinatorWorldTests.aCoordinatorOverTheWorldKeepsToTheWorld,
+  CoordinatorDeleteTests.deleteAsksOnceAndASecondDeleteWhileItAsksAsksNothing; that the live types conform unchanged
+  stays a code read) ______
 - [ ] 3. `Destination` gains the two downloads; the coordinator's upload signatures carry the location and the key
-  template with the destination. ______
-- [ ] 4. Every coordinator log line through the environment, live `NSLog("%@", …)`; `RecordingLog.note` stays. ______
-- [ ] 5. No `private` member opened for tests; `record()` not driven; `recordingProceeds` extracted. ______
+  template with the destination. (suite, in part:
+  CoordinatorDragOutTests.aDragOfAShowingUploadedRecordingStartsOneDownload,
+  CoordinatorUploadTests.aFailedUploadMarksTheRecordOrReturnsItToItsLink,
+  CoordinatorWorldTests.aCoordinatorOverTheWorldKeepsToTheWorld; `download(key:)` has no coordinator test, and the
+  signatures are a code read) ______
+- [ ] 4. Every coordinator log line through the environment, live `NSLog("%@", …)`; `RecordingLog.note` stays. (suite,
+  in part: CoordinatorDeleteTests.anAbortThatFindsNothingIsNotRepeatedAndLogsItGone,
+  CoordinatorRecoveryTests.aZeroByteFileIsRemoved; the live `NSLog("%@", …)` sink and `RecordingLog.note` staying are a
+  code read) ______
+- [ ] 5. No `private` member opened for tests; `record()` not driven; `recordingProceeds` extracted. (suite, in part:
+  CoordinatorRecordingTests.recordingProceedsOnlyWhenStartedNotQuittingAndNotCancelled; no `private` member opened and
+  `record()` not driven are a code read) ______
 - [ ] 6. The fifty-six tests are this phase's set; the rest of the catalogue waits. ______
 - [ ] 7. `pending/` orphans adopted, never deleted; by record id; listed in `start()` before any task; one task,
   the `tmp/Recording` scan first, then `pending/` (D27). ______
 - [ ] 8. An adopted image or recording gets `.none` and `fileIsTemporary`. ______
 - [ ] 9. The three-file queue split with 24 widenings. ______
-- [ ] 10. `multipart upload already gone` for a 404. ______
+- [ ] 10. `multipart upload already gone` for a 404. (suite:
+  CoordinatorDeleteTests.anAbortThatFindsNothingIsNotRepeatedAndLogsItGone,
+  UploadQueueTests.aSinglePutJobsAbortThatFindsNothingIsLoggedAsGone,
+  .aMultipartJobsAbortThatFindsNothingIsLoggedAsGone) ______
 - [ ] 11. `PartSender.send` checks for a cancel first; `createUpload` aborts the fresh id when the first sidecar
-  write fails. ______
-- [ ] 12. The 33 interpolating `NSLog` lines outside the coordinator stay. ______
+  write fails. (suite: UploadQueueTests.aPartAddedAfterACancelSendsNothing,
+  .aNewUploadWhoseFirstSidecarCannotBeWrittenIsAborted) ______
+- [ ] 12. The 20 interpolating `NSLog` lines outside the coordinator stay (5.5). A `%` in an interpolated error text is
+  undefined behaviour in NSLog's format, so a crash is possible, not only a garbled line. ______
 
 ## The plan's decisions, to confirm or overrule
 
 The plan lists them at its end (`docs/superpowers/plans/2026-10-29-coordinator-harness.md`, Plan decisions). Most
 are internal; these change what a user could see or what Tim decided before:
 - [ ] D11. A GIF in `pending/` is read with ImageIO, not `VideoValidation` (which would find every GIF unplayable
-  and remove it); an empty file logs `is empty, removed`. ______
+  and remove it); an empty file logs `is empty, removed`. (suite:
+  CoordinatorRecoveryTests.anEmptyHistoryAdoptsEveryOrphanAndDeletesNothing, .aZeroByteFileIsRemoved) ______
 - [ ] D12. Test 46 pins that pruning closes no card (the design's line said it does; the code never did). Ruled
-  before Task 7; write the ruling here. ______
+  before Task 7; write the ruling here. (suite: CoordinatorDeleteTests.pruningRemovesTheFilesAndAsksForNoDestination;
+  the ruling itself is Tim's to write) ______
 - [ ] D14. Test 27 follows the code's titles: `Upload failed` with the error for a capture with no link, `Not
-  uploaded` with the replace's text for one with a link. ______
+  uploaded` with the replace's text for one with a link. (suite:
+  CoordinatorUploadTests.aFailedUploadMarksTheRecordOrReturnsItToItsLink) ______
 - [ ] D27. `start()`'s one task runs `RecordingRecovery.begin` (the `tmp/Recording` scan) first, then
   `adoptPendingFiles`, then `recoverRecordings`; the design's 4.2 had adoption first. The change keeps a recording
   started while adopting runs from being scanned and removed as unplayable. It is a change to the design's literal

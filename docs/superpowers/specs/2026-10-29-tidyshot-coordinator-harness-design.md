@@ -206,7 +206,7 @@ Twenty-four members widen from `private` to internal: the stored `destination`, 
 
 ### 5.5 The remaining R4 minor
 
-`MultipartStore.swift:113`'s `NSLog` becomes the `NSLog("%@", ...)` form. The other 33 interpolating `NSLog` lines outside the coordinator (`AppSettings`, `HistoryStore`, `Notifier`, `SaveLocation`, `DragFileStore`, the editor) are the codebase's long-standing form and are left; a `%` in an error message there is unlikely and harmless at worst (a garbled log line).
+`MultipartStore.swift:113`'s `NSLog` becomes the `NSLog("%@", ...)` form. The other 20 interpolating `NSLog` lines outside the coordinator (`AppSettings`, `HistoryStore`, `Notifier`, `SaveLocation`, `DragFileStore`, the editor) are the codebase's long-standing form and are left; a `%` in an error message there is unlikely, but an interpolated `%@` or `%s` makes `NSLog` read an argument that was never passed, which is undefined behaviour, so a crash is possible, not only a garbled log line.
 
 ## 6. Settings, entitlements, packages
 
@@ -240,7 +240,7 @@ And the R4 checklist lines the suite now covers are marked `(suite)` with the te
 9. The three-file queue split with 24 widenings (5.1).
 10. `multipart upload already gone` for a 404 (5.2).
 11. `PartSender.send` checks cancellation first; `createUpload` aborts the fresh id when the first sidecar write fails (5.4).
-12. The 33 interpolating `NSLog` lines outside the coordinator stay (5.5).
+12. The 20 interpolating `NSLog` lines outside the coordinator stay (5.5); a `%` in an interpolated error text is undefined behaviour in `NSLog`'s format, so a crash is possible, not only a garbled line.
 
 ## 10. Deferred
 
