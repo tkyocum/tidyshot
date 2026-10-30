@@ -29,8 +29,8 @@ Both probes ran on 2026-10-29 (the R4 design's Probes, Results), and no step is 
   ListParts all answered as expected with Tim's key, no call was refused, Complete's 200 carried no `<Error>`, and
   the HEAD showed `Cache-Control: no-cache` (Tim's lane sends no ACL). The README's `Large uploads` paragraph now
   lists the IAM actions and says the drag-out download needs `s3:GetObject`. M1's `footprint` was over the design's
-  limits: 171 MB peak at 16 MiB parts (limit 120 MB) and 495 MB at 64 MiB parts (limit 250 MB). That goes back to
-  Tim, and the merge waits on his decision; the upload path is unchanged.
+  limits: 171 MB peak at 16 MiB parts (limit 120 MB) and 495 MB at 64 MiB parts (limit 250 MB). Tim kept it on
+  2026-10-29; the upload path is unchanged.
 - **G2, resume data for a failed drag-out download (D1).** Passed: resume data came back, the resume after 2 s
   continued at 0.5004 with a 206, and the late resume at 16 minutes was refused with 403 `RequestTimeTooSkewed`.
   Task 16's "Resume a failed download" step is built: a failed download keeps its `downloadTaskResumeData` with the
@@ -66,8 +66,8 @@ capture). Run every multipart check with Clop off, then once with Clop on (Setti
 running).
 
 **Reading `footprint`** while an upload runs: `footprint TidyShot | head -12`. The `Footprint:` line is the memory
-now; `phys_footprint_peak` under `Auxiliary data` is the most used so far. Judge the peak against 120 MB at 16 MiB
-parts.
+now; `phys_footprint_peak` under `Auxiliary data` is the most used so far. Expect a peak of about 170 MB at 16 MiB
+parts (M1's measure, accepted by Tim on 2026-10-29).
 
 **Reading the log:**
 ```bash
@@ -126,7 +126,7 @@ upload it prints `halfway, pid <pid>: run footprint <pid> now`; in a second Term
   (`aws s3api list-multipart-uploads --bucket snap.tky.io`, if the key may list): ______.
 
 Result for G1: ______ (passed, or what goes back to Tim). Run on 2026-10-29: every call passed; the footprint was
-over both limits and went back to Tim (the R4 design's Probes, Results).
+over both limits, and Tim kept it (the R4 design's Probes, Results).
 
 ## D1, a signed download with progress and resume (settles G2)
 
@@ -218,7 +218,7 @@ Covered by the U1 rect step; repeat on the second display and with a window unde
 
 Each with the 300 MB and the 6 GB recording, upload-only, Clop off, then Clop on, to `snap.tky.io`. Read the log and
 `footprint` as in Setup.
-- [ ] The ring moves. `footprint`'s peak stays under 120 MB (6 GB, three parts in flight): ______ MB. The link plays
+- [ ] The ring moves. `footprint`'s peak stays near 170 MB (6 GB, three parts in flight): ______ MB. The link plays
   through CloudFront. The key template drew one name (the key in the console is the one the card copied).
   The log has one `multipart, <n> parts of 16 MiB` line and a `multipart completed`. `multipart/` holds the sidecar
   while it runs, and neither the sidecar nor a kept copy after `.uploaded`.
