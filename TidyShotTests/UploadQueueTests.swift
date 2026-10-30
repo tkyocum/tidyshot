@@ -1133,7 +1133,7 @@ struct UploadQueueTests {
     }
 
     /// A sidecar that cannot be written after Create fails the job before any part goes, with the
-    /// write's error and no log line of its own.
+    /// write's error; the new upload id is aborted at once (harness design 5.4).
     @Test func aSidecarUnwritableAtCreateFailsTheJob() async throws {
         let movie = try makeLargeMovie(byteCount: mib)
         defer { try? FileManager.default.removeItem(at: movie.folder) }
@@ -1827,6 +1827,7 @@ struct UploadQueueTests {
         #expect(logged(lines) == ["multipart upload already gone"])
     }
 
+    /// The multipart path's equivalent: the 404 is logged as gone and the new upload goes on.
     @Test func aMultipartJobsAbortThatFindsNothingIsLoggedAsGone() async throws {
         let movie = try makeLargeMovie(byteCount: mib)
         defer { try? FileManager.default.removeItem(at: movie.folder) }
@@ -1842,6 +1843,7 @@ struct UploadQueueTests {
         try await eventually { hasEnded(log) }
 
         #expect(log.events.contains(.uploaded(id: id, url: templateURL, key: templateKey)))
+        #expect(destination.state.withLock { $0.aborts.map(\.uploadID) } == ["old-1"])
         #expect(logged(lines) == ["multipart upload already gone", created("upload-1"), "multipart completed"])
     }
 
@@ -1918,6 +1920,8 @@ struct UploadQueueTests {
         try await eventually { await queue.isIdle }
     }
 
+    /// The multipart path's equivalent: an Abort that answers after the cancel is logged, and `.cancelled`
+    /// follows `.started`.
     @Test func anAbortThatAnswersAfterTheMultipartCancelIsLoggedAndTheJobCancels() async throws {
         let movie = try makeLargeMovie(byteCount: mib)
         defer { try? FileManager.default.removeItem(at: movie.folder) }
@@ -1988,5 +1992,6 @@ struct UploadQueueTests {
         #expect(destination.state.withLock { $0.aborts.map(\.key) } == [templateKey])
         #expect(failures(in: log).count == 1)
         #expect(logged(lines) == ["multipart aborted"])
+        try await eventually { await queue.isIdle }
     }
 }

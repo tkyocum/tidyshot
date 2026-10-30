@@ -256,8 +256,8 @@ after the close-out, read `2169 tests in 181 suites passed`.
 
 What was built differently from this design, each with its reason, is the plan's "Plan decisions" list,
 numbered D1 to D27; Tim's checklist (`docs/testing/coordinator-harness-manual-checklist.md`) asks him to confirm
-the three a user could see (D11, D12, D14). Sections 2.1, 2.2, 3.2 (tests 19, 20, 27), 3.3 (test 46), 4.2 and 8
-above now read as built; what they said before:
+the four that change what a user could see or the design's order (D11, D12, D14, D27). Sections 2.1, 2.2, 3.2
+(tests 19, 20, 27), 3.3 (test 46), 4.2, 8, 9 (call 7) and 10 above now read as built; what they said before:
 - 2.1 had no `multipartPlan` or `uploadSleep` rows (D4: the lanes' plan and backoff, so test 19's retry does not wait).
 - 2.2 gave `notifyError(_:title:subtitle:openURL:)`; `Notifier.notifyError` takes `revealing:` (D1).
 - Test 19 failed the first part once; a part's retry sends no `.started`, so it is a single PUT's (D15).
@@ -274,6 +274,8 @@ above now read as built; what they said before:
 - 8 said the suite covers the calls A to H; it covers A to F. G (a second Abort failing after a 204) needs a
   per-call Abort script `FakeDestination` does not have, and H needs a read counter `readPart` does not have (D18),
   so both stay in Tim's R4 run.
+- 10 did not name `ProcessInfo` activities among the seams not added; a test's recording upload takes the real
+  `Uploading a recording` activity.
 
 The other departures, in short: `Clipboard` also has `hasAnnotationClip` (D2); the triple `makeDestination()`
 returns is `AppCoordinator.UploadTarget`, and `persist` and `finishSave` take `UploadTarget?` (D3); the Upload
