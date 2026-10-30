@@ -65,7 +65,7 @@ This is a build of more than one file, and `swiftc` then accepts top-level code 
 - **M1 footprint** (sampled every 5 s with `footprint -p`, since the pause line was held in `tee`'s buffer): at 16 MiB parts, 110 to 158 MB current and 171 MB peak; at 64 MiB parts, 351 to 495 MB current and 495 MB peak. Both are over the design's limits (120 MB and 250 MB). Each part in flight costs about 2.4 times its size, which points at `upload(for:from:)` keeping its own copy of the part's `Data` beside the one read for hashing. This goes back to Tim, as G1 says.
 - **D1:** a 200 MB test object (`tidyshot-probes/r4-d1-…`, uploaded and removed by the script). Progress callbacks arrived from 2.9 s. Cancel at 50 % gave 11,182 bytes of resume data. The resume after 2 s continued at 0.5004 with a 206 (`Content-Range bytes 104877423-209715199/209715200`) and finished in 25 s; the file was 209,715,200 bytes, matching the first response's `Content-Length`. The late resume at 16 minutes after signing was refused with 403 `RequestTimeTooSkewed`: the resume replays the signed `X-Amz-Date`, so S3's 15-minute skew limit is what refuses it, which the 14-minute `usesResumeData` rule stays inside. G2 passes.
 - **U1:** not run (the hand checks, not a probe).
-- **Setup, the lifecycle rule:** the bucket has no `AbortIncompleteMultipartUpload` rule. Its only rule is `2 Year Retention` (`Expiration` 730 days, empty filter), with `TransitionDefaultMinimumObjectSize` `all_storage_classes_128K`. Tim adds the abort rule with the README's steps (the `jq` merge keeps the retention rule).
+- **Setup, the lifecycle rule:** the bucket has no `AbortIncompleteMultipartUpload` rule. Its only rule is `2 Year Retention` (`Expiration` 730 days, empty filter), with `TransitionDefaultMinimumObjectSize` `all_storage_classes_128K`. Tim added the abort rule on 2026-10-29 (`abort-incomplete-multipart`, 7 days, empty prefix); the get afterwards listed both rules and kept `TransitionDefaultMinimumObjectSize`.
 
 **Gates.** The pure code (Tests), the URL commands and the whole drag-out download build on no probe. These parts wait:
 - **G1, multipart against the real bucket** waits on M1. Everything builds and is tested against the local stub first. Before the PR merges, M1 confirms with Tim's key and the dotted path-style bucket:
@@ -458,12 +458,11 @@ Each stands as built; the checklist asks Tim to confirm or overrule each.
 
 ### Probe results
 
-M1 and D1 ran on 2026-10-29 on Mac17,7 (Probes, Results). M1: every call answered as expected, and the footprint was over both limits (171 MB and 495 MB peak), and Tim kept it. D1: resume data came back, the resume continued at 0.5004 with a 206, and the late resume got 403 `RequestTimeTooSkewed`. The lifecycle check found no abort rule on the bucket.
+M1 and D1 ran on 2026-10-29 on Mac17,7 (Probes, Results). M1: every call answered as expected, and the footprint was over both limits (171 MB and 495 MB peak), and Tim kept it. D1: resume data came back, the resume continued at 0.5004 with a 206, and the late resume got 403 `RequestTimeTooSkewed`. The lifecycle check found no abort rule on the bucket; Tim added it the same day.
 
 ### Still open (the PR lists these)
 
 - **U1** and every hand check in `docs/testing/recording-r4-manual-checklist.md` have not run. The Release build has no Screen Recording grant, and a grant is Tim's to give.
-- **The lifecycle rule** on `snap.tky.io`: the check on 2026-10-29 found it missing (the bucket's only rule is `2 Year Retention`). Tim adds it with the README's steps.
 - **The design's 29 calls and the eighteen gaps**: the checklist asks Tim to confirm or overrule each.
 - **Reviewer notes** from each task's review (216 minors, in the local scratch `.superpowers/sdd/r4/minors-all.json`, not in the repository) go to the whole-branch review. The ones the task reports name as left alone are above (Tasks 10, 11, 13, 14, 16).
 - **Untested by design:** the coordinator (`finishDragDownload`'s three-way choice, the drag-out download's resume wiring, `abortUploads`, `startUpload`'s resume wiring, `handle` setting the bar to `.started`'s fraction, `recordingStartCancelled` stopping a start during the settle delay). The hand checks are the only verification.

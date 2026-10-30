@@ -58,7 +58,10 @@ M1 (2026-10-29) found none of them missing. The README's `Large uploads` paragra
 rule is `2 Year Retention` (`Expiration` 730 days). Add the abort rule by the README's get, merge and put steps (`Large uploads`): `put-bucket-lifecycle-configuration`
 replaces the whole configuration, so the merged list must hold the old rules too, and `lifecycle.json` holds only
 `Rules` (the put refuses the get's `TransitionDefaultMinimumObjectSize` in the file). It must be on before the
-multipart hand checks. Write down what the get prints afterwards: ______
+multipart hand checks. Write down what the get prints afterwards: added 2026-10-29 with
+`.superpowers/sdd/r4/probes/add-lifecycle-rule.sh`; the get then listed `2 Year Retention` and
+`abort-incomplete-multipart` (`DaysAfterInitiation` 7, empty prefix), with `TransitionDefaultMinimumObjectSize`
+`all_storage_classes_128K` kept.
 
 **The recordings.** One of about 300 MB and one of about 6 GB, each recorded or already in history (a long
 fullscreen recording at a high frame rate reaches 6 GB). Upload-only is Tim's mode (Settings > General > After
@@ -258,7 +261,7 @@ Each with the 300 MB and the 6 GB recording, upload-only, Clop off, then Clop on
   holds nothing for it. Put the retention back.
 - [ ] The files in `multipart/` of a record with no state, or a state older than 7 days, are removed at launch (put an
   unrelated `<uuid>.json` there, relaunch); a file whose name does not start with a UUID is left alone.
-- [ ] The lifecycle rule is on the bucket (Setup).
+- [x] The lifecycle rule is on the bucket (Setup; added 2026-10-29).
 - [ ] A recording over 625 GB is not reachable by recording; the pure rule is tested. Nothing to run.
 
 ## Drag-out of an uploaded recording with no local file (Task 16)
