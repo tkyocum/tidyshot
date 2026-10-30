@@ -118,6 +118,10 @@ struct CoordinatorRecordingTests {
         coordinator.recordingStartCancelled = true
         coordinator.recordingCountIn = true
         #expect(coordinator.recordingStartCancelled)
+
+        // The count-in ending keeps the flag: `record()` clears the count-in right before it reads the cancel.
+        coordinator.recordingCountIn = false
+        #expect(coordinator.recordingStartCancelled)
     }
 
     /// 52 (harness design 3.4). R4 checklist, Settings prompt section: the record shortcut or `stop-recording` in the settle

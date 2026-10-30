@@ -44,6 +44,7 @@ struct PendingRecoveryTests {
     @Test func theOrphansComeInNameOrder() {
         let urls = (0..<4).map { _ in file("\(UUID().uuidString).png") }
         let sorted = urls.sorted { $0.lastPathComponent < $1.lastPathComponent }
-        #expect(PendingRecovery.orphans(listed: urls.reversed(), recordIDs: []).map(\.url) == sorted)
+        // Reversed from the sorted order, so the input is never in name order by chance.
+        #expect(PendingRecovery.orphans(listed: sorted.reversed(), recordIDs: []).map(\.url) == sorted)
     }
 }
