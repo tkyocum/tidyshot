@@ -643,4 +643,219 @@ struct CoordinatorEditorTests {
         try await world.clock.run(for: .seconds(60))
         try await eventually { !exists(coordinator.dragFiles.folder(for: id)) }
     }
+
+    /// phase-4a:37 (:39), in part; phase-4a:145 (:212), in part. Annotate on the retained capture while its upload
+    /// is held opens the editor at once, and its first push says `Uploading…` with only Copy and Save As… on. A
+    /// Save, an Upload and an Upload as New sent then are refused at write time with `Not saved` or `Not uploaded`
+    /// and `This capture is still uploading.`, and the file and the lane are left as they were; Save As… writes the
+    /// edit and Copy puts it on the clipboard. When the upload lands, the last push clears the subtitle and turns
+    /// every action on, and the link is copied. `save()` and `upload(asNew:)` call the editor's actions past the
+    /// window's validation, to reach the coordinator's own check behind it (+Editor:158-163, :382-388; design 3.4).
+    /// Stays: phase-4a:37, the subtitle as shown and the greyed toolbar (`EDPLACE`); the slow profile is the fake's
+    /// hold. phase-4a:145, the subtitle as shown, greying and ⌘C/⇧⌘C routing (`EDPLACE`); ⌘S, ⌘U and ⌥⌘U refused
+    /// by the window's validation (`EDPLACE`) and their beeps (`BEEP`); ⇧⌘S's panel (`EDSAVEAS`). The test pins
+    /// the coordinator's write-time refusal behind that gate; the line's "do nothing" is the gate's.
+    @Test func anEditorOpenedDuringAHeldUploadHearsUploadingAndGetsSaveAndUploadBack() async throws {
+        defer { world.removeAll() }
+        let folder = try world.storeSaveFolder()
+        destination.state.withLock { $0.holdingUploadsRemaining = 1 }
+        defer { destination.releaseUploads() }
+        let coordinator = world.makeCoordinator()
+        let original = try CoordinatorWorld.pngData(width: 4, height: 2)
+        let file = folder.appending(path: "Shot.png")
+        try original.write(to: file)
+        let record = CaptureRecord(fileURL: file, pixelWidth: 4, pixelHeight: 2, appName: nil,
+                                   uploadState: .uploading(fraction: 0), byteCount: original.count)
+        let id = record.id
+        coordinator.history.add(record)
+        coordinator.latestCapture = (id: id, image: ScaledImage(image: try CoordinatorWorld.image(width: 4, height: 2),
+                                                                scale: 1))
+        coordinator.startUpload(recordID: id, payload: .data(original),
+                                destination: try #require(coordinator.makeDestination()))
+        try await eventually { destination.state.withLock { $0.heldUploads.count } == 1 }
+
+        coordinator.openEditor(recordID: id)
+        let editor = try #require(world.editors.editor(for: id))
+        #expect(coordinator.openingEditorIDs.isEmpty)
+        let first = try #require(editor.pushes.first)
+        #expect(first.status == EditorAvailability.uploadingStatus)
+        #expect(first.available == [.copy, .saveAs])
+        #expect(first.saveCommand == .writeOver)
+        #expect(first.isDeleting == false)
+        editor.draw()
+
+        #expect(!(await editor.save()))
+        #expect(world.notifier.errors.last?.title == "Not saved")
+        #expect(world.notifier.errors.last?.message == "This capture is still uploading.")
+        #expect(await editor.upload() == .refused)
+        #expect(world.notifier.errors.last?.title == "Not uploaded")
+        #expect(world.notifier.errors.last?.message == "This capture is still uploading.")
+        #expect(await editor.upload(asNew: true) == .refused)
+        #expect(world.notifier.errors.last?.title == "Not uploaded")
+        #expect(world.notifier.errors.last?.message == "This capture is still uploading.")
+        #expect(try Data(contentsOf: file) == original)
+        #expect(!editor.isClosed)
+        #expect(destination.state.withLock { $0.attemptKeys.count } == 1)
+
+        let copyURL = try desktop("Copy.png")
+        #expect(await editor.saveAs(to: copyURL))
+        #expect(try EditorPixels.isBlue(png: Data(contentsOf: copyURL)))
+        #expect(world.notifier.calls.contains(.saved(title: "Saved", file: "Copy.png")))
+
+        await editor.copy()
+        #expect(world.clipboard.copies == [.pngAndTIFF])
+        #expect(try EditorPixels.isBlue(png: world.clipboard.pngs[0]))
+        #expect(world.notifier.calls.contains(.notice(title: "Image copied", body: "Shot.png")))
+
+        destination.releaseUploads()
+        try await eventually { isUploaded(coordinator, id) }
+        let last = try #require(editor.pushes.last)
+        #expect(last.status == nil)
+        #expect(last.available == all)
+        #expect(last.saveCommand == .writeOver)
+        let uploadedURL = try #require(coordinator.history.record(id: id)?.uploadedURL)
+        #expect(world.clipboard.copies == [.pngAndTIFF, .url(uploadedURL)])
+    }
+
+    /// phase-4a:146 (:213), in part; phase-4a:147 (:214), in part. With an editor open on a saved capture whose
+    /// link is stale, a Delete whose alert is held pushes `Deleting…` with only Copy and Save As… on, and a Save
+    /// sent then is refused at write time with `This capture is being deleted.`, the file and the edit kept.
+    /// Cancel pushes the stale-link subtitle and every action back and deletes nothing. A second Delete, confirmed,
+    /// removes the record and its object and pushes the deleted subtitle with only Copy and Save As… on, Save going
+    /// to Save As…; the editor stays open and registered, Copy copies, and Save As… writes the edit. `save()` calls
+    /// the editor's action past the window's validation, to reach the coordinator's check behind it
+    /// (+Editor:158-163; design 3.4).
+    /// Stays: phase-4a:146, greying and the subtitle as shown (`EDPLACE`); ⌘S refused by the window's validation
+    /// (`EDPLACE`) and its beep (`BEEP`); the test pins the coordinator's write-time refusal behind that gate.
+    /// phase-4a:147, the subtitle as shown and greying (`EDPLACE`); ⌘C reaching `copyImage` (`EDPLACE`); ⇧⌘S's
+    /// panel (`EDSAVEAS`).
+    @Test func aDeleteAskedThenCancelledThenConfirmedReachesTheOpenEditor() async throws {
+        defer { world.removeAll() }
+        let folder = try world.storeSaveFolder()
+        world.confirm.holds = true
+        let coordinator = world.makeCoordinator()
+        let (record, original) = try addSavedImage(to: coordinator, in: folder, uploadState: .uploaded(url: link, key: key),
+                                                   objectLocation: world.location, uploadIsStale: true)
+        let id = record.id
+        let file = try #require(record.fileURL)
+        coordinator.openEditor(recordID: id)
+        let editor = try await openedEditor(id)
+        #expect(editor.pushes.first?.status == EditorSaveTarget.uploadedCopyStaleNotice)
+        #expect(editor.pushes.first?.available == all)
+        editor.draw()
+        let first = Task { await coordinator.deleteCapture(recordID: id) }
+        defer { first.cancel() }
+        let watch = TaskWatch(first)
+        try await eventually { world.confirm.isWaiting }
+        let asking = try #require(editor.pushes.last)
+        #expect(asking.isDeleting == true)
+        #expect(asking.status == "Deleting…")
+        #expect(asking.available == [.copy, .saveAs])
+        #expect(!(await editor.save()))
+        #expect(world.notifier.errors.last?.title == "Not saved")
+        #expect(world.notifier.errors.last?.message == "This capture is being deleted.")
+        #expect(try Data(contentsOf: file) == original)
+        #expect(editor.model.hasUnsavedChanges)
+        world.confirm.answer(false)
+        try await eventually { watch.hasReturned }
+        await first.value
+        let cancelled = try #require(editor.pushes.last)
+        #expect(cancelled.isDeleting == false)
+        #expect(cancelled.status == EditorSaveTarget.uploadedCopyStaleNotice)
+        #expect(cancelled.available == all)
+        #expect(coordinator.history.record(id: id) != nil)
+        #expect(world.confirm.asked.count == 1)
+        #expect(destination.state.withLock { $0.deletedKeys }.isEmpty)
+        await coordinator.deleteCapture(recordID: id)
+        #expect(coordinator.history.record(id: id) == nil)
+        #expect(destination.state.withLock { $0.deletedKeys } == [key])
+        let gone = try #require(editor.pushes.last)
+        #expect(gone.record == nil)
+        #expect(gone.status == EditorAvailability.deletedStatus)
+        #expect(gone.available == [.copy, .saveAs])
+        #expect(gone.saveCommand == .saveAs)
+        #expect(coordinator.editors[id] === editor)
+        #expect(!editor.isClosed)
+        await editor.copy()
+        #expect(world.clipboard.copies == [.pngAndTIFF])
+        #expect(world.notifier.calls.contains(.notice(title: "Image copied", body: "")))
+        let target = try desktop("Deleted.png")
+        #expect(await editor.saveAs(to: target))
+        #expect(try EditorPixels.isBlue(png: Data(contentsOf: target)))
+        #expect(world.notifier.calls.contains(.saved(title: "Saved", file: "Deleted.png")))
+        #expect(world.clipboard.copies == [.pngAndTIFF, .pngAndTIFF])
+    }
+
+    /// phase-4a:146 (:213), in part (an editor opened while the alert is up); phase-4a:147 (:214), in part. An
+    /// editor opened on a pending capture while its Delete's alert is held hears `Deleting…` in its first push, with
+    /// only Copy and Save As… on, and a Save sent then is refused at write time, the pending file unchanged. Yes
+    /// removes the record and pushes the deleted subtitle; the editor stays registered and Copy still copies.
+    /// `save()` calls the editor's action past the window's validation, to reach the coordinator's check behind it
+    /// (+Editor:158-163; design 3.4).
+    /// Stays: phase-4a:146, greying and the subtitle as shown (`EDPLACE`); ⌘S refused by the window's validation
+    /// (`EDPLACE`) and its beep (`BEEP`); the test pins the coordinator's write-time refusal behind that gate.
+    /// phase-4a:147, the subtitle as shown and greying (`EDPLACE`); ⌘C reaching `copyImage` (`EDPLACE`); ⇧⌘S's
+    /// panel (`EDSAVEAS`).
+    @Test func anEditorOpenedWhileADeleteAsksHearsItAndRefusesSave() async throws {
+        defer { world.removeAll() }
+        world.confirm.holds = true
+        let coordinator = world.makeCoordinator()
+        let record = try addPendingImage(to: coordinator)
+        let pending = try #require(record.fileURL)
+        let original = try Data(contentsOf: pending)
+        let delete = Task { await coordinator.deleteCapture(recordID: record.id) }
+        defer { delete.cancel() }
+        let watch = TaskWatch(delete)
+        try await eventually { world.confirm.isWaiting }
+        coordinator.openEditor(recordID: record.id)
+        let editor = try await openedEditor(record.id)
+        let opened = try #require(editor.pushes.first)
+        #expect(opened.isDeleting)
+        #expect(opened.status == EditorAvailability.deletingStatus)
+        #expect(opened.available == [.copy, .saveAs])
+        editor.draw()
+        #expect(!(await editor.save()))
+        #expect(world.notifier.errors.last?.message == EditorAvailability.deletingRefusal)
+        #expect(try Data(contentsOf: pending) == original)
+        world.confirm.answer(true)
+        try await eventually { watch.hasReturned }
+        await delete.value
+        #expect(coordinator.history.record(id: record.id) == nil)
+        #expect(editor.pushes.last?.record == nil)
+        #expect(editor.pushes.last?.status == EditorAvailability.deletedStatus)
+        #expect(coordinator.editors[record.id] === editor)
+        await editor.copy()
+        #expect(world.clipboard.copies == [.pngAndTIFF])
+    }
+
+    /// phase-4a:162 (:231), in part. A record past Keep history is pruned on the next add, and its open editor hears
+    /// at once that it was deleted: the deleted subtitle, only Copy and Save As… on, Save going to Save As…. The
+    /// save-folder file stays (pruning leaves it, +Delete:237-241), the editor stays registered, and Save As… writes
+    /// the edit. The line's relaunch only gives the hand check an old record; the test starts with one, stamped
+    /// relative to `Date()` since the store prunes on it.
+    /// Stays: the subtitle and greying (`EDPLACE`); ⇧⌘S's panel (`EDSAVEAS`).
+    @Test func aPrunedCaptureTellsItsOpenEditorItWasDeleted() async throws {
+        defer { world.removeAll() }
+        let folder = try world.storeSaveFolder()
+        let coordinator = world.makeCoordinator()
+        let (record, _) = try addSavedImage(to: coordinator, in: folder, timestamp: Date(timeIntervalSinceNow: -2 * 86_400))
+        let id = record.id
+        coordinator.openEditor(recordID: id)
+        let editor = try await openedEditor(id)
+        world.settings.historyRetentionDays = 1
+        coordinator.history.add(CaptureRecord(fileURL: nil, pixelWidth: 4, pixelHeight: 2, appName: nil))
+        #expect(coordinator.history.record(id: id) == nil)
+        let last = try #require(editor.pushes.last)
+        #expect(last.record == nil)
+        #expect(last.status == EditorAvailability.deletedStatus)
+        #expect(last.available == [.copy, .saveAs])
+        #expect(last.saveCommand == .saveAs)
+        #expect(exists(try #require(record.fileURL)))
+        #expect(coordinator.editors[id] === editor)
+        editor.draw()
+        let target = try desktop("Pruned.png")
+        #expect(await editor.saveAs(to: target))
+        #expect(try EditorPixels.isBlue(png: Data(contentsOf: target)))
+        #expect(world.notifier.calls.contains(.saved(title: "Saved", file: "Pruned.png")))
+    }
 }
