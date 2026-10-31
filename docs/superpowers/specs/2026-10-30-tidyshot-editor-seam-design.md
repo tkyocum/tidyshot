@@ -443,9 +443,11 @@ execution itself:
   fc58d18 (the background Save test, its saved file, thumbnail and reopened base). Task 3: 25dd4c1 (the Save As and Copy
   tests). Task 4: feb939c (the no-destination test) and 2edbeb3 (the upload over a link PUT body and the reopened
   uploaded capture's base). Task 7: ce7e971 (the held-upload test). No assertion was added or weakened, and no `pngs[`
-  index is left in `TidyShotTests`. One read stays unguarded:
-  `annotateTheNewestCardSaveThenUploadWritesTheFileThenUploadsAndCopiesTheURL` reads the saved file's pixel (3, 1) with
-  no size check, as built.
+  index is left in `TidyShotTests`. The whole-branch review found the one read left unguarded, the saved file's pixel
+  (3, 1) in `annotateTheNewestCardSaveThenUploadWritesTheFileThenUploadsAndCopiesTheURL`, and it is guarded the same
+  way after the review. The review also added, in `anUploadedUploadOnlyCardsCopyImageAndAnnotateReadTheDragCopy`, a
+  check that the drag folder is still there before the 60-second clock run, so phase-6a:198's keep is pinned on both
+  sides.
 - `UploadQueueTests.aSidecarUnwritableDuringThePartsFailsTheJobBeforeComplete` fails in about 1 of 6 full runs, on the
   untouched baseline (bc6b5e5) as well. It does not use the coordinator's world or the editor, and it is not this
   phase's; a full run that fails only on it passes on a second run.

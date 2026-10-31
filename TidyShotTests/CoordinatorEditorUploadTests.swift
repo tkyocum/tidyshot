@@ -302,6 +302,8 @@ struct CoordinatorEditorUploadTests {
         #expect(await editor.save())
         let written = try Data(contentsOf: file)
         #expect(written != original)
+        let writtenImage = try EditorPixels.decoded(written).image
+        try #require(writtenImage.width == 4 && writtenImage.height == 2)
         #expect(EditorPixels.isBlue(try EditorPixels.pixel(written, x: 0, y: 0)))
         #expect(EditorPixels.isBlue(try EditorPixels.pixel(written, x: 3, y: 1)))
         #expect(try FileManager.default.contentsOfDirectory(atPath: folder.path(percentEncoded: false)) == ["Shot.png"])
@@ -508,6 +510,7 @@ struct CoordinatorEditorUploadTests {
         let k = try #require(other.state.withLock { $0.uploads.last?.key })
         #expect(k != key)
         let done = try #require(coordinator.history.record(id: id))
+        // The fake's public URL is snap.tky.io for every config; the second bucket is pinned by the location.
         #expect(done.uploadState == .uploaded(url: publicURL(k), key: k))
         #expect(done.objectLocation == ObjectLocation(config: second))
         #expect(done.priorUpload == nil)

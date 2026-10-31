@@ -640,6 +640,7 @@ struct CoordinatorEditorTests {
         #expect(world.cards.calls.contains(.close(id, .editorOpened)))
         #expect(destination.state.withLock { $0.dataDownloadKeys }.isEmpty)
         #expect(!world.notifier.calls.contains { if case .notice(_, let body, _) = $0 { return body.hasPrefix("Downloading ") } else { return false } })
+        #expect(exists(coordinator.dragFiles.folder(for: id)))
         try await world.clock.run(for: .seconds(60))
         try await eventually { !exists(coordinator.dragFiles.folder(for: id)) }
     }
