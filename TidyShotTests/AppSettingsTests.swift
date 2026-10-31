@@ -564,4 +564,53 @@ struct AppSettingsTests {
         first.confirmBeforeDeleting = true
         #expect(AppSettings(defaults: defaults).confirmBeforeDeleting)
     }
+
+    /// phase-1 :41. After a relaunch the save folder is remembered (its bookmark resolves) and the counter carries on.
+    @Test func aSecondInstanceKeepsTheSaveFolderAndContinuesTheCounter() throws {
+        let name = "AppSettingsTests-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: name))
+        defaults.removePersistentDomain(forName: name)
+        defer { defaults.removePersistentDomain(forName: name) }
+        let folder = FileManager.default.temporaryDirectory
+            .appending(path: "AppSettingsTests-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+
+        try SaveLocation(defaults: defaults).store(folder)
+        let first = AppSettings(defaults: defaults)
+        #expect(first.nextCounter() == 1)
+        #expect(first.nextCounter() == 2)
+
+        let resolved = try #require(SaveLocation(defaults: defaults).currentURL)
+        #expect(resolved.standardizedFileURL.resolvingSymlinksInPath().pathComponents
+                == folder.standardizedFileURL.resolvingSymlinksInPath().pathComponents)
+        #expect(AppSettings(defaults: defaults).nextCounter() == 3)
+    }
+
+    /// recording-r1 :86, recording-r2 :157, recording-r3 :110. The recording settings' defaults are registered, not
+    /// written: a fresh domain holds none of their keys while each reads its default, and a key appears once its
+    /// setting changes.
+    @Test func recordingDefaultsAreRegisteredNotWritten() throws {
+        let name = "AppSettingsTests-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: name))
+        defaults.removePersistentDomain(forName: name)
+        defer { defaults.removePersistentDomain(forName: name) }
+
+        let settings = AppSettings(defaults: defaults)
+
+        let stored = defaults.persistentDomain(forName: name) ?? [:]
+        for key in ["recordingFrameRate", "recordingRetina", "recordingSystemAudio", "recordingShowsCursor",
+                    "recordingCountdown", "recordingFileNameTemplate", "recordingFormat", "gifFrameRate", "gifMaxSide",
+                    "recordingClickHighlights", "recordingWebcamBubble", "recordingBubbleSize"] {
+            #expect(stored[key] == nil, "\(key)")
+        }
+        #expect(settings.recordingFrameRate == 30)
+        #expect(settings.recordingFormat == .mp4)
+        #expect(settings.gifFrameRate == 15)
+        #expect(settings.gifMaxSide == 1280)
+        #expect(!settings.recordingWebcamBubble)
+
+        settings.recordingFrameRate = 60
+        #expect((defaults.persistentDomain(forName: name) ?? [:])["recordingFrameRate"] as? Int == 60)
+    }
 }

@@ -134,4 +134,14 @@ struct GIFFileSinkTests {
         #expect(GIFMakerError.notEnoughSpace.localizedDescription == "Not enough disk space to make the GIF.")
         #expect(GIFMakerError.couldNotWrite.localizedDescription == "The GIF could not be written. The disk may be full.")
     }
+
+    /// recording-r2 :640 (call A). A recording that cannot be read for its GIF says `The recording could not be
+    /// read.`, and the notice is `GIF not made` / `The recording could not be read. The recording was saved as an MP4.`
+    @Test func couldNotReadSaysTheRecordingCouldNotBeRead() {
+        defer { try? FileManager.default.removeItem(at: folder) }
+        #expect(GIFMakerError.couldNotRead.localizedDescription == "The recording could not be read.")
+        #expect(GIFConversion.notMade(GIFMakerError.couldNotRead.localizedDescription)
+                == RecordingNotice(title: "GIF not made",
+                                   body: "The recording could not be read. The recording was saved as an MP4."))
+    }
 }

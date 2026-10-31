@@ -34,6 +34,30 @@ struct ThumbnailProviderTests {
         CaptureRecord(fileURL: file, thumbnailFileName: thumbnail, pixelWidth: 640, pixelHeight: 400, appName: "Safari")
     }
 
+    /// A PNG of `width` by `height` whose top `top` rows are red and the rest blue.
+    func twoTonePNG(width: Int, height: Int, top: Int) throws -> Data {
+        let context = try #require(CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                             space: CGColorSpaceCreateDeviceRGB(),
+                                             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.setFillColor(CGColor(red: 0, green: 0, blue: 1, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        // CoreGraphics' origin is the bottom left, so the top rows are the highest y.
+        context.setFillColor(CGColor(red: 1, green: 0, blue: 0, alpha: 1))
+        context.fill(CGRect(x: 0, y: height - top, width: width, height: top))
+        return try ImageEncoder.pngData(from: try #require(context.makeImage()), scale: 1)
+    }
+
+    /// The red and the blue of `image`'s middle pixel.
+    func middle(_ image: CGImage) throws -> (red: UInt8, blue: UInt8) {
+        let context = try #require(CGContext(data: nil, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+                                             space: CGColorSpaceCreateDeviceRGB(),
+                                             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.draw(image, in: CGRect(x: -CGFloat(image.width / 2), y: -CGFloat(image.height / 2),
+                                       width: CGFloat(image.width), height: CGFloat(image.height)))
+        let bytes = try #require(context.data).assumingMemoryBound(to: UInt8.self)
+        return (bytes[0], bytes[2])
+    }
+
     @Test func storedThumbnailIsUsedWithoutReadingTheFile() async throws {
         let item = record()
         let name = try store.write(try png(width: 320, height: 200), id: item.id)
@@ -193,5 +217,25 @@ struct ThumbnailProviderTests {
 
         blocking.withLock { $0 = false }
         #expect(await provider.preview(for: item)?.size == CGSize(width: 1200, height: 600))
+    }
+
+    /// phase-5 :199. A record whose named thumbnail file is gone gets one made again from its file through ImageIO:
+    /// about 213 by 320, showing the top of a tall page, written to the store and named on the record.
+    @Test func aNamedThumbnailThatIsGoneIsMadeAgainFromTheFile() async throws {
+        let item = record(thumbnail: "gone.png")
+        history.add(item)
+        let data = try twoTonePNG(width: 640, height: 4_000, top: 960)
+        let provider = makeProvider { _, _ in data }
+
+        let image = try #require(await provider.thumbnail(for: item))
+
+        #expect(image.size == CGSize(width: 213, height: 320))
+        let name = try #require(history.record(id: item.id)?.thumbnailFileName)
+        #expect(name != "gone.png")
+        let stored = try Data(contentsOf: store.url(forFileName: name))
+        let decoded = try #require(ImageEncoder.decode(stored)?.image)
+        let colour = try middle(decoded)
+        #expect(colour.red > 200)
+        #expect(colour.blue < 50)
     }
 }

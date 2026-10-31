@@ -83,10 +83,13 @@ struct ConnectionTesterTests {
         #expect(result.outcome != .readable)
     }
 
+    /// phase-3-1 :63 (with `readableSummaryDoesNotEchoTheProbeURL`). A rejected PUT, as a wrong secret gives,
+    /// reports `Upload failed: …`.
     @Test func uploadFailedWhenPutIsRejected() async {
         let (session, stub) = StubSession.make { _ in (403, Data("AccessDenied".utf8)) }
         let result = await ConnectionTester.run(destination: destination(session), keyTemplate: config.normalized.keyTemplate, session: session)
         #expect(result.outcome == .uploadFailed("Server returned HTTP 403: AccessDenied"))
+        #expect(result.summary == "Upload failed: Server returned HTTP 403: AccessDenied")
         #expect(stub.requests.count == 1)
     }
 
