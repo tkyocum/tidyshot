@@ -160,4 +160,13 @@ struct SelfTimerTests {
         let panel = SelfTimerPanel(model: model, frame: CGRect(x: 0, y: 0, width: 120, height: 120))
         #expect(panel.level == .screenSaver)
     }
+
+    /// phase-6b :72. The countdown panel and the scrolling capture's dashed frame let clicks through to the app
+    /// beneath: both ignore the mouse.
+    @Test func theCountdownPanelAndTheScrollFrameLetClicksThrough() {
+        let panel = SelfTimerPanel(model: SelfTimerModel(), frame: CGRect(x: 0, y: 0, width: 120, height: 120))
+        let frame = ScrollAreaFrameWindow(area: CGRect(x: 100, y: 100, width: 400, height: 300))
+        #expect(panel.ignoresMouseEvents)
+        #expect(frame.ignoresMouseEvents)
+    }
 }

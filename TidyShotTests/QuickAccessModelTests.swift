@@ -228,4 +228,12 @@ struct QuickAccessModelTests {
         #expect(failed.canRetry)
         #expect(failed.canDelete)
     }
+
+    /// phase-3 :42. An upload-only capture's thumbnail reveals nothing in Finder: not while its pending file is kept,
+    /// and not after the upload, when it has no file. A saved capture's does.
+    @Test func anUploadOnlyCardsThumbnailRevealsNothing() {
+        #expect(!model(.uploading(fraction: 0.5), file: pending, temporary: true, kind: .image).canReveal)
+        #expect(!model(.uploaded(url: link, key: "aB3dE9.png"), file: nil, kind: .image).canReveal)
+        #expect(model(file: saved, kind: .image).canReveal)
+    }
 }
