@@ -135,8 +135,9 @@ struct CanvasFitTests {
         #expect(model.shownBackground == nil)
     }
 
-    /// phase-7c :156. With a background on, a Rectangle dragged from where the capture's corner is drawn starts at
-    /// pixel (0, 0), not offset by the margin, so annotations land where the pointer is.
+    /// phase-7c :156, in part. With a background on, a Rectangle dragged from where the capture's corner is drawn
+    /// starts at pixel (0, 0), not offset by the margin, so annotations land where the pointer is. By hand: the
+    /// redact, blur, pixelate, text and arrow, and the select, move and resize.
     @Test func aPointerOnTheCaptureMapsToItsPixelWithABackground() async throws {
         let (canvas, model) = makeCanvas()
         let bare = model.transform

@@ -187,7 +187,8 @@ For the 1200 x 800 pt capture (2400 x 1600 px), Padding 48 (a 2592 x 1792 px min
 - [ ] The preview's rounded corners match the export's at Corner Radius 0, 12 and 40.
 - [ ] The preview fill sits behind the capture and extends past it by the padding; the capture is not stretched. Annotations drawn near the capture's edge (a rectangle that touches it, a highlighter stroke that crosses it) are clipped to the round corners, and annotations never draw on the padding.
 - [ ] Draw annotations with a background on: a redact, a blur, a pixelate, a text and an arrow. They land on the capture where you point, with the cursor on the capture, not offset by the padding. Select, move and resize one.
-  (suite: CanvasFitTests.aPointerOnTheCaptureMapsToItsPixelWithABackground)
+  (suite, in part: CanvasFitTests.aPointerOnTheCaptureMapsToItsPixelWithABackground; by hand: the redact, blur,
+  pixelate, text and arrow, and the select, move and resize)
 - [ ] Zoom to fit (⌘0) fits the whole canvas, and the canvas stays fitted while the window resizes. Actual size (⌘1) shows the canvas at the capture's natural scale. Pan with Space and drag.
   (suite: CanvasFitTests.theFitFramesTheBackgroundsCanvasAndRefitsOnAnAspectChange,
   .aSpaceDragStopsTheFitOnResizeAndFitToViewBringsItBack)

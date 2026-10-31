@@ -102,8 +102,8 @@ None. This phase adds tests and marks; it changes no behaviour. The existing che
 ## 11. Built notes
 
 Built on `checklist-tests` from the plan `docs/superpowers/plans/2026-10-30-checklist-tests.md`. The suite reads
-`2272 tests in 191 suites` (2169 in 181, plus 103 test functions: 10 new suite files and 23 existing ones); write the
-last run's line here if it differs. `TidyShot/` and `project.yml` are unchanged.
+`2272 tests in 191 suites` (2169 in 181, plus 103 test functions: 10 new suite files and 23 existing ones). `TidyShot/`
+and `project.yml` are unchanged.
 
 What was built differently from this design and from tests-A, each with its reason, is the plan's "Plan decisions"
 list, D1 to D31. In short:
@@ -117,7 +117,7 @@ list, D1 to D31. In short:
   and so `AppSettings.shared` (D6). The quit-mode test still sees the destination read for an uploading action (D7).
   The card's fraction is seen on a recording sent in parts, with a part held (D8).
 - The selection tests give the view a responder that keeps the keys it passes up, where the window would beep (D10).
-- The marks name every test that pins a part of the line, the existing D ones too (D13). 148 lines are marked, 15 of
+- The marks name every test that pins a part of the line, the existing D ones too (D13). 148 lines are marked, 16 of
   them in part; recording-r2 351, part of a B line, has none (D15). phase-2 51 is marked in full on PR #28's corrected
   text (D14), and recording-r2 312, phase-4a 108, phase-6a 215 and recording-r4 330 are marked in part though
   tests-A counted them in full (D16). phase-3 31 has obsolete-E's corrected text, and phase-3 26's mark names its D
@@ -130,6 +130,8 @@ list, D1 to D31. In short:
   the record's interrupted state for `.upload` and the clipboard rule. The quit itself, a folder panel open at the quit
   and `.upload`'s `Upload failed` and Retry after the relaunch stay by hand, so that line is marked in part and not in
   full as the plan's script had it (a fifth line besides D16's four).
+- phase-7c 189 is marked in part after the whole-branch review: its test drags one Rectangle through the mapping every
+  tool shares, so the redact, blur, pixelate, text and arrow, and the select, move and resize, stay by hand (a sixth).
 - Six tests that already existed were extended or replaced in place, not added: `removingARecordClearsItsBookkeeping`
   (now also the latest capture and the card closing, phase-4a 53), `aFailureWithResumeDataKeepsItWithTheSigningTime`
   (the clock moves while the download is held), `anOrphanMP4IsAdoptedWithItsLength` (the coordinator-harness 52
