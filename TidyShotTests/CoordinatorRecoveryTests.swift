@@ -64,7 +64,7 @@ struct CoordinatorRecoveryTests {
     }
 
     /// Harness design 4.2 (a `.mp4`) and 4.3: an orphan MP4 gets a record with its length, and
-    /// `Recovered a recording` with `m:ss`.
+    /// `Recovered a recording` with `m:ss`. coordinator-harness :52: an adopted recording gets `.none` and `fileIsTemporary`.
     @Test func anOrphanMP4IsAdoptedWithItsLength() async throws {
         defer { world.removeAll() }
         let coordinator = world.makeCoordinator()
@@ -81,6 +81,9 @@ struct CoordinatorRecoveryTests {
         let duration = try #require(record.durationSeconds)
         #expect(abs(duration - 1) < 0.1)
         #expect(record.byteCount == FileSizes.byteCount(of: url))
+        // coordinator-harness :52 (item 8): an adopted recording is kept in TidyShot, as an image is.
+        #expect(record.fileIsTemporary)
+        #expect(record.uploadState == .none)
         #expect(world.notifier.calls == [.error(title: "Recovered a recording",
                                                  message: "\(url.lastPathComponent), \(RecordingClock.format(duration)). Find it in Recent Captures.")])
         try await eventually { coordinator.history.record(id: id)?.thumbnailFileName != nil }

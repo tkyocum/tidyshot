@@ -418,4 +418,18 @@ struct EditorFlattenerTests {
         #expect(rowsPerLine[0].count >= 5)
         #expect(rowsPerLine[1].count >= 5)
     }
+
+    /// phase-4b :79. A crop of a window capture that keeps a transparent corner keeps it transparent in the saved
+    /// PNG.
+    @Test func aCropKeepingATransparentCornerKeepsItClear() throws {
+        let base = makeImage { x, y in x < 4 && y < 4 ? Self.clearPixel : Self.pattern(x, y) }
+        let document = AnnotationDocument(annotations: []).withCrop(CGRect(x: 0, y: 0, width: 32, height: 24))
+        let flat = try #require(EditorFlattener.flatten(base: base, tiles: [], document: document, scale: 1))
+        let output = try Bitmap(flat)
+        #expect(output.width == 32)
+        #expect(output.height == 24)
+        #expect(output[0, 0] == Self.clearPixel)
+        #expect(output[3, 3] == Self.clearPixel)
+        #expect(output[31, 23] == Self.pattern(31, 23))
+    }
 }

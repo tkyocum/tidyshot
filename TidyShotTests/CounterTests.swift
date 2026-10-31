@@ -222,4 +222,63 @@ struct CounterTests {
             #expect(CounterLayout.fontSize(number: 100, diameter: diameter) < 0.55 * diameter, "\(diameter)")
         }
     }
+
+    /// phase-4c :159. Undoing the paste, the ⌥-drag copy and the ⌘D copy in turn returns the numbers to 1 and 2;
+    /// each redo brings its copy back with its number; after undoing the three again a new counter is 3.
+    @Test func undoingCopiesReturnsTheNumbersAndRedoRestoresThem() throws {
+        let model = models.makeModel(side: 400)
+        model.tool = .select
+        let first = models.add(counter(1, at: CGPoint(x: 60, y: 60)), to: model)
+        models.add(counter(2, at: CGPoint(x: 200, y: 60)), to: model)
+        model.selection = first.id
+        model.duplicateSelection()
+        let select = makeTool(for: .select)
+        select.mouseDown(ToolInput(point: CGPoint(x: 60, y: 60), option: true), on: model)
+        select.mouseDragged(ToolInput(point: CGPoint(x: 60, y: 200), option: true), on: model)
+        select.mouseUp(ToolInput(point: CGPoint(x: 60, y: 200), option: true), on: model)
+        model.selection = first.id
+        model.paste(try #require(model.objectClip()))
+        #expect(numbers(in: model.document) == [1, 2, 3, 4, 5])
+
+        for expected in [[1, 2, 3, 4], [1, 2, 3], [1, 2]] {
+            model.undoManager.undo()
+            #expect(numbers(in: model.document) == expected)
+        }
+        for expected in [[1, 2, 3], [1, 2, 3, 4], [1, 2, 3, 4, 5]] {
+            model.undoManager.redo()
+            #expect(numbers(in: model.document) == expected)
+        }
+        for _ in 0..<3 { model.undoManager.undo() }
+        let placed = try #require(model.makeAnnotation(.counter, from: CGPoint(x: 300, y: 300),
+                                                       to: CGPoint(x: 300, y: 300)))
+        #expect(placed.counterMark?.number == 3)
+    }
+
+    /// phase-4c :162. A counter copied in an editor at one scale and pasted twice into one at another takes the
+    /// target's next numbers, the second cascaded from the first, at the source's point size (64 px at 2x is
+    /// 32 px at 1x); both ways.
+    @Test func aCounterPastedTwiceAcrossScalesTakesTheNextNumbersAtItsPointSize() throws {
+        for (from, to) in [(CGFloat(2), CGFloat(1)), (CGFloat(1), CGFloat(2))] {
+            let source = models.makeModel(scale: from, side: 400)
+            let mark = models.add(counter(1, at: CGPoint(x: 100, y: 100), diameter: 32 * from), to: source)
+            source.selection = mark.id
+            let data = try #require(source.objectClip()?.encoded())
+            let clip = try #require(AnnotationClip.decoded(from: data))
+            let target = models.makeModel(scale: to, side: 400)
+            models.add(counter(1, at: CGPoint(x: 300, y: 300), diameter: 32 * to), to: target)
+            models.add(counter(2, at: CGPoint(x: 340, y: 300), diameter: 32 * to), to: target)
+
+            target.paste(clip)
+            let firstPaste = try #require(target.document.annotations.last?.counterMark)
+            target.paste(clip)
+            let secondPaste = try #require(target.document.annotations.last?.counterMark)
+
+            #expect(firstPaste.number == 3)
+            #expect(secondPaste.number == 4)
+            #expect(firstPaste.diameter == 32 * to)
+            #expect(secondPaste.diameter == 32 * to)
+            #expect(secondPaste.center == CGPoint(x: firstPaste.center.x + target.duplicateOffset.dx,
+                                                  y: firstPaste.center.y + target.duplicateOffset.dy))
+        }
+    }
 }

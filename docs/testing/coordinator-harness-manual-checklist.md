@@ -63,7 +63,9 @@ The design lists them in section 9. Write `confirm` or `overrule` and why; an ov
 - [ ] 6. The fifty-six tests are this phase's set; the rest of the catalogue waits. ______
 - [ ] 7. `pending/` orphans adopted, never deleted; by record id; listed in `start()` before any task; one task,
   the `tmp/Recording` scan first, then `pending/` (D27). ______
-- [ ] 8. An adopted image or recording gets `.none` and `fileIsTemporary`. ______
+- [ ] 8. An adopted image or recording gets `.none` and `fileIsTemporary`. (suite:
+  CoordinatorRecoveryTests.anOrphanPNGIsAdoptedWithItsSizeAThumbnailAndANotice, .anOrphanMP4IsAdoptedWithItsLength)
+  ______
 - [ ] 9. The three-file queue split with 24 widenings. ______
 - [ ] 10. `multipart upload already gone` for a 404. (suite:
   CoordinatorDeleteTests.anAbortThatFindsNothingIsNotRepeatedAndLogsItGone,

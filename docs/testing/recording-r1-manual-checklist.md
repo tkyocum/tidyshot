@@ -84,6 +84,8 @@ The three after-capture actions are named in the picker as `Save and copy image`
 - [ ] Settings > Shortcuts lists `Record screen:` (⌃⇧8) and `Record fullscreen:` (empty) after `Capture text:`. Settings > Upload's key caption reads `The file's extension (.png or .mp4) is added.` The save-folder panel says `Choose where TidyShot saves screenshots and recordings.`
 - [ ] The menu bar menu has `Record Screen  ⌃⇧8` and `Record Fullscreen` after `Capture Text`, both greyed while a screenshot capture runs.
 - [ ] Settings persist. After the reset, `defaults read io.tky.tidyshot recordingFrameRate` prints `does not exist`: the six defaults are registered, not written, so a key exists only once its setting has been changed. Change each (`60 fps`, `Standard`, Record system audio on, Show cursor in recordings off, Count down before recording off, Recording file name `Clip {time}`), quit and reopen: the panes still show them, and `defaults read io.tky.tidyshot <key>` (one key per call) reads `60`, `0`, `1`, `0`, `0` and `Clip {time}` for `recordingFrameRate`, `recordingRetina`, `recordingSystemAudio`, `recordingShowsCursor`, `recordingCountdown` and `recordingFileNameTemplate`. Put them back with the reset loop (quit first) and reopen. A value other than 30 or 60 written by hand reads as 30 in the picker (`defaults write io.tky.tidyshot recordingFrameRate -int 45`, relaunch, then delete the key).
+  (suite: AppSettingsTests.recordingDefaultsAreRegisteredNotWritten, .recordingSettingsPersistUnderTheirKeys,
+  .aStoredFrameRateOtherThan30Or60ReadsAs30)
 
 ## Relaunch, then save and upload
 The sandbox only lets TidyShot read a save-folder file after a relaunch if the upload holds the folder's scope. A test in the same launch as the folder choice passes even without that, so relaunch first.
@@ -92,6 +94,7 @@ The sandbox only lets TidyShot read a save-folder file after a relaunch if the u
 - [ ] The card goes through `Optimizing…` if Clop is on, then uploads, and says `URL copied`. The clipboard holds the URL, and the URL plays in a browser. Write down the file size before and after Clop: ______ MB, ______ MB.
 - [ ] Retry a failed upload. Record again, and before Stop turn Wi-Fi off. Stop, and wait more than 70 s (six attempts over about a minute) until the card says the upload failed. Turn Wi-Fi on, quit TidyShot and open it again, then Retry from Recent Captures (or Retry Failed Uploads in the menu). The upload finishes from the save-folder file on `/Volumes/RecOff`, without a folder prompt, and the link plays. Write down what you saw: ______
 - [ ] Repeat the last step with `Upload only, keep no local file`: the file is in `pending` while it fails, a Retry after a relaunch finishes, and `pending` is empty afterwards.
+  (suite: CoordinatorSaveTests.anUploadOnlyRecordingThatCannotUploadWaitsInPendingUntilARetry)
 
 ## Starting, stopping and the panel
 Settings > General > After capture = `Save and copy image` unless a step says otherwise.
@@ -292,20 +295,30 @@ Use `Upload only, keep no local file` for the first and `Upload and copy URL` fo
   QuickAccessModelTests.uploadedSaysWhetherTheLinkWasCopied; the title `Uploaded, URL copied` is the live notifier's and
   stays by hand)
 - [ ] With `Upload and copy URL` and `Also copy image` on, the clipboard holds the file reference meanwhile and the URL after, as long as nothing else was copied.
+  (suite: CoordinatorSaveTests.aRecordingsURLReplacesItsFileReferenceOnlyWhileTheClipboardHoldsIt)
 - [ ] Retry an interrupted upload after a relaunch (TidyShot has no count for it): the clipboard counts as changed, so the upload finishes with `Uploaded` and the clipboard is left alone.
   (suite: RecordingSavePlanTests.urlReplacesTheClipboardOnlyWhenItIsUnchanged,
   CoordinatorUploadTests.anUploadedRecordingReplacesTheClipboardOnlyWhileItHoldsWhatTheSaveLeft)
-- [ ] Screenshots keep today's behaviour: their URL always replaces the clipboard.
+- [ ] Screenshots keep today's behaviour: their URL always replaces the clipboard. (suite:
+  CoordinatorUploadTests.aScreenshotsURLReplacesTheClipboardEvenAfterACopyElsewhere)
 
 ## Copy File
 - [ ] Copy File on a pending video (`Upload only` while it uploads) from the card's menu, then wait for the upload to end and paste in Finder: the file pastes (it is a staged copy in `tmp/Drag`, not the pending file that the upload removed).
+  (suite: CoordinatorDragOutTests.aCopyFileStageOfAPendingVideoOutlivesItsUpload)
 - [ ] Let the card close (or close it), wait more than a minute and paste again: the file still pastes, because the one-minute clean-up waits again, a minute at a time, while the clipboard still holds its Copy File reference (Gap 7). `ls $C/tmp/Drag/*` still lists the copy. Now copy some text in another app and wait more than a minute: `tmp/Drag` no longer has the copy.
+  (suite: CoordinatorDragOutTests.theCleanUpWaitsWhileTheClipboardHoldsTheCopyFileReference,
+  DragCleanupTests.theClipboardStillHoldingCopyFilesReferenceWaitsAgain, .aClipboardThatMovedOnRemovesTheFolder)
 - [ ] With no card showing for it, Copy File from the Recent Captures row of a `Kept in TidyShot` video (its file stays in `pending`) and paste: the file pastes. Copy some text and wait more than a minute: the copy has gone from `tmp/Drag`, though no card closed after the Copy File.
+  (suite: CoordinatorDragOutTests.aCopyFileWithNoCardSchedulesItsOwnCleanUp)
 - [ ] Close a `Kept in TidyShot` video's card (restore it first if it is closed) and, within the minute, Copy File from its row: the file pastes, and still pastes a minute later (Copy File cancels the clean-up that was due, as a press does, and schedules its own).
+  (suite: CoordinatorDragOutTests.aCopyFileWithinTheMinuteReplacesTheCloseCleanUp)
 - [ ] Copy File once more, then quit and reopen TidyShot without copying anything else: the launch sweep of `tmp/Drag` removes the copy, so a paste finds no file (expected; write down what Finder does: ______).
-- [ ] Copy File on a recording in the save folder puts the file itself on the clipboard.
+- [ ] Copy File on a recording in the save folder puts the file itself on the clipboard. (suite:
+  CoordinatorRecordActionsTests.copyFilePutsASavedRecordingItselfAndNeedsALocalFile)
 - [ ] Recent Captures: a video row has `Copy File` (`doc.on.doc`) where Copy Image is for screenshots. A click on the row copies the link, or the file when there is none.
 - [ ] With `{counter}` in the Recording file name template, press a pending video's card for a drag after Copy File: the clipboard's file still pastes (the staged copy is reused under the name it has).
+  (suite: CoordinatorDragOutTests.aDragPressAfterCopyFileReusesTheStagedCopy,
+  DragFileStoreTests.aVideoStageReusesAMatchingCopyUnderAnotherName)
 
 ## Clop
 Settings > General > Optimization > `Optimize images and videos with Clop` on, Clop running. The `Clop:` log lines come from `NSLog`, which `log show` prints as `<private>` on this Mac (the `Recording:` lines use `Logger` and read fine). To read them, start TidyShot with its stderr in a file. Quit TidyShot from its menu first: `open -n` starts a new copy even while one runs, and two copies would both take the shortcuts. Then `open -n --stderr ~/Desktop/rec-r1/tidyshot.err ~/git/tidyshot/.build-rel/Build/Products/Release/TidyShot.app`, check that `pgrep -x TidyShot` prints one id, and later `grep 'Clop:' ~/Desktop/rec-r1/tidyshot.err`. If that file stays empty, say so in the Observations and judge by the object's size and tracks instead.
@@ -330,8 +343,11 @@ Settings > General > Optimization > `Optimize images and videos with Clop` on, C
 - [ ] Save As… from the card. To a new file: a copy appears, `Saved` posts. Over an existing file, on the same volume and on `/Volumes/RecOff`: the file is replaced (the replacement-folder step must work under the sandbox across volumes; write down what happened: ______). With no local file and no drag copy: `Saving a copy…` / `Downloading <key>` posts and the download lands in the file.
 - [ ] Drag a card with a local file into Finder and Slack or Mail: the file `Recording ….mp4` arrives. A second press, the click that opens the file, and the drag itself copy a large file across volumes once (watch `tmp/Drag`).
 - [ ] R4 changed this (was: cannot be dragged). Dragging an uploaded video with no local file and no drag copy downloads it first, with progress on its card (see `recording-r4-manual-checklist.md`); Restoring its card still starts no download.
-- [ ] Delete removes the save-folder file, the pending file and the uploaded object, as for a screenshot.
+- [ ] Delete removes the save-folder file, the pending file and the uploaded object, as for a screenshot. (suite:
+  CoordinatorDeleteTests.deleteRemovesTheObjectTheFileTheThumbnailAndTheRow)
 - [ ] Retention (optional): quit TidyShot, back up `history.json`, set the `timestamp` of an uploaded video to 60 days ago and open TidyShot again. The record is dropped as any capture's is, its thumbnail goes, and its save-folder file stays. A video that is `Kept in TidyShot` (its only copy is in `pending`) is never dropped. Put `history.json` back.
+  (suite: CoordinatorDeleteTests.retentionDropsOldRowsAndTheirThumbnailsButKeepsSaveFolderFilesAndUnsentUploads,
+  HistoryStoreTests.pruningKeepsUploadOnlyCapturesThatWereNeverUploaded)
 
 ## Restore
 - [ ] Restoring an uploaded upload-only video's card after its drag folder is gone (wait a minute past the card closing, or delete `tmp/Drag`) starts no download (check Activity Monitor/Network for a transfer). R4 changed the rest (was: the card cannot be dragged): a drag from that card downloads the file first (see `recording-r4-manual-checklist.md`). Save As… on that card downloads to the file you choose.
@@ -340,7 +356,11 @@ Settings > General > Optimization > `Optimize images and videos with Clop` on, C
 ## No destination
 Settings > Upload with no complete destination (or clear the credentials with Forget Credentials). The warning posts once per launch.
 - [ ] `Upload and copy URL`: the recording is saved exactly as `Save and copy image` would (file in the save folder, `.none`), a file reference is on the clipboard whatever the copy settings say, `Recording saved` posts, and the warning `Upload not configured` / `Set up a destination in Settings > Upload. The recording was saved and is on the clipboard as a file.` posts.
+  (suite: CoordinatorSaveTests.uploadWithNoDestinationSavesTheRecordingAndCopiesItsFile,
+  RecordingSavePlanTests.uploadWithNoDestinationIsSavedAndCopiedAsAFile)
 - [ ] `Upload only, keep no local file`: the file goes to `pending` with a failed state, nothing is on the clipboard, `Recording saved` does not post, and the warning reads `Set up a destination in Settings > Upload, then retry from Recent Captures. TidyShot keeps the recording until then.` After setting a destination, Retry uploads it.
+  (suite: CoordinatorSaveTests.anUploadOnlyRecordingThatCannotUploadWaitsInPendingUntilARetry,
+  RecordingSavePlanTests.uploadOnlyWithNoDestinationWaitsInPendingWithNothingCopied)
 
 ## Save folder problems
 - [ ] No save folder set, `Save and copy image`: the folder panel opens after Stop. Cancel it: `Not saved to a folder` posts with `No folder was chosen. TidyShot keeps the recording. Use Save As… on its card.`, the file is in `pending`, the card says `Kept in TidyShot`, and the clipboard has a reference to the pending file. For `Upload and copy URL` the second sentence is `The recording uploads without a local copy.`
@@ -357,9 +377,15 @@ The plan filled these where the design was silent; each was built as written. Wr
 - [ ] 4. Fallbacks: `.upload` with no destination falls back exactly as `.save` (a forced file reference, `.none`); a `.save` fallback's clipboard reference points at the pending file; over 625 GB (R4; was 5 GiB), where the file is decides: a pending file moves into the save folder and a save-folder file stays.
   (suite: RecordingSavePlanTests.uploadWithNoDestinationFallsBackAsSave, .saveFallbackKeepsTheRecordingInPending,
   .oversizedSaveFolderFileStays, .oversizedPendingFileMovesIntoTheSaveFolder) ______
-- [ ] 5. Quit mode skips only the folder prompt, Clop, the upload, the card, the notifications and the not-configured warning; the clipboard rule and the shutter still apply. ______
+- [ ] 5. Quit mode skips only the folder prompt, Clop, the upload, the card, the notifications and the not-configured warning; the clipboard rule and the shutter still apply.
+  (suite, in part: CoordinatorSaveTests.quitModeSkipsTheCardTheUploadAndTheNoticesForEveryAction,
+  RecordingSavePlanTests.quitModeForEachAction; by hand: the quit itself, a folder panel open at the quit, and
+  `.upload`'s `Upload failed` and Retry after the relaunch) ______
 - [ ] 6. Strings: `<reason> The recording is still at <path>.` when even the rename failed (not reachable by hand); `Recovered a recording` reads `<file name>, <m:ss>. Find it in Recent Captures.` and shows no card; the recovered record's time is the file's creation date. ______
-- [ ] 7. Copy File's drag copy outlives the upload and the card: a pending video's staged copy is kept at `.uploaded`, and `scheduleDragCleanup` waits again while the clipboard still holds the reference, then removes the copy once the clipboard has moved on. A Copy File with no card schedules the same clean-up. (See Copy File.) ______
+- [ ] 7. Copy File's drag copy outlives the upload and the card: a pending video's staged copy is kept at `.uploaded`, and `scheduleDragCleanup` waits again while the clipboard still holds the reference, then removes the copy once the clipboard has moved on. A Copy File with no card schedules the same clean-up. (See Copy File.)
+  (suite: CoordinatorDragOutTests.aCopyFileStageOfAPendingVideoOutlivesItsUpload,
+  .theCleanUpWaitsWhileTheClipboardHoldsTheCopyFileReference, .aCopyFileWithNoCardSchedulesItsOwnCleanUp,
+  DragCleanupTests.theClipboardStillHoldingCopyFilesReferenceWaitsAgain) ______
 - [ ] 8. Panel geometry: 172 x 44 pt for a window recording without sound, 244 x 44 for an area or fullscreen one (R3); the fullscreen panel sits `ScrollPanelGeometry.gap` above the bottom of the visible frame. Is the bar the right size and place? ______
 - [ ] 9. Start races: the quit hold's count-in phase covers the whole hand-off, so a quit between the selection and the first frame records nothing; a window or display that goes between the hand-off's last read and the driver's own read gives `Recording failed` / `The window is no longer on screen.` or `The display is no longer connected.`
   (suite: QuitHoldTests.everyRecordingPhaseButIdleHolds,

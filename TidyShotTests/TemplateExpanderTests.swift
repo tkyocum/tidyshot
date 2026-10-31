@@ -98,4 +98,10 @@ struct TemplateExpanderTests {
         #expect(!name.hasSuffix(".local"))
         #expect(name.allSatisfy { $0.isASCII && ($0.isLowercase || $0.isNumber || $0 == "-" || $0 == ".") })
     }
+
+    /// phase-3-1 :60. The token list both settings captions show (General and Upload) names every token.
+    @Test func theTokenListNamesEveryToken() {
+        #expect(TemplateExpander.tokenList
+                == "{date} {year} {month} {day} {time} {datetime} {hostname} {counter} {random} {random:8}")
+    }
 }

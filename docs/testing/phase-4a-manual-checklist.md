@@ -49,14 +49,22 @@ keeps what it has served (see Caches).
 Each row has four buttons: Annotate (the pencil, tooltip "Annotate"), Copy URL, Copy Image and
 Delete. Annotate closes the menu first, then the editor opens key and in front, also when Slack was
 frontmost.
-- [ ] Saved capture, never uploaded: the editor opens from the file in the save folder.
-- [ ] Capture uploaded with "Upload and copy URL": opens from the file in the save folder.
-- [ ] Upload-only capture whose upload failed: opens from `pending/<UUID>.png`.
+- [ ] Saved capture, never uploaded: the editor opens from the file in the save folder. (suite:
+  CoordinatorEditorTests.loadImageReadsTheLocalFileOrDownloadsTheObject, EditorInputTests.saveFolderFileForSavedCapture)
+- [ ] Capture uploaded with "Upload and copy URL": opens from the file in the save folder. (suite:
+  CoordinatorEditorTests.loadImageReadsTheLocalFileOrDownloadsTheObject, EditorInputTests.saveFolderFileForSavedCapture)
+- [ ] Upload-only capture whose upload failed: opens from `pending/<UUID>.png`. (suite:
+  CoordinatorEditorTests.loadImageReadsTheLocalFileOrDownloadsTheObject,
+  EditorInputTests.pendingFileForUploadOnlyPending)
 - [ ] Upload-only capture that finished uploading: after a moment (it downloads the object) the editor opens, titled `Capture <time>`. With Wi-Fi off: no window, and a `Could not open the capture` notification gives the reason.
 - [ ] Capture from before Phase 3: opens from its file. Move the file out of the save folder and press Annotate: no window, and `Could not open the capture` with "The local file could not be read." Put the file back.
+  (suite: CoordinatorEditorTests.annotateOnAMovedPrePhase3FileSaysCouldNotOpenAndOpensNoEditor,
+  EditorInputTests.legacyRecordWithFileReadsTheFile)
 - [ ] Capture uploaded with "Upload and copy URL" whose file was renamed in Finder: the editor still opens, from the downloaded object. Rename the file back.
+  (suite: CoordinatorEditorTests.loadImageReadsTheLocalFileOrDownloadsTheObject)
 - [ ] Settings > Overlay, turn "Show Quick Access overlay after capture" off. Capture once in each after-capture mode: no overlay appears, and Annotate on the new row opens the editor each time (for "Upload only, keep no local file", also while it is still uploading). Turn the overlay back on.
 - [ ] Stale retained image: with the overlay on, take capture A (leave its overlay open), then take capture B. Open the editor on A from its Recent Captures row: it shows A's pixels, not B's. Then delete a row whose overlay is still open: that overlay closes, and Annotate on a different row still opens the right capture.
+  (suite: CoordinatorDeleteTests.removingARecordClearsItsBookkeeping, EditorInputTests.retainedWinsForLatestCapture)
 
 ## Tools
 - [ ] The toolbar shows, in order: the fourteen tools (Select, Redact, Pixelate, Blur, Spotlight, Rectangle, Arrow, Ellipse, Line, Pencil, Highlighter, Text, Counter, Crop), the colour button, the options button, the Background button, the zoom pop-up, Copy, Save (a downward arrow) and a prominent Upload (a cloud with an up arrow). Copy, Save and Upload are plain buttons with no menus; their tooltips read `Copy the image (⌘C)`, `Save (⌘S)` and `Upload and copy the link (⌘U)`. Each tool's tooltip names its letter.
@@ -67,10 +75,16 @@ frontmost.
   .commitOnMouseUpOnly, .tinyDragDiscarded, .newShapeSelected, EditorModelTests.selectAllAndCancelOnlyChangeSelection,
   EditorPaletteTests.standardDefaultsAreRedBlackFourEightTen)
 - [ ] Pixelate: a drag makes a mosaic of equal squares, 10 points by default. A second region over the same text, offset by a few pixels, has squares that line up with the first. The options slider (6 to 32 pt) changes a selected mosaic live.
+  (suite: EditorModelTests.blockSizeAppliesToTheSelectedPixelateInOneStep, RedactionRendererTests.mosaicBlocksUniform,
+  .mosaicGridStableWhenRegionMoves, EffectGeometryTests.mosaicRectAnchoredToImageGrid,
+  EditorPaletteTests.standardDefaultsAreRedBlackFourEightTen)
 - [ ] Blur: a drag blurs the area. The options slider (4 to 24 pt) changes a selected blur live. (suite:
   EditorModelTests.sliderBurstOnSelectedBlurIsOneStep, RedactionRendererTests.blurTileEqualsFullImageBlurCrop,
   EditorPaletteTests.standardDefaultsAreRedBlackFourEightTen)
 - [ ] Rectangle: red and 4 pt by default, the stroke inside the dragged box. Keys `1` to `6` set 2, 3, 4, 6, 8 and 12 pt on the selection and on the tool.
+  (suite: EditorModelTests.widthAndColourApplyToTheSelectedShapeAndItsTool,
+  EditorPaletteTests.standardDefaultsAreRedBlackFourEightTen,
+  EditorFlattenerTests.rectangleStrokeHitsExpectedPixelsAndCentreUntouched, KeyRoutingTests.digitsOneToSixPickWidths)
 - [ ] Arrow: the tail is where the drag starts and the head where it ends; Shift snaps it to 45 degrees. (suite:
   CanvasToolTests.arrowShiftSnaps45, ArrowGeometryTests.headSymmetricAboutShaft)
 - [ ] Select: a click on an arrow drawn over a blur picks the arrow; a click on the blur away from the arrow picks the blur (dashed outline). A drag moves the selection and Shift locks the move to one axis. Boxes have 8 handles and arrows 2; dragging a handle resizes. A click on empty space deselects. Delete removes the selection. `←` moves it one image pixel, `⇧←` ten. Escape deselects and never closes the window.
@@ -138,9 +152,13 @@ resolution without HiDPI); skip the 1x run if neither is available and say so.
 - [ ] With Show notification on, the `Saved` notification names the file; clicking it reveals the file in Finder. With it off, nothing is posted.
 - [ ] Cancel in the panel: nothing is written and the unsaved dot stays.
 - [ ] Settings > General, set the file name template to `shot-{counter}`. On an upload-only capture that finished uploading, ⇧⌘S suggests `shot-<n>.png` with the counter as it stands; save it, then take a capture: its name uses the next number, so none was skipped. Set the template back.
+  (suite: CoordinatorRecordActionsTests.saveAsSuggestionUsesTheCurrentCounterWithoutDrawingOne,
+  EditorNamingTests.counterUsesTheCurrentValue)
 - [ ] ⇧⌘S on a saved capture and save over its own file (confirm Replace): it behaves as ⌘S, so the row's thumbnail shows the edit, and on an uploaded capture the subtitle says the uploaded copy still shows the original.
 - [ ] Edit, ⌘U, and keep drawing before the window closes (slow machine or large capture; may be hard to hit): if the drawing changed during the call, the editor beeps and stays open with the newer edit unsaved.
 - [ ] In the panel, pick an existing PNG and confirm Replace: it is replaced. Pick a locked file (Finder, Get Info, Locked) and confirm Replace: a `Not saved` notification with the reason, and the unsaved dot stays. Unlock it.
+  (suite, in part: CoordinatorRecordActionsTests.saveAsReplacesAnExistingFileAndSaysNotSavedForALockedOne; by hand: the
+  panel's Replace prompt and the unsaved dot staying)
 
 ## Copy
 - [ ] ⌘C, ⇧⌘C and the toolbar's Copy button each post `Image copied`. Notes and Preview (File > New from Clipboard) paste the edited image at point size, not double. The window stays open.
@@ -162,15 +180,24 @@ resolution without HiDPI); skip the 1x run if neither is available and say so.
   .noCacheControlByDefault; `startUpload` building the replace with `no-cache` has no test, and what `curl` sees on the
   real bucket stays by hand)
 - [ ] Another uploaded capture whose link was never opened: edit, then Upload as New (⌥⌘U; it has no button). The editor closes, a new URL on the clipboard shows the edit, `curl -I <old url>` gives 403 or 404, and the row's link button copies the new URL.
+  (suite: CoordinatorUploadTests.uploadAsNewCopiesTheNewLinkAndDeletesTheOldObject,
+  EditorUploadPlanTests.asNewSupersedesOldKey)
 - [ ] Saved capture never uploaded: ⌥⌘U beeps. ⌘U uploads it for the first time, closes the editor and copies a new link.
 - [ ] Interrupted replace keeps Upload as New: after the "Quit during a replace" item below, relaunch (the row shows "· Upload failed" and its link still copies). Annotate on that row: Upload as New stays enabled and ⌥⌘U uploads to a new key, copies the new link and deletes the old object (`curl -I <old url>` gives 403 or 404).
+  (suite: CoordinatorUploadTests.uploadAsNewCopiesTheNewLinkAndDeletesTheOldObject,
+  HistoryStoreTests.interruptedReplaceKeepsPriorUpload, EditorSaveTargetTests.uploadAsNewKeepsInterruptedReplace)
 - [ ] Capture from before Phase 3: ⌘U shows the notice `The earlier upload stays in the bucket.` and makes a new link; `curl -I <old url>` still gives 200.
 - [ ] Optional, with a second bucket: point Settings > Upload at it, then ⌘U on a capture uploaded to the first. The notice reads `The destination changed, so this uploads as a new link.`, the link is in the second bucket, and the old object is gone from the first. Point the settings back.
 - [ ] Enter a wrong secret access key in Settings > Upload and press Save, then ⌘U on an uploaded capture: the editor closes. After the retries: a notification `Upload failed. The link still shows the earlier image.`, and the row still copies the old URL. Annotate on the row reopens the edited image, with the subtitle `The uploaded copy still shows the original. Upload to replace it.` Enter the right key, ⌘U: the same URL now shows the edit.
 - [ ] Folder change with a bad key: Settings > General, Choose… another save folder. Open an older capture (saved in the old folder) from Recent Captures, Redact, then enter a wrong secret access key in Settings > Upload and press ⌘U. The editor closes. After the failure, `pending/<UUID>.png` holds the redacted image and the file in the old folder is unchanged. Enter the right key, Retry Failed Uploads: the link shows the redacted image, not the original, and `pending/<UUID>.png` is gone. Choose the original folder again.
 - [ ] The same wrong key, ⌘U on an upload-only capture that finished uploading. The editor closes. After the failure `pending/<UUID>.png` exists and holds the edit. Annotate on the row reopens it with the edit, and the subtitle says the uploaded copy still shows the original. Right key, ⌘U: the same URL shows the edit and `pending/<UUID>.png` is gone.
 - [ ] Quit during a replace: Network Link Conditioner on a slow profile (a custom profile with a few hundred Kbps uplink), ⌘U on a large uploaded capture (the editor closes), and while the row shows the upload running choose Quit TidyShot. Relaunch: the row shows "· Upload failed", and clicking the row or its link button still copies the old URL. Network Link Conditioner off, Retry Failed Uploads: the URL is unchanged and shows the edit.
+  (suite: CoordinatorUploadTests.anInterruptedReplaceRetriesOverItsOwnKeyAfterARelaunch,
+  HistoryStoreTests.uploadingRecordsBecomeFailedOnLoadAndPersist,
+  EditorUploadPlanTests.retryOfInterruptedReplaceReusesKey)
 - [ ] Slow profile again, ⌘U, then Delete on the row while the replace runs: Delete cancels the upload and removes the object (`curl -I <url>` gives 403 or 404).
+  (suite: CoordinatorDeleteTests.deleteDuringAReplaceCancelsItAndDeletesTheLinksKey,
+  CaptureDeletionTests.objectsIncludePriorUploadAtItsLocation)
 
 ## Caches
 - [ ] Redact before sharing: capture a made-up secret with "Upload and copy URL", do not open or paste the URL, Annotate from the overlay, Redact, ⌘U. Then open the link in a browser: it shows the redaction.
@@ -178,6 +205,8 @@ resolution without HiDPI); skip the 1x run if neither is available and say so.
 - [ ] Upload as New on that capture: the new link shows the redaction. The old link may still be served from CloudFront's copy until it expires, although the object is gone from the bucket.
 - [ ] Only if the bucket has versioning: after a replace, `aws s3api list-object-versions --bucket <bucket> --prefix <key>` lists two versions, the original being the older one.
 - [ ] The first successful replace after launch posts `Replaced. Copies opened before now may stay cached for a while.` A second replace in the same launch does not, and neither does Upload as New or a first upload. Quit and relaunch: the next replace posts it again.
+  (suite: CoordinatorUploadTests.onlyTheFirstReplaceOfALaunchPostsTheCacheNote,
+  EditorUploadPlanTests.cacheNoteOnlyOnFirstSameKeyReplace)
 
 ## Availability while uploading, deleting, or after a folder change
 - [ ] Slow profile, "Upload and copy URL": capture something large and press Annotate on the overlay while it uploads. The subtitle reads `Uploading…`, ⌘S, ⌘U and ⌥⌘U beep and do nothing, and Save and Upload are greyed in the toolbar; ⌘C and ⇧⌘C work and ⇧⌘S opens the save panel. When the upload finishes they turn on again.

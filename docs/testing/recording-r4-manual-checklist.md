@@ -210,7 +210,8 @@ Covered by the U1 rect step; repeat on the second display and with a window unde
   display; the window highlight is not drawn while the cursor is inside the rect.
 - [ ] Return and Enter do nothing. A click inside records it after the count-in. A drag (even one that starts inside)
   replaces it on screen and records the dragged area on release. A click outside on a window records the window.
-  Escape cancels.
+  Escape cancels. (suite: SelectionViewTests.aRecordingSelectionIgnoresReturnAndRecordsAClickInsideTheRect,
+  SelectionOutcomeTests.recordingModeClickInThePresetRecordsIt, .recordingModeDragReplacesThePreset)
 
 ## The Settings prompt's deferral reason (Task 3)
 
@@ -238,7 +239,9 @@ Each with the 300 MB and the 6 GB recording, upload-only, Clop off, then Clop on
 - [ ] Quit mid-upload and relaunch: the record shows `Upload was interrupted.`; Retry Failed Uploads resumes (the
   log's `resumes at` line), and nothing resumes by itself at launch. `kill -9` mid-upload, relaunch, Retry resumes. (suite, in part: HistoryStoreTests.interruptedMultipartUploadKeepsItsStateOnLoad, CoordinatorUploadTests.aStoredUploadWhoseSourceMatchesResumes)
 - [ ] Delete mid-upload aborts it (the AWS console, or `aws s3api list-multipart-uploads --bucket snap.tky.io`, lists no
-  incomplete upload for the key) and the key is gone. `multipart/` holds nothing for the record. (suite, in part: UploadQueueTests.aCancelDuringThePartsWaitsForEveryPart, CoordinatorDeleteTests.eachUploadIsAbortedWhereItWasCreated)
+  incomplete upload for the key) and the key is gone. `multipart/` holds nothing for the record. (suite:
+  CoordinatorDeleteTests.deleteDuringAMultipartUploadAbortsItAndDeletesTheKey, .eachUploadIsAbortedWhereItWasCreated,
+  UploadQueueTests.aCancelDuringThePartsWaitsForEveryPart)
 - [ ] Delete of a failed multipart upload aborts it; its confirmation counts the object (`Removes it from object
   storage and from history.`). (suite: CoordinatorDeleteTests.anAbortThatAnswers204IsSentAgain,
   .anAbortFailureAsksToRemoveFromHistory, CaptureDeletionTests.confirmationCountsTheMultipartObject,
@@ -257,7 +260,10 @@ Each with the 300 MB and the 6 GB recording, upload-only, Clop off, then Clop on
   for the key. (Fixed in the branch: the queue's single-PUT path aborts `abortFirst`; the record's `multipart` stays
   until `.uploaded` clears it.) (suite: UploadQueueTests.aSinglePutJobWithAnUploadToAbortAbortsItFirst)
 - [ ] `Upload Trimmed` on a 300 MB trimmed file replaces the link in parts; a failure (Wi-Fi off) keeps the old link
-  and marks it stale, and a later `Upload Trimmed` resumes when the trimmed file still matches. (suite, in part: CoordinatorUploadTests.aFailedUploadMarksTheRecordOrReturnsItToItsLink, MultipartPlanTests.resumesWhenEverythingMatches)
+  and marks it stale, and a later `Upload Trimmed` resumes when the trimmed file still matches. (suite:
+  CoordinatorTrimTests.uploadTrimmedReplacesInPartsKeepsTheLinkOnFailureAndResumes,
+  CoordinatorUploadTests.aFailedUploadMarksTheRecordOrReturnsItToItsLink,
+  MultipartPlanTests.resumesWhenEverythingMatches)
 - [ ] Clop on, `Upload Trimmed` on a trimmed file over 100 MiB, fail it (Wi-Fi off for two minutes), trim again, then
   `Upload Trimmed`: the log shows `source changed, starting again` and the link plays the second trim, not the first. (suite, in part: CoordinatorUploadTests.anOutdatedKeptClopCopyCountsAsAChangedSource)
 - [ ] A Clop result kept in `multipart/<id>.mp4` is used by Retry (no second Clop run, `resumes at`) and is gone after
@@ -298,8 +304,12 @@ empty drag folder (`tmp/Drag`), and a copy of the same recording that is longer 
 - [ ] A disk-check refusal shows `Download failed` with `Your disk is almost full.` as its tool tip and logs `refused,
   not enough disk space`. (A small APFS volume as the container's is a hand set-up; read the log if none is at hand.) (suite: CoordinatorDragOutTests.tooLittleFreeSpaceRefusesTheDownload)
 - [ ] A GIF with no local file downloads too. (suite, in part: DragDownloadRuleTests.startsForAnUploadedVideoOrGIFWithNoLocalFile)
-- [ ] A downloaded drag copy is not a local file: Copy File still needs one, and Trim downloads its own copy.
-- [ ] After the card closes, the 60 s clean-up removes the downloaded copy; a restored card downloads again. (suite, in part: DragCleanupTests.aCardShowingTheRecordLeavesTheFolder, .noCopyFileRemovesTheFolder)
+- [ ] A downloaded drag copy is not a local file: Copy File still needs one, and Trim downloads its own copy. (suite:
+  CoordinatorRecordActionsTests.copyFilePutsASavedRecordingItselfAndNeedsALocalFile,
+  RecentCaptureFormattingTests.copyFileNeedsAVideoWithALocalFile, RecordingTrimTests.sourceFollowsEditorInputsOrder)
+- [ ] After the card closes, the 60 s clean-up removes the downloaded copy; a restored card downloads again. (suite:
+  CoordinatorDragOutTests.theCleanUpRemovesADownloadedCopyAndALaterDragDownloadsAgain,
+  DragCleanupTests.aCardShowingTheRecordLeavesTheFolder, .noCopyFileRemovesTheFolder)
 
 ## Regression
 
@@ -324,10 +334,14 @@ in the design's built notes.
   URLCommandTests.recordScreenRefusesTheActionsARecordingCannotDo, .theActionsEachKindTakes) ______
 - [ ] 3. A rect under 32 by 32 pt is refused with `The area must be at least 32 by 32 points to record.` (suite:
   URLCommandHandlerTests.recordScreenRefusesARectUnder32Points) ______
-- [ ] 4. A rect is preselected and only a click inside it records; no key does; the first switch is enough. ______
+- [ ] 4. A rect is preselected and only a click inside it records; no key does; the first switch is enough. (suite:
+  SelectionViewTests.aRecordingSelectionIgnoresReturnAndRecordsAClickInsideTheRect,
+  SelectionOutcomeTests.recordingModeClickInThePresetRecordsIt,
+  URLCommandGateTests.theRecordingCommandsNeedOnlyURLCommandsOn) ______
 - [ ] 5. `startRecording` returns once the start is under way. (suite:
   URLCommandHandlerTests.aBurstStartsThenStopsAndDropsALaterCapture) ______
-- [ ] 6. Recording notices do not name the URL's sender. ______
+- [ ] 6. Recording notices do not name the URL's sender. (suite:
+  CoordinatorSaveTests.recordingNoticesNeverNameTheSender) ______
 - [ ] 7. `CaptureRefusal` gains `.recordingStarting` and `.recordingRunning`, with their log reasons. (suite:
   ShortcutsTests.aRefusedCaptureNamesTheRecordingThenTheLockThenThePrompt,
   URLCommandHandlerTests.theLogSaysWhyACaptureCommandWasDropped,
@@ -369,7 +383,9 @@ in the design's built notes.
 - [ ] 20. Pruning aborts nothing; the lifecycle rule covers it. (suite:
   CoordinatorDeleteTests.pruningRemovesTheFilesAndAsksForNoDestination) ______
 - [ ] 21. No ListMultipartUploads sweep; the lifecycle rule is the backstop. ______
-- [ ] 22. The drag-out download starts at the drag threshold, not on the press, and has no menu item. ______
+- [ ] 22. The drag-out download starts at the drag threshold, not on the press, and has no menu item. (suite, in part:
+  QuickAccessCardDragViewTests.theDragViewAsksForTheDownloadOncePerPressPastTheThreshold; by hand: the card's menu has
+  no download item) ______
 - [ ] 23. A GIF with no local file downloads as a video does. (suite, in part:
   DragDownloadRuleTests.startsForAnUploadedVideoOrGIFWithNoLocalFile; a GIF's download landing has no coordinator test,
   as on line 289) ______
@@ -413,10 +429,13 @@ say how each stands. Write `confirm` or `overrule` and why.
 - [ ] 8. `multipartFiles` is a collaborator beside `pendingFiles`. Internal. (suite:
   MultipartStoreTests.theFolderIsMultipartNextToTheHistoryAndFilesAreNamedByID) ______
 - [ ] 9. A resumed template job that must draw a new key names it with a counter of 0. Tim's template has no
-  `{counter}`. ______
+  `{counter}`. (suite: CoordinatorUploadTests.aResumedTemplateJobWhoseKeyIsTakenRedrawsItWithCounterZero,
+  UploadQueueTests.aTemplateResumeWhoseKeyWasTakenDrawsANewKeyAndRestarts) ______
 - [ ] 10. The preset click reaches `SelectionOutcome.resolve` as `clickInPreset: CGRect?`. Internal. (suite:
   SelectionOutcomeTests.recordingModeClickInThePresetRecordsIt, .otherModesIgnoreThePresetClick) ______
-- [ ] 11. The card's drag view asks for the download once per press. Check: Wi-Fi off, hold the drag: one request. ______
+- [ ] 11. The card's drag view asks for the download once per press. Check: Wi-Fi off, hold the drag: one request.
+  (suite: QuickAccessCardDragViewTests.theDragViewAsksForTheDownloadOncePerPressPastTheThreshold,
+  CoordinatorDragOutTests.aSecondDragWhileOneRunsStartsNoSecondDownload) ______
 - [ ] 12. The card's download state is `QuickAccessModel.dragDownload`; `Download failed` uses
   `exclamationmark.triangle.fill` in red, as `Upload failed` does. ______
 - [ ] 13. `S3Destination`'s `httpResponse`, `failure`, `excerpt` (and `errorBody`) are internal. Internal. (suite, in
@@ -427,7 +446,9 @@ say how each stands. Write `confirm` or `overrule` and why.
   CoordinatorDeleteTests.anAbortThatFindsNothingIsNotRepeatedAndLogsItGone) ______
 - [ ] 15. `DragFileStore.landingURL()` makes `Drag/.downloads/<uuid>`. Internal. (suite:
   DragFileStoreTests.landingURLIsAFreshPathInTheDownloadsFolder) ______
-- [ ] 16. Resume data travels in the error with `signedAt` read before the first call (G2). ______
+- [ ] 16. Resume data travels in the error with `signedAt` read before the first call (G2). (suite:
+  CoordinatorDragOutTests.aFailureWithResumeDataKeepsItWithTheSigningTime,
+  DragDownloadTests.resumeDataContinuesWithARangeRequest) ______
 - [ ] 17. The drag-out download's form differs from the design's wording: the card's status lives on its model and is set
   directly, not pushed in `pushCardFlags`; two files the design's list does not name; the call is
   `download(key:to:expectedBytes:resumeData:progress:)`. Check: the card shows and clears `Downloading…`
@@ -443,8 +464,10 @@ Calls the build made that neither the design nor the gaps settled (each easy to 
 - [ ] D. A second `partsRejected` in a job restarts with no reason line of its own. (suite: UploadQueueTests.aSecondRejectedPartListRestarts) ______
 - [ ] E. A resume sends no `.started` until it knows its done fraction. (suite: CoordinatorUploadTests.aResumesStartSetsTheBarAtItsDoneFraction, UploadQueueTests.aResumeSendsOnlyTheMissingParts) ______
 - [ ] F. Every abort of a start over or a restart is one try, not a retry loop. (suite: UploadQueueTests.aJobWithAnUploadToAbortAbortsItBeforeItsCreate, .aSinglePutJobAbortsOnceAcrossItsRetries, .aSecondRejectedPartListRestarts) ______
-- [ ] G. Delete's second Abort failing fails Delete (the second alert) like the first. ______
-- [ ] H. Part reads retry from the same bytes held in memory, not reread. ______
+- [ ] G. Delete's second Abort failing fails Delete (the second alert) like the first. (suite:
+  CoordinatorDeleteTests.aSecondAbortThatFailsAsksToRemoveFromHistory) ______
+- [ ] H. Part reads retry from the same bytes held in memory, not reread. (suite:
+  UploadQueueTests.aPartRetrySendsTheBytesItFirstRead) ______
 
 ## Observations
 Write these into the R4 design's Probes section and built notes:

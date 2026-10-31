@@ -52,10 +52,20 @@ with `defaults read io.tky.tidyshot <key>`.
 - [ ] No stored area (`defaults delete io.tky.tidyshot lastAreaRect`, relaunch): ⌃⇧1 opens like Capture Scrolling's selection: crosshair, loupe, and the window under the pointer highlighted.
 - [ ] Drag a rectangle: eight handles appear and the toolbar sits centred under it, reading left to right `W` and `H` fields, the lock, a separator, Capture, Window (greyed), Fullscreen, Scrolling, Timer, Cancel. Each button's tooltip is 2.9's: `Lock aspect ratio`, `Capture area (Return)`, `Capture the window with transparent corners`, `Capture this display`, `Scrolling capture of this area`, `Capture this area after 5 seconds`, `Cancel (Escape)`.
 - [ ] Click a window without dragging: the rect is the window's frame (clipped to its display) and Window is enabled; resizing, moving or nudging it keeps Window enabled. Drag a new rect: Window is greyed again. With a rect showing, click (no drag) outside it on another window: that window's frame becomes the rect; click outside on the bare desktop: the rect stays.
+  (suite: SelectionViewTests.aClickWithoutADragTakesTheHighlightedWindowAndADragDoesNot,
+  SelectionOutcomeTests.allInOneModeDragsAnAreaOrClicksAWindow)
 - [ ] Drag each of the eight handles: the rect resizes only that handle's sides; it never flips, never gets smaller than 4 pt on a side and never leaves its display. Drag slowly across a half-point (a scaled display or a trackpad makes them): the edges you are not dragging do not move, not even by a point, and the moving edge lands on a whole point. Drag inside: it moves, clamped at every edge. Drag outside: a new rect starts.
+  (suite: SelectionViewTests.aPressOutsideTheRectStartsANewOne, SelectionAdjustTests.eachHandleMovesOnlyItsEdges,
+  .resizingStopsAtTheMinimumSide, .resizingIsClampedToTheBounds, .halfPointDragsKeepTheOppositeEdges,
+  .insideMovesTheRectAndClampsAtEachEdge)
 - [ ] The cursor is the resize cursor on each handle, an open hand inside (closed while moving), an arrow over the toolbar and the crosshair elsewhere. While a drag, resize or move runs the size label shows and the toolbar hides; it comes back at mouse-up.
 - [ ] Arrow keys move the rect 1 pt, Shift-arrows 10 pt, clamped at the edges; the W and H fields keep their values. Command-Return and Command-arrows neither capture nor nudge.
+  (suite: SelectionViewTests.commandKeysNeitherCaptureNorNudgeAndShiftArrowMovesTen,
+  SelectionAdjustTests.arrowsNudgeByOneOrTenAndStopAtTheEdge, .nudgesStopAtTheBounds,
+  SelectionViewArmingTests.aDisarmedRectStillNudgesAndCancels)
 - [ ] Type 640 into `W` and press Return: the width becomes 640, growing from the top-left corner, clamped at the display edge; nothing is captured, and a second Return captures. A value larger than the room (or one that makes the rect poke out of the display) is clamped or moves the rect inside the display, and the field then shows the size the rect really has, not what you typed. The same for `H`. Tab moves between the two fields.
+  (suite: SelectionViewTests.aTypedWidthResizesFromTheTopLeftWithoutCapturing,
+  SelectionAdjustTests.typedSizeGrowsFromTheTopLeft, .typedSizeIsClampedAndMovedInside)
 - [ ] Lock on (`lock` shown): a corner or edge drag keeps the ratio the rect had when the lock was turned on; typing W changes H and the other way. Lock off (`lock.open`) frees it. The lock is remembered across launches. With two displays, turn the lock on over one, then draw a rect on the other: the lock is still on there, and the toolbar's symbol agrees.
 - [ ] Toolbar placement: a rect near the bottom of the display puts the toolbar above it; a rect that fills the display puts it inside its bottom edge; a rect at the left or right edge keeps the toolbar on screen; a rect at the top of a notched display never puts it under the notch or the menu bar.
   (suite, in part: AllInOneToolbarPlacementTests.belowTheSelectionAndCentred, .aboveWhenThereIsNoRoomBelow,
@@ -74,7 +84,8 @@ with `defaults read io.tky.tidyshot <key>`.
 - [ ] Menu `Self-Timer` (or its recorded shortcut): the overlay shows the crosshair, the loupe and the window highlight. Drag an area: the overlay goes, a 96 pt rounded square appears centred on the area with `5` in large monospaced digits and `Esc to cancel` under it, and a dashed frame marks the area. It counts 5, 4, 3, 2, 1, once a second; at zero both disappear and the capture is saved. Neither is in the image, nor is a Quick Access card. Escape in the selection overlay, before the countdown, still cancels the selection.
 - [ ] Click a window instead: the countdown centres on the window and the result is a window capture with transparent corners. Move the window during the countdown: the capture follows it. Close it before zero: `The window is no longer on screen.` titled `Self-timer`, and no capture. Start a countdown on the second display and unplug it before zero: `The display is no longer connected.`, no capture.
 - [ ] A menu: start a timer over Safari's menu bar area, then open the File menu during the countdown and hold it open: the image contains the open menu. The same with a tooltip (`~/Desktop/p6/freeze.html`). During the countdown the app you clicked before is frontmost (its name in the menu bar), and a menu opened from the keyboard there works: TidyShot gave up activation.
-- [ ] The countdown panel and frame are click-through: clicking under them reaches the app beneath.
+- [ ] The countdown panel and frame are click-through: clicking under them reaches the app beneath. (suite:
+  SelfTimerTests.theCountdownPanelAndTheScrollFrameLetClicksThrough)
 - [ ] The badge sits at the screen-saver level: pin a screenshot over the area first (the Pin section), start a self-timer on it, and the badge and the dashed frame are drawn over the pin; they also show over a full-screen app, the menu bar and the Dock.
 - [ ] Escape, with Safari frontmost, cancels: both panels go and nothing is captured. After that Escape works normally in Safari (it is not swallowed). Escape still cancels a scrolling session (Phase 5).
 - [ ] While the countdown runs, ⌃⇧4, the Self-Timer shortcut and the other shortcuts do nothing and the menu's capture items are disabled; the countdown is not disturbed.
@@ -181,6 +192,8 @@ Both toggles on. Each line posts the error named and captures nothing; nothing c
   URLCommandHandlerTests.silentCommandsAreRefusedByDefaultNamingTheSender)
 - [ ] `t 'capture-area?action=%25@%25n%25s'`: `Unknown action “%@%n%s”. …`; the log shows `%@%n%s` as plain text. `t 'capture-area?action=%E2%80%AEdaolpu'`: the notification shows `daolpu` with no reversed text. A 200-character action is cut at 40 characters with `…`.
 - [ ] `t 'capture-area?display=7'` with no rect opens the normal selection (display counts only with a rect); `t 'capture-area?display=abc'` posts `There is no display abc.`
+  (suite: URLCommandHandlerTests.aDisplayWithoutARectOpensTheNormalSelection,
+  URLCommandTests.theDisplayIsAWholeNumberFromOne)
 - [ ] Unknown commands, including CleanShot's file-path ones: `t pin`, `t 'open-annotate?filepath=/etc/hosts'`, `t 'add-quick-access-overlay?filepath=/tmp/x.png'`, `t open-settings`: `Unknown command “…”.` No file is read (no sandbox prompt, nothing in the log about the path).
   (suite: URLCommandTests.anUnknownCommandIsAnError, .errorMessagesAreTheSpecStrings)
 - [ ] Unknown parameters are ignored: `t 'capture-window?foo=1&filepath=/etc/hosts'` runs Capture Window. (suite:
@@ -192,6 +205,8 @@ Both toggles on. Each line posts the error named and captures nothing; nothing c
 - [ ] While a selection is open (⌃⇧4, not released), while a self-timer counts, and during a scrolling session before and after Start: `t capture-fullscreen`, `t capture-area` and `t capture-scrolling` do nothing and post nothing (the log reads `dropped, a capture is running`); the scrolling session neither starts nor finishes. `t restore-recently-closed` still restores a card.
 - [ ] `for i in 1 2 3; do t capture-window; done`: one window selection opens; the other two are dropped.
 - [ ] Several URLs waiting for a cold launch: quit TidyShot, then `open 'tidyshot://capture-window' 'tidyshot://capture-area' 'tidyshot://restore-recently-closed'`. TidyShot starts, one window selection opens (only the first capture command runs; the log reads `a queued capture command ran first` for the second), and the restore still happens. With the silent toggle off, a refused `capture-fullscreen` ahead of a `capture-window` does not stop the window selection from opening.
+  (suite: URLCommandHandlerTests.aGateRefusedCaptureDoesNotCountAsTheFirstQueuedOne,
+  .onlyTheFirstQueuedCaptureCommandRuns)
 
 ## VoiceOver
 Turn VoiceOver on (⌘F5).

@@ -162,7 +162,9 @@ prints the GIF frame count and the summed delays; `ffprobe -v error -show_entrie
   launch, so quit it first, then `defaults write io.tky.tidyshot gifFrameRate -int 12`, `defaults write
   io.tky.tidyshot gifMaxSide -int 640` and `defaults write io.tky.tidyshot recordingFormat -string webm`,
   and open it again: `Format` shows `MP4`; switch it to GIF and the rows show `15 fps` and `1280 px`.
-  Quit, put them back with the reset loop, and open it again.
+  Quit, put them back with the reset loop, and open it again. (suite:
+  AppSettingsTests.recordingDefaultsAreRegisteredNotWritten, .r2RecordingSettingsPersistUnderTheirKeys,
+  .r2StoredValuesOutsideTheChoicesReadAsTheDefaults)
 - [ ] `Microphone` lists `Off`, `System Default` and each input by name (Tim's six: TKY Microphone,
   Brio 500, MacBook Pro Microphone, LG UltraFine Display Audio, CalDigit TS4 Audio - Rear, RODE AI-1).
   With the Recording tab open, plug the RODE AI-1 in: it appears; unplug it: it goes. Choose it, then
@@ -283,7 +285,9 @@ Format = GIF. ⌃⇧8 and drag an area; the bar is for GIF.
 - [ ] A GIF's upload and the clipboard. `Upload and copy URL` with Clop **off**: the URL replaces the
   clipboard only when nothing was copied in between; copy text while it uploads and the text stays,
   `Uploaded` posts, and a click copies the link. The link plays the GIF in a browser. Uploading uses the
-  `image/gif` content type: `curl -sI "<url>" | grep -i content-type`.
+  `image/gif` content type: `curl -sI "<url>" | grep -i content-type`. (suite:
+  CoordinatorSaveTests.aRecordingsURLReplacesItsFileReferenceOnlyWhileTheClipboardHoldsIt,
+  UploadPayloadTests.gifIsAFile, CaptureRecordTests.gifKindTypes)
 - [ ] Clop on and running, then a GIF: it uploads as made. The card never says `Optimizing…`; the uploaded
   object is byte-identical to the saved file (`curl -s -o $W/up.gif "<url>"; cmp $W/up.gif "<saved .gif>"`);
   and `grep 'Clop: GIFs are not sent to Clop' ~/Desktop/rec-r2/tidyshot.err` finds one line, and still one
@@ -335,7 +339,11 @@ loop, or music).
   not muted` (the card's tooltip shows the whole sentence), Retry Failed Uploads skips it with no notice, and
   a relaunch keeps the mark. The marked card offers the thumbnail's Open, `Trim…` and Delete, with no Copy
   File, Save As… or drag; the row's click opens the file. Write down what the card and
-  menu offered: ______
+  menu offered: (suite, in part: CoordinatorSaveTests.aMarkedRecordingStaysInPendingForEveryActionAndNeverLeaves,
+  RecordingSavePlanTests.aMarkedRecordingTargetsPendingForEveryAction,
+  QuickAccessModelTests.aMarkedRecordSaysSoundNotMutedAndOffersOpenTrimAndDeleteOnly,
+  UploadRefusalTests.retryFailedUploadsLeavesOutMarkedAndDeletingRecords; by hand: the `-MuteFailure` run itself, the
+  card's tool tip and the mark after a relaunch) ______
 - [ ] **(Debug)** `kill -9` during a muted recording, then relaunch with `--args -MuteFailure both`: the
   recovered record shows `Sound not muted`, and `Recovered a recording` ends `Its sound is not muted, so it
   was not uploaded.`
@@ -387,7 +395,10 @@ selection overlay or the count-in, and the stream's `Recording: starting …` li
   is not read by any test)
 - [ ] With access undecided (`tccutil reset Microphone io.tky.tidyshot`) and another capture under way (a
   screenshot's area selection, its self-timer countdown, a scrolling capture): a Record press shows no
-  prompt, starts nothing and logs nothing; the capture goes on. Once it is done, a Record press prompts.
+  prompt, starts nothing and logs nothing; the capture goes on. Once it is done, a Record press prompts. (suite, in
+  part: CoordinatorRecordingTests.aRecordPressDuringACaptureWithAccessUndecidedShowsNoPrompt,
+  ShortcutsTests.aPromptShowsOnlyWithNoCaptureRunning; by hand: the Record press once the capture is done, which
+  prompts)
 - [ ] The chosen input unplugged before the recording (or the RODE AI-1 chosen while unplugged): the recording
   uses the default input, and `Recorded with <default input name>` / `<name> is not connected.` posts after
   Stop. With no input at all: `Recorded without the microphone` / `No microphone is connected.` (suite:
@@ -490,7 +501,11 @@ a start on one passes through), and the window, the pass and the wiring landed w
 - [ ] The sheet's text, buttons and default button for each row of the design's table (Save target with a
   destination and a link, with a destination and no link, with no destination; `.unavailable` with a
   destination; `.unavailable` with none disables `Trim…`). Save on an uploaded recording shows `Link not
-  updated`; `Upload Trimmed` clears it; a failed Save and Upload (network off) leaves it.
+  updated`; `Upload Trimmed` clears it; a failed Save and Upload (network off) leaves it. (suite, in part:
+  CoordinatorTrimTests.uploadTrimmedClearsTheStaleNoteOnSuccessAndKeepsItOnFailure,
+  RecordingTrimTests.saveTargetWithADestination, .saveTargetWithNoDestination,
+  .cancelIsAlwaysLastAndTheButtonsHaveTheirTitles, .thePutMarksTheLinkStaleOnlyWhenItSetsTheFlag; by hand: the sheet as
+  it shows)
 - [ ] Save and Save and Upload with the record's file in a save folder on another volume (`/Volumes/RecOff`),
   in the sandboxed build, after a relaunch (the stored bookmark's scope), and with a recording in `pending/`:
   the file is replaced and plays trimmed, the duration and thumbnail update, and nothing stray is left in the
@@ -510,7 +525,10 @@ a start on one passes through), and the window, the pass and the wiring landed w
   updated`.
 - [ ] During a slow Save to the other volume (a long recording): Retry, `Upload Trimmed` and Delete are
   disabled or refused with `This capture is being trimmed.` (`Not deleted` / `This capture is being trimmed.
-  Delete it when the trim finishes.`), and once the put finishes the file plays trimmed and Delete works.
+  Delete it when the trim finishes.`), and once the put finishes the file plays trimmed and Delete works. (suite:
+  CoordinatorTrimTests.aCaptureBeingTrimmedRefusesDeleteAndUploadTrimmed,
+  CoordinatorUploadTests.aRetryOfATrimmingOrUploadingRecordDoesNothingButSay,
+  QuickAccessModelTests.retryUploadTrimmedAndDeleteAreDisabledWhileTrimming)
 - [ ] Close the Trim window of an upload-only record: `tmp/Trim/<id>.mp4` is gone. (suite, in part:
   RecordingTrimTests.closingAWindowRemovesOnlyItsRecordsWorkFiles; `trimWindowDidClose` calling it is behind the Trim
   window seam and stays by hand)
@@ -649,7 +667,9 @@ came out). Write `confirm` or `overrule` and why, then copy the result to the de
 - [ ] 2. Notices after Stop come in a fixed order (`RecordingNoticeOrder`): the save's own notification
   (`GIF not made`, `Sound removed`, or `Recording saved`/`Sound not muted` from the plan), then `Recording
   stopped`, then the microphone note. `GIF not made` and `Sound removed` always post in normal mode, whatever
-  Show notification says. Nothing posts in quit mode (D below). ______
+  Show notification says. Nothing posts in quit mode (D below). (suite:
+  CoordinatorSaveTests.noticesAfterStopComeInOrderWhateverShowNotificationSays,
+  RecordingNoticeOrderTests.theSavesNoticeThenRecordingStoppedThenTheMicrophoneNote, .quitModeGivesNothing) ______
 - [ ] 3. `Recording.recoveryURL` is the MP4 for a GIF: when the GIF cannot leave `tmp/Recording`, `Not saved to a
   folder` names the MP4's path. (Not reachable by hand.) (suite:
   GIFConversionTests.onSuccessTheGIFIsSavedAndTheMP4RemovedOnlyAfterTheRecordExists,
@@ -684,7 +704,9 @@ came out). Write `confirm` or `overrule` and why, then copy the result to the de
   File. The size gives way first when the detail is too wide. ______
 - [ ] 11. Sizes (spec 2.13): a GIF's size is the GIF's after its move (after a failed conversion the MP4's); a muted
   recording's is the rewritten file's; Trim's is the trimmed file's. Check a GIF's, a muted recording's and a
-  trimmed recording's row sizes against `ls -l`. ______
+  trimmed recording's row sizes against `ls -l`. (suite, in part: CoordinatorSaveTests.aGIFsSizeIsTheMovedFilesSize,
+  VideoValidationTests.aRewrittenFileReadsItsNewSize, CaptureRecordTests.aTrimsWriteRecordsTheTrimmedFile; by hand: the
+  MP4's size after a failed conversion, and the rows against `ls -l`) ______
 - [ ] 12. `saveRecording`'s new parameters: `saveNotice:`, `microphoneNote:` and `unmutedIntervals:`, each
   defaulting to none so R1's callers compile. Internal; nothing to see. ______
 
@@ -692,11 +714,12 @@ Four more where the build made a call the design did not settle. Tim confirmed a
 2026-10-24 (design, Decided 2026-10-24, 5):
 - [x] A. `GIFMakerError.couldNotRead` (`The recording could not be read.`) is the body when a recording cannot be
   read for conversion: `GIF not made` / `The recording could not be read. The recording was saved as an MP4.`
-  confirm (Tim, 2026-10-24)
+  confirm (Tim, 2026-10-24) (suite: GIFFileSinkTests.couldNotReadSaysTheRecordingCouldNotBeRead)
 - [x] B. The marked card keeps a disabled `Copy URL` (a marked record never has a link). Leave it, or drop it?
   confirm: leave it (Tim, 2026-10-24)
 - [x] C. The cache note's title when a replaced upload's URL was not copied is `Uploaded` (the copied branch's `Uploaded,
-  URL copied` would be untrue there). confirm (Tim, 2026-10-24)
+  URL copied` would be untrue there). confirm (Tim, 2026-10-24) (suite:
+  CoordinatorTrimTests.aFirstReplaceWhoseURLWasNotCopiedPostsTheCacheNoteAsUploaded)
 - [x] D. A recording that ends with nothing kept (`.nothing`) no longer posts `Recording failed` while TidyShot quits;
   R1 posted it. In quit mode no notice posts at all (`RecordingNoticeOrder.afterStop(… quitMode:)`).
   confirm (Tim, 2026-10-24) (suite: RecordingNoticeOrderTests.quitModeGivesNothing)
@@ -732,7 +755,8 @@ Six more, calls E to J, which the build left open. Tim answered all six on 2026-
   .videoRecordRoundTrips, .everyKindButAnImageIsTimeBased)
 - [ ] The Recent Captures menu opens at once with a GIF, a video and a screenshot among the rows.
 - [ ] Quit TidyShot with nothing recording: it quits at once. (suite: QuitHoldTests.idleWithNoUnsavedEditorDoesNotHold)
-- [ ] Delete (and confirm) a GIF: the file, the record and any uploaded object go.
+- [ ] Delete (and confirm) a GIF: the file, the record and any uploaded object go. (suite:
+  CoordinatorDeleteTests.deleteRemovesTheObjectTheFileTheThumbnailAndTheRow)
 
 ## Observations
 Write these into the R2 design's Probes section (and the built notes for the gaps):

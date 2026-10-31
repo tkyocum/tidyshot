@@ -832,6 +832,8 @@ struct UploadQueueTests {
         #expect(destination.state.withLock { $0.parts.map(\.uploadID) } == Array(repeating: "upload-1", count: 4))
         #expect(destination.state.withLock { $0.parts.map(\.size) } == Array(repeating: 262_144, count: 4))
         #expect(partNumbers(destination) == [1, 2, 3, 4])
+        let zeros = FakeDestination.digest(Data(count: 262_144))
+        #expect(destination.state.withLock { $0.partDigests.map(\.digest) } == Array(repeating: zeros, count: 4))
         let completes = destination.state.withLock { $0.completes }
         #expect(completes.map(\.key) == [templateKey])
         #expect(completes.map(\.uploadID) == ["upload-1"])
@@ -1088,6 +1090,32 @@ struct UploadQueueTests {
         // The upload's state stays for a Retry.
         #expect(movie.store.readSidecar(id: id, uploadID: "upload-1") == MultipartSidecar(uploadID: "upload-1",
                                                                                           completeSent: false, parts: []))
+    }
+
+    /// recording-r4 :378 (call H). A part's retry sends the bytes the part first read, not a fresh read: part 3's range
+    /// changes in the file after its first try is sent, and both tries carry the first bytes' digest. Harness D18
+    /// asked for a read counter; changing the file shows the same thing with no seam.
+    @Test func aPartRetrySendsTheBytesItFirstRead() async throws {
+        let movie = try makeLargeMovie(byteCount: mib)
+        defer { try? FileManager.default.removeItem(at: movie.folder) }
+        let file = movie.file
+        let destination = FakeDestination(.init(onCall: { call in
+            guard call == "part 3" else { return }
+            // Part 3's bytes were read before this call; overwrite its range in the file.
+            guard let handle = try? FileHandle(forWritingTo: file) else { return }
+            try? handle.seek(toOffset: 2 * 262_144)
+            try? handle.write(contentsOf: Data(repeating: 0xFF, count: 262_144))
+            try? handle.close()
+        }, partFailures: [3: [.httpStatus(503, body: "")]]))
+        let log = EventLog()
+        let queue = makeMultipartQueue(destination: destination, log: log, store: movie.store)
+        let id = UUID()
+
+        await queue.enqueue(largeJob(id, file: movie.file, byteCount: mib))
+        try await eventually { log.events.contains(.uploaded(id: id, url: templateURL, key: templateKey)) }
+
+        let digests = destination.state.withLock { $0.partDigests.filter { $0.number == 3 }.map(\.digest) }
+        #expect(digests == Array(repeating: FakeDestination.digest(Data(count: 262_144)), count: 2))
     }
 
     /// `multipartStarted` is delivered before any part goes; the sidecar names the upload id from

@@ -399,4 +399,27 @@ struct ScrollCaptureSessionTests {
         #expect(world.posted.isEmpty)
         await session.cancel()
     }
+
+    /// phase-5 :106. Done while the too-fast line shows saves what was stitched before the loss, at its size, with no
+    /// half-written rows at the end.
+    @Test func doneWhileLostSavesWhatWasStitchedBeforeTheLoss() async throws {
+        var page = makePage()
+        let (session, source, _) = makeSession(page)
+        await session.start()
+        send(&page, source, offsets: [0, 100])
+        try await eventually { session.heightPixels == 500 }
+        send(&page, source, offsets: [700])
+        try await eventually { session.status == .manualLost }
+
+        await session.done()
+
+        guard case .image(let image)? = session.outcome else {
+            Issue.record("no image")
+            return
+        }
+        #expect(image.image.height == 500)
+        let comparison = page.compare(try stitchedPixels(of: image), reached: 100)
+        #expect(comparison.actualHeight == comparison.expectedHeight)
+        #expect(comparison.mismatched == 0)
+    }
 }

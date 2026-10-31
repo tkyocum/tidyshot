@@ -22,6 +22,18 @@ struct ClickRingOverlayTests {
         (ring.sublayers ?? []).compactMap { $0 as? CAShapeLayer }
     }
 
+    /// A timing function's four control points, so two can be compared.
+    func controlPoints(_ function: CAMediaTimingFunction?) -> [Float]? {
+        guard let function else { return nil }
+        var points: [Float] = []
+        for index in 0..<4 {
+            var values: [Float] = [0, 0]
+            function.getControlPoint(at: index, values: &values)
+            points += values
+        }
+        return points
+    }
+
     // MARK: The ring
 
     @Test(arguments: [ClickRingColour.yellow, .blue])
@@ -159,5 +171,20 @@ struct ClickRingOverlayTests {
         overlay.setScreenFrame(second)
         #expect(overlay.frame == second)
         #expect(overlay.ringContainer.frame == CGRect(origin: .zero, size: second.size))
+    }
+
+    /// recording-r3 :440 (call F). The ring's grow eases out and its fade is linear: the grow has the ease-out curve,
+    /// and neither the fade group nor its parts has a timing function.
+    @Test func theRingGrowsEasingOutAndFadesLinearly() throws {
+        let overlay = ClickRingOverlay(screenFrame: screenFrame)
+        overlay.apply(.begin(ClickRing(button: .left, colour: .yellow, point: CGPoint(x: 120, y: 80))))
+        let ring = try #require(overlay.ringContainer.sublayers?.first)
+        let grow = try #require(ring.animation(forKey: ClickRingOverlay.growKey))
+        #expect(controlPoints(grow.timingFunction) == controlPoints(CAMediaTimingFunction(name: .easeOut)))
+
+        overlay.apply(.end(.left))
+        let fade = try #require(ring.animation(forKey: ClickRingOverlay.fadeKey) as? CAAnimationGroup)
+        #expect(fade.timingFunction == nil)
+        #expect((fade.animations ?? []).allSatisfy { $0.timingFunction == nil })
     }
 }

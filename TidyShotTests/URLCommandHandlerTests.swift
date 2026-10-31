@@ -389,4 +389,30 @@ struct URLCommandHandlerTests {
         #expect(URLCommandHandler.senderName("  ") == "  ")
         #expect(URLCommandHandler.senderName(nil) == nil)
     }
+
+    /// phase-6b :153. `capture-area?display=7` with no rect opens the normal selection: the display counts only with
+    /// a rect. `display=abc`'s notice is `URLCommandTests.theDisplayIsAWholeNumberFromOne`.
+    @Test func aDisplayWithoutARectOpensTheNormalSelection() async throws {
+        let handler = await makeHandler()
+
+        try await send(handler, "tidyshot://capture-area?display=7")
+
+        #expect(target.calls == [.area(standard)])
+        #expect(log.notices.isEmpty)
+    }
+
+    /// phase-6b :161. With silent captures off, a `capture-fullscreen` the gate refuses, queued ahead of a
+    /// `capture-window` before the launch finished, does not count as the first capture command: the window
+    /// selection still opens.
+    @Test func aGateRefusedCaptureDoesNotCountAsTheFirstQueuedOne() async throws {
+        settings.urlCommandsAllowSilent = false
+        let handler = await makeHandler(ready: false)
+        try await send(handler, "tidyshot://capture-fullscreen")
+        try await send(handler, "tidyshot://capture-window")
+
+        await handler.ready()
+
+        #expect(target.calls == [.window(standard)])
+        #expect(log.notices == [notice("capture-fullscreen from Raycast" + refusal)])
+    }
 }

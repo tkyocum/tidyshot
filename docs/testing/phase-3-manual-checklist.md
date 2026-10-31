@@ -28,6 +28,8 @@ history including at least one Phase 2 capture (made before this build).
   (obsolete: the floating preview panel on the Recent Captures rows replaced the right-hand pane when the gallery window
   was removed)
 - [ ] Clicking an Uploaded cell copies the URL (paste into Notes); clicking a Saved cell copies the file (paste in Finder makes a copy).
+  (suite, in part: CoordinatorRecordActionsTests.copyLinkOrFileCopiesTheLinkEachTimeOrTheSavedFile; by hand: the menu
+  closing)
 - [x] Context menu offers Copy URL or Copy File, Retry Upload (Failed only), Reveal in Finder (local file only), Delete….
   (obsolete: the row has link, photo and trash buttons instead of a context menu, and Retry moved to Retry Failed
   Uploads and the card's Retry)
@@ -35,6 +37,8 @@ history including at least one Phase 2 capture (made before this build).
   (obsolete: the three-button alert was withdrawn; Delete asks `Delete this capture?` with Delete and Cancel, and a
   failed removal opens a second Remove and Cancel alert, checked in the Phase 3.1 checklist)
 - [ ] Delete… on a Phase 2 capture that was uploaded: the alert says the uploaded object stays in the bucket; Delete removes the row and the file, and `curl -I <url>` still gives 200.
+  (suite: CaptureDeletionTests.confirmationTextSaysWhenTheObjectStays,
+  CoordinatorDeleteTests.aPrePhase3UploadedCaptureIsDeletedWithNoStorageRequest)
 - [x] Delete… while offline on an uploaded capture: notification "Not deleted" and the row stays; back online, Delete… works.
   (obsolete: a failed storage DELETE now opens a second alert, `Couldn't delete it from storage: <reason>`, with Remove
   and Cancel instead of a `Not deleted` notification, checked in the Phase 3.1 checklist)
@@ -46,7 +50,9 @@ history including at least one Phase 2 capture (made before this build).
 - [x] Make the local file undeletable (`chflags uchg <file>` on a Saved capture), Delete…: notification "Not deleted" naming the file and the reason, and the row stays; `chflags nouchg <file>`, Delete… works.
   (obsolete: a save-folder file that cannot be removed now opens the second alert `Couldn't delete the file: <reason>`,
   and `Not deleted` is posted only for a `pending/` file)
-- [ ] Change the Upload tab's bucket (to a second bucket you can write to) and Save, then Delete… a capture uploaded before the change: the object is removed from the bucket it was uploaded to (`curl -I <old url>` gives 403 or 404), not looked for in the new one.
+- [ ] Change the Upload tab's bucket and Save, then Delete a capture uploaded before the change (trash button on its row or card): the object is removed from the bucket it was uploaded to (`curl -I <old url>` gives 403 or 404), not looked for in the new one.
+  (suite: CoordinatorDeleteTests.aDeleteAfterABucketChangeDeletesWhereTheObjectWent,
+  CaptureDeletionTests.objectsIncludeSupersededAtTheirLocations)
 - [ ] Key template `shared/{date}` and a key that cannot read objects (HEAD answers 403 for existing keys), two captures the same day: both rows point at the same key; Delete the first from its row: notification "Not deleted from storage" saying another capture shares this key, the row goes, and the second capture's URL still works.
   (suite, in part: CoordinatorDeleteTests.aSharedKeyKeepsTheObjectAndSaysSo, S3DestinationTests.headTreats403AsMissing;
   a real key that cannot read objects answering 403 for an existing key, so that two captures land on one key, stays by
@@ -61,14 +67,22 @@ history including at least one Phase 2 capture (made before this build).
 
 ## Overlay delete
 - [ ] Trash button during an upload (fullscreen capture or Network Link Conditioner): the alert reads "Removes it from object storage, your save folder and history." ("Removes it from object storage and from history." for an upload-only capture); after Delete the overlay closes, the menu bar icon returns to the viewfinder, no object is in the bucket (list it, or GET the URL the overlay would have shown), no row, no file, no thumbnail.
+  (suite: CoordinatorDeleteTests.deleteDuringAnUploadCancelsItThenDeletesTheReservedKey,
+  CaptureDeletionTests.confirmationTextIsOneLine)
 - [ ] Trash button during an upload, right after saving the Upload tab (so the upload runs on the replaced queue): the upload is still cancelled, and the menu bar icon returns to the viewfinder.
-- [ ] Trash button after the upload finished: object, row, file and thumbnail gone.
-- [ ] Cancel in the alert keeps everything and the overlay stays.
-- [ ] Clicking the thumbnail of an upload-only capture does nothing (no Finder reveal).
+  (suite: CoordinatorDeleteTests.deleteDuringAnUploadCancelsItThenDeletesTheReservedKey)
+- [ ] Trash button after the upload finished: object, row, file and thumbnail gone. (suite:
+  CoordinatorDeleteTests.deleteRemovesTheObjectTheFileTheThumbnailAndTheRow)
+- [ ] Cancel in the alert keeps everything and the overlay stays. (suite:
+  CoordinatorDeleteTests.deleteDuringAnUploadCancelsItThenDeletesTheReservedKey,
+  .deleteAsksOnceAndASecondDeleteWhileItAsksAsksNothing)
+- [ ] Clicking the thumbnail of an upload-only capture does nothing (no Finder reveal). (suite:
+  QuickAccessModelTests.anUploadOnlyCardsThumbnailRevealsNothing)
 
 ## Upload only
 - [ ] Settings > General, "Upload only, keep no local file": the caption appears; with no save folder chosen, a capture shows no folder prompt, the overlay goes to "URL copied", pasting gives the URL, `pending/` is empty afterwards, the Recent Captures row shows the object name (`aSIS7x.png`) and its photo button still copies the image, "Reveal Last Capture" is disabled.
 - [ ] Wi-Fi off, capture: overlay "Upload failed" with Retry, `pending/<UUID>.png` exists; Wi-Fi on, Retry Failed Uploads in the menu (or the overlay's Retry): Uploaded, and the pending file is gone.
+  (suite: CoordinatorUploadTests.aFailedUploadOnlyImageKeepsItsPendingFileAndSizeUntilARetrySendsIt)
 - [ ] Wi-Fi off, capture in upload-only, then set retention to 1 day and wait past it (or change the record's `timestamp` in `history.json` to two days ago before relaunching) and take another capture: the failed upload-only row and its `pending/` file are still there.
   (suite: HistoryStoreTests.pruningKeepsUploadOnlyCapturesThatWereNeverUploaded,
   CoordinatorDeleteTests.pruningRemovesTheFilesAndAsksForNoDestination)
@@ -89,13 +103,17 @@ history including at least one Phase 2 capture (made before this build).
   (suite, in part: FileNamerTests.yearMonthDayAndHostnameTokens, .defaultTemplateMatchesSystemStyle; that a real save
   names its file from the template stays by hand)
 - [ ] A retried failed upload lands under the capture's own date folder, not today's; with `{counter}` in the key template, the retry's key has a newly drawn counter value, and an upload-only capture taken before a destination existed gets a real counter (not 0) when it is retried.
+  (suite: CoordinatorUploadTests.aRetryIsNamedForTheCapturesDateWithANewlyDrawnCounter)
 
 ## Forget credentials
 - [ ] Forget Credentials: the three fields clear, the status reads "Credentials removed from the keychain…", Keychain Access no longer has "TidyShot S3 credentials"; a capture gives "Upload not configured"; re-enter and Save: uploads work again.
 - [ ] Forget Credentials while an upload is running: that upload still finishes (Uploaded, URL copied) and the menu bar icon returns to the viewfinder.
+  (suite: CoordinatorUploadTests.forgettingCredentialsMidUploadLetsThatUploadFinish)
 
 ## History hygiene
 - [ ] Retention 1 day with older captures present, then capture: older rows disappear, their files in `thumbnails/` are gone, and their files in the save folder remain; a failed upload-only capture is kept with its `pending/` file however old it is.
+  (suite: CoordinatorDeleteTests.retentionDropsOldRowsAndTheirThumbnailsButKeepsSaveFolderFilesAndUnsentUploads,
+  HistoryStoreTests.pruningKeepsUploadOnlyCapturesThatWereNeverUploaded)
 - [ ] Quit, replace `history.json` with `not json`, relaunch: `history.json.corrupt-<number>` exists and `thumbnails/` is untouched. With `pending/` empty, Recent Captures shows "No captures yet". With files in `pending/`, each readable one comes back as a row with a `Recovered a capture` (or `Recovered a recording`) notification, and only an empty or unreadable file is removed.
   (suite, in part: HistoryStoreTests.corruptFileIsSetAsideNotOverwritten, .corruptFileSetAsideSurvivesNameCollision,
   CoordinatorRecoveryTests.anEmptyHistoryAdoptsEveryOrphanAndDeletesNothing,

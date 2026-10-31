@@ -106,6 +106,7 @@ Open `long-still.html` in Safari at the top, with the window about 1100 by 800 p
   ScrollStitcherTests.tooFastThenRecover; End and Home in a real Safari stay by hand)
 - [ ] A hard trackpad flick (a 3000 pt fling) does the same: the line shows while the page is too far from the last accepted screen and clears after you scroll back into overlap. A slow flick that you let coast never shows the line.
 - [ ] Done while the line shows saves what was stitched before the loss, at the right size, with no half-written rows at the end.
+  (suite: ScrollCaptureSessionTests.doneWhileLostSavesWhatWasStitchedBeforeTheLoss)
 
 ## Manual mode on Terminal scrollback
 Terminal with the `seq` output run, scrolled up to about line 1500.
@@ -190,6 +191,7 @@ Use the three after-capture actions in turn (Settings > General), each with a Sa
 - [ ] "Upload only, keep no local file": nothing appears in the save folder, the upload finishes, the URL is on the clipboard and the temporary file is deleted. With Wi-Fi off, the upload fails and `pending/<UUID>.png` keeps the tall PNG until Retry Failed Uploads succeeds.
 - [ ] With Network Link Conditioner on a slow profile, a tall capture's upload shows progress on the overlay and the overlay's Delete during the upload cancels it and removes what was written.
 - [ ] The overlay's Delete on a stitched capture, after one confirmation: the file, the history row, the thumbnail and (when uploaded) the object are gone.
+  (suite: CoordinatorDeleteTests.deleteRemovesTheObjectTheFileTheThumbnailAndTheRow)
 - [ ] Nothing is written or uploaded before Done: during a session, the save folder, `history.json` and the bucket do not change, in all three actions.
 - [ ] The overlay appears, and the other captures work, while a previous tall capture is still encoding or uploading.
 - [ ] A stream that stops by itself (optional, needs a second display): start a capture on the second display, scroll a few screens, then unplug that display or put it to sleep. A notification titled `Scrolling capture stopped` says `The capture stopped early: <reason> TidyShot saved what it had.` (the reason is `The screen recording stream stopped.` when ScreenCaptureKit gives none) and the rows stitched so far, up to the last screen before the stop, are saved like any capture. Stopped before the first frame arrived: `Scrolling capture failed` with the reason only, and nothing saved.
@@ -208,6 +210,8 @@ Use the three after-capture actions in turn (Settings > General), each with a Sa
 - [ ] A capture taller than three times its width (drag an area 300 pt wide and 400 pt tall, scroll through three screens): the overlay's well and the Recent Captures thumbnail show the **top** of the page, filling the well, not a thin sliver of the whole page. In the `thumbnails` folder `sips -g pixelWidth -g pixelHeight` on its file reports a height of 320 and a width of about 213 (2:3).
 - [ ] The Recent Captures hover preview of the same row shows the top of the page too, sharper than the thumbnail: it is made from the file and cut to the top the same way.
 - [ ] Thumbnail made from the file: quit TidyShot, delete the capture's file from the `thumbnails` folder, relaunch and open Recent Captures. The row's new thumbnail (made from the PNG through ImageIO) shows the **top** of the page, about 213 by 320, not a sliver.
+  (suite: ThumbnailProviderTests.aNamedThumbnailThatIsGoneIsMadeAgainFromTheFile,
+  ThumbnailMakerTests.thumbnailOfATallPNGShowsItsTop)
 - [ ] A capture only 2.5 times as tall as it is wide (area 400 by 1000 pt, Start and Done at once): no crop; the thumbnail is the whole capture, about 128 by 320.
   (suite: ThumbnailMakerTests.cropForThumbnailKeepsTheTopOfTallImages, .targetSizeFitsTheLongestSide)
 - [ ] A normal area, window and fullscreen capture still produce the thumbnails they did before (compare with an earlier row).

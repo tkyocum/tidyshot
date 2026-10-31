@@ -236,4 +236,119 @@ struct EditorBackgroundExportTests {
         #expect(view.shadowLayer.isHidden)
         #expect(!view.isContentMasked)
     }
+
+    /// phase-7c :94, phase-7c :98, in part. A swatch, the Shadow toggle and an aspect change are one step each: the
+    /// editor is dirty after each and clean after Save, and three undos take them back in reverse, one at a
+    /// time. By hand: the window's edited mark.
+    @Test func aSwatchTheShadowAndAnAspectAreThreeStepsThatDirtyTheEditor() throws {
+        let model = makeModel()
+        model.setBackground(solid(red))
+        model.markSaved()
+        let start = model.document.background
+
+        try change(model) { $0.fill = .solid(blue) }
+        #expect(model.hasUnsavedChanges)
+        let swatched = model.document.background
+        try change(model) { $0.shadow.toggle() }
+        #expect(model.hasUnsavedChanges)
+        let shadowed = model.document.background
+        try change(model) { $0.aspect = .square }
+        #expect(model.hasUnsavedChanges)
+        model.markSaved()
+        #expect(!model.hasUnsavedChanges)
+
+        model.undoManager.undo()
+        #expect(model.document.background == shadowed)
+        #expect(model.hasUnsavedChanges)
+        model.undoManager.undo()
+        #expect(model.document.background == swatched)
+        model.undoManager.undo()
+        #expect(model.document.background == start)
+    }
+
+    /// phase-7c :143, phase-7c :165. For every aspect ratio the canvas the editor shows has the export's size, and
+    /// with a crop the ratio is laid out from the crop's size.
+    @Test func theShownCanvasHasTheExportsSizeForEveryAspect() async throws {
+        for aspect in BackgroundAspect.allCases {
+            let model = makeModel()
+            var style = solid(red)
+            style.aspect = aspect
+            model.setBackground(style)
+            let shown = try #require(model.shownBackground)
+            let export = try await model.renderExport()
+            #expect(shown.canvasRect.size == CGSize(width: export.image.width, height: export.image.height), "\(aspect)")
+        }
+
+        let model = makeModel()
+        model.tool = .crop
+        model.cropDraft = CGRect(x: 2, y: 3, width: 10, height: 8)
+        model.applyCrop()
+        var style = solid(red)
+        style.aspect = .sixteenNine
+        model.setBackground(style)
+        let shown = try #require(model.shownBackground)
+        let export = try await model.renderExport()
+        let layout = try #require(BackgroundLayout.make(contentSize: CGSize(width: 10, height: 8), style: style, scale: 2))
+        #expect(shown.contentRect == CGRect(x: 2, y: 3, width: 10, height: 8))
+        #expect(shown.canvasRect.size == layout.canvasSize)
+        #expect(CGSize(width: export.image.width, height: export.image.height) == layout.canvasSize)
+    }
+
+    /// phase-7c :147, phase-7c :150. A tall capture (14,000 px, as a scrolling capture of `tall.html`) takes a
+    /// background and exports with the padding; an 18,000 px one does not until a crop brings the content
+    /// under the limit. Undo after that takes the background step first (the line's first outcome), then the
+    /// crop, and the bare capture still exports.
+    @Test func aBackgroundFitsTallContentAndACropUnderTheLimit() async throws {
+        let style = solid(red)
+        let tall = makeModel(width: 10, height: 14_000, scale: 2)
+        #expect(tall.backgroundFits(style))
+        tall.setBackground(style)
+        let tallExport = try await tall.renderExport()
+        #expect(tallExport.image.width == 10 + 16)
+        #expect(tallExport.image.height == 14_000 + 16)
+
+        let taller = makeModel(width: 10, height: 18_000, scale: 2)
+        #expect(!taller.backgroundFits(style))
+        taller.tool = .crop
+        taller.cropDraft = CGRect(x: 0, y: 0, width: 10, height: 10_000)
+        taller.applyCrop()
+        #expect(taller.backgroundFits(style))
+        taller.setBackground(style)
+        let croppedExport = try await taller.renderExport()
+        #expect(croppedExport.image.height == 10_000 + 16)
+
+        taller.undoManager.undo()
+        #expect(taller.document.background == nil)
+        #expect(taller.document.crop != nil)
+        taller.undoManager.undo()
+        #expect(taller.document.crop == nil)
+        let bareExport = try await taller.renderExport()
+        #expect(bareExport.image.height == 18_000)
+    }
+
+    /// phase-7c :158, phase-7c :164. With a background on, the Crop tool hides it (the handles work on the whole
+    /// capture); Escape (`cancelCrop`) brings it back around the whole capture; an applied crop is framed; and
+    /// undoing the crop frames the whole capture again, with the background still on.
+    @Test func theCropToolHidesTheBackgroundAndCancelOrUndoReturnsItAroundTheWholeCapture() {
+        let model = makeModel()
+        model.setBackground(solid(red))
+        let whole = CGRect(x: 0, y: 0, width: 16, height: 16)
+        let crop = CGRect(x: 2, y: 2, width: 8, height: 8)
+
+        model.tool = .crop
+        #expect(model.shownBackground == nil)
+        #expect(model.cropDraft == whole)
+        model.cropDraft = crop
+        model.cancelCrop()
+        #expect(model.shownBackground?.contentRect == whole)
+
+        model.tool = .crop
+        model.cropDraft = crop
+        model.applyCrop()
+        #expect(model.shownBackground?.contentRect == crop)
+        model.undoManager.undo()
+        #expect(model.document.crop == nil)
+        #expect(model.document.background != nil)
+        #expect(model.shownBackground?.contentRect == whole)
+    }
 }

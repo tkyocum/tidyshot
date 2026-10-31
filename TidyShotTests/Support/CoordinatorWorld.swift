@@ -50,7 +50,8 @@ final class CoordinatorWorld {
     let recording: RecordingTestWorld
     let driver: FakeRecordingDriver
     let chrome: FakeRecordingChrome
-    let microphones = FakeMicrophoneDevices()
+    /// The coordinator's microphones; a test sets others before `makeCoordinator()`.
+    var microphones: any MicrophoneDevices = FakeMicrophoneDevices()
     /// The coordinator's cameras; a test sets others before `makeCoordinator()`.
     var cameras: any CameraDevices = FakeCameraDevices()
 
@@ -140,6 +141,18 @@ final class CoordinatorWorld {
     func removeAll() {
         try? FileManager.default.removeItem(at: root)
         defaults.removePersistentDomain(forName: suiteName)
+    }
+
+    /// `<root>/Saved/`, stored as the save location's folder (`SaveLocation.store`, where Settings >
+    /// General's Choose… lands), so a save-folder file is reached as in the app: a recording moves
+    /// there, Delete removes from there, and an upload reads from there under the folder's scope. The
+    /// folder panel is never built. Store it before anything a test drives asks for the folder.
+    @discardableResult
+    func storeSaveFolder() throws -> URL {
+        let folder = root.appending(path: "Saved", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try saveLocation.store(folder)
+        return folder
     }
 
     /// A sparse file of `byteCount` bytes at `url`, its folder made.

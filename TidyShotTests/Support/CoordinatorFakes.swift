@@ -10,8 +10,8 @@ final class FakeNotifier: Notifying {
         case setUp
         case saved(title: String, file: String)
         case uploaded(url: URL, copied: Bool)
-        case error(title: String, message: String)
-        case notice(title: String, body: String)
+        case error(title: String, message: String, subtitle: String? = nil)
+        case notice(title: String, body: String, subtitle: String? = nil)
         case held
         case released
         case waited(Duration)
@@ -22,7 +22,7 @@ final class FakeNotifier: Notifying {
     /// The `notifyError` calls, in order.
     var errors: [(title: String, message: String)] {
         calls.compactMap { call -> (title: String, message: String)? in
-            guard case .error(let title, let message) = call else { return nil }
+            guard case .error(let title, let message, _) = call else { return nil }
             return (title, message)
         }
     }
@@ -36,11 +36,11 @@ final class FakeNotifier: Notifying {
     func notifyUploaded(url: URL, copied: Bool) { calls.append(.uploaded(url: url, copied: copied)) }
 
     func notifyError(_ message: String, title: String, subtitle: String?, revealing fileURL: URL?) {
-        calls.append(.error(title: title, message: message))
+        calls.append(.error(title: title, message: message, subtitle: subtitle))
     }
 
     func notify(title: String, body: String, subtitle: String?, openURL: URL?) {
-        calls.append(.notice(title: title, body: body))
+        calls.append(.notice(title: title, body: body, subtitle: subtitle))
     }
 
     func holdNotices() { calls.append(.held) }
@@ -312,6 +312,32 @@ final class HeldCameraDevices: CameraDevices {
     func list() -> [CameraDevice] { [] }
     func preferred() -> CameraDevice? { nil }
     func access() -> CameraAccess { currentAccess }
+
+    func requestAccess() async -> Bool {
+        requestCount += 1
+        return await prompt.wait()
+    }
+
+    func answer(_ granted: Bool) {
+        currentAccess = granted ? .authorized : .denied
+        prompt.resume(granted)
+    }
+}
+
+/// Microphones whose access prompt stays open until `answer(_:)`, as `HeldCameraDevices` does for the
+/// camera. A prompt whose task is cancelled ends as refused, and a second prompt while one is open is
+/// recorded as an issue and refused at once.
+final class HeldMicrophoneDevices: MicrophoneDevices {
+    var currentAccess = MicrophoneAccess.notDetermined
+    private(set) var requestCount = 0
+    private let prompt = SingleWaiter(cancelled: false,
+                                      secondEntry: "HeldMicrophoneDevices was asked again while its prompt was open")
+
+    var isAsking: Bool { prompt.isWaiting }
+
+    func list() -> [MicrophoneDevice] { [] }
+    func defaultDevice() -> MicrophoneDevice? { nil }
+    func access() -> MicrophoneAccess { currentAccess }
 
     func requestAccess() async -> Bool {
         requestCount += 1

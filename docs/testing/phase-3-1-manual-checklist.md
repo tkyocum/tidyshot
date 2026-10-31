@@ -32,13 +32,21 @@ Recent Captures shows `Saved` or `Failed`, the submenu row shows no suffix or "�
 - [ ] The row under the mouse is highlighted; the menu highlight never sticks to a row the mouse has left.
 - [ ] With VoiceOver on (`⌘F5`), moving through the submenu reads each row's name and time, with "Uploading" or "Upload failed" when shown, never a blank item. Keyboard navigation inside a row (reaching its buttons with the arrow keys or Tab) is out of scope for Phase 3.1; do not fail the checklist on it.
 - [ ] Clicking an uploaded row closes the menu and puts the URL on the clipboard; clicking a never-uploaded row puts the file there (paste in Finder makes a copy).
+  (suite, in part: CoordinatorRecordActionsTests.copyLinkOrFileCopiesTheLinkEachTimeOrTheSavedFile; by hand: the menu
+  closing)
 - [ ] The link button is greyed out on a never-uploaded row; on an uploaded row it closes the menu and copies the URL.
 - [ ] The photo button on a saved capture closes the menu, posts "Image copied", and Notes pastes the image at point size, not double.
 - [ ] The photo button on an upload-only capture (no local file) posts "Copying image…", then "Image copied", and the paste works; with Wi-Fi off it posts "Could not copy image" with the reason.
+  (suite: CoordinatorRecordActionsTests.copyImageReadsTheFileOrDownloadsTheObject,
+  .aCopyImageWhoseDownloadFailsSaysCouldNotCopyImage)
 - [ ] On a capture made before Phase 3 whose file was deleted from the save folder (or move its file out of the folder for this item and put it back afterwards), the photo button stays enabled; pressing it posts "Could not copy image" with "The local file could not be read." (a capture from before Phase 3 has no stored bucket location to download from).
+  (suite: CoordinatorRecordActionsTests.copyImageOfAMissingFileWithNoUsableUploadSaysTheFileCouldNotBeRead,
+  RecentCaptureFormattingTests.buttonsFollowWhatTheCaptureHas)
 - [ ] Rename the file of a capture that was saved but never uploaded (in Finder, in the save folder), then press its photo button: "Could not copy image" with "The local file could not be read." Rename it back.
+  (suite: CoordinatorRecordActionsTests.copyImageOfAMissingFileWithNoUsableUploadSaysTheFileCouldNotBeRead)
 - [ ] The trash button closes the menu and shows the delete alert (see Delete); after Delete the row is gone the next time the menu opens.
-- [ ] With an empty history the submenu shows a greyed "No captures yet".
+- [ ] With an empty history the submenu shows a greyed "No captures yet". (suite:
+  RecentCapturesMenuTests.anEmptyHistoryShowsOneDisabledNoCapturesYet)
 
 ## Preview
 - [ ] Moving onto a thumbnail shows the capture in a rounded panel above the menu, level with the row, at most 560 by 420 points, on the side of the submenu away from the status menu (on its right when it opened to the right of the menu); the menu stays open and the frontmost app stays active.
@@ -54,8 +62,12 @@ Recent Captures shows `Saved` or `Failed`, the submenu row shows no suffix or "�
   (suite: CaptureDeletionTests.confirmationTextIsOneLine, .confirmationTextSaysWhenTheObjectStays)
 - [ ] Wi-Fi off, Delete on an uploaded capture: a second alert, "Couldn't delete it from storage: …" with "Remove it from history anyway? The object stays in the bucket." and Remove (red) and Cancel. Cancel keeps the capture. Delete again, Remove: the row and thumbnail go, the file in the save folder stays, and with Wi-Fi back on `curl -I <url>` still gives 200.
 - [ ] Wi-Fi off, capture in upload-only mode: the row shows "· Upload failed" and `pending/<UUID>.png` exists. Delete: the line reads "Removes it from history."; there is no second alert; the row, the thumbnail and `pending/<UUID>.png` go.
+  (suite: CoordinatorDeleteTests.aFailedUploadOnlyCaptureIsDeletedWithOneQuestionAndNoDelete,
+  CaptureDeletionTests.confirmationTextIsOneLine)
 - [ ] Upload-only mode, Network Link Conditioner on a low-bandwidth profile (a custom profile with a few hundred Kbps uplink), take a large fullscreen capture. Once the overlay's progress bar has started moving (HEAD has passed and the key is reserved), switch the profile to 100% loss. Within about two minutes, press Delete (trash button or overlay). The line reads "Removes it from object storage and from history.". After about a minute, the second alert "Couldn't delete it from storage: …" appears. Press Cancel: the row now shows "· Upload failed" and `pending/<UUID>.png` is still there. Press Delete again and confirm; the second alert appears after the timeout. Press Remove: the row and the thumbnail go, and `pending/<UUID>.png` is gone. (Do not start at 100% loss: HEAD then never answers, no key is reserved, and Delete removes the pending file with no second alert. Do not use Wi-Fi off here either: the three attempts give up in about 3 s and clear the reserved key.)
+  (suite: CoordinatorDeleteTests.aRemoteDeleteFailureDuringAnUploadKeepsTheRecordUntilRemoveFromHistory)
 - [ ] Forget Credentials, then Delete on an uploaded capture: the second alert says "Couldn't delete it from storage: No credentials are saved in Settings > Upload." Re-enter the credentials.
+  (suite: CoordinatorDeleteTests.aDeleteThatCannotReachStorageAsksToRemoveFromHistory)
 - [ ] Choose another save folder in Settings > General, quit and relaunch, then Delete an uploaded capture saved before the change: a second alert, "Couldn't delete the file: …" with "Remove it from history anyway? The file stays where it is." and Remove (red) and Cancel; the object is already gone (`curl -I <url>` gives 403 or 404). Cancel keeps the capture. Delete again, Remove: the row and thumbnail go and the file stays in the old folder. Choose the old folder again.
 - [ ] Network Link Conditioner at 100% loss, Delete on an uploaded capture, then open the TidyShot menu and keep it open until the request times out (about a minute): no alert opens over the menu; the second alert appears once the menu closes.
 - [ ] Network Link Conditioner at 100% loss, Delete on an uploaded capture, then the trash button in the overlay and in the submenu for the same capture while the request hangs: no second "Delete this capture?" alert appears; the storage-failure alert after the request times out is expected.
@@ -67,9 +79,11 @@ Recent Captures shows `Saved` or `Failed`, the submenu row shows no suffix or "�
   the upgrade over a real Phase 3 container, the two Settings tabs and the real upload's key stay by hand)
 - [ ] Again with the Phase 3 build, set the file name template to `{app}` alone. After launching this build Settings > General shows the default template, and `log show --last 5m --predicate 'process == "TidyShot"' | grep "Naming template"` shows one line with the old template; quitting and relaunching adds no second line. No notification is posted.
 - [ ] The token captions in Settings > General and Settings > Upload list `{date} {year} {month} {day} {time} {datetime} {hostname} {counter} {random} {random:8}`.
+  (suite: TemplateExpanderTests.theTokenListNamesEveryToken)
 - [ ] An empty Endpoint and Public URL each show a grey "Required"; the example sits on its own caption line under each field.
 - [ ] Both example captions are grey like the other captions, URL included (not a blue link), and clicking one opens nothing.
 - [ ] Save and Test Connection with correct settings reports exactly "Upload and public read both work." with no URL after it; a wrong secret still reports "Upload failed: …".
+  (suite: ConnectionTesterTests.readableSummaryDoesNotEchoTheProbeURL, .uploadFailedWhenPutIsRejected)
 - [ ] The Settings window is 600 by 800 points and fits on the screen with its toolbar. With the key template's orange warning showing, the Upload tab scrolls, and scrolling reaches everything down to the Save buttons and the status line under them.
 
 ## Crosshair

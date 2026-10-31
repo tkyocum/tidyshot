@@ -283,4 +283,97 @@ struct CoordinatorRecordingTests {
         #expect(atWait?.phase == .idle)
         #expect(atWait?.stops == 1)
     }
+
+    /// recording-r2 :364, in part. With microphone access undecided and another capture holding the lock (an area
+    /// selection, a self-timer countdown, a scrolling capture), a record press shows no prompt and starts
+    /// nothing, and the capture goes on. By hand: the press once the capture is done, which prompts and then
+    /// makes the live `tmp/Recording`, and that nothing is logged.
+    @Test func aRecordPressDuringACaptureWithAccessUndecidedShowsNoPrompt() async throws {
+        defer { world.removeAll() }
+        world.settings.recordingMicrophone = MicrophoneChoice.systemDefaultValue
+        let microphones = FakeMicrophoneDevices(access: .notDetermined)
+        world.microphones = microphones
+        let coordinator = world.makeCoordinator()
+        let gate = TestGate()
+        let lock = Task { await coordinator.withCaptureLock(coversDesktop: false) { await gate.wait() } }
+        try await eventually { gate.isWaiting }
+
+        let press = TaskWatch(Task { await coordinator.recordFullscreen() })
+        try await eventually { press.hasReturned }
+
+        #expect(microphones.requestCount == 0)
+        #expect(coordinator.askingPermission == nil)
+        #expect(coordinator.isCapturing)
+        #expect(coordinator.recordingPhase == .idle)
+        #expect(world.notifier.calls.isEmpty)
+        gate.open()
+        _ = await lock.value
+    }
+
+    /// recording-r3 :155. A GIF start asks for the camera (the bubble applies to GIF) and never for the microphone,
+    /// though one is set. A quit while the camera prompt is up ends the start before the capture lock.
+    @Test func aGIFStartAsksForTheCameraAndNotTheMicrophone() async throws {
+        defer { world.removeAll() }
+        world.settings.recordingFormat = .gif
+        world.settings.recordingMicrophone = MicrophoneChoice.systemDefaultValue
+        world.settings.recordingWebcamBubble = true
+        world.settings.hideDesktopIconsWhileCapturing = false
+        let microphones = FakeMicrophoneDevices(access: .notDetermined)
+        world.microphones = microphones
+        let cameras = HeldCameraDevices()
+        world.cameras = cameras
+        let coordinator = world.makeCoordinator()
+
+        let start = TaskWatch(Task { await coordinator.recordFullscreen() })
+        try await eventually { cameras.isAsking }
+        #expect(coordinator.askingPermission == .camera)
+        #expect(microphones.requestCount == 0)
+
+        // The quit makes the start give up once the prompt is answered: no lock, no `tmp/Recording`. It returns
+        // while the prompt is up only because nothing records yet; gated, so a start that locked or counted in
+        // first fails here instead of hanging, and the deferred answer frees the start either way (D31).
+        do {
+            defer { cameras.answer(false) }
+            let quit = TaskWatch(Task { await coordinator.finishRecordingForQuit() })
+            try await eventually { quit.hasReturned }
+        }
+        try await eventually { start.hasReturned }
+        #expect(cameras.requestCount == 1)
+        #expect(microphones.requestCount == 0)
+        #expect(!coordinator.isCapturing)
+        #expect(world.notifier.calls == [.waited(.seconds(1))])
+    }
+
+    /// recording-r2 :351, the held prompt's part (a B line, left unmarked, D15). With the microphone prompt up, a
+    /// second record press asks nothing, every capture is refused for the prompt, and a quit before the answer
+    /// starts nothing. The disabled menu items, the dropped URL command's log line and the recording that
+    /// starts after the answer stay with the line's seams.
+    @Test func aSecondRecordPressWhileTheMicrophonePromptIsUpAsksNothingAndAQuitStartsNothing() async throws {
+        defer { world.removeAll() }
+        world.settings.recordingMicrophone = MicrophoneChoice.systemDefaultValue
+        let microphones = HeldMicrophoneDevices()
+        world.microphones = microphones
+        let coordinator = world.makeCoordinator()
+
+        let first = TaskWatch(Task { await coordinator.recordFullscreen() })
+        try await eventually { microphones.isAsking }
+        #expect(coordinator.askingPermission == .microphone)
+        #expect(coordinator.capturesRefused)
+        #expect(coordinator.captureRefusal == .permissionPrompt(.microphone))
+
+        let second = TaskWatch(Task { await coordinator.recordScreen() })
+        try await eventually { second.hasReturned }
+        #expect(microphones.requestCount == 1)
+
+        // Gated as the GIF test's quit is (D31).
+        do {
+            defer { microphones.answer(false) }
+            let quit = TaskWatch(Task { await coordinator.finishRecordingForQuit() })
+            try await eventually { quit.hasReturned }
+        }
+        try await eventually { first.hasReturned }
+        #expect(!coordinator.isCapturing)
+        #expect(coordinator.askingPermission == nil)
+        #expect(world.notifier.calls == [.waited(.seconds(1))])
+    }
 }
