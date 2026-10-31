@@ -98,11 +98,14 @@ Open any capture in the editor, click Background.
   hand)
 - [ ] A drag cut short by the popover closing: start a Padding drag, hold the button, press Escape or click outside the popover (if it closes under a held drag). The new padding is kept as one step: one ⌘Z undoes it. Write down what happened if the popover does not close under a held drag.
 - [ ] A swatch click, the Shadow toggle and an Aspect Ratio change are each one step. Make one of each, then ⌘Z three times: they undo in reverse, one at a time.
+  (suite: EditorBackgroundExportTests.aSwatchTheShadowAndAnAspectAreThreeStepsThatDirtyTheEditor)
 - [ ] Solid colour: choose the Solid Colour swatch (one step), then drag in the colour panel through several colours. All the colour changes with nothing between them are one step: one ⌘Z returns to the fill before the first of them. Pick Padding, then another colour: that colour is a new step.
   (suite: EditorBackgroundExportTests.solidColourRunIsOneUndoStep)
 - [ ] Undo then redo with the popover open: the popover's controls follow (the ring moves, the sliders move).
 - [ ] After an undo that removes the background, the popover's switch is off.
-- [ ] The editor is dirty after any of these (the title shows the edited mark) and clean after Save.
+- [ ] The editor is dirty after any of these (the title shows the edited mark) and clean after Save. (suite, in part:
+  EditorBackgroundExportTests.aSwatchTheShadowAndAnAspectAreThreeStepsThatDirtyTheEditor; by hand: the title's edited
+  mark)
 
 ## The colour panel
 - [ ] With Solid Colour chosen, click its swatch (the colour well). The system colour panel opens. Drag in its wheel: the editor's preview follows live. Type a hex value in the panel's sliders tab: it follows.
@@ -166,21 +169,31 @@ For the 1200 x 800 pt capture (2400 x 1600 px), Padding 48 (a 2592 x 1792 px min
 - [ ] A capture already wider than 16:9 (a wide strip, say 1600 x 200 pt): 16:9 grows its height, not its width. (suite:
   BackgroundLayoutTests.eachRatioGrowsTheHeightOfWideContent)
 - [ ] The preview matches the export for every ratio: the canvas in the editor has the same proportions as the saved file, and the fill covers it all.
-- [ ] Aspect Ratio changes while Zoom to fit is on: the canvas refits to the window.
+  (suite: EditorBackgroundExportTests.theShownCanvasHasTheExportsSizeForEveryAspect,
+  .baseImageViewPlacesTheBackgroundLayers)
+- [ ] Aspect Ratio changes while Zoom to fit is on: the canvas refits to the window. (suite:
+  CanvasFitTests.theFitFramesTheBackgroundsCanvasAndRefitsOnAnAspectChange)
 
 ## The limit
 - [ ] Scrolling capture of `tall.html` (⌃⇧5, Start, scroll, Done) to about 7,000 pt (14,000 px on a 2x display; check with `sips`), open in the editor: the Background popover's switch works, the preview is on, and Save As… writes the file with the padding added.
+  (suite: EditorBackgroundExportTests.aBackgroundFitsTallContentAndACropUnderTheLimit)
 - [ ] A second scrolling capture of about 9,000 pt (18,000 px): open it in the editor. The popover's switch is dimmed and off, with the caption `Backgrounds work on images up to 16,384 px.`; it cannot be turned on.
 - [ ] Near the limit: scroll to a capture of between 16,000 and 16,384 px tall. The switch works, the export is the content plus the padding, and the preview shows the fill. Write down the time Save As… takes (the probe measured 442 ms for 3094 x 16000).
 - [ ] Crop a 18,000 px capture to 10,000 px tall, then open the popover: the switch works now (the limit is on the content, the crop), and undoing the crop turns the background off or makes the export fail with `The background could not be drawn.`. Write down which happened.
+  (suite: EditorBackgroundExportTests.aBackgroundFitsTallContentAndACropUnderTheLimit)
 
 ## The preview
 - [ ] The editor preview's drop shadow. With Shadow on, the preview shows a shadow under the capture that matches the export's: same softness, same downward offset, same darkness, and rounded to the same corner. Save As… the file and open it in Preview beside the editor at the same size; compare. Zoom the editor in and out (⌘=, ⌘-, ⌘1): the shadow scales with the image. Shadow off: no shadow in the preview.
 - [ ] The preview's rounded corners match the export's at Corner Radius 0, 12 and 40.
 - [ ] The preview fill sits behind the capture and extends past it by the padding; the capture is not stretched. Annotations drawn near the capture's edge (a rectangle that touches it, a highlighter stroke that crosses it) are clipped to the round corners, and annotations never draw on the padding.
 - [ ] Draw annotations with a background on: a redact, a blur, a pixelate, a text and an arrow. They land on the capture where you point, with the cursor on the capture, not offset by the padding. Select, move and resize one.
+  (suite: CanvasFitTests.aPointerOnTheCaptureMapsToItsPixelWithABackground)
 - [ ] Zoom to fit (⌘0) fits the whole canvas, and the canvas stays fitted while the window resizes. Actual size (⌘1) shows the canvas at the capture's natural scale. Pan with Space and drag.
+  (suite: CanvasFitTests.theFitFramesTheBackgroundsCanvasAndRefitsOnAnAspectChange,
+  .aSpaceDragStopsTheFitOnResizeAndFitToViewBringsItBack)
 - [ ] Pick the Crop tool: the preview's background hides and the whole capture shows with the crop handles, as in 4b. Return applies the crop; the background frames the crop. Escape cancels: the background returns around the whole capture.
+  (suite: EditorBackgroundExportTests.theCropToolHidesTheBackgroundAndCancelOrUndoReturnsItAroundTheWholeCapture,
+  .shownBackgroundFramesTheCropInImagePixels)
 - [ ] A drag of a Padding slider on a large capture (5120 x 2880 px) is smooth. Write down any lag.
 - [ ] Dark mode and light mode: the popover and the sheet are legible in both.
 
@@ -188,7 +201,10 @@ For the 1200 x 800 pt capture (2400 x 1600 px), Padding 48 (a 2592 x 1792 px min
 - [ ] Crop a capture to a part (Crop tool, Return), then turn the background on. The canvas frames the crop, not the whole capture, and nothing outside the crop shows. Save As…: the file is the crop plus padding (for a 1000 x 600 pt crop at 2x and padding 48: 2192 x 1392 px).
   (suite: EditorBackgroundExportTests.backgroundFramesTheCrop, .shownBackgroundFramesTheCropInImagePixels)
 - [ ] Background first, then crop: the crop's handles work on the whole capture while the Crop tool is open; after applying, the background re-frames the crop. Undo the crop: back to the whole capture, with the background still on.
-- [ ] Aspect Ratio 16:9 with a crop: the ratio applies to the crop's size.
+  (suite: EditorBackgroundExportTests.theCropToolHidesTheBackgroundAndCancelOrUndoReturnsItAroundTheWholeCapture,
+  .shownBackgroundFramesTheCropInImagePixels)
+- [ ] Aspect Ratio 16:9 with a crop: the ratio applies to the crop's size. (suite:
+  EditorBackgroundExportTests.theShownCanvasHasTheExportsSizeForEveryAspect)
 
 ## Copy, Save, Save As… and Upload
 With a background on, Padding 48, a visible fill.
@@ -224,6 +240,8 @@ Settings > Capture > `Add background to window captures` on, with a style you ca
 - [ ] With the setting off and the editor's background off, a window capture, an area capture and an edit's Save are as before: the same sizes, no padding.
 - [ ] Phase 7b: Capture Text and Hide desktop icons still work, and a window capture with Hide desktop icons on and the background setting on has the picture, not icons, in a desktop-picture fill.
 - [ ] An old capture's editor, opened with no background ever set, looks as before (no extra layers, no change in Fit).
+  (suite: CanvasFitTests.theFitFramesTheBackgroundsCanvasAndRefitsOnAnAspectChange,
+  EditorBackgroundExportTests.noBackgroundExportsTheCaptureAsBefore, .baseImageViewPlacesTheBackgroundLayers)
 - [ ] ⌃⇧1 to ⌃⇧6, the overlay, pins and URL commands behave as in the Phase 6b checklist.
 
 ## Observations

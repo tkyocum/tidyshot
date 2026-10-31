@@ -59,24 +59,30 @@ write to, its public URL base (for example `https://snap.tky.io/`), and an acces
 
 ## Overlay
 - [ ] Panel appears in the chosen corner of the display under the mouse, 16 pt from the edges, without taking focus from the frontmost app.
-- [ ] Progress ring moves during a large (fullscreen Retina) upload, then shows the checkmark and URL.
-- [ ] "Copy URL" puts the URL on the clipboard again after something else was copied.
+- [ ] Progress ring moves during a large (fullscreen Retina) upload, then shows the checkmark and URL. (suite:
+  CoordinatorUploadTests.anUploadShowsItsFractionOnTheCardThenUploaded, QuickAccessModelTests.uploadingShowsTheFraction,
+  .uploadedSaysWhetherTheLinkWasCopied)
+- [ ] "Copy URL" puts the URL on the clipboard again after something else was copied. (suite:
+  CoordinatorRecordActionsTests.copyLinkOrFileCopiesTheLinkEachTimeOrTheSavedFile)
 - [ ] Clicking the thumbnail reveals the file in Finder.
 - [ ] Auto-close happens 5 s after the upload finishes; with the pointer over the card when the time runs out, the 5 s
   start again; after the pointer leaves, the card closes when the current 5 s run out.
 - [ ] Auto-close 0 keeps the panel until the X is clicked.
-- [ ] Settings > Overlay off: no panel, uploads still work.
+- [ ] Settings > Overlay off: no panel, uploads still work. (suite:
+  CoordinatorSaveTests.aCaptureWithTheOverlayOffShowsNoCardAndStillUploads)
 - [x] A second capture replaces the panel with the new capture. (obsolete: with the default settings cards stack newest
   first since Phase 6a; a new capture replaces the old one only with `Show up to 1 overlay`)
 
 ## Failures and history
 - [ ] Turn Wi-Fi off, capture: the file is saved, the overlay shows "Upload failed" with Retry, a notification appears, Recent Captures shows the item as `Failed`, nothing is on the clipboard unless "Also copy image" is on.
-- [ ] Turn Wi-Fi on, click Retry in the overlay: the upload succeeds and the URL is copied.
+- [ ] Turn Wi-Fi on, click Retry in the overlay: the upload succeeds and the URL is copied. (suite:
+  CoordinatorUploadTests.aScreenshotsURLReplacesTheClipboardEvenAfterACopyElsewhere)
 - [ ] Recent Captures > Retry Failed Uploads retries every `Failed` item. (suite:
   CoordinatorUploadTests.retryFailedUploadsSaysOnceWithoutCredentialsAndEnqueuesWithThem,
   UploadRefusalTests.retryFailedUploadsLeavesOutMarkedAndDeletingRecords)
 - [ ] Clicking an uploaded Recent Captures row copies its URL; clicking a row that was never uploaded copies the file
-  (paste in Finder makes a copy).
+  (paste in Finder makes a copy). (suite:
+  CoordinatorRecordActionsTests.copyLinkOrFileCopiesTheLinkEachTimeOrTheSavedFile)
 - [ ] Recent Captures rows show only the object or file name, the relative time, the size and the upload state in words,
   no emoji. (suite: RecentCaptureFormattingTests.nameIsTheObjectOrTheFileName,
   .detailIsTheRelativeTimeAndAnUnsettledState, .detailIsTheTimeAndTheSize, .detailIsTheTimeTheSizeAndEachUploadState)
@@ -91,3 +97,5 @@ write to, its public URL base (for example `https://snap.tky.io/`), and an acces
 - [ ] Quit, replace history.json with the text `not json`, relaunch: Recent Captures is empty, and `history.json.corrupt-<number>` next to it still holds `not json` after the next capture.
   (suite: HistoryStoreTests.corruptFileIsSetAsideNotOverwritten)
 - [ ] With captures older than a day in history, set retention to 1 day and take a capture without relaunching: the older items are gone from Recent Captures, their files are still on disk.
+  (suite: CoordinatorDeleteTests.retentionDropsOldRowsAndTheirThumbnailsButKeepsSaveFolderFilesAndUnsentUploads,
+  HistoryStoreTests.prunesRecordsOlderThanRetention)

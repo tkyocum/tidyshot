@@ -78,7 +78,7 @@ None. `project.yml` does not change; new test files are picked up by `xcodegen g
 
 ## 7. Tests summary
 
-2169 tests in 181 suites → 2272 in 191 (103 new test functions, 10 new suite files; a parameterized test counts once per argument in `xcodebuild`'s line, so the plan states the exact expected line after counting arguments).
+2169 tests in 181 suites → 2272 in 191 (103 new test functions, 10 new suite files; `xcodebuild`'s line counts a parameterized test once, whatever its arguments).
 
 ## 8. Hand checks
 
@@ -101,4 +101,40 @@ None. This phase adds tests and marks; it changes no behaviour. The existing che
 
 ## 11. Built notes
 
-(Written at close-out.)
+Built on `checklist-tests` from the plan `docs/superpowers/plans/2026-10-30-checklist-tests.md`. The suite reads
+`2272 tests in 191 suites` (2169 in 181, plus 103 test functions: 10 new suite files and 23 existing ones); write the
+last run's line here if it differs. `TidyShot/` and `project.yml` are unchanged.
+
+What was built differently from this design and from tests-A, each with its reason, is the plan's "Plan decisions"
+list, D1 to D31. In short:
+- Section 7 said a parameterized test counts once per argument; `xcodebuild` counts it once, as the baseline shows
+  (2169 `@Test` functions, 2169 tests), and section 7 now says so. The totals were right (D1).
+- Section 3's four fake extensions landed as written; `FakeNotifier.Call`'s subtitle is a defaulted value of `.error`
+  and `.notice`, so no existing test changed (D2). Two more support pieces landed with their first tests:
+  `CoordinatorWorld.storeSaveFolder()` (D5) and `HeldMicrophoneDevices`, with `world.microphones` an
+  `any MicrophoneDevices` (D4).
+- The three record-press tests press Record Fullscreen, since Record Screen's press reads `CaptureIntent.standard`
+  and so `AppSettings.shared` (D6). The quit-mode test still sees the destination read for an uploading action (D7).
+  The card's fraction is seen on a recording sent in parts, with a part held (D8).
+- The selection tests give the view a responder that keeps the keys it passes up, where the window would beep (D10).
+- The marks name every test that pins a part of the line, the existing D ones too (D13). 148 lines are marked, 15 of
+  them in part; recording-r2 351, part of a B line, has none (D15). phase-2 51 is marked in full on PR #28's corrected
+  text (D14), and recording-r2 312, phase-4a 108, phase-6a 215 and recording-r4 330 are marked in part though
+  tests-A counted them in full (D16). phase-3 31 has obsolete-E's corrected text, and phase-3 26's mark names its D
+  half (D17).
+- A call that only a regression would leave waiting is gated too: the two quits under a held prompt, and the saves
+  that would open the folder panel if a recording were sent to the save folder by mistake (D31).
+- R4's calls G and H are covered, so the harness design's section 8 and its built notes read A to H again.
+- The quit-mode test (recording-r1 332) went through a fix round after review: it also saves once in quit mode with no
+  folder stored, gated so a regression that opens the folder panel fails it, and it pins the file kept in `pending/`,
+  the record's interrupted state for `.upload` and the clipboard rule. The quit itself, a folder panel open at the quit
+  and `.upload`'s `Upload failed` and Retry after the relaunch stay by hand, so that line is marked in part and not in
+  full as the plan's script had it (a fifth line besides D16's four).
+- Six tests that already existed were extended or replaced in place, not added: `removingARecordClearsItsBookkeeping`
+  (now also the latest capture and the card closing, phase-4a 53), `aFailureWithResumeDataKeepsItWithTheSigningTime`
+  (the clock moves while the download is held), `anOrphanMP4IsAdoptedWithItsLength` (the coordinator-harness 52
+  expectations), `aSelectedCounterShowsAndTakesTheColour`, `uploadFailedWhenPutIsRejected` and
+  `aFileAtTheThresholdGoesMultipart` (the part digests). Every other task's blocks and anchors landed as the brief
+  quoted them.
+
+Hand checks: none (section 8). The checklists' marks are the record.

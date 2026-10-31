@@ -167,6 +167,7 @@ says.
   (suite, in part: EditorModelTests.sizeEnableRule, EditorPaletteTests.standardDefaultsAreRedBlackFourEightTen; the
   `Small`, `Medium`, `Large` labels are not asserted and stay by hand)
 - [ ] `Line width` is always enabled. With a spotlight or a counter selected it changes only the default (the selected one does not change), and no undo step is added.
+  (suite: EditorModelTests.lineWidthWithASpotlightOrCounterSelectedChangesOnlyTheDefault)
 - [ ] The Colour button is dimmed for Spotlight with nothing selected, and while a spotlight is selected, so the palette cannot quietly change the stroke colour. It is enabled with Select and a counter selected, with Arrow and with Crop. It is enabled with Spotlight as the tool and a counter selected.
   (suite: EditorModelTests.colorAppliesRule, .aSelectedCounterShowsAndTakesTheColour)
 - [ ] Options popover layout: every label (`Line width`, `Blur radius`, `Pixel block`, `Shape`, `Dim`, `Size`) shows on one line, right-aligned, with Spotlight, Counter and other tools active, and after drawing and selecting a spotlight and changing Dim. (Fixed 2026-10-23: `Line width` wrapped one letter per line once a spotlight was drawn.)
@@ -194,6 +195,7 @@ says.
 - [ ] The digits contrast with the fill: switch through the palette and place a counter in each colour. White digits on Black, Red, Blue, Purple and Pink; black digits on Orange, Yellow, Green, Teal and White. Pick a custom light grey in the colour panel: black digits. The number is centred across and down the circle.
   (suite: CounterTests.numberColourContrastsWithEverySwatch, .renderedNumberIsCentred)
 - [ ] With a counter selected, the Colour button's swatch shows its colour; a swatch from the palette recolours it (`Undo Color`) and the digits flip to suit. Counters placed afterwards use that colour (the stroke colour changed with it).
+  (suite: EditorModelTests.aSelectedCounterShowsAndTakesTheColour, CounterTests.numberColourContrastsWithEverySwatch)
 - [ ] Size: `Small`, `Medium`, `Large` set 24, 32 and 44 pt, times the capture scale (48, 64 and 88 px at 2x). With a counter selected, picking a Size resizes it about its centre as one step, `Undo Counter Size`, and sets the default for the next counters. Picking Size with nothing selected only changes the default.
   (suite: EditorModelTests.sizeOnASelectedCounterIsOneStepAboutItsCentre, .sizeWithNothingSelectedChangesOnlyTheDefault,
   .aNewCounterTakesTheSizeAndColourDefaults, EditorPaletteTests.standardDefaultsAreRedBlackFourEightTen)
@@ -206,17 +208,22 @@ says.
 - [ ] Counters 1 and 2 on the capture. Select counter 1 and press ⌘D: the copy is numbered 3 (`Undo Duplicate Counter`). An ⌥-drag of counter 2 with Select (counter 1 now lies mostly under its copy) shows the copy numbered 4 while you drag, and commits it as 4, leaving counter 2 as it was. ⌘C and ⌘V: the paste is numbered 5, selected (`Undo Paste Counter`). No number is ever repeated.
   (suite: CounterTests.duplicateOptionDragAndPasteEachTakeTheNextNumber)
 - [ ] Undo the paste, the ⌥-drag copy and the ⌘D copy in turn: the numbers return to 1 and 2. Redo restores each copy with its number. Undo the three again and place a counter: it is 3.
+  (suite: CounterTests.undoingCopiesReturnsTheNumbersAndRedoRestoresThem)
 - [ ] Start an ⌥-drag of counter 2 with Select and release Option before the mouse: the copy goes, and counter 2 itself follows the pointer, still numbered 2. Releasing the mouse moves it as one `Undo Move Counter` and uses no number: the next counter placed is 4.
   (suite: CanvasToolTests.optionReleasedMidDragShowsTheCounterWithItsOwnNumber, .optionReleasedMidDragMoves,
   CounterTests.nextNumberIsOneMoreThanTheLargest)
 - [ ] Three pastes of one counter (⌘C once, ⌘V three times): they land 10, 20 and 30 pt down and to the right of the original, as counters with the next three numbers, not stacked on the original.
   (suite: CounterTests.threePastesOfOneCounterCascade)
 - [ ] ⌘C a counter in one editor and ⌘V it twice in another editor open on a capture at a different scale (a 2x capture into a 1x one, and the other way): new numbers (the next ones in the target), a cascade, and the same point size as the source (a 64 px counter at 2x is 32 px at 1x).
+  (suite: CounterTests.aCounterPastedTwiceAcrossScalesTakesTheNextNumbersAtItsPointSize)
 - [ ] The same for a spotlight: ⌘D, ⌥-drag and ⌘C, ⌘V give `Duplicate Spotlight` and `Paste Spotlight`; a second paste lands one step further. A document with two spotlights has two holes in one dim.
+  (suite: EditorModelTests.everySpotlightEditIsOneNamedUndoStep,
+  SpotlightRenderingTests.overlappingSpotlightsLeaveTheirUnionUndimmed)
 
 ## Undo and redo of every new step name
 Each is one Edit > Undo entry named as below; ⌘Z restores the picture, ⇧⌘Z reapplies it, and the title shows the edited mark after each.
 - [ ] `Add Spotlight`, `Move Spotlight`, `Resize Spotlight`, `Duplicate Spotlight` (⌘D, and an ⌥-drag), `Paste Spotlight`.
+  (suite: EditorModelTests.everySpotlightEditIsOneNamedUndoStep, CanvasToolTests.spotlightDragCommitsAddSpotlight)
 - [ ] `Spotlight Shape`, `Spotlight Dim` (a run of clicks is one step) and `Counter Size`. (suite:
   EditorModelTests.shapeAndDimOnASelectedSpotlightAreOneStepEach, .aRunOfDimClicksIsOneStep,
   .sizeOnASelectedCounterIsOneStepAboutItsCentre)
@@ -268,6 +275,7 @@ top has it in `row 81`, 8 pt above the top of `row 82`.)
   (suite, in part: AppSettingsTests.aStoredCounterSizeOutsideTheStopsReadsAs32; the Size row's `Medium` label is not
   asserted, as on line 139, and stays by hand)
 - [ ] Dim does not carry into a new capture. Set 70 % on one capture's spotlight, then open another capture (or close the editor and open the same capture again): its first spotlight dims to 50 %, and `Dim` reads 50 % until a spotlight is there. Two editors open at once keep their own Dim.
+  (suite: EditorModelTests.spotlightDimStaysWithItsModel)
 - [ ] On a scratch capture, close an editor that has unsaved spotlights and counters: the usual unsaved-changes sheet appears, as for other annotations. After Save, reopening the capture gives a flat image: there is no layer to edit (the editable project format is not built).
 
 ## VoiceOver
@@ -276,6 +284,9 @@ top has it in `row 81`, 8 pt above the top of `row 82`.)
 - [ ] A counter reads `Counter <its number>` with no value: `Counter 1`, `Counter 2`, `Counter 3`. Delete counter 2, then read again: `Counter 1`, then `Counter 3`, matching the picture.
   (suite: CanvasAccessibilityTests.countersReadTheirOwnNumbers)
 - [ ] AXPress on an element selects it (not while a drag runs or Crop is active). With a crop applied, only annotations that reach into the crop are listed.
+  (suite, in part: CanvasAccessibilityTests.anAccessibilityPressSelectsAndTheCanvasActsOnTheSelection,
+  .anAccessibilityPressIsRefusedWithTheCropToolOrDuringADrag, .cropHidesAnnotationsOutsideIt; by hand: VoiceOver itself,
+  and the canvas's own list with a crop)
 
 ## Regression
 - [ ] The 4b checklist's toolbar, Ellipse, Line, Pencil, Highlighter, Text, Crop and accessibility sections still pass, with the extra two tools in the toolbar.

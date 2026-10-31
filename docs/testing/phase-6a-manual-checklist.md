@@ -151,6 +151,7 @@ Settings > Overlay > Show up to 5 overlays, auto-close 60 s so the cards stay wh
 - [ ] Right-click and Control-click open the card's context menu wherever you press: the thumbnail, the status text, the empty margin, the gap between the Annotate and Delete buttons, and the spot under the close badge (point at the card first so the badge shows). Both open the same menu, with another app frontmost, and neither starts a drag, closes the card or reveals a file (Control-click on the thumbnail must not reveal). If either fails to open the menu on some spot, write down where: the fix is a `hitTest(_:)` override in `QuickAccessCardDragSource` (the `QuickAccessCardDragView` in `TidyShot/Overlay/QuickAccessCardDragSource.swift`) that lets right-clicks and Control-clicks through to the SwiftUI context menu. It is a follow-up, not built in 6a. The `NSHostingView` menu fallback of Task 4 is not built either.
 - [ ] A click on the thumbnail reveals a save-folder file in Finder; on an upload-only card with no file it does nothing and nothing breaks. A click on a button does not start a drag.
 - [ ] Copy Image, from the context menu, with each kind of capture: a saved file; an uploaded capture that kept its file; an upload-only capture whose file is gone (a signed download runs; `Copying image…` is posted). Preview > File > New from Clipboard shows the same image, with the same pixel size as the file.
+  (suite: CoordinatorRecordActionsTests.copyImageReadsTheFileOrDownloadsTheObject)
 - [ ] Annotate from a card opens the editor and closes the card (not restorable, see below).
 
 ## Close and restore
@@ -169,7 +170,8 @@ Bind `Restore closed overlay:` to a combination for this section.
 - [ ] Delete a closed card's capture from Recent Captures: restore skips it. (suite, in part:
   ClosedOverlaysTests.popSkipsDeletedAndShownIds; the coordinator's record check and the restore itself stay by hand)
 - [ ] A restored card's Annotate opens the editor from the file or, for an uploaded upload-only capture, from the bucket (the same as the Annotate button in Recent Captures).
-- [ ] Quit and reopen: the list is empty and the menu item is disabled. Recent Captures still holds everything.
+- [ ] Quit and reopen: the list is empty and the menu item is disabled. Recent Captures still holds everything. (suite:
+  CoordinatorOverlayTests.aRelaunchForgetsClosedCardsButKeepsTheirRecords)
 
 ## Save As… and Copy Image from the card
 Keep another app (Safari) frontmost while you click the card.
@@ -188,6 +190,9 @@ Keep another app (Safari) frontmost while you click the card.
 - [ ] During a drag, `ls -R ~/Library/Containers/io.tky.tidyshot/Data/tmp/Drag` shows `<record id>/<name>.png` and `shasum -a 256` of it equals the source file's. The original in the save folder is untouched and stays where it was after every drop below.
 - [ ] A drag starts from the thumbnail, the status text, the link text and the empty margin of a card, shows the card's thumbnail as the drag image, and offers copy only (the green plus, never a move). A press on a button, the badge or the right column does not start a drag. A click without moving still works everywhere. Hold a drag over another app longer than the auto-close time: the card does not close under it.
 - [ ] Names: an uploaded capture's file is named like the end of its URL (`aSIS7.png` for `.../aSIS7.png`), so it matches the link on the clipboard; with the key template `shots/{random:6}` it is the last part only. A capture that was never uploaded is named like its Save As… suggestion. The key's name is kept after a restore too: close an uploaded upload-only card, restore it, wait for the quiet download, press on the card and `ls` its `Drag/<record id>` folder: the one file carries the key name (`aSIS7.png`), as does the file the receiver shows, not a name left from an earlier copy.
+  (suite: CoordinatorDragOutTests.aRestoredUploadOnlyCardsQuietDownloadIsNamedForItsKey,
+  DragFileNameTests.uploadedKeyNamesTheFile, .nestedKeyGivesItsLastComponent,
+  .withoutAKeyTheSaveAsSuggestionNamesTheFile)
 - [ ] Receivers. Use "Upload and copy URL" and wait for the upload to finish, then drag the card onto each receiver. Fill in the table: accepted (yes/no), the name the receiver shows, whether the image arrives whole (same pixel size), and whether a prompt about data from another app appears.
 
   | Receiver | Accepted | Name shown | Whole | Prompt |
@@ -220,7 +225,9 @@ Keep another app (Safari) frontmost while you click the card.
 - [ ] A stored area that lies partly beyond a display's edge after a resolution change is clipped to the display and captured.
   (suite: PreviousAreaTests.aRectPartlyOffItsDisplayIsClippedToIt, .aRectBetweenTwoDisplaysGoesToTheOneHoldingItsCentre)
 - [ ] An area that leaves less than 1 point on its display is reported as not on a connected display, not captured at zero size: with TidyShot quit, `defaults write io.tky.tidyshot lastAreaRect -data "$(printf '{"x":-0.4,"y":100,"width":1.2,"height":200}' | xxd -p | tr -d '\n')"` (a strip whose centre is on the main display's left edge, with 0.8 pt of it on the display; this needs the main display's left edge at x 0), reopen and press ⌃⇧6: `The previous area is not on a connected display.` titled `No previous area`, and no capture. Then `defaults delete io.tky.tidyshot lastAreaRect` again.
-- [ ] The menu item is disabled while a capture or a scrolling session runs, and ⌃⇧6 does nothing then.
+- [ ] The menu item is disabled while a capture or a scrolling session runs, and ⌃⇧6 does nothing then. (suite, in part:
+  CoordinatorCaptureTests.aCaptureWhileTheLockIsHeldReturnsAtOnceAndPostsNothing,
+  ShortcutsTests.aCaptureIsRefusedWhileAnotherRunsOrAPromptIsOpen; by hand: the menu item shown disabled)
 - [ ] Freeze does not apply: with freeze on, ⌃⇧6 still captures live (put the counter page under the stored area and check the counter in the image is not frozen from earlier).
 
 ## VoiceOver

@@ -225,7 +225,7 @@ New: `CoordinatorDragOutTests` (16), `CoordinatorUploadTests` (18), `Coordinator
 3. A `record-screen` URL still starts a selection and `urlRecordingStartPending` clears (a second `record-screen` right after the selection closes starts another): the one R4 line the harness leaves (test 53).
 4. The log lines of `stop-recording` in each phase (R4 checklist 178-186) stay as they were: the harness pins the state, not the `RecordingLog` text.
 
-And the R4 checklist lines the suite now covers are marked `(suite)` with the test's name, so Tim's remaining R4 run is shorter: lines 224-227, 230-263, 271-291 and the calls A to F, except the real bucket, CloudFront, `footprint`, the Wi-Fi toggle, the AWS console and the Clop run. The calls G and H stay with Tim: G's second Abort must fail after a first that answered 204, which needs a per-call `FakeDestination` script the harness does not add, and H's rereads need a read counter `readPart` does not have.
+And the R4 checklist lines the suite now covers are marked `(suite)` with the test's name, so Tim's remaining R4 run is shorter: lines 224-227, 230-263, 271-291 and the calls A to H, except the real bucket, CloudFront, `footprint`, the Wi-Fi toggle, the AWS console and the Clop run. The harness covered A to F; the checklist tests phase covered G with the `onCall` script `FakeDestination` already had (`CoordinatorDeleteTests.aSecondAbortThatFailsAsksToRemoveFromHistory`) and H with a digest of each part's bytes (`UploadQueueTests.aPartRetrySendsTheBytesItFirstRead`).
 
 ## 9. The design's calls (for Tim to overrule)
 
@@ -271,9 +271,9 @@ the four that change what a user could see or the design's order (D11, D12, D14,
   while adopting runs is never listed and removed mid-write (D27). `recoverRecordings` takes `begin`'s result.
 - 9's call 7 read "one recovery task, `pending/` first"; it now reads "the `tmp/Recording` scan first, then
   `pending/`" to match 4.2 (D27).
-- 8 said the suite covers the calls A to H; it covers A to F. G (a second Abort failing after a 204) needs a
-  per-call Abort script `FakeDestination` does not have, and H needs a read counter `readPart` does not have (D18),
-  so both stay in Tim's R4 run.
+- 8 said the suite covers the calls A to H; the harness covered A to F, and G and H stayed in Tim's R4 run (D18).
+  The checklist tests phase (`docs/superpowers/specs/2026-10-30-tidyshot-checklist-tests-design.md`) covers G with
+  the `onCall` script `FakeDestination` already had and H with a digest of each part's bytes, so 8 reads A to H.
 - 10 did not name `ProcessInfo` activities among the seams not added; a test's recording upload takes the real
   `Uploading a recording` activity.
 

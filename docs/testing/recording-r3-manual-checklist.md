@@ -114,7 +114,9 @@ Reading a recording's frame at a time: `ffmpeg -ss <s> -i <file>.mp4 -frames:v 1
   back: quit, `defaults write io.tky.tidyshot recordingBubbleSize -string huge`, `defaults write io.tky.tidyshot
   recordingBubbleInsetRight -float -4` and `defaults write io.tky.tidyshot recordingBubbleInsetBottom -string
   nope`, open it: `Bubble size` shows `Medium`, and the next bubble sits 16 pt from the right and bottom
-  edges. Put them back with the reset loop.
+  edges. Put them back with the reset loop. (suite: AppSettingsTests.recordingDefaultsAreRegisteredNotWritten,
+  .r3RecordingSettingsPersistUnderTheirKeys, .aStoredBubbleSizeOutsideTheThreeReadsAsMedium,
+  .aNegativeOrUnreadableBubbleInsetReadsAs16, BubblePlacementTests.theStandardInsets)
 - [ ] `Camera` lists `System Default` and each camera by name, and no Desk View camera (Tim's: Brio 500, TKY
   Camera, MacBook Pro Camera, LG UltraFine Display Camera, OBS Virtual Camera; the two Desk View cameras are
   not listed). With the Recording tab open, plug the Brio in: it appears; unplug it: it goes. Choose it, then
@@ -154,7 +156,8 @@ Run `tccutil reset Camera io.tky.tidyshot` first (Tim's step), then open the Rel
   without the webcam bubble` / `Camera access is off for TidyShot.` posts only after Stop, after the save's own
   notification. Settings shows `Camera access is off for TidyShot.` with `Privacy Settings…`, which opens the
   Camera pane; turn access on in System Settings and come back: the note clears when the window becomes key.
-- [ ] A GIF start still asks for the camera and not the microphone (the bubble applies to GIF).
+- [ ] A GIF start still asks for the camera and not the microphone (the bubble applies to GIF). (suite:
+  CoordinatorRecordingTests.aGIFStartAsksForTheCameraAndNotTheMicrophone)
 - [ ] With the camera prompt up: a second Record press does nothing and logs `Recording: start ignored, the
   camera prompt is open`. A start refused by the lock after its prompt cannot be forced by hand (`ShortcutsTests`
   pin its notice and rule).
@@ -387,7 +390,9 @@ during the count-in or the recording, and nothing in quit mode.
 - [ ] A start with the toggle on and a camera that cannot start (not forceable by hand): `Recorded without the
   webcam bubble` / `The camera could not be started.` Skip and write `skipped`: ______
 - [ ] A note and a microphone note together: the order is the save's notification, `Recording stopped`, the
-  microphone note, the camera note, then the highlights note. Write down the order you saw: ______
+  microphone note, the camera note, then the highlights note. Write down the order you saw: (suite:
+  CoordinatorSaveTests.noticesAfterStopComeInOrderWhateverShowNotificationSays,
+  RecordingNoticeOrderTests.theCameraNoteThenTheHighlightsNoteComeLast) ______
 - [ ] No camera note posts when the bubble toggle was off and the bar never pressed. (suite:
   CameraNoteTests.noNoteWhenTheBubbleWasNeverWanted,
   RecordingControllerTests.theSummaryAndTheKeptRecordingFollowThePresses)
@@ -478,7 +483,8 @@ Calls the build made that the design did not settle (each easy to overrule):
   (Task 12). ______
 - [ ] E. A failed start counts as a loss in the run state, so a later reconnect shows the picture again
   (Task 11). ______
-- [ ] F. The ring's grow eases out and its fade is linear (Task 10). ______
+- [ ] F. The ring's grow eases out and its fade is linear (Task 10). (suite:
+  ClickRingOverlayTests.theRingGrowsEasingOutAndFadesLinearly) ______
 - [ ] G. After a loss the preview is hidden and the symbol shows on the grey (Task 11). (suite:
   WebcamBubblePanelTests.aLossShowsTheSymbolOnGrey, .aLossWhileHiddenShowsOnlyOnceThePictureIsBack) ______
 
