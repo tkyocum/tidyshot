@@ -243,6 +243,7 @@ With a spotlight (rectangle and ellipse, Dim 70 %) and a few counters, an arrow 
 - [ ] Save As… (⇧⌘S) to `~/Desktop/p4c/saveas.png` matches, and leaves the capture and its record unchanged.
 - [ ] Upload (⌘U): the editor closes. The uploaded object, opened from the link, matches `saveas.png`.
 - [ ] Once the upload has finished, reopen the capture with Annotate on its Recent Captures row: it opens as a flat image with the marks in its pixels, and no spotlight or counter left to select.
+  (suite: CoordinatorEditorUploadTests.anUploadedCaptureReopensFlatWithItsMarksInThePixels)
 - [ ] Upload as New (⌥⌘U), on the uploaded capture (see the setup), not on the one just uploaded, which now reopens flat: open it in the editor and draw the same marks. Save As… to `~/Desktop/p4c/asnew.png` and compare it with the canvas, then press ⌥⌘U: the editor closes, the clipboard gets a new link, and the object it opens matches `asnew.png`.
 - [ ] With a Background on, a crop and the spotlight, on a second scratch capture: Copy, Save, Save As… and Upload, in the same order (Upload last), each give the dim inside the content only, with the fill and the padding undimmed.
 - [ ] Pixels outside the effects, the drawings and the dim equal the capture: close any editor on the main capture without saving and open it again (it was never saved over; `main-original.png` holds it), draw a single small spotlight, Save As… to `~/Desktop/p4c/dim50.png`, and check with `px.swift` that a pixel inside its hole equals the same pixel of `main-original.png`, and one outside is about half of it at 50 %.
@@ -271,6 +272,11 @@ top has it in `row 81`, 8 pt above the top of `row 82`.)
 
 ## Defaults and the document
 - [ ] Shape and Size survive a relaunch. Choose Ellipse and Large, then check `defaults read io.tky.tidyshot editorSpotlightEllipse` (`1`) and `editorCounterDiameterPoints` (`44`). Quit and relaunch TidyShot, open any capture in the editor: Spotlight draws ellipses, the Shape row shows Ellipse when the Spotlight tool is active, a new counter is 44 pt (88 px at 2x), and the Size row shows Large with the Counter tool.
+  (suite, in part: CoordinatorEditorTests.anEditorOpensWithTheStoredSpotlightShapeAndCounterSize,
+  AppSettingsTests.editorDefaultsRoundTripThroughSecondInstance, .spotlightAndCounterDefaultsAreRegistered,
+  EditorToolbarTests.currentDefaultsCarryEveryEditorDefault, EditorModelTests.aNewSpotlightTakesTheShapeDefault,
+  .aNewCounterTakesTheSizeAndColourDefaults; by hand: choosing Ellipse and Large in the popover (`EDDEFAULTS`), the rows
+  as drawn, `defaults read` and the relaunch)
 - [ ] Hand-write a bad size: `defaults write io.tky.tidyshot editorCounterDiameterPoints -float 40`, relaunch: the Size row reads Medium and new counters are 32 pt. Then `defaults delete` the two keys again.
   (suite, in part: AppSettingsTests.aStoredCounterSizeOutsideTheStopsReadsAs32; the Size row's `Medium` label is not
   asserted, as on line 139, and stays by hand)
@@ -293,7 +299,9 @@ top has it in `row 81`, 8 pt above the top of `row 82`.)
 - [ ] A scratch capture with no spotlight and no counter saves, copies and uploads exactly as before: same file, no dim, no change in size.
   (suite: SpotlightRenderingTests.noSpotlightDimsNothing, EditorFlattenerTests.outputSizeEqualsBase,
   .bytesOutsideEffectsEqualBase)
-- [ ] An older capture, made before 4c, opens in the editor, edits and exports as before.
+- [ ] An older capture, made before 4c, opens in the editor, edits and exports as before. (suite:
+  CoordinatorEditorTests.aCaptureFromBefore4cOpensEditsAndSavesAsBefore,
+  AnnotationDocumentTests.documentWithoutSpotlightDimReadsHalf)
 - [ ] Redact, Blur and Pixelate still work, and a Highlighter over a Blur still follows the blur live (4b).
 - [ ] 7c: a Background on a capture still composes, and the editor's Background popover still opens from the toolbar.
 - [ ] Switching tools in quick succession (`S`, `N`, `V`, `R`) neither flickers a stale outline nor leaves a selection chrome behind.

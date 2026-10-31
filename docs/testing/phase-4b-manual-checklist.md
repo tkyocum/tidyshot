@@ -97,12 +97,20 @@ data.
 - [ ] Draw a rectangle that straddles the crop's edge (draw it before cropping), then crop: the saved PNG contains only the part inside the crop.
   (suite: CropGeometryTests.flattenedSizeEqualsCrop)
 - [ ] Saved pixel size: on a saved capture, crop to a readout of, say, 800 x 400, Return, ⌘S. `sips -g pixelWidth -g pixelHeight -g dpiWidth <file>` reports 800 x 400 (the readout, not the original size), and `dpiWidth` is 144 on the 2x display (72 on a 1x display). Quick Look shows only the cropped picture, and no new file appears.
+  (suite: CoordinatorEditorSaveTests.saveWithACropWritesTheCroppedSizeAtTheCapturesScaleAndReopensCropped,
+  EditorModelTests.undoRestoresUncropped, EditorFlattenerTests.pngRoundTripKeepsScaleTwo)
 - [ ] Thumbnail: open the Recent Captures menu. The row's thumbnail shows the cropped picture with its new proportions, and the hover preview shows the cropped image. The row's pixel size in `history.json` (`pixelWidth`, `pixelHeight`) equals the crop.
 - [ ] Reopen the cropped capture with Annotate: the editor opens the cropped file at its new size, with no crop pending, and Crop starts from the whole picture again.
+  (suite: CoordinatorEditorSaveTests.saveWithACropWritesTheCroppedSizeAtTheCapturesScaleAndReopensCropped,
+  EditorModelTests.undoRestoresUncropped)
 - [ ] Uploaded pixel size: on a capture uploaded with "Upload and copy URL", crop, then the Upload button. When the upload finishes, `curl -s <url> -o /tmp/crop.png && sips -g pixelWidth -g pixelHeight /tmp/crop.png` reports the cropped size, the file in the save folder is cropped too, and `history.json` has the cropped `pixelWidth` and `pixelHeight`. The link is the same as before.
-- [ ] Upload-only capture that finished uploading: crop, ⌘U. The link then serves the cropped size.
+  (suite: CoordinatorEditorUploadTests.uploadWritesTheFileFirstThenReplacesTheLinksObject)
+- [ ] Upload-only capture that finished uploading: crop, ⌘U. The link then serves the cropped size. (suite:
+  CoordinatorEditorUploadTests.uploadOfAnUploadOnlyCaptureWritesPendingThenReplacesItsKey)
 - [ ] Save As… (⇧⌘S) with a crop: the new PNG has the cropped pixel size, and the capture's own file is unchanged.
+  (suite: CoordinatorEditorSaveTests.saveAsWithACropWritesACroppedCopyAndLeavesTheCaptureAlone)
 - [ ] Copy (⌘C with nothing selected) with a crop: Preview, File > New from Clipboard, shows the cropped image at point size.
+  (suite: CoordinatorEditorSaveTests.copyWithACropPutsTheCroppedImageAtPointSizeAndSaysImageCopied)
 - [ ] Crop a redacted capture so that the redaction is partly outside: the saved PNG has no trace of the cropped-away part, and the part inside is still solid.
   (suite: RedactionExportTests.croppedExportKeepsRedactionAndHasCropSize)
 - [ ] Crop of the window capture with transparent corners, keeping a corner: the corner stays transparent in the saved PNG.
@@ -130,6 +138,9 @@ data.
   (suite: CanvasViewEventTests.anObjectCopiedInOneCanvasPastesIntoAnotherAtItsPointSize,
   AnnotationClipTests.offImageObjectIsCentredThenCascades, EditorModelTests.pasteIntoAnotherEditorKeepsPointSize)
 - [ ] ⌘C with nothing selected still copies the flattened image (`Image copied`; Preview > New from Clipboard shows it). With an object selected, ⌘C copies the object and ⇧⌘C and the toolbar's Copy button still copy the image.
+  (suite, in part: CoordinatorEditorSaveTests.copyWithACropPutsTheCroppedImageAtPointSizeAndSaysImageCopied; by hand:
+  which command reaches the copy, ⌘C with and without a selection, ⇧⌘C and the toolbar button (`EDPLACE`); Preview is
+  the `pngs` decode)
 - [ ] ⌘V with nothing on the clipboard to paste, or with an image or text on it, beeps and adds nothing. ⌘V while Crop is active beeps. ⌘X with an object selected does nothing to the object.
 - [ ] While editing text, ⌘V and ⌘X act on the text, as in the Text section, and ⌘D duplicates nothing.
 
@@ -147,15 +158,30 @@ data.
 ## Annotate from Recent Captures, with the 4b tools
 The row's Annotate button was built in 4a; these confirm it with the new tools.
 - [ ] Saved capture, never uploaded: Annotate on its row opens the editor. Place a text and an ellipse, crop, ⌘S: the same file now shows all three (cropped, with the text and ellipse inside).
+  (suite: CoordinatorEditorSaveTests.saveWithTextEllipseAndCropWritesAllThreeIntoTheSameFile)
 - [ ] Capture uploaded with "Upload and copy URL": Annotate on its row, highlight a line, ⌘U. The editor closes at once, and the link shows the highlight.
+  (suite, in part: CoordinatorEditorUploadTests.uploadWritesTheFileFirstThenReplacesTheLinksObject; by hand: the editor
+  closing at once (`EDPLACE`); the link showing the highlight is the PUT body)
 - [ ] Upload-only capture whose upload failed: opens from `pending/<UUID>.png`; add a pencil stroke, ⌘S writes the pending file, Retry Failed Uploads uploads it with the stroke.
+  (suite: CoordinatorEditorSaveTests.saveOnAFailedUploadOnlyCaptureRewritesPendingAndRetryUploadsTheEdit,
+  EditorInputTests.pendingFileForUploadOnlyPending, EditorSaveTargetTests.pendingFileIsPendingTarget)
 - [ ] Upload-only capture that finished uploading: Annotate downloads the object and opens `Capture <time>`; add text, crop and ⌘U. The link serves the cropped image with the text.
+  (suite: CoordinatorEditorUploadTests.uploadOfAnUploadOnlyCaptureWritesPendingThenReplacesItsKey)
 - [ ] Settings > Overlay, turn "Show Quick Access overlay after capture" off. Capture in each after-capture mode and press Annotate on the new row: the editor opens every time, and a 4b tool works in it. Turn the overlay back on.
 
 ## Reopening a stale upload-only record
 - [ ] Enter a wrong secret access key in Settings > Upload and press Save. On an upload-only capture that finished uploading, Annotate, add text, crop to a readout you note, ⌘U. The editor closes, and after the retries a notification says `Upload failed. The link still shows the earlier image.` Quit TidyShot and relaunch.
+  (suite, in part:
+  CoordinatorEditorUploadTests.aFailedReplaceOfAnUploadOnlyCaptureKeepsPendingAcrossARelaunchUntilTheNextUpload,
+  CoordinatorUploadTests.aFailedUploadMarksTheRecordOrReturnsItToItsLink; by hand: the editor closing (`EDPLACE`), and
+  the real quit and relaunch, for which the test builds a second coordinator; the test pins one attempt, since a 403 is
+  not retried, and the notice titled `Not uploaded` with the line's text as its body)
 - [ ] The row still copies the old URL. Annotate on the row reopens the edit with the text and at the cropped size, with the subtitle `The uploaded copy still shows the original. Upload to replace it.` (the pending file holds the cropped, edited bytes).
+  (suite, in part:
+  CoordinatorEditorUploadTests.aFailedReplaceOfAnUploadOnlyCaptureKeepsPendingAcrossARelaunchUntilTheNextUpload; by
+  hand: the subtitle as shown (`EDPLACE`))
 - [ ] Enter the right key and press ⌘U: the same URL now serves the cropped image with the text, `pending/<UUID>.png` is gone, and the row's pixel size in `history.json` is the cropped size.
+  (suite: CoordinatorEditorUploadTests.aFailedReplaceOfAnUploadOnlyCaptureKeepsPendingAcrossARelaunchUntilTheNextUpload)
 
 ## Selection, undo and export across the tools
 - [ ] ⌘A selects the front-most annotation (drawings before effects), whichever tool made it: an ellipse, line, stroke or text included. Delete removes it; one ⌘Z brings it back. While Crop is active ⌘A selects nothing.

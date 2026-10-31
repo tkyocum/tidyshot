@@ -31,7 +31,9 @@ design's tests 1 to 5, already built and green in its scratch tree; each is writ
 One of those five (test 2) takes a different edit here (section 2.6), and test 5 gains a `TaskWatch` gate. Of the 73
 lines: full 25, part 40, deferred 8, obsolete or already covered 0 (section 9). phase-4a:39 and phase-6a:164 are part
 here, not full as in the judge's draft (design call 13). The design's review built every entry here, with the review's
-fixes, in a scratch tree, and all of them passed (design section 12); the `CoordinatorOverlayTests` entry was built in a scratch
+fixes, in a scratch tree, and all of them passed (design section 12), and they are built on `editor-seam`
+(plan `docs/superpowers/plans/2026-10-30-editor-seam.md`;
+the two first tests of section 5 were strengthened in the execution, plan D76 and design section 12); the `CoordinatorOverlayTests` entry was built in a scratch
 suite with its own `destination`, so its placement in that suite and the `destination` property it adds (2.2) are the plan's.
 
 | Line (key, current line) | Test | Suite | Verdict |

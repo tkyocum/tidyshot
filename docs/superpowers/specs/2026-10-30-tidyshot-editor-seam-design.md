@@ -417,3 +417,35 @@ Lines this seam does not finish, by the seam that does (a line can be under more
 ## 12. Built notes
 
 From the design's review; the close-out adds the suite line and Release build on the branch, the marks made and the seams.md edit. The design's review rebuilt the fakes and tests with its fixes in the facts review's scratch tree (a copy of the repository at a079a6f with section 2's diff applied): the three seam suites `Test run with 11 tests in 3 suites passed`, the rest of the catalogue `13 tests in 1 suite` and `26 tests in 1 suite` passed, the full suite `Test run with 2320 tests in 195 suites passed` (2272 + 46 catalogue tests + 2 probes), and the Release build `** BUILD SUCCEEDED **`. A probe with the fake's two text commits removed failed with 5 issues.
+
+Built on `editor-seam` from the plan `docs/superpowers/plans/2026-10-30-editor-seam.md`: the full suite
+`Test run with 2318 tests in 193 suites passed` (the baseline's 2272 tests in 191 suites, and 46 tests in two new suite
+files and two existing ones) and the Release build `** BUILD SUCCEEDED **` with no `error:` or `warning:` line from the
+compiler or the linker. 65 lines carry marks, 25 in full and 40 in part, and the 8 deferred lines none. seams.md has
+section 11's edit, with one difference: sorted by Lines, `TARGET` (34) is third, ahead of `CAPSRC` (33), so the first
+three seams complete 78 lines, not 58; every row's numbers, the three sums and the first ten's 152 are as section 11
+gives. The hand checks of section 9 are `docs/testing/editor-seam-manual-checklist.md`, for Tim.
+
+Built differently from this design and the catalogue. The plan's decisions D3 to D75 hold what the task writers changed
+(the helpers' homes, the bodies kept as the review built them, the doc comments, the waits); these come from the
+execution itself:
+- The two first tests are stronger than the catalogue's entries (plan D76; fix commits 62b01c4 and fe0a799).
+  `annotateOnACaptureWhoseEditorIsOpenBringsItForwardAndBuildsNoSecond` opens an upload-only capture (`addUploadOnly`)
+  where the catalogue's entry (section 5, Opening) names a `pending/` file, and asserts that the object was downloaded
+  once (`dataDownloadKeys == [key]`), so a dropped `openingEditorIDs` guard fails it.
+  `quitAsksEachChangedEditorCancelStopsItDontSaveLetsItGo` records the call count before the review and asserts exactly
+  `[.present, .askToSave]` after it, so a review that stops calling `present()` fails, and after Don't Save asserts that
+  both editors are still registered. The catalogue's entries keep their text; the marks of phase-4a:39 and phase-4a:155
+  are unchanged.
+- Six fix commits make a regression fail one test where it would have trapped the test process:
+  `world.clipboard.pngs[0]` and `[1]` became `try #require(pngs.first)` or `pngs.last`, and the composed or uploaded
+  size checks before an `EditorPixels.pixel` read became `try #require`. Task 2: f0b8bcb (the locked-file Save test) and
+  fc58d18 (the background Save test, its saved file, thumbnail and reopened base). Task 3: 25dd4c1 (the Save As and Copy
+  tests). Task 4: feb939c (the no-destination test) and 2edbeb3 (the upload over a link PUT body and the reopened
+  uploaded capture's base). Task 7: ce7e971 (the held-upload test). No assertion was added or weakened, and no `pngs[`
+  index is left in `TidyShotTests`. One read stays unguarded:
+  `annotateTheNewestCardSaveThenUploadWritesTheFileThenUploadsAndCopiesTheURL` reads the saved file's pixel (3, 1) with
+  no size check, as built.
+- `UploadQueueTests.aSidecarUnwritableDuringThePartsFailsTheJobBeforeComplete` fails in about 1 of 6 full runs, on the
+  untouched baseline (bc6b5e5) as well. It does not use the coordinator's world or the editor, and it is not this
+  phase's; a full run that fails only on it passes on a second run.

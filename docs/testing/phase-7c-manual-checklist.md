@@ -210,9 +210,20 @@ For the 1200 x 800 pt capture (2400 x 1600 px), Padding 48 (a 2592 x 1792 px min
 ## Copy, Save, Save As… and Upload
 With a background on, Padding 48, a visible fill.
 - [ ] Copy (⇧⌘C, or ⌘C with nothing selected, since ⌘C with an annotation selected copies the object; or the toolbar button): paste into Preview > File > New from Clipboard. It is the composed image: the fill, the padding, the round corners and the shadow, with annotations.
+  (suite, in part: CoordinatorEditorSaveTests.copyWithABackgroundPutsTheComposedCanvasOnTheClipboard; by hand: the
+  window's routing of ⇧⌘C, ⌘C and the toolbar button to the copy (`EDPLACE`); Preview is the `pngs` decode)
 - [ ] Save (⌘S) on a capture with a local file: the file in the save folder is the composed image (open it). The editor is clean afterwards. The capture's recorded size and thumbnail in Recent Captures follow: the thumbnail shows the background and the size is the canvas's.
+  (suite, in part: CoordinatorEditorSaveTests.saveWithABackgroundWritesTheComposedCanvasAndReopensFlat,
+  .saveWritesOverTheSaveFolderFileAndUploadsNothing; by hand: the clean state as the window shows it (`EDPLACE`) and the
+  thumbnail as drawn)
 - [ ] Annotate the saved capture again: it opens as the composed image, flat. The popover's switch is off, because the file is the image; turning it on adds a second background around the first. Write down whether that is what you expect.
-- [ ] Save As… (⇧⌘S): the file is the composed image; the capture and its record are unchanged.
+  (suite, in part: CoordinatorEditorSaveTests.saveWithABackgroundWritesTheComposedCanvasAndReopensFlat; by hand: the
+  popover's switch turned on, whose setter reads `AppSettings.shared` (`BGPOP`), and the switch drawn in the window
+  (`EDPLACE`); whether a second background is expected is Tim's call; the test closes the first editor before the
+  reopen, since an Annotate while it is open brings it forward with its background)
+- [ ] Save As… (⇧⌘S): the file is the composed image; the capture and its record are unchanged. (suite, in part:
+  CoordinatorEditorSaveTests.saveAsWithABackgroundWritesTheComposedImageAndLeavesTheCaptureAlone; by hand: the panel
+  (`EDSAVEAS`))
 - [ ] Upload (⌘U): the uploaded object, opened from the URL, is the composed image (not the original). Upload as New (⌥⌘U) the same. Clop on: the optimised object is the composed image as well.
 - [ ] Each of these twice in a row after a change: no stale result (the second export has the second style).
 - [ ] The background cannot be drawn: with a capture over 16,384 px, turn the background on is refused (above), so this failure is only reached by the undo path (see The limit). When it happens, Save and Save As… post `Not saved` with `The background could not be drawn.`, Upload posts `Not uploaded` with it, Copy posts `Could not copy image` with it, and the editor stays dirty. Write down what you saw, or that it could not be reached.
@@ -228,6 +239,8 @@ Settings > Capture > `Add background to window captures` on, with a style you ca
 - [ ] A portrait window (narrower than tall) with 16:9: the canvas is portrait (inverted ratio).
 - [ ] The setting off: a window capture is the plain window again, at once (no relaunch).
 - [ ] Open the window capture in the editor (the card's Annotate): it opens as the composed image with the background baked in, and the popover's switch is off.
+  (suite, in part: CoordinatorEditorTests.aComposedWindowCaptureOpensFlatWithNoBackground; by hand: producing the window
+  capture (`TARGET`), and the popover's switch as its binding shows it (`BGPOP`) and drawn in the window (`EDPLACE`))
 - [ ] `action=copy`: `t 'capture-window?action=copy'`, click a window: the clipboard image is the window on the background, with no file, no card and no history row. `t 'capture-window?action=upload'` uploads the composed image. Paste to check.
 - [ ] A window larger than the limit cannot be made, so `Background: the window is too large for a background, keeping the window capture` and `Background: no bitmap could be made, keeping the window capture` have no practical way to force. They are checked by code reading: `withWindowBackground` logs one of the two and returns the plain result, with no notification. Write down any other way you used.
 - [ ] Two window captures in quick succession (the second before the first's card shows): both get the background, and the saved files do not mix.
