@@ -399,7 +399,7 @@ struct CoordinatorEditorUploadTests {
         let saved = try Data(contentsOf: file)
         let afterSave = coordinator.history.record(id: id)
         #expect(world.clipboard.copies == [.pngAndTIFF, .pngAndTIFF])
-        #expect(world.clipboard.pngs[1] == saved)
+        #expect(world.clipboard.pngs.last == saved)
         // A second box over the first, so the document is unsaved again before the Upload.
         editor.draw()
         #expect(await editor.upload() == .refused)
