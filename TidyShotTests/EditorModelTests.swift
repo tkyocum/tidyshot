@@ -979,8 +979,9 @@ struct EditorModelTests {
         #expect(model.counterSizeApplies)
     }
 
-    /// A counter has a colour: selected, the swatch shows it and a pick recolours it as `Color`.
-    @Test func aSelectedCounterShowsAndTakesTheColour() {
+    /// A counter has a colour: selected, the swatch shows it and a pick recolours it as `Color`. phase-4c :151:
+    /// a counter placed afterwards takes the applied colour.
+    @Test func aSelectedCounterShowsAndTakesTheColour() throws {
         let model = makeModel(side: 200)
         model.tool = .select
         let mark = add(counter(), to: model)
@@ -994,5 +995,287 @@ struct EditorModelTests {
         model.undoManager.undo()
         #expect(model.document.annotation(id: mark.id) == mark)
         #expect(model.activeColor == red)
+        // phase-4c :151: the stroke colour followed the swatch, so a counter placed afterwards takes it.
+        let placed = try #require(model.makeAnnotation(.counter, from: CGPoint(x: 120, y: 120), to: CGPoint(x: 120, y: 120)))
+        #expect(placed.counterMark?.color == blue)
+    }
+
+    // MARK: Checklist cases (CT-1)
+
+    nonisolated enum Shape: CaseIterable, Sendable {
+        case rectangle
+        case ellipse
+        case line
+    }
+
+    nonisolated enum Duplicated: CaseIterable, Sendable {
+        case ellipse, line, pencil, highlighter, text, arrow, blur, redact
+    }
+
+    /// phase-4a :60. The options slider's block size changes a selected mosaic, live, as one step: a burst of
+    /// changes undoes at once (`Block Size`).
+    @Test func blockSizeAppliesToTheSelectedPixelateInOneStep() throws {
+        let model = makeModel(side: 256)
+        model.tool = .select
+        let rect = CGRect(x: 4, y: 4, width: 200, height: 200)
+        let region = add(.pixelate(Region(id: UUID(), rect: rect),
+                                   block: RedactionDefaults.block(points: 10, scale: 2, region: rect)), to: model)
+        model.selection = region.id
+
+        model.applyEffectParameter(.block, points: 20)
+        model.applyEffectParameter(.block, points: 24)
+
+        guard case .pixelate(_, let block)? = model.document.annotation(id: region.id) else {
+            Issue.record("the selection is not a mosaic")
+            return
+        }
+        #expect(block == RedactionDefaults.block(points: 24, scale: 2, region: rect))
+        #expect(model.blockPoints == 24)
+        #expect(model.undoManager.undoActionName == EditorModel.ActionName.block)
+        model.undoManager.undo()
+        #expect(model.document.annotation(id: region.id) == region)
+    }
+
+    /// phase-4a :62, phase-4b :37. Keys 1 to 6 (`applyLineWidth`) set the width on a selected rectangle, ellipse or
+    /// line and on its tool; a swatch recolours the selection, and the tool's colour follows.
+    @Test(arguments: Shape.allCases)
+    func widthAndColourApplyToTheSelectedShapeAndItsTool(kind: Shape) {
+        let model = makeModel(side: 64)
+        model.tool = .select
+        let shape: Annotation = switch kind {
+        case .rectangle:
+            .rectangle(ShapeBox(id: UUID(), rect: CGRect(x: 4, y: 4, width: 20, height: 10), color: red, lineWidth: 8))
+        case .ellipse:
+            .ellipse(ShapeBox(id: UUID(), rect: CGRect(x: 4, y: 4, width: 20, height: 10), color: red, lineWidth: 8))
+        case .line:
+            .line(Segment(id: UUID(), from: CGPoint(x: 4, y: 4), to: CGPoint(x: 30, y: 20), color: red, lineWidth: 8))
+        }
+        add(shape, to: model)
+        model.selection = shape.id
+
+        model.applyLineWidth(points: 12)
+        #expect(model.document.annotation(id: shape.id) == shape.withLineWidth(12 * model.scale))
+        #expect(model.lineWidthPoints == 12)
+        #expect(model.undoManager.undoActionName == EditorModel.ActionName.lineWidth)
+
+        model.applyColor(blue)
+        #expect(model.document.annotation(id: shape.id) == shape.withLineWidth(12 * model.scale).withColor(blue))
+        #expect(model.strokeColor == blue)
+        #expect(model.undoManager.undoActionName == EditorModel.ActionName.color)
+    }
+
+    /// phase-4b :55. The colour button recolours a selected text and the tool's colour, and the text being typed,
+    /// so a text placed afterwards takes that colour.
+    @Test func colourAppliesToTheSelectedTextAndTheTextBeingTyped() {
+        let model = makeModel(side: 64)
+        model.tool = .select
+        let text = add(.text(TextBox(id: UUID(), string: "Hi", origin: CGPoint(x: 4, y: 4), fontSize: 24, color: red)),
+                       to: model)
+        model.selection = text.id
+
+        model.applyColor(blue)
+        #expect(model.document.annotation(id: text.id) == text.withColor(blue))
+        #expect(model.strokeColor == blue)
+
+        model.tool = .text
+        model.beginTextEditing(at: CGPoint(x: 30, y: 30), existing: nil)
+        #expect(model.textEditing?.box.color == blue)
+        model.applyColor(black)
+        #expect(model.textEditing?.box.color == black)
+        #expect(model.strokeColor == black)
+    }
+
+    /// phase-4b :84 (the all-outside case). With a crop applied and every annotation wholly outside it, ⌘A selects
+    /// nothing.
+    @Test func selectAllWithEveryAnnotationOutsideTheCropSelectsNothing() {
+        let model = makeModel(side: 64)
+        add(box(x: 40), to: model)
+        add(blurRegion(radius: 4), to: model)
+        model.tool = .crop
+        model.cropDraft = CGRect(x: 20, y: 20, width: 10, height: 10)
+        model.applyCrop()
+        #expect(model.document.crop == CGRect(x: 20, y: 20, width: 10, height: 10))
+
+        model.selectAll()
+
+        #expect(model.selection == nil)
+    }
+
+    /// phase-4b :88. ⌘D copies every kind: the copy is the same annotation `duplicateOffset` away with its own id,
+    /// selected, in one step `Duplicate <title>`; a redaction's copy is a redaction.
+    @Test(arguments: Duplicated.allCases)
+    func duplicateCopiesEveryKindOffsetAndNamed(kind: Duplicated) throws {
+        let model = makeModel(side: 64)
+        model.tool = .select
+        let points = [CGPoint(x: 4, y: 4), CGPoint(x: 10, y: 8), CGPoint(x: 16, y: 6)]
+        let original: Annotation = switch kind {
+        case .ellipse:
+            .ellipse(ShapeBox(id: UUID(), rect: CGRect(x: 4, y: 4, width: 12, height: 8), color: red, lineWidth: 4))
+        case .line: .line(Segment(id: UUID(), from: CGPoint(x: 4, y: 4), to: CGPoint(x: 20, y: 12), color: red, lineWidth: 4))
+        case .pencil: .pencil(Stroke(id: UUID(), points: points, color: red, lineWidth: 4))
+        case .highlighter: .highlighter(Stroke(id: UUID(), points: points, color: red, lineWidth: 12))
+        case .text: .text(TextBox(id: UUID(), string: "Hi", origin: CGPoint(x: 4, y: 4), fontSize: 24, color: red))
+        case .arrow: arrow()
+        case .blur: blurRegion(radius: 4)
+        case .redact: redaction()
+        }
+        add(original, to: model)
+        model.selection = original.id
+
+        model.duplicateSelection()
+
+        #expect(model.document.annotations.count == 2)
+        let copy = try #require(model.document.annotations.last)
+        #expect(copy.id != original.id)
+        #expect(copy == original.moved(by: model.duplicateOffset).withID(copy.id))
+        #expect(model.selection == copy.id)
+        #expect(model.undoManager.undoActionName == "Duplicate \(original.title)")
+    }
+
+    /// phase-4b :118. One of each tool (Redact, Pixelate, Blur, Rectangle, Arrow, Ellipse, Line, Pencil, Highlighter,
+    /// Text), made by the real tools over the model, then a crop: undo takes the crop as its own step, then the
+    /// ten annotations newest first; redo brings them back in order, then the crop.
+    @Test func oneOfEachToolUndoesNewestFirstAndRedoesInOrder() {
+        let model = makeModel(side: 400)
+        for (index, tool) in [EditorTool.redact, .pixelate, .blur, .rectangle, .arrow, .ellipse, .line].enumerated() {
+            let y = CGFloat(10 + index * 40)
+            let drag = makeTool(for: tool)
+            drag.mouseDown(ToolInput(point: CGPoint(x: 10, y: y)), on: model)
+            drag.mouseDragged(ToolInput(point: CGPoint(x: 60, y: y + 30)), on: model)
+            drag.mouseUp(ToolInput(point: CGPoint(x: 60, y: y + 30)), on: model)
+        }
+        for (index, tool) in [EditorTool.pencil, .highlighter].enumerated() {
+            let y = CGFloat(300 + index * 40)
+            let stroke = makeTool(for: tool)
+            stroke.mouseDown(ToolInput(point: CGPoint(x: 10, y: y)), on: model)
+            for x in stride(from: 20, through: 80, by: 10) {
+                stroke.mouseDragged(ToolInput(point: CGPoint(x: CGFloat(x), y: y + 5)), on: model)
+            }
+            stroke.mouseUp(ToolInput(point: CGPoint(x: 80, y: y + 5)), on: model)
+        }
+        model.beginTextEditing(at: CGPoint(x: 200, y: 200), existing: nil)
+        model.updateEditingText("Ten")
+        model.commitTextEditing()
+        let all = model.document.annotations
+        #expect(all.count == 10)
+        model.tool = .crop
+        model.cropDraft = CGRect(x: 0, y: 0, width: 300, height: 300)
+        model.applyCrop()
+        let cropped = model.document
+
+        model.undoManager.undo()
+        #expect(model.document.crop == nil)
+        #expect(model.document.annotations == all)
+        for count in stride(from: 9, through: 0, by: -1) {
+            model.undoManager.undo()
+            #expect(model.document.annotations == Array(all.prefix(count)))
+        }
+        #expect(!model.undoManager.canUndo)
+        for count in 1...10 {
+            model.undoManager.redo()
+            #expect(model.document.annotations == Array(all.prefix(count)))
+        }
+        model.undoManager.redo()
+        #expect(model.document == cropped)
+    }
+
+    /// phase-4c :140. With a spotlight or a counter selected, `Line width` changes only the default: the selected
+    /// one is unchanged, no undo step is added and nothing is unsaved.
+    @Test func lineWidthWithASpotlightOrCounterSelectedChangesOnlyTheDefault() {
+        let model = makeModel(side: 200)
+        model.tool = .select
+        let hole = add(spotlight(), to: model)
+        let mark = add(counter(), to: model)
+        model.markSaved()
+        let document = model.document
+        let lastStep = model.undoManager.undoActionName
+
+        for (selected, points) in [(hole.id, CGFloat(8)), (mark.id, CGFloat(12))] {
+            model.selection = selected
+            model.applyLineWidth(points: points)
+            #expect(model.lineWidthPoints == points)
+            #expect(model.document == document)
+            #expect(model.undoManager.undoActionName == lastStep)
+            #expect(!model.hasUnsavedChanges)
+        }
+    }
+
+    /// phase-4c :163, phase-4c :167. Every spotlight edit is one named step: `Add Spotlight`, `Move Spotlight`,
+    /// `Resize Spotlight`, `Duplicate Spotlight` (⌘D and an ⌥-drag) and `Paste Spotlight`, the second paste one
+    /// cascade step further; undo and redo restore each document, and the unsaved state follows.
+    @Test func everySpotlightEditIsOneNamedUndoStep() throws {
+        let model = makeModel(side: 400)
+        model.tool = .select
+        var documents = [model.document]
+        var names: [String] = []
+        func step() {
+            documents.append(model.document)
+            names.append(model.undoManager.undoActionName)
+        }
+
+        let draw = makeTool(for: .spotlight)
+        draw.mouseDown(ToolInput(point: CGPoint(x: 40, y: 40)), on: model)
+        draw.mouseDragged(ToolInput(point: CGPoint(x: 140, y: 100)), on: model)
+        draw.mouseUp(ToolInput(point: CGPoint(x: 140, y: 100)), on: model)
+        step()
+        let hole = try #require(model.document.spotlights.first)
+        model.selection = hole.id
+
+        let select = makeTool(for: .select)
+        select.mouseDown(ToolInput(point: CGPoint(x: 90, y: 70)), on: model)
+        select.mouseDragged(ToolInput(point: CGPoint(x: 110, y: 80)), on: model)
+        select.mouseUp(ToolInput(point: CGPoint(x: 110, y: 80)), on: model)
+        step()
+        let moved = try #require(model.document.annotation(id: hole.id)?.spotlightShape?.rect)
+        select.mouseDown(ToolInput(point: CGPoint(x: moved.maxX, y: moved.maxY)), on: model)
+        select.mouseDragged(ToolInput(point: CGPoint(x: moved.maxX + 30, y: moved.maxY + 20)), on: model)
+        select.mouseUp(ToolInput(point: CGPoint(x: moved.maxX + 30, y: moved.maxY + 20)), on: model)
+        step()
+        model.duplicateSelection()
+        step()
+        let resized = try #require(model.document.annotation(id: hole.id)?.spotlightShape?.rect)
+        let centre = CGPoint(x: resized.midX, y: resized.midY)
+        select.mouseDown(ToolInput(point: centre, option: true), on: model)
+        select.mouseDragged(ToolInput(point: CGPoint(x: centre.x, y: centre.y + 150), option: true), on: model)
+        select.mouseUp(ToolInput(point: CGPoint(x: centre.x, y: centre.y + 150), option: true), on: model)
+        step()
+        model.selection = hole.id
+        let clip = try #require(model.objectClip())
+        model.paste(clip)
+        step()
+        let firstPaste = try #require(model.document.annotations.last?.spotlightShape?.rect)
+        model.paste(clip)
+        step()
+        let secondPaste = try #require(model.document.annotations.last?.spotlightShape?.rect)
+
+        #expect(names == ["Add Spotlight", "Move Spotlight", "Resize Spotlight", "Duplicate Spotlight",
+                          "Duplicate Spotlight", "Paste Spotlight", "Paste Spotlight"])
+        #expect(secondPaste.origin == CGPoint(x: firstPaste.minX + model.duplicateOffset.dx,
+                                              y: firstPaste.minY + model.duplicateOffset.dy))
+        for document in documents.reversed().dropFirst() {
+            model.undoManager.undo()
+            #expect(model.document == document)
+        }
+        #expect(!model.hasUnsavedChanges)
+        for document in documents.dropFirst() {
+            model.undoManager.redo()
+            #expect(model.document == document)
+            #expect(model.hasUnsavedChanges)
+        }
+    }
+
+    /// phase-4c :203. The spotlight Dim belongs to its document: 70 % in one editor leaves another at 50 %, and a
+    /// new editor starts at 50 %.
+    @Test func spotlightDimStaysWithItsModel() {
+        let first = makeModel()
+        let second = makeModel()
+        add(spotlight(), to: first)
+        add(spotlight(), to: second)
+
+        first.applySpotlightDim(0.7)
+
+        #expect(first.document.effectiveSpotlightDim == 0.7)
+        #expect(second.document.effectiveSpotlightDim == 0.5)
+        #expect(makeModel().document.effectiveSpotlightDim == 0.5)
     }
 }
