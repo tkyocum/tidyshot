@@ -239,12 +239,13 @@ struct CoordinatorEditorTests {
         editor.draw()
         #expect(coordinator.quitNeedsHold)
         editor.holdsCloseSheet = true
+        let before = editor.calls.count
 
         let first = Task { await coordinator.reviewEditorsBeforeQuit() }
         defer { first.cancel() }
         let firstWatch = TaskWatch(first)
         try await eventually { editor.isAsking }
-        #expect(Array(editor.calls.suffix(2)) == [.present, .askToSave])
+        #expect(Array(editor.calls.dropFirst(before)) == [.present, .askToSave])
         editor.answer(.cancel)
         try await eventually { firstWatch.hasReturned }
         let proceeded = await first.value
