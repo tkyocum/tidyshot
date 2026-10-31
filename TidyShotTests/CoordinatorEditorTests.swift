@@ -190,15 +190,16 @@ struct CoordinatorEditorTests {
     }
 
     /// phase-4a:39 (:43), in part. A second Annotate while the capture's image loads opens nothing more
-    /// (`openingEditorIDs`); once the editor is open, Annotate on the same capture calls `present()` on the
-    /// registered editor again, builds no second one, pushes no second state and closes the card only once.
+    /// (`openingEditorIDs`): the upload-only capture is downloaded once. Once the editor is open, Annotate on the
+    /// same capture calls `present()` on the registered editor again, builds no second one, pushes no second
+    /// state and closes the card only once.
     /// Stays: the window coming forward, by hand. It is `present()`'s own body in `EditorWindowController`,
     /// which the fake records and does not run; ordering a window front is barred in the suite, so no seam
     /// reaches it.
     @Test func annotateOnACaptureWhoseEditorIsOpenBringsItForwardAndBuildsNoSecond() async throws {
         defer { world.removeAll() }
         let coordinator = world.makeCoordinator()
-        let record = try addPendingImage(to: coordinator)
+        let record = try addUploadOnly(to: coordinator)
         let id = record.id
         coordinator.openEditor(recordID: id)
         coordinator.openEditor(recordID: id)
@@ -215,6 +216,7 @@ struct CoordinatorEditorTests {
         #expect(editor.calls.last == .present)
         #expect(editor.pushes.count == 1)
         #expect(world.cards.calls.filter { $0 == .close(id, .editorOpened) }.count == 1)
+        #expect(destination.state.withLock { $0.dataDownloadKeys } == [key])
     }
 
     /// phase-4a:155 (:223), in part. The quit holds only while an editor has unsaved changes, and the quit
@@ -264,6 +266,8 @@ struct CoordinatorEditorTests {
         #expect(try Data(contentsOf: pending) == original)
         #expect(editor.model.hasUnsavedChanges)
         #expect(!editor.isClosed)
+        #expect(coordinator.editors[changed.id] === editor)
+        #expect(coordinator.editors[clean.id] === other)
         #expect(!other.calls.contains(.askToSave))
     }
 }
