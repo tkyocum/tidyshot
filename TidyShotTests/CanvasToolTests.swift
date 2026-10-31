@@ -803,4 +803,46 @@ struct CanvasToolTests {
         #expect(canvas.commits.first?.actionName == "Move Counter")
         #expect(canvas.document.annotations == [moved, two])
     }
+
+    /// phase-4b :61. A selected text moves with a drag, as one step, Delete removes it, and it has no handles.
+    @Test func aSelectedTextMovesAndDeletesAndHasNoHandles() throws {
+        let box = TextBox(id: UUID(), string: "Here", origin: CGPoint(x: 100, y: 100), fontSize: 40, color: red)
+        let text = Annotation.text(box)
+        let canvas = FakeCanvasEditing([text])
+        let tool = makeTool(for: .select)
+        let inside = CGPoint(x: TextLayout.frame(for: box).midX, y: TextLayout.frame(for: box).midY)
+
+        tool.mouseDown(ToolInput(point: inside), on: canvas)
+        #expect(canvas.selection == text.id)
+        tool.mouseDragged(ToolInput(point: CGPoint(x: inside.x + 20, y: inside.y + 10)), on: canvas)
+        tool.mouseUp(ToolInput(point: CGPoint(x: inside.x + 20, y: inside.y + 10)), on: canvas)
+        #expect(canvas.commits.count == 1)
+        #expect(canvas.commits.first?.actionName == "Move Text")
+        #expect(canvas.document.annotation(id: text.id) == text.moved(by: CGVector(dx: 20, dy: 10)))
+        #expect(HitTester.handles(for: text).isEmpty)
+
+        let model = EditorModelTests().makeModel(side: 400)
+        model.commit(model.document.appending(text), actionName: "Add Text")
+        model.selection = text.id
+        model.deleteSelection()
+        #expect(model.document.annotation(id: text.id) == nil)
+    }
+
+    /// phase-4b :80 (the draft's minimum). A crop draft's handle dragged below the tiny-drag size (2 pt, so 2 px at
+    /// this zoom) leaves the last draft that was large enough, and nothing crashes.
+    @Test func aCropDraftStopsAtTheTinyDragSize() {
+        let canvas = FakeCanvasEditing()
+        canvas.cropDraft = CGRect(x: 10, y: 10, width: 20, height: 10)
+        let tool = makeTool(for: .crop)
+
+        tool.mouseDown(at(30, 20), on: canvas)
+        tool.mouseDragged(at(20, 15), on: canvas)
+        #expect(canvas.cropDraft == CGRect(x: 10, y: 10, width: 10, height: 5))
+        tool.mouseDragged(at(11, 11), on: canvas)
+        #expect(canvas.cropDraft == CGRect(x: 10, y: 10, width: 10, height: 5))
+        tool.mouseDragged(at(10, 10), on: canvas)
+        tool.mouseUp(at(10, 10), on: canvas)
+        #expect(canvas.cropDraft == CGRect(x: 10, y: 10, width: 10, height: 5))
+        #expect(canvas.commits.isEmpty)
+    }
 }
