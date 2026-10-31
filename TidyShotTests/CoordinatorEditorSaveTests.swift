@@ -694,7 +694,7 @@ struct CoordinatorEditorSaveTests {
         let target = try desktop("Composed.png")
         #expect(await editor.saveAs(to: target))
         let d = try EditorPixels.decoded(Data(contentsOf: target))
-        #expect(d.image.width == 20 && d.image.height == 18)
+        try #require(d.image.width == 20 && d.image.height == 18)
         #expect(EditorPixels.pixel(d.image, x: 0, y: 0) == [0, 255, 0, 255])
         #expect(EditorPixels.isBlue(EditorPixels.pixel(d.image, x: 8, y: 8)))
         #expect(coordinator.history.record(id: id) == before)
@@ -726,7 +726,7 @@ struct CoordinatorEditorSaveTests {
         #expect(world.notifier.calls.isEmpty)
         #expect(editor.model.hasUnsavedChanges)
         #expect(!editor.isClosed)
-        #expect(try EditorPixels.isBlue(png: world.clipboard.pngs[0]))
+        #expect(try EditorPixels.isBlue(png: try #require(world.clipboard.pngs.first)))
     }
 
     /// phase-4b:77 (:105); phase-4b:92 (:132), in part.
@@ -759,12 +759,13 @@ struct CoordinatorEditorSaveTests {
         editor.actions.objectClipboard.copy(Data("clip".utf8))
 
         #expect(world.clipboard.copies.first == .pngAndTIFF)
+        let copied = try #require(world.clipboard.pngs.first)
         #expect(world.clipboard.pngs.count == 1)
-        let decoded = try EditorPixels.decoded(world.clipboard.pngs[0])
+        let decoded = try EditorPixels.decoded(copied)
         #expect(decoded.image.width == 120)
         #expect(decoded.image.height == 60)
         #expect(decoded.scale == 2)
-        #expect(abs(try #require(EditorPixels.dpiWidth(of: world.clipboard.pngs[0])) - 144) < 0.5)
+        #expect(abs(try #require(EditorPixels.dpiWidth(of: copied)) - 144) < 0.5)
         #expect(EditorPixels.rgba(decoded.image) == EditorPixels.rgba(expected))
         #expect(coordinator.clipboardOwner == EditorClipboard.Owner(recordID: id, changeCount: 1))
         #expect(world.notifier.calls == [.notice(title: "Image copied", body: "Shot.png")])
@@ -793,9 +794,11 @@ struct CoordinatorEditorSaveTests {
         editor.model.setBackground(background)
         await editor.copy()
         #expect(world.clipboard.copies == [.pngAndTIFF])
+        let copied = try #require(world.clipboard.pngs.first)
         #expect(world.clipboard.pngs.count == 1)
-        let d = try EditorPixels.decoded(world.clipboard.pngs[0])
-        #expect(d.image.width == 20 && d.image.height == 18 && d.scale == 1)
+        let d = try EditorPixels.decoded(copied)
+        try #require(d.image.width == 20 && d.image.height == 18)
+        #expect(d.scale == 1)
         #expect(EditorPixels.pixel(d.image, x: 0, y: 0) == [0, 255, 0, 255])
         #expect(EditorPixels.pixel(d.image, x: 19, y: 17) == [0, 255, 0, 255])
         #expect(EditorPixels.isBlue(EditorPixels.pixel(d.image, x: 8, y: 8)))
@@ -846,7 +849,7 @@ struct CoordinatorEditorSaveTests {
             #expect(world.clipboard.changeCount == 2)
         } else {
             #expect(world.clipboard.copies == [.pngAndTIFF, .pngAndTIFF])
-            #expect(world.clipboard.pngs[1] == written)
+            #expect(world.clipboard.pngs.last == written)
             #expect(coordinator.clipboardOwner == EditorClipboard.Owner(recordID: id, changeCount: 2))
         }
         if write == .save { try await settledEdit(coordinator, id) }
