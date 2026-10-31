@@ -565,4 +565,372 @@ struct CoordinatorEditorUploadTests {
         #expect(fill[0] > 230 && fill[1] < 90 && fill[2] < 90)
         try await settledEdit(coordinator, id)
     }
+
+    /// phase-4a:131 (:191), in part. A replace the bucket refuses with a 403 (what a wrong secret gives) closes the
+    /// editor, is tried once (a 403 is not retried), and posts `Not uploaded` with the line's body; the record keeps
+    /// its link and location, the file holds the edit, and the row still copies the old URL. Annotate reopens the edit
+    /// with the stale-copy status, and the next Upload (the right key) replaces the same key and copies the same URL.
+    /// Stays: closing and the subtitle as shown (`EDPLACE`). The link serving is the PUT body. The notice's title is
+    /// `Not uploaded` (harness D14).
+    @Test func aFailedReplaceKeepsTheLinkAndTheEditAndTheRightKeyReplacesIt() async throws {
+        defer { world.removeAll() }
+        let folder = try world.storeSaveFolder()
+        destination.state.withLock {
+            $0.failuresRemaining = 1
+            $0.failure = .httpStatus(403, body: "SignatureDoesNotMatch: The request signature we calculated does not match the signature you provided.")
+        }
+        let coordinator = world.makeCoordinator()
+        let (record, _) = try addSavedImage(to: coordinator, in: folder, uploadState: .uploaded(url: link, key: key),
+                                            objectLocation: world.location)
+        let id = record.id
+        coordinator.openEditor(recordID: id)
+        let editor = try await openedEditor(id)
+        editor.draw()
+        #expect(await editor.upload() == EditorUploadOutcome(wroteLocally: true, enqueued: true))
+        #expect(editor.isClosed)
+        try await eventually {
+            world.notifier.calls.contains(.error(title: "Not uploaded", message: "Upload failed. The link still shows the earlier image."))
+        }
+        #expect(destination.state.withLock { $0.attemptKeys } == [key])
+        let failed = try #require(coordinator.history.record(id: id))
+        #expect(failed.uploadState == .uploaded(url: link, key: key))
+        #expect(failed.objectLocation == world.location)
+        #expect(failed.uploadIsStale == true)
+        #expect(failed.priorUpload == nil)
+        #expect(try EditorPixels.isBlue(png: Data(contentsOf: try #require(record.fileURL))))
+        coordinator.copyLinkOrFile(recordID: id)
+        #expect(world.clipboard.copies == [.url(link)])
+        coordinator.openEditor(recordID: id)
+        let reopened = try await reopenedEditor(id, after: editor)
+        #expect(world.editors.built.count == 2)
+        #expect(EditorPixels.isBlue(reopened.model.base))
+        #expect(reopened.pushes.first?.status == EditorSaveTarget.uploadedCopyStaleNotice)
+        world.date = world.date.addingTimeInterval(1)
+        #expect(await reopened.upload() == EditorUploadOutcome(wroteLocally: true, enqueued: true))
+        try await eventually { coordinator.history.record(id: id)?.uploadIsStale == false }
+        #expect(coordinator.history.record(id: id)?.uploadState == .uploaded(url: link, key: key))
+        #expect(destination.state.withLock { $0.uploads.map(\.key) } == [key])
+        #expect(destination.state.withLock { $0.attemptKeys } == [key, key])
+        #expect(try EditorPixels.isBlue(png: try #require(destination.state.withLock { $0.uploads.last?.data })))
+        #expect(world.clipboard.copies == [.url(link), .url(link)])
+        #expect(world.notifier.calls.filter { $0 == .notice(title: "Uploaded, URL copied", body: EditorUploadPlan.cacheNote) }.count == 1)
+        try await settledEdit(coordinator, id)
+    }
+
+    /// phase-4a:133 (:193), in part; phase-4b:112 (:156), in part; phase-4b:113 (:157), in part; phase-4b:114 (:158).
+    /// An upload-only capture's failed replace (a 403, tried once) closes the editor and keeps the edit, with its text
+    /// and at the cropped size, in `pending/<UUID>.png`, while the record keeps its link. A relaunch (a second
+    /// coordinator over the same `history.json`, design 5) reads that state back; the row copies the old URL, Annotate
+    /// reopens the pending file's edit with the stale-copy status, and the next Upload replaces the same key, removes
+    /// the pending file and leaves the cropped size on the record.
+    /// Stays: phase-4a:133, closing and the subtitle as shown (`EDPLACE`). phase-4b:112, the window closing
+    /// (`EDPLACE`); the real quit and relaunch, by hand (a second coordinator stands for it); a 403 is not retried and
+    /// the title is `Not uploaded`. phase-4b:113, the subtitle as shown (`EDPLACE`).
+    @Test func aFailedReplaceOfAnUploadOnlyCaptureKeepsPendingAcrossARelaunchUntilTheNextUpload() async throws {
+        defer { world.removeAll() }
+        let original = try EditorPixels.png(width: 200, height: 100, scale: 2, white: true)
+        destination.state.withLock {
+            $0.downloadedData = original
+            $0.failuresRemaining = 10
+            $0.failure = .httpStatus(403, body: "SignatureDoesNotMatch")
+        }
+        let coordinator = world.makeCoordinator()
+        let record = CaptureRecord(fileURL: nil, pixelWidth: 200, pixelHeight: 100, appName: nil,
+                                   uploadState: .uploaded(url: link, key: key), objectLocation: world.location)
+        let id = record.id
+        coordinator.history.add(record)
+
+        // 1
+        coordinator.destinationDidChange()
+        coordinator.openEditor(recordID: id)
+        let editor = try await openedEditor(id)
+        let box = try addText(editor.model, "Edit", at: CGPoint(x: 80, y: 50))
+        crop(editor.model, to: CGRect(x: 40, y: 20, width: 120, height: 60), apply: false)
+        #expect(CropGeometry.readout(for: try #require(editor.model.cropDraft)) == "120 × 60")
+        let outcome = await editor.upload()
+        let expected = try #require(await editor.export()).image.image
+        try await eventually {
+            world.notifier.calls.contains(.error(title: "Not uploaded", message: EditorUploadPlan.failedReplaceMessage))
+        }
+        // The edit's thumbnail named (+Editor:217, :249-275): its history save lands before the relaunch reads it.
+        try await settledEdit(coordinator, id)
+
+        #expect(outcome == EditorUploadOutcome(wroteLocally: true, enqueued: true))
+        #expect(editor.isClosed)
+        #expect(coordinator.editors[id] == nil)
+        #expect(destination.state.withLock { $0.uploadAttempts } == 1)
+        #expect(destination.state.withLock { $0.attemptKeys } == [key])
+        #expect(destination.state.withLock { $0.uploads.isEmpty })
+        #expect(world.notifier.calls.contains(.error(title: "Not uploaded",
+                                                     message: "Upload failed. The link still shows the earlier image.")))
+        #expect(!world.notifier.errors.contains { $0.title == "Upload failed" })
+        let failed = try #require(coordinator.history.record(id: id))
+        #expect(failed.uploadState == .uploaded(url: link, key: key))
+        #expect(failed.objectLocation == world.location)
+        #expect(failed.priorUpload == nil)
+        #expect(failed.uploadIsStale == true)
+        #expect(failed.fileIsTemporary == true)
+        #expect(failed.fileURL == pendingURL(coordinator, id))
+        #expect(failed.keepsUnuploadedEdit == true)
+        #expect(failed.pixelWidth == 120)
+        #expect(failed.pixelHeight == 60)
+        #expect(EditorPixels.rgba(try EditorPixels.decoded(Data(contentsOf: pendingURL(coordinator, id))).image)
+            == EditorPixels.rgba(expected))
+
+        // 2: the first coordinator is quiescent (no upload running, the edit's thumbnail named); nothing
+        // below calls it or runs world.clock.
+        try #require(coordinator.history.record(id: id)?.isUploading == false)
+        let relaunched = world.makeCoordinator()
+        relaunched.history.load()
+        let loaded = try #require(relaunched.history.record(id: id))
+        #expect(loaded.uploadState == failed.uploadState)
+        #expect(loaded.fileURL == failed.fileURL)
+        #expect(loaded.fileIsTemporary == failed.fileIsTemporary)
+        #expect(loaded.uploadIsStale == failed.uploadIsStale)
+
+        // 3
+        relaunched.copyLinkOrFile(recordID: id)
+        relaunched.openEditor(recordID: id)
+        let reopened = try await reopenedEditor(id, after: editor)
+        #expect(world.clipboard.copies == [.url(link)])
+        #expect(world.editors.built.count == 2)
+        #expect(reopened.title == title(of: record))
+        #expect(reopened.representedURL == nil)
+        #expect(reopened.model.base.width == 120)
+        #expect(reopened.model.base.height == 60)
+        #expect(reopened.model.scale == 2)
+        #expect(EditorPixels.rgba(reopened.model.base) == EditorPixels.rgba(expected))
+        #expect(reopened.model.document == AnnotationDocument(annotations: []))
+        #expect(destination.state.withLock { $0.dataDownloadKeys } == [key])
+        let reopenPush = try #require(reopened.pushes.first)
+        #expect(reopenPush.status == EditorSaveTarget.uploadedCopyStaleNotice)
+        #expect(reopenPush.available == all)
+        #expect(reopenPush.saveCommand == .writeOver)
+
+        // 4: a later edit, so its thumbnail gets a new name settledEdit can wait for.
+        world.date = world.date.addingTimeInterval(1)
+        destination.state.withLock { $0.failuresRemaining = 0 }
+        relaunched.destinationDidChange()
+        let outcome2 = await reopened.upload()
+        try await eventually {
+            relaunched.history.record(id: id)?.isUploading == false && relaunched.history.record(id: id)?.fileURL == nil
+        }
+        #expect(outcome2 == EditorUploadOutcome(wroteLocally: true, enqueued: true))
+        #expect(reopened.isClosed)
+        let uploads = destination.state.withLock { $0.uploads }
+        #expect(uploads.map(\.key) == [key])
+        #expect(uploads.first?.cacheControl == "no-cache")
+        let decoded = try EditorPixels.decoded(try #require(uploads.first?.data))
+        #expect(decoded.image.width == 120)
+        #expect(decoded.image.height == 60)
+        #expect(decoded.scale == 2)
+        #expect(EditorPixels.rgba(decoded.image) == EditorPixels.rgba(expected))
+        #expect(EditorPixels.changedPixels(decoded.image, in: TextLayout.frame(for: box).offsetBy(dx: -40, dy: -20),
+                                           from: [255, 255, 255]) > 0)
+        #expect(!FileManager.default.fileExists(atPath: pendingURL(relaunched, id).path(percentEncoded: false)))
+        let done = try #require(relaunched.history.record(id: id))
+        #expect(done.uploadState == .uploaded(url: link, key: key))
+        #expect(done.fileURL == nil)
+        #expect(done.uploadIsStale == false)
+        #expect(done.pixelWidth == 120)
+        #expect(done.pixelHeight == 60)
+        #expect(done.byteCount == uploads.first?.data.count)
+        #expect(world.clipboard.copies == [.url(link), .url(link)])
+        #expect(world.notifier.calls.contains(.notice(title: "Uploaded, URL copied", body: EditorUploadPlan.cacheNote)))
+        try await settledEdit(relaunched, id)
+    }
+
+    /// phase-4a:132 (:192), in part. With another save folder chosen, a failed replace (a 403) of a capture saved in
+    /// the old folder leaves that file unchanged and keeps the edit in `pending/<UUID>.png`; Retry Failed Uploads does
+    /// nothing for it (the record is not failed, it keeps its link), and the next Upload replaces the same key with the
+    /// edit and removes the pending file. The edit is a drawn box, not a Redact: no test commits an effect (design 5).
+    /// Stays: closing (`EDPLACE`). The line's last step is at odds with the code: Retry Failed Uploads does nothing for
+    /// this capture; the next ⌘U recovers it (tests-editor.md section 8, Tim's call).
+    @Test func aFailedReplaceAfterAFolderChangeKeepsTheEditInPendingUntilTheNextUpload() async throws {
+        defer { world.removeAll() }
+        let folderA = try world.storeSaveFolder()
+        let folderB = world.root.appending(path: "Other", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folderB, withIntermediateDirectories: true)
+        let coordinator = world.makeCoordinator()
+        let (record, original) = try addSavedImage(to: coordinator, in: folderA, name: "Old.png",
+                                                   uploadState: .uploaded(url: link, key: key),
+                                                   objectLocation: world.location)
+        let id = record.id
+        destination.state.withLock {
+            $0.downloadedData = original
+            $0.failuresRemaining = 1
+            $0.failure = .httpStatus(403, body: "SignatureDoesNotMatch")
+        }
+        try world.saveLocation.store(folderB)
+        coordinator.openEditor(recordID: id)
+        let editor = try await openedEditor(id)
+        #expect(editor.model.base.width == 4)
+        editor.draw()
+        _ = await editor.upload()
+        try await eventually { world.notifier.errors.contains { $0.title == "Not uploaded" } }
+        let old = folderA.appending(path: "Old.png")
+        #expect(try Data(contentsOf: old) == original)
+        #expect(try EditorPixels.isBlue(png: Data(contentsOf: pendingURL(coordinator, id))))
+        let failed = try #require(coordinator.history.record(id: id))
+        #expect(failed.fileURL == pendingURL(coordinator, id))
+        #expect(failed.fileIsTemporary)
+        #expect(failed.uploadIsStale)
+        #expect(failed.keepsUnuploadedEdit)
+        #expect(failed.uploadState == .uploaded(url: link, key: key))
+        #expect(coordinator.history.failedRecords.isEmpty)
+        coordinator.retryFailedUploads()
+        // Synchronous: a retry would have flipped both at once (startingRetry, startUpload).
+        #expect(coordinator.history.record(id: id)?.isUploading == false)
+        #expect(coordinator.history.record(id: id)?.uploadState == .uploaded(url: link, key: key))
+        #expect(exists(pendingURL(coordinator, id)))
+        coordinator.openEditor(recordID: id)
+        let reopened = try await reopenedEditor(id, after: editor)
+        #expect(EditorPixels.isBlue(reopened.model.base))
+        #expect(reopened.pushes.first?.status == EditorSaveTarget.uploadedCopyStaleNotice)
+        world.date = world.date.addingTimeInterval(1)
+        #expect(await reopened.upload() == EditorUploadOutcome(wroteLocally: true, enqueued: true))
+        try await eventually { coordinator.history.record(id: id)?.uploadIsStale == false }
+        #expect(coordinator.history.record(id: id)?.uploadState == .uploaded(url: link, key: key))
+        let uploads = destination.state.withLock { $0.uploads }
+        #expect(uploads.map(\.key) == [key])
+        #expect(try EditorPixels.isBlue(png: try #require(uploads.first?.data)))
+        #expect(!exists(pendingURL(coordinator, id)))
+        #expect(coordinator.history.record(id: id)?.fileURL == nil)
+        try world.saveLocation.store(folderA)
+        #expect(try Data(contentsOf: old) == original)
+        try await settledEdit(coordinator, id)
+    }
+
+    /// phase-4a:148 (:215), in part. A new save folder reaches the open editor without any other call: its push gives
+    /// `EditorSaveTarget.outsideFolderReason` and ⌘S as Save As…. A Save that reaches the coordinator anyway is refused
+    /// with `Not saved` and leaves the file; the fake's `save()` skips the window's validation, so this is the
+    /// coordinator's own check (design 3.4). Upload writes the edit to `pending/<UUID>.png` until the PUT lands, never
+    /// to the old folder's file. With the first folder chosen again, another capture there is saved over its file.
+    /// Stays: ⌘S's panel (`EDSAVEAS`); ⌘W's Save (`CLOSESHEET` and `EDSAVEAS`); the subtitle and closing (`EDPLACE`).
+    @Test func aNewSaveFolderReachesTheOpenEditorAndUploadGoesThroughPending() async throws {
+        defer { world.removeAll() }
+        let folderA = try world.storeSaveFolder()
+        let folderB = world.root.appending(path: "Other", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folderB, withIntermediateDirectories: true)
+        destination.state.withLock { $0.holdingUploadsRemaining = 1 }
+        defer { destination.releaseUploads() }
+        let coordinator = world.makeCoordinator()
+        let (record, original) = try addSavedImage(to: coordinator, in: folderA)
+        let (other, _) = try addSavedImage(to: coordinator, in: folderA, name: "Other.png")
+        let id = record.id
+        coordinator.openEditor(recordID: id)
+        let editor = try await openedEditor(id)
+        #expect(editor.pushes.first?.saveCommand == .writeOver)
+        #expect(editor.pushes.first?.status == nil)
+        try world.saveLocation.store(folderB)
+        try await eventually { editor.pushes.last?.saveFolder == folderB }
+        let moved = try #require(editor.pushes.last)
+        #expect(moved.status == EditorSaveTarget.outsideFolderReason)
+        #expect(moved.saveCommand == .saveAs)
+        #expect(moved.available.contains(.save))
+        editor.draw()
+        #expect(!(await editor.save()))
+        #expect(world.notifier.errors.last?.title == "Not saved")
+        #expect(world.notifier.errors.last?.message == EditorSaveTarget.outsideFolderReason)
+        #expect(try Data(contentsOf: folderA.appending(path: "Shot.png")) == original)
+        #expect(await editor.upload() == EditorUploadOutcome(wroteLocally: true, enqueued: true))
+        #expect(editor.isClosed)
+        try await eventually { destination.state.withLock { $0.heldUploads.count } == 1 }
+        #expect(try Data(contentsOf: folderA.appending(path: "Shot.png")) == original)
+        #expect(try EditorPixels.isBlue(png: Data(contentsOf: pendingURL(coordinator, id))))
+        #expect(coordinator.history.record(id: id)?.fileURL == pendingURL(coordinator, id))
+        #expect(coordinator.history.record(id: id)?.fileIsTemporary == true)
+        destination.releaseUploads()
+        try await eventually { isUploaded(coordinator, id) }
+        #expect(!exists(pendingURL(coordinator, id)))
+        #expect(coordinator.history.record(id: id)?.fileURL == nil)
+        let k = try #require(coordinator.history.record(id: id)?.uploadedKey)
+        #expect(coordinator.history.record(id: id)?.uploadState == .uploaded(url: publicURL(k), key: k))
+        #expect(try Data(contentsOf: folderA.appending(path: "Shot.png")) == original)
+        try world.saveLocation.store(folderA)
+        let errorsBefore = world.notifier.errors.count
+        coordinator.openEditor(recordID: other.id)
+        let second = try await openedEditor(other.id)
+        #expect(second.pushes.first?.saveCommand == .writeOver)
+        #expect(second.pushes.first?.status == nil)
+        second.draw()
+        #expect(await second.save())
+        #expect(try EditorPixels.isBlue(png: Data(contentsOf: folderA.appending(path: "Other.png"))))
+        #expect(world.notifier.errors.count == errorsBefore)
+        try await settledEdit(coordinator, id)
+        try await settledEdit(coordinator, other.id)
+    }
+
+    /// phase-6a:199 (:211), in part: the upload-only half (the "Save and copy image" half is
+    /// `CoordinatorEditorSaveTests.saveOverTheFileRemovesTheDragCopyAndEveryReadGivesTheEdit`). Upload from the editor
+    /// on an upload-only capture with a kept drag copy removes `Drag/<record id>` at once. While the PUT is held,
+    /// Save As…'s read, Copy Image and a new drag stage give the edit from the pending file; after it, the kept drag
+    /// copy and a second Annotate give the edit, and nothing is downloaded. The edit is a drawn box standing for the
+    /// arrow.
+    /// Stays: the card's Save As… panel (`SAVEAS`); the drop, by hand. The line's "from the card" after an Annotate
+    /// cannot happen as written (tests-editor.md section 8), so the test puts the record back in `FakeCards.showing`.
+    @Test func uploadOfAnUploadOnlyCaptureRemovesItsDragCopyAndEveryReadGivesTheEdit() async throws {
+        defer { world.removeAll() }
+        let coordinator = world.makeCoordinator()
+        let record = try addPendingImage(to: coordinator)
+        let id = record.id
+        world.cards.showing.insert(id)
+        coordinator.retryUpload(recordID: id)
+        try await eventually { coordinator.history.record(id: id)?.uploadedKey != nil }
+        let k = try #require(coordinator.history.record(id: id)?.uploadedKey)
+        #expect(coordinator.history.record(id: id)?.fileURL == nil)
+        #expect(coordinator.dragFiles.stagedFile(id: id) != nil)
+        destination.state.withLock { $0.holdingUploadsRemaining = 1 }
+        defer { destination.releaseUploads() }
+
+        coordinator.openEditor(recordID: id)
+        let editor = try await openedEditor(id)
+        #expect(destination.state.withLock { $0.dataDownloadKeys }.isEmpty)
+        editor.draw()
+        let outcome = await editor.upload()
+        #expect(outcome == EditorUploadOutcome(wroteLocally: true, enqueued: true))
+        #expect(editor.isClosed)
+        #expect(!exists(coordinator.dragFiles.folder(for: id)))
+        #expect(coordinator.dragFiles.stagedFile(id: id) == nil)
+        #expect(world.cards.dragFiles(for: id).last == .some(nil))
+        let pending = pendingURL(coordinator, id)
+        let current = try #require(coordinator.history.record(id: id))
+        #expect(current.fileURL == pending)
+        #expect(current.fileIsTemporary)
+        #expect(try EditorPixels.isBlue(png: Data(contentsOf: pending)))
+        #expect(current.uploadIsStale)
+        #expect(current.editedAt == world.date)
+        #expect(current.isUploading)
+
+        try await eventually { destination.state.withLock { $0.heldUploads.count } == 1 }
+        let now = try #require(coordinator.history.record(id: id))
+        #expect(try EditorPixels.isBlue(png: try await coordinator.imageData(of: now, downloadTitle: "Saving a copy…")))
+        await coordinator.copyImage(recordID: id)
+        #expect(try EditorPixels.isBlue(png: try #require(world.clipboard.pngs.last)))
+        #expect(world.clipboard.copies.last == .pngAndTIFF)
+        world.cards.showing.insert(id)
+        coordinator.prepareDragFile(recordID: id)
+        try await eventually { world.cards.dragFiles(for: id).last.flatMap { $0 } != nil }
+        let staged = try #require(world.cards.dragFiles(for: id).last.flatMap { $0 })
+        #expect(try EditorPixels.isBlue(png: Data(contentsOf: staged)))
+        #expect(destination.state.withLock { $0.dataDownloadKeys }.isEmpty)
+
+        destination.releaseUploads()
+        try await eventually { coordinator.history.record(id: id)?.uploadState == .uploaded(url: publicURL(k), key: k) }
+        let uploads = destination.state.withLock { $0.uploads }
+        #expect(uploads.map(\.key) == [k, k])
+        #expect(uploads.last?.cacheControl == "no-cache")
+        #expect(try EditorPixels.isBlue(png: try #require(uploads.last?.data)))
+        let done = try #require(coordinator.history.record(id: id))
+        #expect(done.fileURL == nil)
+        #expect(!done.uploadIsStale)
+        #expect(try EditorPixels.isBlue(png: Data(contentsOf: try #require(coordinator.dragFiles.stagedFile(id: id)))))
+
+        coordinator.openEditor(recordID: id)
+        try await eventually { world.editors.built.filter { $0.model.recordID == id }.count == 2 }
+        let again = try #require(world.editors.editor(for: id))
+        #expect(EditorPixels.isBlue(again.model.base))
+        #expect(destination.state.withLock { $0.dataDownloadKeys }.isEmpty)
+        try await settledEdit(coordinator, id)
+    }
 }
