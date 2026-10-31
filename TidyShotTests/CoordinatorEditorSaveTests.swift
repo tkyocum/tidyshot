@@ -531,4 +531,324 @@ struct CoordinatorEditorSaveTests {
         #expect(world.factory.askedConfigs.isEmpty)
         try await settledEdit(coordinator, id)
     }
+
+    /// phase-4a:97 (:146), in part.
+    /// An upload-only capture has no file to write over, so Save stays on and ⌘S runs Save As… (the first push's
+    /// `saveCommand` is `.saveAs` and its status `EditorSaveTarget.noFileReason`, EST:16). The suggestion, read through
+    /// `editor.actions.saveAsSuggestion()` as the panel reads it when it opens, is the file name template's name with
+    /// the current counter in the save folder, and no counter is drawn (+RecordActions:321-330). Save As… writes the
+    /// PNG, posts `Saved` and touches no record, so nothing uploads and no link goes on the clipboard
+    /// (+Editor:283-304, +RecordActions:291-297).
+    /// Stays: the sheet, its name and folder (`EDSAVEAS`); "Save is on" as the toolbar shows it, and the dot
+    /// (`EDPLACE`). The first push's `available` is the rule.
+    @Test func saveAsOnAnUploadOnlyCaptureWritesThePNGAndUploadsNothing() async throws {
+        defer { world.removeAll() }
+        let folder = try world.storeSaveFolder()
+        world.settings.fileNameTemplate = "shot-{counter}"
+        _ = world.settings.nextCounter()
+        let coordinator = world.makeCoordinator()
+        let record = try addUploadOnly(to: coordinator)
+        coordinator.openEditor(recordID: record.id)
+        let editor = try await openedEditor(record.id)
+        editor.draw()
+        let first = try #require(editor.pushes.first)
+        #expect(first.available.contains(.save))
+        #expect(first.saveCommand == .saveAs)
+        #expect(first.status == EditorSaveTarget.noFileReason)
+        let suggestion = editor.actions.saveAsSuggestion()
+        #expect(suggestion == EditorNaming.SaveAsSuggestion(fileName: "shot-1.png", directory: folder, mediaKind: .image))
+        let target = folder.appending(path: "shot-1.png")
+        #expect(await editor.saveAs(to: target))
+        #expect(try EditorPixels.isBlue(png: Data(contentsOf: target)))
+        #expect(world.notifier.calls.contains(.saved(title: "Saved", file: "shot-1.png")))
+        #expect(!editor.model.hasUnsavedChanges)
+        #expect(coordinator.history.records.count == 1)
+        #expect(coordinator.history.record(id: record.id) == record)
+        #expect(destination.state.withLock { $0.uploadAttempts } == 0)
+        #expect(world.clipboard.copies.isEmpty)
+        #expect(world.settings.currentCounter == 1)
+    }
+
+    /// phase-4a:102 (:151), in part.
+    /// Save As… elsewhere on a 2x capture writes the edit at 144 dpi (`sips` is the DPI read, here `dpiWidth`) and
+    /// leaves the capture alone: its file and its record are unchanged, so the editor keeps its title; no record and no
+    /// card are added, no shutter plays and nothing uploads (+Editor:283-304, +RecordActions:291-297). The suggestion,
+    /// read through `editor.actions.saveAsSuggestion()` as the panel reads it, is the capture's own file name in the
+    /// save folder (+RecordActions:321-330).
+    /// Stays: the panel's suggestion and the choice (`EDSAVEAS`); the dot (`EDPLACE`).
+    @Test func saveAsElsewhereWritesA144DPICopyAndLeavesTheCaptureAlone() async throws {
+        defer { world.removeAll() }
+        let folder = try world.storeSaveFolder()
+        let coordinator = world.makeCoordinator()
+        let (record, original) = try addSavedImage(to: coordinator, in: folder, scale: 2)
+        let id = record.id
+        coordinator.openEditor(recordID: id)
+        let editor = try await openedEditor(id)
+        #expect(editor.model.scale == 2)
+        editor.draw()
+        #expect(editor.actions.saveAsSuggestion() == EditorNaming.SaveAsSuggestion(fileName: "Shot.png", directory: folder,
+                                                                                   mediaKind: .image))
+        let target = try desktop("Edited.png")
+        #expect(await editor.saveAs(to: target))
+        let written = try Data(contentsOf: target)
+        #expect(try EditorPixels.isBlue(png: written))
+        #expect(abs(try #require(EditorPixels.dpiWidth(of: written)) - 144) < 0.5)
+        #expect(try Data(contentsOf: try #require(record.fileURL)) == original)
+        #expect(coordinator.history.records.count == 1)
+        #expect(coordinator.history.record(id: id) == record)
+        #expect(world.cards.calls == [.close(id, .editorOpened)])
+        #expect(world.shutterCount == 0)
+        #expect(world.factory.askedConfigs.isEmpty)
+        #expect(destination.state.withLock { $0.uploadAttempts } == 0)
+        #expect(world.notifier.calls.contains(.saved(title: "Saved", file: "Edited.png")))
+        #expect(world.editors.built.count == 1)
+        #expect(!editor.model.hasUnsavedChanges)
+    }
+
+    /// phase-4a:106 (:157), in part.
+    /// Save As… onto the capture's own file is a Save (`EditorSaveTarget.saveAsWritesOverOwnFile`, EST:50-56;
+    /// +Editor:286-290): the file holds the edit, the folder holds no second file, the thumbnail is named for the edit,
+    /// `editedAt` is set and no `Saved` notice is posted, as after ⌘S. On an uploaded capture the record turns stale
+    /// and the last push's status is `EditorSaveTarget.uploadedCopyStaleNotice`; on a never-uploaded one neither.
+    /// Nothing uploads.
+    /// Stays: the Replace confirmation (`EDSAVEAS`); the subtitle as shown (`EDPLACE`).
+    @Test(arguments: [false, true])
+    func saveAsOntoItsOwnFileIsASave(uploaded: Bool) async throws {
+        defer { world.removeAll() }
+        let folder = try world.storeSaveFolder()
+        let coordinator = world.makeCoordinator()
+        let (record, _) = try addSavedImage(to: coordinator, in: folder,
+                                            uploadState: uploaded ? .uploaded(url: link, key: key) : .none,
+                                            objectLocation: uploaded ? world.location : nil)
+        let id = record.id
+        let file = try #require(record.fileURL)
+        coordinator.openEditor(recordID: id)
+        let editor = try await openedEditor(id)
+        editor.draw()
+        #expect(await editor.saveAs(to: file))
+        #expect(try EditorPixels.isBlue(png: Data(contentsOf: file)))
+        #expect(try FileManager.default.contentsOfDirectory(atPath: folder.path(percentEncoded: false)) == ["Shot.png"])
+        try await eventually {
+            coordinator.history.record(id: id)?.thumbnailFileName == coordinator.thumbnails.fileName(for: id, editedAt: world.date)
+        }
+        #expect(coordinator.history.record(id: id)?.editedAt == world.date)
+        #expect(!world.notifier.calls.contains { if case .saved = $0 { return true } else { return false } })
+        #expect(coordinator.history.record(id: id)?.uploadIsStale == uploaded)
+        #expect(editor.pushes.last?.status == (uploaded ? EditorSaveTarget.uploadedCopyStaleNotice : nil))
+        #expect(destination.state.withLock { $0.uploadAttempts } == 0)
+    }
+
+    /// phase-4b:76 (:104).
+    /// Save As… with a crop draft still open writes a copy at the cropped pixel size and the capture's scale, pixel for
+    /// pixel the export (which applies the draft first, as the window's export does, EWC:302-303), and leaves the
+    /// capture's file, its folder and its record unchanged (+Editor:283-304, +RecordActions:291-297).
+    @Test func saveAsWithACropWritesACroppedCopyAndLeavesTheCaptureAlone() async throws {
+        defer { world.removeAll() }
+        let folder = try world.storeSaveFolder()
+        let coordinator = world.makeCoordinator()
+        let png = try EditorPixels.png(width: 200, height: 100, scale: 2)
+        let file = folder.appending(path: "Shot.png")
+        try png.write(to: file)
+        let record = CaptureRecord(fileURL: file, pixelWidth: 200, pixelHeight: 100, appName: nil, byteCount: png.count)
+        coordinator.history.add(record)
+        let url = try desktop("Crop.png")
+        coordinator.openEditor(recordID: record.id)
+        let editor = try await openedEditor(record.id)
+        crop(editor.model, to: CGRect(x: 40, y: 20, width: 120, height: 60), apply: false)
+        #expect(await editor.saveAs(to: url))
+        let expected = try #require(await editor.export()).image.image
+        let decoded = try EditorPixels.decoded(Data(contentsOf: url))
+        #expect(decoded.image.width == 120)
+        #expect(decoded.image.height == 60)
+        #expect(decoded.scale == 2)
+        #expect(EditorPixels.rgba(decoded.image) == EditorPixels.rgba(expected))
+        #expect(try Data(contentsOf: file) == png)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: folder.path(percentEncoded: false)) == ["Shot.png"])
+        #expect(coordinator.history.record(id: record.id) == record)
+        #expect(world.notifier.calls.contains(.saved(title: "Saved", file: "Crop.png")))
+        #expect(world.clipboard.copies.isEmpty)
+        #expect(world.factory.askedConfigs.isEmpty)
+    }
+
+    /// phase-7c:172 (:215), in part.
+    /// Save As… with a solid background writes the composed image: the fill around the edit, 20 by 18 for a 4 by 2
+    /// capture with padding 8. The capture is left alone: its record, its file, its folder and its thumbnail are
+    /// unchanged, and with no clipboard owner the clipboard is untouched (+Editor:283-304, :436-446).
+    /// Stays: the panel (`EDSAVEAS`).
+    @Test func saveAsWithABackgroundWritesTheComposedImageAndLeavesTheCaptureAlone() async throws {
+        defer { world.removeAll() }
+        let folder = try world.storeSaveFolder()
+        let coordinator = world.makeCoordinator()
+        let original = try ImageEncoder.pngData(from: CoordinatorWorld.image(width: 4, height: 2), scale: 1)
+        let file = folder.appending(path: "Shot.png")
+        try original.write(to: file)
+        let id = UUID()
+        let thumb = try coordinator.thumbnails.write(Data("png".utf8), id: id)
+        coordinator.history.add(CaptureRecord(id: id, fileURL: file, thumbnailFileName: thumb, pixelWidth: 4, pixelHeight: 2,
+                                              appName: nil, byteCount: original.count))
+        coordinator.openEditor(recordID: id)
+        let editor = try await openedEditor(id)
+        editor.draw()
+        editor.model.setBackground(background)
+        let before = coordinator.history.record(id: id)
+        let target = try desktop("Composed.png")
+        #expect(await editor.saveAs(to: target))
+        let d = try EditorPixels.decoded(Data(contentsOf: target))
+        #expect(d.image.width == 20 && d.image.height == 18)
+        #expect(EditorPixels.pixel(d.image, x: 0, y: 0) == [0, 255, 0, 255])
+        #expect(EditorPixels.isBlue(EditorPixels.pixel(d.image, x: 8, y: 8)))
+        #expect(coordinator.history.record(id: id) == before)
+        #expect(try Data(contentsOf: file) == original)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: folder.path(percentEncoded: false)) == ["Shot.png"])
+        #expect(coordinator.history.record(id: id)?.thumbnailFileName == "\(id.uuidString).png")
+        #expect(world.notifier.calls.contains(.saved(title: "Saved", file: "Composed.png")))
+        #expect(world.clipboard.copies.isEmpty)
+        #expect(world.factory.askedConfigs.isEmpty)
+    }
+
+    /// phase-4a:112 (:165).
+    /// With "Show notification" off, Copy puts the edit on the clipboard and owns it for the capture, and posts
+    /// nothing (+Editor:451-466). The retained capture opens the editor at once, and the editor stays open and changed.
+    @Test func copyWithShowNotificationOffPostsNothing() async throws {
+        defer { world.removeAll() }
+        world.settings.showNotification = false
+        let coordinator = world.makeCoordinator()
+        let record = CaptureRecord(fileURL: nil, pixelWidth: 4, pixelHeight: 2, appName: nil)
+        coordinator.history.add(record)
+        coordinator.latestCapture = (id: record.id, image: ScaledImage(image: try CoordinatorWorld.image(width: 4, height: 2), scale: 1))
+        coordinator.openEditor(recordID: record.id)
+        let editor = try #require(world.editors.editor(for: record.id))
+        #expect(coordinator.openingEditorIDs.isEmpty)
+        editor.draw()
+        await editor.copy()
+        #expect(world.clipboard.copies == [.pngAndTIFF])
+        #expect(coordinator.clipboardOwner == EditorClipboard.Owner(recordID: record.id, changeCount: world.clipboard.changeCount))
+        #expect(world.notifier.calls.isEmpty)
+        #expect(editor.model.hasUnsavedChanges)
+        #expect(!editor.isClosed)
+        #expect(try EditorPixels.isBlue(png: world.clipboard.pngs[0]))
+    }
+
+    /// phase-4b:77 (:105); phase-4b:92 (:132), in part.
+    /// Copy with nothing selected and a crop draft open puts the cropped image on the clipboard at the capture's
+    /// scale, 144 dpi for a 2x capture, so its point size is half its pixels (Preview is the `pngs` decode). It says
+    /// `Image copied` with the file's name, owns the clipboard, and leaves the file, the record and the window alone
+    /// (+Editor:451-466). Then `editor.actions.objectClipboard.copy`, which the canvas's ⌘C calls with an object
+    /// selected (EWC:75), copies the object and leaves the image's owner and the notices alone (+Editor:111-116).
+    /// Stays: phase-4b:92, which command reaches the copy: ⌘C with and without a selection, ⇧⌘C, the toolbar button
+    /// (`EDPLACE`).
+    @Test func copyWithACropPutsTheCroppedImageAtPointSizeAndSaysImageCopied() async throws {
+        defer { world.removeAll() }
+        let folder = try world.storeSaveFolder()
+        let coordinator = world.makeCoordinator()
+        let png = try EditorPixels.png(width: 200, height: 100, scale: 2)
+        let file = folder.appending(path: "Shot.png")
+        try png.write(to: file)
+        let record = CaptureRecord(fileURL: file, pixelWidth: 200, pixelHeight: 100, appName: nil, byteCount: png.count)
+        let id = record.id
+        coordinator.history.add(record)
+
+        coordinator.openEditor(recordID: id)
+        let editor = try await openedEditor(id)
+        editor.model.commitNewShape(try #require(editor.model.makeAnnotation(.rectangle, from: CGPoint(x: 50, y: 30),
+                                                                            to: CGPoint(x: 110, y: 70))))
+        editor.model.selection = nil
+        crop(editor.model, to: CGRect(x: 40, y: 20, width: 120, height: 60), apply: false)
+        await editor.copy()
+        let expected = try await expected(editor)
+        editor.actions.objectClipboard.copy(Data("clip".utf8))
+
+        #expect(world.clipboard.copies.first == .pngAndTIFF)
+        #expect(world.clipboard.pngs.count == 1)
+        let decoded = try EditorPixels.decoded(world.clipboard.pngs[0])
+        #expect(decoded.image.width == 120)
+        #expect(decoded.image.height == 60)
+        #expect(decoded.scale == 2)
+        #expect(abs(try #require(EditorPixels.dpiWidth(of: world.clipboard.pngs[0])) - 144) < 0.5)
+        #expect(EditorPixels.rgba(decoded.image) == EditorPixels.rgba(expected))
+        #expect(coordinator.clipboardOwner == EditorClipboard.Owner(recordID: id, changeCount: 1))
+        #expect(world.notifier.calls == [.notice(title: "Image copied", body: "Shot.png")])
+        #expect(try Data(contentsOf: file) == png)
+        #expect(coordinator.history.record(id: id) == record)
+        #expect(!editor.isClosed)
+        #expect(world.clipboard.copies == [.pngAndTIFF, .annotationClip(Data("clip".utf8))])
+        #expect(world.clipboard.copies.last == .annotationClip(Data("clip".utf8)))
+        #expect(coordinator.clipboardOwner == EditorClipboard.Owner(recordID: id, changeCount: 1))
+        #expect(world.notifier.calls.count == 1)
+    }
+
+    /// phase-7c:169 (:212), in part.
+    /// Copy with a solid background puts the composed canvas on the clipboard (Preview is the `pngs` decode): 20 by 18
+    /// at scale 1, the fill at both corners and the edit inside. It says `Image copied` with the file's name, owns the
+    /// clipboard, and leaves the edit unsaved, since Copy never marks saved (+Editor:451-466).
+    /// Stays: the window's routing to `copyImage` (`EDPLACE`).
+    @Test func copyWithABackgroundPutsTheComposedCanvasOnTheClipboard() async throws {
+        defer { world.removeAll() }
+        let folder = try world.storeSaveFolder()
+        let coordinator = world.makeCoordinator()
+        let (record, _) = try addSavedImage(to: coordinator, in: folder)
+        coordinator.openEditor(recordID: record.id)
+        let editor = try await openedEditor(record.id)
+        editor.draw()
+        editor.model.setBackground(background)
+        await editor.copy()
+        #expect(world.clipboard.copies == [.pngAndTIFF])
+        #expect(world.clipboard.pngs.count == 1)
+        let d = try EditorPixels.decoded(world.clipboard.pngs[0])
+        #expect(d.image.width == 20 && d.image.height == 18 && d.scale == 1)
+        #expect(EditorPixels.pixel(d.image, x: 0, y: 0) == [0, 255, 0, 255])
+        #expect(EditorPixels.pixel(d.image, x: 19, y: 17) == [0, 255, 0, 255])
+        #expect(EditorPixels.isBlue(EditorPixels.pixel(d.image, x: 8, y: 8)))
+        #expect(EditorPixels.isBlue(EditorPixels.pixel(d.image, x: 11, y: 9)))
+        #expect(coordinator.clipboardOwner == EditorClipboard.Owner(recordID: record.id, changeCount: world.clipboard.changeCount))
+        #expect(world.notifier.calls.contains(.notice(title: "Image copied", body: "Shot.png")))
+        #expect(editor.model.hasUnsavedChanges)
+    }
+
+    nonisolated enum Write: CaseIterable, Sendable { case save, saveAs }
+
+    /// phase-4a:115 (:168) `(.save, false)`; phase-4a:116 (:169) `(.saveAs, false)`; phase-4a:117 (:170)
+    /// `(.saveAs, true)`; phase-4a:118 (:171) `(.save, true)`.
+    /// The clipboard rule after Save and Save As…: while the clipboard still holds what TidyShot put there for the
+    /// capture, the edit replaces it and TidyShot owns it at the new count; once something else was copied since
+    /// (TextEdit's text), it is left alone (+Editor:218, :302, :436-446; the rule is `EditorClipboardTests`',
+    /// EC:15-18). Preview is the `pngs` decode. The capture's own copy and owner are set up as +Save:57-67 leaves
+    /// them; that step is in `save(_:intent:)` (`TARGET`), and no test pins it today.
+    @Test(arguments: Write.allCases, [false, true])
+    func aSaveOrSaveAsTakesTheClipboardOnlyWhileItHoldsTheCapture(write: Write, userCopied: Bool) async throws {
+        defer { world.removeAll() }
+        let folder = try world.storeSaveFolder()
+        let coordinator = world.makeCoordinator()
+        let (record, original) = try addSavedImage(to: coordinator, in: folder)
+        let id = record.id
+        coordinator.latestCapture = (id: id, image: ScaledImage(image: try CoordinatorWorld.image(width: 4, height: 2), scale: 1))
+        let count = world.clipboard.copy(pngData: original, tiffData: nil)
+        coordinator.clipboardOwner = EditorClipboard.Owner(recordID: id, changeCount: count)
+        if userCopied { world.clipboard.setString("From TextEdit") }
+        coordinator.openEditor(recordID: id)
+        let editor = try #require(world.editors.editor(for: id))
+        editor.draw()
+        let writtenURL: URL
+        switch write {
+        case .save:
+            #expect(await editor.save())
+            writtenURL = try #require(record.fileURL)
+        case .saveAs:
+            writtenURL = try desktop("Shot.png")
+            #expect(await editor.saveAs(to: writtenURL))
+        }
+        let written = try Data(contentsOf: writtenURL)
+        #expect(try EditorPixels.isBlue(png: written))
+        if userCopied {
+            #expect(world.clipboard.copies == [.pngAndTIFF, .string("From TextEdit")])
+            #expect(world.clipboard.pngs.count == 1)
+            #expect(coordinator.clipboardOwner == EditorClipboard.Owner(recordID: id, changeCount: 1))
+            #expect(world.clipboard.changeCount == 2)
+        } else {
+            #expect(world.clipboard.copies == [.pngAndTIFF, .pngAndTIFF])
+            #expect(world.clipboard.pngs[1] == written)
+            #expect(coordinator.clipboardOwner == EditorClipboard.Owner(recordID: id, changeCount: 2))
+        }
+        if write == .save { try await settledEdit(coordinator, id) }
+    }
 }
