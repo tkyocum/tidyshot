@@ -9,12 +9,13 @@ nonisolated enum CoordinatorWorldError: Error {
 }
 
 /// A coordinator's world in the suite (harness design 2.4): temp folders, a `UserDefaults` suite named
-/// after the test, settings and a save location over it, credentials in memory, the fakes, a clock the
-/// test moves, a date it sets, free space it sets, a log it reads and a destination factory. Build it in
-/// the suite's `init`, make the coordinator with `makeCoordinator()`, and `defer { world.removeAll() }`
-/// first thing in each test. Nothing here reaches the system, except the `ProcessInfo` activity
-/// (`Uploading a recording`) the coordinator begins while `fileUploadIDs` is not empty: the design
-/// leaves `ProcessInfo` activities out of the environment (2.1, Deferred), and it ends when the set empties.
+/// after the test, settings and a save location over it, credentials in memory, the fakes, the editors
+/// the coordinator opens (`editors`; no window is built), a clock the test moves, a date it sets, free
+/// space it sets, a log it reads and a destination factory. Build it in the suite's `init`, make the
+/// coordinator with `makeCoordinator()`, and `defer { world.removeAll() }` first thing in each test.
+/// Nothing here reaches the system, except the `ProcessInfo` activity (`Uploading a recording`) the
+/// coordinator begins while `fileUploadIDs` is not empty: the design leaves `ProcessInfo` activities out
+/// of the environment (2.1, Deferred), and it ends when the set empties.
 final class CoordinatorWorld {
     static let config = S3DestinationConfig(endpoint: "https://s3.us-west-2.amazonaws.com", region: "us-west-2",
                                              bucket: "snap.tky.io", publicURLTemplate: "https://snap.tky.io/{key}")
@@ -39,6 +40,8 @@ final class CoordinatorWorld {
     let cards = FakeCards()
     let clipboard = FakeClipboard()
     let confirm = FakeConfirm()
+    /// Every editor the coordinator opened (`environment.makeEditor`); no window is built.
+    let editors = FakeEditors()
     /// The coordinator's clock, and its self-timer's.
     let clock = FakeScrollClock()
     let factory = FakeDestinationFactory()
@@ -106,6 +109,7 @@ final class CoordinatorWorld {
         let factory = factory
         let state = state
         let confirm = confirm
+        let editors = editors
         return AppEnvironment(
             historyFileURL: historyFileURL,
             temporaryDirectory: temporaryDirectory,
@@ -121,6 +125,10 @@ final class CoordinatorWorld {
             freeBytes: { url in state.freeBytes(at: url) },
             confirm: { question in await confirm.confirm(question) },
             playShutter: { [weak self] in self?.shutterCount += 1 },
+            makeEditor: { model, actions, title, representedURL, onClose in
+                editors.make(model: model, actions: actions, title: title, representedURL: representedURL,
+                             onClose: onClose)
+            },
             now: { state.date },
             clock: clock,
             log: { line in state.append(line) })

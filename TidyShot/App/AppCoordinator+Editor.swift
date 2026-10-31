@@ -69,8 +69,9 @@ extension AppCoordinator {
         afterMenuTracking { [weak self] in self?.openEditor(recordID: recordID) }
     }
 
-    /// Builds the model and the window and shows them. `openEditor` and `loadAndPresentEditor`
-    /// have checked that no editor is open for the record and that it still exists.
+    /// Builds the model and, through `environment.makeEditor`, the editor (the window in the app, a
+    /// fake in the suite), and shows them. `openEditor` and `loadAndPresentEditor` have checked
+    /// that no editor is open for the record and that it still exists.
     private func presentEditor(record: CaptureRecord, image: ScaledImage) {
         // A save-folder file names the window and gives it a proxy icon; a pending file in the
         // container is not shown.
@@ -78,15 +79,13 @@ extension AppCoordinator {
         let title = fileURL?.lastPathComponent
             ?? "Capture \(record.timestamp.formatted(date: .omitted, time: .shortened))"
         let model = EditorModel(recordID: record.id, image: image, renderer: RedactionRenderer.shared, defaults: settings.editorDefaults)
-        let controller = EditorWindowController(model: model, actions: editorActions(for: record.id), title: title,
-                                                representedURL: fileURL,
-                                                cascadeFrom: NSApp.orderedWindows.first { $0 is EditorWindow })
-        controller.onClose = { [weak self] closed in self?.editorDidClose(closed) }
-        editors[record.id] = controller
+        let editor = environment.makeEditor(model, editorActions(for: record.id), title, fileURL,
+                                            { [weak self] closed in self?.editorDidClose(closed) })
+        editors[record.id] = editor
         pushEditorState(for: record.id)
         observeSaveFolderForEditors()
         Task { await RedactionRenderer.shared.warmUp(with: image.image) }
-        controller.present()
+        editor.present()
         // The editor is now the capture's surface; the record stays in Recent Captures.
         overlay.close(recordID: record.id, reason: .editorOpened)
         // The card may already be closed (editor opened from Recent Captures): not restorable.
@@ -466,9 +465,9 @@ extension AppCoordinator {
     }
 
     /// Drops a closed editor. When the last one closes, the renderer frees its caches.
-    private func editorDidClose(_ controller: EditorWindowController) {
-        let id = controller.model.recordID
-        guard editors[id] === controller else { return }
+    private func editorDidClose(_ editor: any EditorPresenting) {
+        let id = editor.model.recordID
+        guard editors[id] === editor else { return }
         editors[id] = nil
         if editors.isEmpty {
             Task { await RedactionRenderer.shared.clearCaches() }

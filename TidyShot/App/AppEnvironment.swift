@@ -33,6 +33,11 @@ struct AppEnvironment {
     /// Delete's two alerts: true for Delete or Remove.
     var confirm: @MainActor (DeleteConfirmation) async -> Bool
     var playShutter: @MainActor () -> Void
+    /// Builds an annotation editor over the coordinator's model and actions, titled `title`, with
+    /// `representedURL` as its proxy icon, not yet shown. `onClose` runs when its window closes.
+    var makeEditor: @MainActor (_ model: EditorModel, _ actions: EditorActions, _ title: String,
+                                _ representedURL: URL?,
+                                _ onClose: @escaping @MainActor (any EditorPresenting) -> Void) -> any EditorPresenting
     var now: @Sendable () -> Date
     /// The coordinator's own waits: the drag folder's clean-up, a replaced lane's poll, a recording's
     /// settle delay without a count-in, and a quit's poll.
@@ -42,8 +47,9 @@ struct AppEnvironment {
 
     /// What the app runs on: the user's Application Support folder (the temporary folder when it
     /// cannot be had), the shared settings, the Keychain, the notification centre, the card stack,
-    /// the general pasteboard, S3, the alerts, the shutter sound, the wall clock and `NSLog`. The
-    /// collaborators are built in the order the coordinator's stored properties built them.
+    /// the general pasteboard, S3, the alerts, the shutter sound, the editor window, the wall clock
+    /// and `NSLog`. The collaborators are built in the order the coordinator's stored properties
+    /// built them.
     static func live() -> AppEnvironment {
         let saveLocation = SaveLocation()
         let settings = AppSettings.shared
@@ -67,6 +73,15 @@ struct AppEnvironment {
             freeBytes: { RecordingLimits.freeBytes(at: $0) },
             confirm: { await AppEnvironment.confirmLive($0) },
             playShutter: { SoundPlayer.playShutter() },
+            makeEditor: { model, actions, title, representedURL, onClose in
+                // The window as presentEditor built it: cascaded 22 pt from the frontmost editor,
+                // read now, before this one exists. Its close reaches the coordinator's callback.
+                let controller = EditorWindowController(model: model, actions: actions, title: title,
+                                                        representedURL: representedURL,
+                                                        cascadeFrom: NSApp.orderedWindows.first { $0 is EditorWindow })
+                controller.onClose = { closed in onClose(closed) }
+                return controller
+            },
             now: { Date() },
             clock: SystemScrollClock(),
             log: { NSLog("%@", $0) })
