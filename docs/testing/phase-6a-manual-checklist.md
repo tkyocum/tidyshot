@@ -130,7 +130,9 @@ Settings > Overlay > Show up to 5 overlays, auto-close 60 s so the cards stay wh
 - [ ] A card that slides away from a still pointer closes. Auto-close 10 s, take two captures, rest the pointer on the older card (the countdown waits), take a third capture so the older card slides down from under the pointer, and keep the pointer still: when its countdown next runs out the card closes, although no hover-exit event came. The card that now stands under the still pointer is the one that waits.
 - [ ] Lowering `Show up to N overlays` takes effect at the next layout, not when the stepper moves: with five cards showing, set it to 2 and look: all five stay. Then take a capture, or close any card: the stack is cut to the newest two cards at that moment, and the cards that go close as pushed out and can be restored. Raising the limit again brings no card back by itself.
 - [ ] While the pointer is over a card, let another card close: the cards under the pointer do not move out from under it until the pointer leaves, then the stack settles. Close the newest card with its badge and keep the pointer still: the others slide up only after the pointer leaves the stack.
-- [ ] Delete a card in the middle of the stack and Annotate another: each closes and the gap closes.
+- [ ] Delete a card in the middle of the stack and Annotate another: each closes and the gap closes. (suite, in part:
+  CoordinatorEditorTests.annotateFromACardOrRecentCapturesLeavesNothingToRestore; by hand: the gap in the stack closing
+  (`QASTACK`))
 - [ ] Upload-only mode, a capture uploading in one card and an older card settled: the uploading card stays until its URL is copied, then counts down; the settled one closes on its own timer.
 - [ ] A card cannot be moved: pressing on its background and dragging does not move the panel (it starts a drag-out, see below).
 - [ ] The stack is on every Space and over a full-screen app: take a capture in a full-screen Safari window and the stack shows there.
@@ -152,13 +154,17 @@ Settings > Overlay > Show up to 5 overlays, auto-close 60 s so the cards stay wh
 - [ ] A click on the thumbnail reveals a save-folder file in Finder; on an upload-only card with no file it does nothing and nothing breaks. A click on a button does not start a drag.
 - [ ] Copy Image, from the context menu, with each kind of capture: a saved file; an uploaded capture that kept its file; an upload-only capture whose file is gone (a signed download runs; `Copying image…` is posted). Preview > File > New from Clipboard shows the same image, with the same pixel size as the file.
   (suite: CoordinatorRecordActionsTests.copyImageReadsTheFileOrDownloadsTheObject)
-- [ ] Annotate from a card opens the editor and closes the card (not restorable, see below).
+- [ ] Annotate from a card opens the editor and closes the card (not restorable, see below). (suite:
+  CoordinatorEditorTests.annotateFromACardOrRecentCapturesLeavesNothingToRestore,
+  ClosedOverlaysTests.onlyUserAutoPushedAndDraggedClosesAreRestorable)
 
 ## Close and restore
 Bind `Restore closed overlay:` to a combination for this section.
 - [ ] Close a card with the badge, with the context menu `Close`, by auto-close, by pushing it out with a sixth capture, and by dragging it out. Each time `Restore Closed Overlay` in the menu is enabled and the shortcut brings back that card at the corner, with the record's current state (a link that arrived since, a failed upload) and its thumbnail, and with the normal auto-close. With a shortcut recorded, the menu item reads `Restore Closed Overlay  <shortcut>`.
 - [ ] With the stack on the second display, restore: the card joins that stack. With no card showing, restore puts the card on the pointer's display (`Display of the capture` and `Display with the pointer`) or the main display (`Main display`).
 - [ ] Delete a capture from its card, and open the editor from another card: neither can be restored. When only those were closed, `Restore Closed Overlay` is disabled. A card whose delete is under way (the confirmation accepted, an upload being cancelled and the storage `DELETE` still running; Network Link Conditioner on `100% Loss` slows it) is not restorable in that window either: the menu item stays disabled and the shortcut does nothing. Open the editor from Recent Captures on a capture whose card is already closed: its card is no longer restorable.
+  (suite: CoordinatorEditorTests.annotateFromACardOrRecentCapturesLeavesNothingToRestore,
+  CoordinatorOverlayTests.aCardWhoseDeleteIsUnderWayIsNotRestorable)
 - [ ] Close four cards one after the other and restore four times: they come back newest-closed first. A fifth restore does nothing and the menu item is disabled.
   (suite, in part: ClosedOverlaysTests.repeatedRestoresWalkBack, .hasRestorableMatchesPop; the coordinator's
   `restoreClosedOverlay` showing the card and the menu item's enabled state stay by hand, behind the screen seam)
@@ -170,6 +176,10 @@ Bind `Restore closed overlay:` to a combination for this section.
 - [ ] Delete a closed card's capture from Recent Captures: restore skips it. (suite, in part:
   ClosedOverlaysTests.popSkipsDeletedAndShownIds; the coordinator's record check and the restore itself stay by hand)
 - [ ] A restored card's Annotate opens the editor from the file or, for an uploaded upload-only capture, from the bucket (the same as the Annotate button in Recent Captures).
+  (suite, in part: CoordinatorEditorTests.aRestoredCardsAnnotateOpensFromTheFileOrTheBucket,
+  CoordinatorDragOutTests.aRestoredUploadOnlyCardsQuietDownloadIsNamedForItsKey; by hand: the restore itself, which
+  reads the screens (`SCREENS`); the test opens a showing card with no retained image, as a restored one is, and for the
+  uploaded upload-only capture before and after the restore's quiet download)
 - [ ] Quit and reopen: the list is empty and the menu item is disabled. Recent Captures still holds everything. (suite:
   CoordinatorOverlayTests.aRelaunchForgetsClosedCardsButKeepsTheirRecords)
 
@@ -208,7 +218,15 @@ Keep another app (Safari) frontmost while you click the card.
   Finder copies the file, never moves it. Dropping on the Trash does not delete or move the original. Copy the table under probe 2 in `docs/superpowers/research/phase-6-research.md`. If any receiver refuses the file URL or shows the prompt, write down which: the file-promise fallback (Task 6, Step 9; a provider that also writes the file URL) is then built as a follow-up, not in 6a.
 - [ ] Modes, with Finder and Slack: "Save and copy image" (drag at once); "Upload and copy URL" before the upload ends (Network Link Conditioner on a slow profile) and after; "Upload only, keep no local file" before the upload ends and after it (the URL is on the clipboard, the file in `pending` is gone). Each time the dropped file is the capture, whole.
 - [ ] Upload only, after the upload: the card is still on screen, and dragging it still works, from a file in the `Drag` folder that took the place of the pending file. `history.json` shows the record as before (no `fileURL`), and Recent Captures shows no local file. Copy Image, Save As… and Annotate on that card need no download (no `Downloading` notification). 60 seconds after the card closes `ls ~/Library/Containers/io.tky.tidyshot/Data/tmp/Drag` no longer lists the record's folder (Slack may still read the file in those seconds).
+  (suite, in part: CoordinatorEditorTests.anUploadedUploadOnlyCardsCopyImageAndAnnotateReadTheDragCopy,
+  CoordinatorUploadTests.anUploadedUploadOnlyImageMovesToItsDragFolderOnlyWithACard; by hand: the card's Save As… panel
+  (`SAVEAS`), and Slack reading the file)
 - [ ] An edited capture's drag copy is replaced. Upload-only mode, wait for the upload (the card shows `URL copied` and a drag file is kept), then press Annotate, draw an arrow, and save the edit (⌘S, or ⌘U to upload it): the capture's `Drag/<record id>` folder is gone at once. Then, from the card or Recent Captures: Copy Image, Save As… and Annotate show the edited image (arrow included), never the one before the edit; a drag started after the edit (press on the card, which stages the edit again) drops the edited image. Do the same with "Save and copy image" and an edit saved over the file: the dragged file has the arrow too.
+  (suite, in part: CoordinatorEditorSaveTests.saveOverTheFileRemovesTheDragCopyAndEveryReadGivesTheEdit,
+  CoordinatorEditorUploadTests.uploadOfAnUploadOnlyCaptureRemovesItsDragCopyAndEveryReadGivesTheEdit; by hand: the
+  card's Save As… panel (`SAVEAS`), and the drop; the line's "from the card" cannot happen after an Annotate, which
+  closes the card for good, and in upload-only mode ⌘S is Save As…, so the tests read through Recent Captures and remove
+  the drag copy with ⌘U there and ⌘S over a saved file)
 - [ ] Start a drag during a slow upload, hold the card in the air until the upload finishes, then drop: the file still arrives whole.
 - [ ] A restored card with no local file (upload-only, restored after closing): it starts a quiet download when it appears (no notification). Network Link Conditioner on a slow profile: dragging before the download ends does nothing and the card stays; after it ends, dragging works. With Wi-Fi off the restore still works and dragging does nothing. A restored card with a save-folder file drags at once.
 - [ ] A save folder on an external disk, if one is at hand: drag a fresh capture; the drag starts once the copy is made, and the receiver gets the file whole.

@@ -31,6 +31,22 @@ struct EditorActions {
     var unusableBackgroundImage: (_ fileName: String) -> Void
 }
 
+/// What the coordinator asks of an open annotation editor (the editor seam): `EditorWindowController`
+/// in the app, `FakeEditor` in the suite. Class-bound, so the registry keeps one object per record and
+/// `editorDidClose` and the quit review compare by identity (`===`). Construction, and the close
+/// callback, are `AppEnvironment.makeEditor`'s.
+protocol EditorPresenting: AnyObject {
+    /// The editor's document; the coordinator reads `recordID` and `hasUnsavedChanges`.
+    var model: EditorModel { get }
+    /// Brings the editor forward (activates the app).
+    func present()
+    /// The coordinator's push (`pushEditorState`): the record as it is now (nil once deleted or
+    /// pruned), the save folder, and whether a delete is running.
+    func recordDidChange(_ record: CaptureRecord?, saveFolder: URL?, isDeleting: Bool)
+    /// The unsaved-changes sheet, for the quit review. True when the editor may go.
+    func askToSaveBeforeClosing() async -> Bool
+}
+
 /// One annotation editor window for one capture record: the window, the two stacked views, the
 /// document actions, zoom, and the unsaved-changes sheet.
 final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUserInterfaceValidations {
@@ -519,3 +535,5 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
         canvasView.endSpacePan()
     }
 }
+
+extension EditorWindowController: EditorPresenting {}

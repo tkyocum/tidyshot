@@ -255,8 +255,8 @@ final class AppCoordinator {
     /// image, by the editor's Copy, and after an edit replaced the clipboard. An edit of that
     /// capture replaces the clipboard only while the count still matches.
     @ObservationIgnored var clipboardOwner: EditorClipboard.Owner?
-    /// Open annotation editors, one per record.
-    @ObservationIgnored var editors: [UUID: EditorWindowController] = [:]
+    /// Open annotation editors, one per record: the window in the app, a fake in the suite.
+    @ObservationIgnored var editors: [UUID: any EditorPresenting] = [:]
     /// True while a save-folder observation is registered (`observeSaveFolderForEditors`).
     @ObservationIgnored var isObservingSaveFolder = false
 

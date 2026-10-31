@@ -142,6 +142,11 @@ Use `capture-window` (click a window each time).
 - [ ] `action=save` under `Upload only`: saved in the save folder, the image copied (with General's copy toggle on), no upload.
 - [ ] `action=copy`: the image is on the clipboard (Preview > New from Clipboard), and nothing else: no file in the save folder or `pending`, no card, no Recent Captures row, no upload; the shutter sound plays (with Play sound on); `Image copied` shows the pixel size with the subtitle `From <sender>`. With Show notification off, no notification. The newest card's Annotate still opens its own capture.
 - [ ] `action=annotate`: the after-capture action runs, then the editor opens on the new capture and its card closes. `action=pin`: the action runs, then a pin opens and the card stays.
+  (suite, in part:
+  CoordinatorEditorUploadTests.annotateTheNewestCardSaveThenUploadWritesTheFileThenUploadsAndCopiesTheURL,
+  CaptureIntentTests.annotateRunsTheAfterCaptureActionThenOpensTheEditor, .pinRunsTheAfterCaptureActionThenPins; by
+  hand: reaching `save(_:intent:)` (`TARGET`) and the `action=pin` half (`PINS`); the test pins the editor opening on
+  the new capture and its card closing)
 - [ ] `action=UPLOAD` works like `upload`. `action=print` posts `Unknown action “print”. Use upload, save, copy, annotate or pin.`
   (suite: URLCommandTests.everyActionParsesOnEveryCaptureCommand, .anUnknownOrEmptyActionIsAnError,
   .errorMessagesAreTheSpecStrings)

@@ -165,12 +165,14 @@ final class FakeClipboard: Clipboard {
     }
 
     private(set) var copies: [Copy] = []
+    /// The PNG of every `.image` and `.pngAndTIFF` copy, in order (what Preview's New from Clipboard reads).
+    private(set) var pngs: [Data] = []
     var changeCount = 0
     var annotationClip: Data?
 
     func setString(_ string: String) { write(.string(string)) }
-    func copy(image: CGImage, pngData: Data, scale: CGFloat) -> Int { write(.image) }
-    func copy(pngData: Data, tiffData: Data?) -> Int { write(.pngAndTIFF) }
+    func copy(image: CGImage, pngData: Data, scale: CGFloat) -> Int { pngs.append(pngData); return write(.image) }
+    func copy(pngData: Data, tiffData: Data?) -> Int { pngs.append(pngData); return write(.pngAndTIFF) }
     func copy(tiffData: Data?) -> Int { write(.tiff) }
     func copy(fileURL: URL) -> Int { write(.fileURL(fileURL)) }
     func copy(url: URL) -> Int { write(.url(url)) }
