@@ -50,7 +50,8 @@ final class CoordinatorWorld {
     let recording: RecordingTestWorld
     let driver: FakeRecordingDriver
     let chrome: FakeRecordingChrome
-    let microphones = FakeMicrophoneDevices()
+    /// The coordinator's microphones; a test sets others before `makeCoordinator()`.
+    var microphones: any MicrophoneDevices = FakeMicrophoneDevices()
     /// The coordinator's cameras; a test sets others before `makeCoordinator()`.
     var cameras: any CameraDevices = FakeCameraDevices()
 

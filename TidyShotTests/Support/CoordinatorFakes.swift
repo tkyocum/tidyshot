@@ -324,6 +324,32 @@ final class HeldCameraDevices: CameraDevices {
     }
 }
 
+/// Microphones whose access prompt stays open until `answer(_:)`, as `HeldCameraDevices` does for the
+/// camera. A prompt whose task is cancelled ends as refused, and a second prompt while one is open is
+/// recorded as an issue and refused at once.
+final class HeldMicrophoneDevices: MicrophoneDevices {
+    var currentAccess = MicrophoneAccess.notDetermined
+    private(set) var requestCount = 0
+    private let prompt = SingleWaiter(cancelled: false,
+                                      secondEntry: "HeldMicrophoneDevices was asked again while its prompt was open")
+
+    var isAsking: Bool { prompt.isWaiting }
+
+    func list() -> [MicrophoneDevice] { [] }
+    func defaultDevice() -> MicrophoneDevice? { nil }
+    func access() -> MicrophoneAccess { currentAccess }
+
+    func requestAccess() async -> Bool {
+        requestCount += 1
+        return await prompt.wait()
+    }
+
+    func answer(_ granted: Bool) {
+        currentAccess = granted ? .authorized : .denied
+        prompt.resume(granted)
+    }
+}
+
 /// A wait a test opens by hand, for a body held inside the capture lock. A wait whose task is
 /// cancelled ends, so a suite's time limit can end it. A second wait while one is open is recorded
 /// as an issue and ends at once.
