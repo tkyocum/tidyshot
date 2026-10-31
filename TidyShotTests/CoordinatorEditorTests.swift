@@ -704,7 +704,7 @@ struct CoordinatorEditorTests {
 
         await editor.copy()
         #expect(world.clipboard.copies == [.pngAndTIFF])
-        #expect(try EditorPixels.isBlue(png: world.clipboard.pngs[0]))
+        #expect(try EditorPixels.isBlue(png: #require(world.clipboard.pngs.first)))
         #expect(world.notifier.calls.contains(.notice(title: "Image copied", body: "Shot.png")))
 
         destination.releaseUploads()
