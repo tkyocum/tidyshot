@@ -248,7 +248,7 @@ struct CoordinatorEditorSaveTests {
         #expect(error.message.hasSuffix(" The edited image is on the clipboard."))
         #expect(error.message.count > " The edited image is on the clipboard.".count)
         #expect(world.clipboard.copies == [.image])
-        #expect(try EditorPixels.isBlue(png: world.clipboard.pngs[0]))
+        #expect(try EditorPixels.isBlue(png: try #require(world.clipboard.pngs.first)))
         #expect(coordinator.clipboardOwner == EditorClipboard.Owner(recordID: id, changeCount: 1))
         #expect(coordinator.history.record(id: id)?.editedAt == nil)
         #expect(world.logLines.contains { $0.hasPrefix("Save over failed: ") })
