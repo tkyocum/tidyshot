@@ -1,14 +1,14 @@
 # Seams for the B lines
 
-Source: `catalogue.json` (1405 lines, 265 in category B), `reader-summaries.md`, and the 14 lines tests-A.md moved from A to B, so 279 B lines in all. Every seam below was checked against the code on `checklist-tests` at e011d2f (file:line as found there; where a reader's line number had drifted, the one here is the current one). A second pass re-checked every line list against the catalogue (all 265 B lines present, none listed twice under one seam, every "also" note matching the other seams the line is listed under, every header and table count matching its list) and corrected or completed 14 file:line citations that had drifted or were partial. The reconciliation of the four documents (critic.md) then added tests-A's 14 lines: 13 under `EDITOR` (each builds an `EditorWindowController`) and recording-r2:241 under `TMPDIRS`. That moved `TMPDIRS` from tenth to eighth in the table, ahead of `TRIM` and `SCREENS`; no line's Completes credit changed. CT-2 (`docs/superpowers/specs/2026-10-30-tidyshot-editor-seam-design.md`, section 11) then built `EDITOR`: each of its 73 lines carries its CT-2 verdict, the new seam `EDPLACE` holds the 8 lines CT-2 deferred and the 30 it marked in part with the window's glue left, and the part lines also sit under the other seams their marks name (57 new seam slots). The table, the counts and the last sections were redone by the rules in the summary.
+Source: `catalogue.json` (1405 lines, 265 in category B), `reader-summaries.md`, and the 14 lines tests-A.md moved from A to B, so 279 B lines in all. Every seam below was checked against the code on `checklist-tests` at e011d2f (file:line as found there; where a reader's line number had drifted, the one here is the current one). A second pass re-checked every line list against the catalogue (all 265 B lines present, none listed twice under one seam, every "also" note matching the other seams the line is listed under, every header and table count matching its list) and corrected or completed 14 file:line citations that had drifted or were partial. The reconciliation of the four documents (critic.md) then added tests-A's 14 lines: 13 under `EDITOR` (each builds an `EditorWindowController`) and recording-r2:241 under `TMPDIRS`. That moved `TMPDIRS` from tenth to eighth in the table, ahead of `TRIM` and `SCREENS`; no line's Completes credit changed. CT-2 (`docs/superpowers/specs/2026-10-30-tidyshot-editor-seam-design.md`, section 11) then built `EDITOR`: each of its 73 lines carries its CT-2 verdict, the new seam `EDPLACE` holds the 8 lines CT-2 deferred and the 30 it marked in part with the window's glue left, and the part lines also sit under the other seams their marks name (57 new seam slots). The table, the counts and the last sections were redone by the rules in the summary. CT-3 (`docs/superpowers/specs/2026-10-31-tidyshot-small-seams-design.md`, section 11) then built `CLOP`, `SAVEAS` and `LOG`: each of their 49 lines carries its CT-3 verdict (28 full, 18 in part, 3 deferred), and the part and deferred lines also sit under the other seams their marks name (6 new seam slots). The table, the counts and the last sections were redone again by the same rules, with seams of equal Lines kept in their old table order.
 
 ## Summary
 
 - 279 B lines (265 from the catalogue, 14 from tests-A), 42 distinct seams.
-- 186 lines need one seam; 93 need two or more (listed in their own section).
-- 16 seams unlock three or fewer lines each.
+- 182 lines need one seam; 97 need two or more (listed in their own section).
+- 15 seams unlock three or fewer lines each.
 - "Lines" counts every B line that needs the seam; "alone" counts the lines that need it and nothing else; "completes" counts the lines this seam finishes when the seams are added in table order (each line is credited to the last of its seams in that order, so every B line has exactly one home).
-- The counts add up: Lines sums to 404 (186 one-seam lines, plus 218 seam slots held by the 93 lines that need two or more); Alone sums to 186; Completes sums to 279, every B line once. Read down the Completes column for a running total: the first three seams cover 78 lines, the first ten 152.
+- The counts add up: Lines sums to 410 (182 one-seam lines, plus 228 seam slots held by the 97 lines that need two or more); Alone sums to 182; Completes sums to 279, every B line once. Read down the Completes column for a running total: the first three seams cover 78 lines, the first ten 150.
 - Two dependencies hold throughout and are not repeated per line: `CAPSRC`, `SELINT` and `SCROLLCTL` are built on `TARGET` (they hand back displays and windows), and `POSTER` is reached only through `TRIM`.
 - Two A lines name a seam in their evidence and need none; one A line has a second half that needs `TMPDIRS`; one B line has a part that is A (see the end).
 
@@ -17,16 +17,16 @@ Source: `catalogue.json` (1405 lines, 265 in category B), `reader-summaries.md`,
 | 1 | Editor presenter factory | `EDITOR` | 73 | 26 | 26 | M |
 | 2 | Editor window placement | `EDPLACE` | 38 | 0 | 24 | S |
 | 3 | Value capture target | `TARGET` | 34 | 26 | 28 | M |
-| 4 | Capture source (engine and selector) | `CAPSRC` | 33 | 8 | 8 | L |
+| 4 | Capture source (engine and selector) | `CAPSRC` | 34 | 8 | 8 | L |
 | 5 | Clop optimiser and running check | `CLOP` | 23 | 22 | 22 | S |
-| 6 | Card Save As panel | `SAVEAS` | 14 | 9 | 11 | S |
+| 6 | Card Save As panel | `SAVEAS` | 14 | 7 | 8 | S |
 | 7 | Recording chrome factory | `RECCHROME` | 14 | 0 | 8 | S |
-| 8 | RecordingLog sink | `LOG` | 12 | 9 | 9 | S |
-| 9 | tmp/ directory statics | `TMPDIRS` | 12 | 7 | 8 | M |
-| 10 | Screen list for the card stack and pins | `SCREENS` | 12 | 6 | 8 | M |
+| 8 | Screen list for the card stack and pins | `SCREENS` | 14 | 6 | 10 | M |
+| 9 | tmp/ directory statics | `TMPDIRS` | 13 | 7 | 8 | M |
+| 10 | RecordingLog sink | `LOG` | 12 | 7 | 8 | S |
 | 11 | Trim window factory | `TRIM` | 11 | 9 | 9 | L |
 | 12 | Editor Save As sheet | `EDSAVEAS` | 11 | 2 | 8 | S |
-| 13 | Headless pins | `PINS` | 9 | 5 | 8 | M |
+| 13 | Headless pins | `PINS` | 10 | 5 | 9 | M |
 | 14 | RecordingExtras window and camera factories | `EXTRAS` | 9 | 4 | 8 | M |
 | 15 | Self-timer stage factory | `STAGE` | 9 | 1 | 6 | S |
 | 16 | Status menu model | `STATUSMENU` | 8 | 5 | 8 | M |
@@ -40,8 +40,8 @@ Source: `catalogue.json` (1405 lines, 265 in category B), `reader-summaries.md`,
 | 24 | Editor export beep | `BEEP` | 5 | 1 | 5 | S |
 | 25 | Selection overlay internals | `SELINT` | 4 | 3 | 4 | L |
 | 26 | Editor close sheet | `CLOSESHEET` | 4 | 1 | 3 | S |
-| 27 | Recording chrome's not-filmed mapping | `CHROMEMAP` | 3 | 3 | 3 | S |
-| 28 | URL command log closure | `URLLOG` | 3 | 2 | 3 | S |
+| 27 | URL command log closure | `URLLOG` | 4 | 2 | 4 | S |
+| 28 | Recording chrome's not-filmed mapping | `CHROMEMAP` | 3 | 3 | 3 | S |
 | 29 | Save folder chooser | `FOLDER` | 3 | 1 | 3 | S |
 | 30 | Capture Text's copy step reachable | `COPYTEXT` | 2 | 2 | 2 | S |
 | 31 | Quit reply decision | `APPDELEGATE` | 2 | 1 | 2 | S |
@@ -134,7 +134,7 @@ Lines (73):
 - `phase-6a:158` Delete a capture from its card, and open the editor from…; CT-2: full
 - `phase-6a:164` A restored card's Annotate opens the editor from the file or… (also `SCREENS`); CT-2: in part
 - `phase-6a:198` Upload only, after the upload: the card is still on screen, and… (also `SAVEAS`); CT-2: in part
-- `phase-6a:199` An edited capture's drag copy is replaced. Upload-only mode… (also `SAVEAS`); CT-2: in part
+- `phase-6a:199` An edited capture's drag copy is replaced. Upload-only mode… (also `SAVEAS`, `PINS`); CT-2: in part
 - `phase-6b:118` action=annotate: the after-capture action runs, then the editor… (also `TARGET`, `PINS`); CT-2: in part
 - `phase-7c:72` The toolbar in the editor has a `Background` button (the… (also `EDPLACE`); moved from A by tests-A (a constructed EditorWindowController); CT-2: deferred
 - `phase-7c:169` Copy (⇧⌘C, or ⌘C with nothing selected, since ⌘C with an… (also `EDPLACE`); moved from A by tests-A (a constructed EditorWindowController); CT-2: in part
@@ -237,7 +237,7 @@ Lines (34):
 - `small-tweaks:13` A screenshot row reads <time> · <size>, for example 2 minutes…
 - `small-tweaks:16` An upload-only capture shows a size before and after its upload.
 
-### 4. Capture source (engine and selector) (`CAPSRC`): 33 lines, 8 alone
+### 4. Capture source (engine and selector) (`CAPSRC`): 34 lines, 8 alone
 
 - Replaces: `let engine = CaptureEngine()` (AppCoordinator.swift:15), read through `loadContent` (:511-523, `engine.shareableContent()`) and `capture(...)`, and `lazy var selector = SelectionController(...)` (:32), whose `select`, `selectAllInOne`, `dismiss`, `overlayWindows`, `frozenCapture` the capture and recording entry points call (+Capture.swift:37-360, +Recording.swift:215-221, :490). Every capture and recording start reads content first, including `capturePreviousArea`'s refusals (+Capture.swift:146-160).
 - Shape: Two protocols on `AppEnvironment`: a content source whose `shareableContent()` returns value displays and windows and whose `capture(target:)` returns an image, and a selector whose `select(mode:content:freeze:)` returns a value `Selection`.
@@ -245,7 +245,7 @@ Lines (34):
 - Effort for the seam: L
 - Note: Built on `TARGET`: the content and the selection carry the value target. Lines that need only the engine half: phase-5:78, phase-6a:209, phase-6a:214, recording-r3:276 and the `recordFullscreen` legs.
 
-Lines (33):
+Lines (34):
 
 - `phase-5:78` Drag an area 400 pt wide and 60 pt tall: no session starts and… (also `SCROLL`)
 - `phase-5:182` Nothing is written or uploaded before Done: during a session… (also `SCROLL`)
@@ -280,63 +280,66 @@ Lines (33):
 - `recording-r2:605` 1. Settings are read at the start: the hand-off reads the… (also `RECCHROME`)
 - `recording-r2:653` E. A post-Stop notice during a later recording: every… (also `RECCHROME`)
 - `recording-r3:276` A failed content read: not forceable by hand; the code path is… (also `EXTRAS`)
+- `recording-r4:217` The record shortcut during the settle delay with Count down… (also `LOG`, deferred in CT-3; and `TMPDIRS`)
 
 ### 5. Clop optimiser and running check (`CLOP`): 23 lines, 22 alone
 
 - Replaces: `let clopOptimiser = ClopApp.makeOptimiser()` (AppCoordinator.swift:160; `ClopApp` in TidyShot/Upload/ClopOptimiser.swift:278, over the real `tmp/Clop` and `ClopClient`) and `clopIsRunning()` calling `ClopApp.runningBundleID()` (AppCoordinator+Upload.swift:425-431; NSRunningApplication at ClopOptimiser.swift:267). With `optimiseWithClop` on, a test today depends on whether Clop runs on the test Mac.
-- Shape: Two members on `AppEnvironment`: the `ClopOptimiser` itself (its `init(workDirectory:transport:)`, ClopOptimiser.swift:75, already takes a transport) and `clopRunningBundleID: () -> String?`.
-- Live: `ClopApp.makeOptimiser()` and `ClopApp.runningBundleID()`.
+- Shape: Built in CT-3 (design 2.1): two members on `AppEnvironment`, `clopOptimiser: any ClopOptimising` and `isClopRunning: @MainActor () -> Bool`. `ClopOptimising` is a protocol of the two calls the coordinator makes (`optimisedPNG`, `optimisedVideo`), and `ClopOptimiser` conforms to it unchanged. A fake transport under the concrete optimiser was rejected: a hold there blocks a thread on the optimiser's two shared static queues and has no cancellation. The running check is a `Bool` because the coordinator reads the bundle id only as nil or not.
+- Live: `ClopApp.makeOptimiser()` and `{ ClopApp.runningBundleID() != nil }`.
 - Effort for the seam: S
+- CT-3: Built on `small-seams` (`docs/superpowers/specs/2026-10-31-tidyshot-small-seams-design.md`). Each line below carries its CT-3 verdict; a line marked in part also sits under every other seam its mark names, noted there as "also `CLOP`, in part since CT-3".
 
 Lines (23):
 
-- `phase-7-clop:21` The toggle takes effect without Save: turn it on, close…
-- `phase-7-clop:28` Editor Upload (same link), the same-key replace, Upload as New…; the editor-driven half would also need EDITOR; startUpload(fixedKey:) stands in
-- `phase-7-clop:29` Upload-only mode (After capture: Upload only, keep no local…
-- `phase-7-clop:31` A capture that Clop cannot shrink (upload a plain white fill…
-- `phase-7-clop:32` A key template with {counter}: three captures in a row get…
-- `phase-7-clop:35` Quit Clop, toggle on, capture: the original uploads, the log…
-- `phase-7-clop:36` Clop set to convert PNG to another format (Clop > Settings >…
-- `phase-7-clop:37` Free-tier Clop past its cap, if you can reach it: uploads still…
-- `phase-7-clop:41` Delete while Clop is optimising a large scrolling capture…
-- `phase-7-clop:42` The same Delete where the record is kept: make the file removal…
-- `phase-7-clop:43` With the file removal made to fail as above, Delete, decline…
-- `phase-7-clop:44` Change upload settings during optimisation: start the 65,536 px…
-- `phase-7-clop:45` Toggle the setting off while an optimisation runs: the running…
-- `recording-r1:271` Delete (and confirm) during the upload cancels it and removes…
-- `recording-r1:296` Cleanup. ls $C/tmp/Clop is empty after an optimised upload… (also `TMPDIRS`)
-- `recording-r1:297` Clop off: the original uploads and the card never says…
-- `recording-r1:330` 3. Counter: for a recording's upload, {counter} is drawn after…
-- `recording-r2:275` Clop on and running, then a GIF: it uploads as made. The card…
-- `recording-r4:253` Clop on, Upload Trimmed on a trimmed file over 100 MiB, fail it…
-- `recording-r4:255` A Clop result kept in multipart/<id>.mp4 is used by Retry (no…
-- `recording-r4:323` 16. Clop's result is kept in multipart/<id>.mp4, and a Retry…
-- `small-tweaks:14` Upload a capture with Clop on: after the upload, the row shows…
-- `small-tweaks:15` A recording row shows its size after it saves, and the…
+- `phase-7-clop:21` The toggle takes effect without Save: turn it on, close…; CT-3: in part
+- `phase-7-clop:28` Editor Upload (same link), the same-key replace, Upload as New…; the editor half through `EDITOR` (landed in CT-2); CT-3: full
+- `phase-7-clop:29` Upload-only mode (After capture: Upload only, keep no local…; CT-3: full
+- `phase-7-clop:31` A capture that Clop cannot shrink (upload a plain white fill…; CT-3: full
+- `phase-7-clop:32` A key template with {counter}: three captures in a row get…; CT-3: full
+- `phase-7-clop:35` Quit Clop, toggle on, capture: the original uploads, the log…; CT-3: full
+- `phase-7-clop:36` Clop set to convert PNG to another format (Clop > Settings >…; CT-3: full
+- `phase-7-clop:37` Free-tier Clop past its cap, if you can reach it: uploads still…; CT-3: full
+- `phase-7-clop:41` Delete while Clop is optimising a large scrolling capture…; CT-3: full
+- `phase-7-clop:42` The same Delete where the record is kept: make the file removal…; CT-3: full
+- `phase-7-clop:43` With the file removal made to fail as above, Delete, decline…; CT-3: full
+- `phase-7-clop:44` Change upload settings during optimisation: start the 65,536 px…; CT-3: full
+- `phase-7-clop:45` Toggle the setting off while an optimisation runs: the running…; CT-3: full
+- `recording-r1:271` Delete (and confirm) during the upload cancels it and removes…; CT-3: full
+- `recording-r1:296` Cleanup. ls $C/tmp/Clop is empty after an optimised upload… (also `TMPDIRS`); CT-3: in part
+- `recording-r1:297` Clop off: the original uploads and the card never says…; CT-3: full
+- `recording-r1:330` 3. Counter: for a recording's upload, {counter} is drawn after…; CT-3: full
+- `recording-r2:275` Clop on and running, then a GIF: it uploads as made. The card…; CT-3: in part
+- `recording-r4:253` Clop on, Upload Trimmed on a trimmed file over 100 MiB, fail it…; CT-3: in part
+- `recording-r4:255` A Clop result kept in multipart/<id>.mp4 is used by Retry (no…; CT-3: full
+- `recording-r4:323` 16. Clop's result is kept in multipart/<id>.mp4, and a Retry…; CT-3: full
+- `small-tweaks:14` Upload a capture with Clop on: after the upload, the row shows…; CT-3: full
+- `small-tweaks:15` A recording row shows its size after it saves, and the…; CT-3: full
 
-### 6. Card Save As panel (`SAVEAS`): 14 lines, 9 alone
+### 6. Card Save As panel (`SAVEAS`): 14 lines, 7 alone
 
 - Replaces: `askSaveAsTarget` (TidyShot/App/AppCoordinator+RecordActions.swift:195-206): `EditorNaming.savePanel(for:)` and `await panel.begin()`, reached from `saveAs(recordID:)` (:111) -> `saveCopy` (:179) and from `saveVideoCopy` (:130).
 - Shape: A closure on `AppEnvironment`: `chooseSaveAsURL: @MainActor (EditorNaming.SaveAsSuggestion) async -> URL?`. A held answer (the `FakeConfirm` pattern) covers phase-6a:175.
 - Live: Builds `EditorNaming.savePanel(for:)`, activates the app and awaits `panel.begin()`, as the body does now.
 - Effort for the seam: S
+- CT-3: Built on `small-seams` (`docs/superpowers/specs/2026-10-31-tidyshot-small-seams-design.md`). Each line below carries its CT-3 verdict; a line marked in part also sits under every other seam its mark names, noted there as "also `SAVEAS`, in part since CT-3".
 
 Lines (14):
 
-- `coordinator-split:44` Pin, then the pin menu's three items [+Pins, +RecordActions]… (also `PINS`, `SCREENS`, `EDITOR`)
-- `phase-6a:170` Save to the Desktop: shasum -a 256 of the copy equals that of…
-- `phase-6a:171` For an upload-only capture the suggestion is the file name…
-- `phase-6a:172` After the upload, on a card that showed through it: the panel…; also FakeDestination.download(key:) able to throw
-- `phase-6a:174` Save As… changes nothing about the capture: the card, its link…
-- `phase-6a:175` Open the panel and wait for the card's auto-close to run out…
-- `phase-6a:176` Use Save As… from the button and from the context menu, from a…
-- `phase-6a:198` Upload only, after the upload: the card is still on screen, and… (also `EDITOR`)
-- `phase-6a:199` An edited capture's drag copy is replaced. Upload-only mode… (also `EDITOR`, in part since CT-2)
-- `recording-r1:313` Restoring an uploaded upload-only video's card after its drag… (also `SCREENS`)
-- `recording-r1:340` A screenshot's save, upload, Retry, Delete, Save As… and Copy…
-- `recording-r2:264` A GIF's card and row. The card has the poster with a GIF badge… (also `WORKSPACE`)
-- `recording-r2:670` A screenshot's save, upload, Retry, Delete, Save As… and Copy…
-- `recording-r4:277` Save As… during the download waits and then saves the landed…
+- `coordinator-split:44` Pin, then the pin menu's three items [+Pins, +RecordActions]… (also `PINS`, `SCREENS`, `EDITOR`); CT-3: in part
+- `phase-6a:170` Save to the Desktop: shasum -a 256 of the copy equals that of…; CT-3: in part
+- `phase-6a:171` For an upload-only capture the suggestion is the file name…; CT-3: in part
+- `phase-6a:172` After the upload, on a card that showed through it: the panel… (also `SCREENS`); also FakeDestination.download(key:) able to throw; CT-3: in part
+- `phase-6a:174` Save As… changes nothing about the capture: the card, its link…; CT-3: full
+- `phase-6a:175` Open the panel and wait for the card's auto-close to run out…; CT-3: in part
+- `phase-6a:176` Use Save As… from the button and from the context menu, from a… (also `SCREENS`); CT-3: in part
+- `phase-6a:198` Upload only, after the upload: the card is still on screen, and… (also `EDITOR`); CT-3: in part
+- `phase-6a:199` An edited capture's drag copy is replaced. Upload-only mode… (also `EDITOR`, in part since CT-2; and `PINS`); CT-3: in part
+- `recording-r1:313` Restoring an uploaded upload-only video's card after its drag… (also `SCREENS`); CT-3: in part
+- `recording-r1:340` A screenshot's save, upload, Retry, Delete, Save As… and Copy…; CT-3: full
+- `recording-r2:264` A GIF's card and row. The card has the poster with a GIF badge… (also `WORKSPACE`); CT-3: in part
+- `recording-r2:670` A screenshot's save, upload, Retry, Delete, Save As… and Copy…; CT-3: full
+- `recording-r4:277` Save As… during the download waits and then saves the landed…; CT-3: full
 
 ### 7. Recording chrome factory (`RECCHROME`): 14 lines, 0 alone
 
@@ -363,36 +366,38 @@ Lines (14):
 - `recording-r2:605` 1. Settings are read at the start: the hand-off reads the… (also `CAPSRC`)
 - `recording-r2:653` E. A post-Stop notice during a later recording: every… (also `CAPSRC`)
 
-### 8. RecordingLog sink (`LOG`): 12 lines, 9 alone
+### 8. Screen list for the card stack and pins (`SCREENS`): 14 lines, 6 alone
 
-- Replaces: `RecordingLog.note` (TidyShot/Recording/ScreenRecordingDriver.swift:91-96, a static `Logger` the suite cannot read). The coordinator's calls: AppCoordinator+Recording.swift:109-892 (the `stop-recording`, URL-start, prompt and Settings-prompt lines), +Recovery.swift:127-161, +Upload.swift:378, :395. Outside the coordinator: RecordingRecovery.swift:34, :36, :137 (`could not be played, removed` and its failures), RecordingExtras.swift:215-250 (camera lines).
-- Shape: A closure on `AppEnvironment` (`recordingLog: @Sendable (String) -> Void`) that the coordinator uses for its own calls and passes to `RecordingRecovery.begin` and `RecordingExtras.init` for theirs; the world collects it with `logLines`. A settable static sink is simpler but would mix lines across parallel suites.
-- Live: `RecordingLog.note`.
-- Effort for the seam: S for the coordinator's calls; M with the `RecordingRecovery` and `RecordingExtras` ones
+- Replaces: `overlayScreen(captureDisplayID:)` (TidyShot/App/AppCoordinator+Overlay.swift:55-62: `NSScreen.screens`, `NSEvent.mouseLocation`), used by `showOverlay` and by `restoreClosedOverlay` when `overlay.screen` is nil (:94, which `FakeCards.screen` always is); `pinScreen(preferred:)` (AppCoordinator+Pins.swift:58-64) and `pin`'s primary height (:31). `QuickAccessCards.show(record:thumbnail:screen: NSScreen, ...)` (QuickAccessController.swift:387) takes an `NSScreen`, which a test cannot make.
+- Shape: A closure on `AppEnvironment` returning value screens (display id, frame, visible frame) plus the pointer location, and `QuickAccessCards.show` taking a screen value (or a display id) instead of an `NSScreen`.
+- Live: `NSScreen.screens` mapped to values and `NSEvent.mouseLocation`; `QuickAccessController.show` looks the `NSScreen` up by display id, as `stackScreen()` already does (QuickAccessController.swift:337).
+- Effort for the seam: M
 
-Lines (12):
+Lines (14):
 
-- `coordinator-harness:27` 4. stop-recording's log lines in each phase (R4 checklist…
-- `recording-r1:263` A leftover that does not play (echo junk >…
-- `recording-r3:156` With the camera prompt up: a second Record press does nothing…
-- `recording-r3:162` The microphone pick during a recording behaves as the bubble…
-- `recording-r3:416` 7. The recording's clock times the camera's log lines and the… (also `EXTRAS`)
-- `recording-r3:419` 9. The prompts' order and log lines are as the Camera prompt…
-- `recording-r3:436` D. Recording: camera could not be started: <reason> is logged… (also `EXTRAS`)
-- `recording-r4:192` Two record-screen URLs back to back (one Keyboard Maestro… (also `URLLOG`); one start and no notice are A now
-- `recording-r4:214` Turn Show webcam bubble on in Settings while a GIF converts…
-- `recording-r4:217` The record shortcut during the settle delay with Count down…
-- `recording-r4:347` 5. RecordingController.isEnding, so a second stop-recording…
-- `recording-r4:366` 18. urlRecordingStartPending makes a second record-screen…
+- `coordinator-split:36` Capture Area: the file, the card and the clipboard [+Capture… (also `TARGET`, `WORKSPACE`)
+- `coordinator-split:44` Pin, then the pin menu's three items [+Pins, +RecordActions]… (also `PINS`, `SAVEAS`, `EDITOR`)
+- `coordinator-split:46` Restore Closed Overlay [+Overlay, and init's…
+- `phase-6a:160` Restore walks back through the closed list even when the stack…; also a FakeCards that pushes the oldest card out past a limit
+- `phase-6a:161` The list holds ten: set Show up to 1 and take twelve captures…
+- `phase-6a:164` A restored card's Annotate opens the editor from the file or… (also `EDITOR`, in part since CT-2)
+- `phase-6a:172` After the upload, on a card that showed through it: the panel… (also `SAVEAS`, in part since CT-3)
+- `phase-6a:176` Use Save As… from the button and from the context menu, from a… (also `SAVEAS`, in part since CT-3)
+- `phase-6a:203` Close after dragging out on: a drop onto a receiver closes the…
+- `phase-6b:83` Pin a window or fullscreen capture: centred on the pointer's… (also `PINS`)
+- `recording-r1:308` R4 changed this (was: cannot be dragged). Dragging an uploaded…
+- `recording-r1:313` Restoring an uploaded upload-only video's card after its drag… (also `SAVEAS`)
+- `recording-r1:314` Restore Closed Overlay brings back a video's card with its…; also a FakeCards.show that keeps the poster
+- `recording-r4:275` A click on the thumbnail opens the link and downloads nothing… (also `WORKSPACE`)
 
-### 9. tmp/ directory statics (`TMPDIRS`): 12 lines, 7 alone
+### 9. tmp/ directory statics (`TMPDIRS`): 13 lines, 7 alone
 
 - Replaces: `Recording.directory`/`Recording.makeDirectory()` (TidyShot/Recording/Recording.swift:51, :57), `MuteLog.directory` (MuteLog.swift:24), `RecordingTrim.directory` (RecordingTrim.swift:50), `ClopApp.workDirectory` (ClopOptimiser.swift:272), all under the host's real `FileManager.default.temporaryDirectory`. Read at AppCoordinator.swift:298-300 and :321-322 (start), AppCoordinator+Recording.swift:356-363 (`recordingCanStart`), +Recovery.swift:119 and :165, +Trim.swift:67. `RecordingMute` also reads `MuteLog.directory` itself (RecordingMute.swift:60, :136).
 - Shape: Four URLs on `AppEnvironment`, derived from `temporaryDirectory` as `dragFiles` already is, passed to the statics' callers (and to `RecordingMute`/`RecordingTrim` helpers that take a folder default today).
 - Live: The same four paths under `FileManager.default.temporaryDirectory`.
 - Effort for the seam: M
 
-Lines (12):
+Lines (13):
 
 - `coordinator-harness:50` 7. pending/ orphans adopted, never deleted; by record id… (also `LAUNCH`)
 - `coordinator-harness:69` D27. start()'s one task runs RecordingRecovery.begin (the… (also `LAUNCH`)
@@ -405,31 +410,33 @@ Lines (12):
 - `recording-r2:625` 9. Trim: the download posts Downloading <key> under Opening the…; also FakeDestination.download(key:to:) able to throw (today a no-op); TRIM for the method part
 - `recording-r3:161` With Show webcam bubble off, a start never prompts for the…
 - `recording-r3:407` 1. The camera resolve takes no toggle and runs at every start…
+- `recording-r4:217` The record shortcut during the settle delay with Count down… (also `LOG`, deferred in CT-3; and `CAPSRC`)
 - `recording-r4:326` 18. No upload resumes by itself at launch. ______ (also `LAUNCH`)
 
 Also the second half of one A line, not counted above: `recording-r2:364` With access undecided and another capture under way… Once the capture is done, a Record press prompts and goes on into `recordingCanStart`, which makes the live `tmp/Recording` (`Recording.makeDirectory`, AppCoordinator+Recording.swift:356). The first half is A, covered in part by tests-A's `CoordinatorRecordingTests.aRecordPressDuringACaptureWithAccessUndecidedShowsNoPrompt`.
 
-### 10. Screen list for the card stack and pins (`SCREENS`): 12 lines, 6 alone
+### 10. RecordingLog sink (`LOG`): 12 lines, 7 alone
 
-- Replaces: `overlayScreen(captureDisplayID:)` (TidyShot/App/AppCoordinator+Overlay.swift:55-62: `NSScreen.screens`, `NSEvent.mouseLocation`), used by `showOverlay` and by `restoreClosedOverlay` when `overlay.screen` is nil (:94, which `FakeCards.screen` always is); `pinScreen(preferred:)` (AppCoordinator+Pins.swift:58-64) and `pin`'s primary height (:31). `QuickAccessCards.show(record:thumbnail:screen: NSScreen, ...)` (QuickAccessController.swift:387) takes an `NSScreen`, which a test cannot make.
-- Shape: A closure on `AppEnvironment` returning value screens (display id, frame, visible frame) plus the pointer location, and `QuickAccessCards.show` taking a screen value (or a display id) instead of an `NSScreen`.
-- Live: `NSScreen.screens` mapped to values and `NSEvent.mouseLocation`; `QuickAccessController.show` looks the `NSScreen` up by display id, as `stackScreen()` already does (QuickAccessController.swift:337).
-- Effort for the seam: M
+- Replaces: `RecordingLog.note` (TidyShot/Recording/ScreenRecordingDriver.swift:91-96, a static `Logger` the suite cannot read). The coordinator's calls: AppCoordinator+Recording.swift:109-892 (the `stop-recording`, URL-start, prompt and Settings-prompt lines), +Recovery.swift:127-161, +Upload.swift:378, :395. Outside the coordinator: RecordingRecovery.swift:34, :36, :137 (`could not be played, removed` and its failures), RecordingExtras.swift:215-250 (camera lines).
+- Shape: Built in CT-3 (design 2.3): a closure on `AppEnvironment` (`recordingLog: @Sendable (String) -> Void`) that the coordinator uses for its own 24 calls and hands to `RecordingRecovery.scan` through `begin`'s `scanning:` parameter; the world collects it as `recordingLines`, beside `logLines`, because `RecordingLog` writes `.public` and `log` does not. `RecordingExtras.init` and the mute sweep are not threaded (`EXTRAS`). A settable static sink would mix lines across parallel suites.
+- Live: `RecordingLog.note`.
+- Effort for the seam: S for the coordinator's calls; M with the `RecordingRecovery` and `RecordingExtras` ones
+- CT-3: Built on `small-seams` (`docs/superpowers/specs/2026-10-31-tidyshot-small-seams-design.md`). Each line below carries its CT-3 verdict; a line marked in part or deferred also sits under every other seam its mark names, noted there as "also `LOG`, in part since CT-3" or "deferred in CT-3".
 
 Lines (12):
 
-- `coordinator-split:36` Capture Area: the file, the card and the clipboard [+Capture… (also `TARGET`, `WORKSPACE`)
-- `coordinator-split:44` Pin, then the pin menu's three items [+Pins, +RecordActions]… (also `PINS`, `SAVEAS`, `EDITOR`)
-- `coordinator-split:46` Restore Closed Overlay [+Overlay, and init's…
-- `phase-6a:160` Restore walks back through the closed list even when the stack…; also a FakeCards that pushes the oldest card out past a limit
-- `phase-6a:161` The list holds ten: set Show up to 1 and take twelve captures…
-- `phase-6a:164` A restored card's Annotate opens the editor from the file or… (also `EDITOR`, in part since CT-2)
-- `phase-6a:203` Close after dragging out on: a drop onto a receiver closes the…
-- `phase-6b:83` Pin a window or fullscreen capture: centred on the pointer's… (also `PINS`)
-- `recording-r1:308` R4 changed this (was: cannot be dragged). Dragging an uploaded…
-- `recording-r1:313` Restoring an uploaded upload-only video's card after its drag… (also `SAVEAS`)
-- `recording-r1:314` Restore Closed Overlay brings back a video's card with its…; also a FakeCards.show that keeps the poster
-- `recording-r4:275` A click on the thumbnail opens the link and downloads nothing… (also `WORKSPACE`)
+- `coordinator-harness:27` 4. stop-recording's log lines in each phase (R4 checklist…; CT-3: full
+- `recording-r1:263` A leftover that does not play (echo junk >…; CT-3: full
+- `recording-r3:156` With the camera prompt up: a second Record press does nothing…; CT-3: full
+- `recording-r3:162` The microphone pick during a recording behaves as the bubble…; CT-3: in part
+- `recording-r3:416` 7. The recording's clock times the camera's log lines and the… (also `EXTRAS`); CT-3: deferred
+- `recording-r3:419` 9. The prompts' order and log lines are as the Camera prompt… (also `URLLOG`); CT-3: in part
+- `recording-r3:436` D. Recording: camera could not be started: <reason> is logged… (also `EXTRAS`); CT-3: deferred
+- `recording-r4:192` Two record-screen URLs back to back (one Keyboard Maestro… (also `URLLOG`); one start and no notice are A now; CT-3: in part
+- `recording-r4:214` Turn Show webcam bubble on in Settings while a GIF converts…; CT-3: in part
+- `recording-r4:217` The record shortcut during the settle delay with Count down… (also `CAPSRC`, `TMPDIRS`); CT-3: deferred
+- `recording-r4:347` 5. RecordingController.isEnding, so a second stop-recording…; CT-3: full
+- `recording-r4:366` 18. urlRecordingStartPending makes a second record-screen…; CT-3: full
 
 ### 11. Trim window factory (`TRIM`): 11 lines, 9 alone
 
@@ -473,7 +480,7 @@ Lines (11):
 - `phase-7c:172` Save As… (⇧⌘S): the file is the composed image; the capture and… (also `EDITOR`)
 - `phase-7c:174` Each of these twice in a row after a change: no stale result…
 
-### 13. Headless pins (`PINS`): 9 lines, 5 alone
+### 13. Headless pins (`PINS`): 10 lines, 5 alone
 
 - Replaces: `lazy var pins = PinController()` (AppCoordinator.swift:138). `PinController.open` builds a `PinPanel` and `PinView` and orders the panel front (TidyShot/Pin/PinController.swift:42-88); `lock`, `unlockAll`, `closeAll`, the opacity and zoom closures act on that panel (:94-131).
 - Shape: A panel factory inside `PinController` (a protocol over the frame, `orderFrontRegardless`, `ignoresMouseEvents`, `alphaValue`, `close`, `screen`), with the test assigning `coordinator.pins = PinController(makePanel:)`. That covers the coordinator side (`pin`, Delete, prune, `hasPins`) and the controller's own closures (phase-6b:87, :88, :89). A `Pinning` protocol over `PinController` alone covers only the coordinator side.
@@ -481,10 +488,11 @@ Lines (11):
 - Effort for the seam: M
 - Note: `pin(recordID:)` also reads the screens (`SCREENS`) for where the pin opens.
 
-Lines (9):
+Lines (10):
 
 - `coordinator-split:44` Pin, then the pin menu's three items [+Pins, +RecordActions]… (also `SCREENS`, `SAVEAS`, `EDITOR`)
 - `coordinator-split:49` Retention pruning of a pinned upload-only capture that has…
+- `phase-6a:199` An edited capture's drag copy is replaced. Upload-only mode… (also `SAVEAS`, in part since CT-3; and `EDITOR`)
 - `phase-6b:83` Pin a window or fullscreen capture: centred on the pointer's… (also `SCREENS`)
 - `phase-6b:87` Click the pin, then: arrows move it 1 pt, Shift-arrows 10 pt…; FakeClipboard keeping the PNG bytes, for the pixel size
 - `phase-6b:88` Right-click: Copy Image, Save As…, Annotate, Opacity (100%…
@@ -707,7 +715,21 @@ Lines (4):
 - `phase-4a:153` On an upload-only capture that finished uploading, the first… (also `EDSAVEAS`)
 - `phase-4a:155` Quit TidyShot from the menu with a changed editor: the sheet… (also `EDITOR`, in part since CT-2; and `APPDELEGATE`)
 
-### 27. Recording chrome's not-filmed mapping (`CHROMEMAP`): 3 lines, 3 alone
+### 27. URL command log closure (`URLLOG`): 4 lines, 2 alone
+
+- Replaces: `URLCommandHandler`'s direct `NSLog` calls (TidyShot/URLScheme/URLCommandHandler.swift:86, :155, :178, :210); the coordinator builds the handler privately (AppCoordinator.swift:36-40).
+- Shape: A `log` closure on `URLCommandHandler.init`, fed from `environment.log`.
+- Live: `NSLog("%@", ...)`.
+- Effort for the seam: S
+
+Lines (4):
+
+- `phase-6b:152` t 'capture-area?action=%25@%25n%25s': Unknown action “%@%n%s”…
+- `recording-r3:419` 9. The prompts' order and log lines are as the Camera prompt… (also `LOG`, in part since CT-3)
+- `recording-r4:187` record-screen during a recording is dropped, logged URL command…
+- `recording-r4:192` Two record-screen URLs back to back (one Keyboard Maestro… (also `LOG`); one start and no notice are A now
+
+### 28. Recording chrome's not-filmed mapping (`CHROMEMAP`): 3 lines, 3 alone
 
 - Replaces: `RecordingScreenChrome.setFilmed(_:)`'s `notAvailable` (TidyShot/Recording/RecordingChrome.swift:145-156) acts on the private model, which only `show()` fills, and `show()` orders real panels front.
 - Shape: A pure static on `BarToggle` (or a test-supplied model on the chrome).
@@ -719,19 +741,6 @@ Lines (3):
 - `recording-r3:336` A lookup miss (Not available for this recording, Recorded…
 - `recording-r3:413` 4. The filmed features are bubble and highlights, and a missing…
 - `recording-r3:432` A. A bar-disabled bubble button keeps its own tool tip when its…
-
-### 28. URL command log closure (`URLLOG`): 3 lines, 2 alone
-
-- Replaces: `URLCommandHandler`'s direct `NSLog` calls (TidyShot/URLScheme/URLCommandHandler.swift:86, :155, :178, :210); the coordinator builds the handler privately (AppCoordinator.swift:36-40).
-- Shape: A `log` closure on `URLCommandHandler.init`, fed from `environment.log`.
-- Live: `NSLog("%@", ...)`.
-- Effort for the seam: S
-
-Lines (3):
-
-- `phase-6b:152` t 'capture-area?action=%25@%25n%25s': Unknown action “%@%n%s”…
-- `recording-r4:187` record-screen during a recording is dropped, logged URL command…
-- `recording-r4:192` Two record-screen URLs back to back (one Keyboard Maestro… (also `LOG`); one start and no notice are A now
 
 ### 29. Save folder chooser (`FOLDER`): 3 lines, 1 alone
 
@@ -897,7 +906,7 @@ Lines (1):
 
 ## Lines that need two or more seams at once
 
-93 lines. Grouped by the seams they need.
+97 lines. Grouped by the seams they need.
 
 - `EDITOR` + `EDPLACE` (24): `coordinator-split:43` Annotate the newest card, Save, then…; `phase-4a:37` "Upload and copy URL", a large capture…; `phase-4a:56` The toolbar shows, in order: the tools…; `phase-4a:58` With the canvas focused, V D X B R A…; `phase-4a:88` ⌘1 shows the picture at its natural…; `phase-4a:94` Saved capture: Redact, ⌘S. The same…; `phase-4a:95` Capture uploaded with "Upload and copy…; `phase-4a:96` Capture from before Phase 3: ⌘S…; `phase-4a:99` Lock the saved file (Finder, Get Info…; `phase-4a:123` Capture uploaded with "Upload and copy…; `phase-4a:124` Upload-only capture that finished…; `phase-4a:131` Enter a wrong secret access key in…; `phase-4a:132` Folder change with a bad key: Settings…; `phase-4a:133` The same wrong key, ⌘U on an…; `phase-4a:151` ⌘W on an editor with no changes closes…; `phase-4b:92` ⌘C with nothing selected still copies…; `phase-4b:106` Capture uploaded with "Upload and copy…; `phase-4b:112` Enter a wrong secret access key in…; `phase-4b:113` The row still copies the old URL…; `phase-4c:94` The toolbar shows fourteen tools, in…; `phase-4c:95` With the canvas focused, S (either…; `phase-7c:72` The toolbar in the editor has a…; `phase-7c:169` Copy (⇧⌘C, or ⌘C with nothing selected…; `phase-7c:170` Save (⌘S) on a capture with a local…
 - `CAPSRC` + `RECCHROME` (8): `recording-r2:231` Two GIF recordings converting at once…; `recording-r2:236` Stop Making GIF with one conversion…; `recording-r2:238` Quit during a conversion. Start a 60 s…; `recording-r2:390` A GIF save that ends during a second…; `recording-r2:402` The same with an upload that finishes…; `recording-r2:407` Quit during the second recording of the…; `recording-r2:605` 1. Settings are read at the start: the…; `recording-r2:653` E. A post-Stop notice during a later…
@@ -905,19 +914,22 @@ Lines (1):
 - `EDITOR` + `EDPLACE` + `BEEP` (3): `phase-4a:107` Edit, ⌘U, and keep drawing before the…; `phase-4a:127` Saved capture never uploaded: ⌥⌘U…; `phase-4a:146` With an editor open, press Delete on…
 - `CAPSRC` + `RECCHROME` + `STAGE` (3): `recording-r1:196` Closing the window during the count-in…; `recording-r2:397` The same with the GIF saved during the…; `recording-r2:409` A quick quit, where nothing else holds…
 - `CAPSRC` + `SCROLL` (3): `phase-5:78` Drag an area 400 pt wide and 60 pt…; `phase-5:182` Nothing is written or uploaded before…; `phase-6a:211` The rect survives a relaunch. A window…
+- `SAVEAS` + `SCREENS` (3): `phase-6a:172` After the upload, on a card that showed…; `phase-6a:176` Use Save As… from the button and from…; `recording-r1:313` Restoring an uploaded upload-only…
 - `TMPDIRS` + `LAUNCH` (3): `coordinator-harness:50` 7. pending/ orphans adopted, never…; `coordinator-harness:69` D27. start()'s one task runs…; `recording-r4:326` 18. No upload resumes by itself at…
 - `EDITOR` + `EDPLACE` + `TARGET` (2): `phase-4a:119` "Upload and copy URL" with no…; `phase-4a:120` "Upload and copy URL" with "Also copy…
-- `EDITOR` + `SAVEAS` (2): `phase-6a:198` Upload only, after the upload: the card…; `phase-6a:199` An edited capture's drag copy is…
 - `CAPSRC` + `STAGE` (2): `phase-6b:77` 3 seconds and 10 seconds in Settings >…; `phase-6b:79` A self-timer area becomes the previous…
 - `CAPSRC` + `COVERS` (2): `phase-7b:96` Not covered: Capture Scrolling (⌃⇧5)…; `recording-r1:122` A window recording with Hide desktop…
 - `LOG` + `EXTRAS` (2): `recording-r3:416` 7. The recording's clock times the…; `recording-r3:436` D. Recording: camera could not be…
+- `LOG` + `URLLOG` (2): `recording-r3:419` 9. The prompts' order and log lines are…; `recording-r4:192` Two record-screen URLs back to back…
 - `TRIM` + `POSTER` (2): `recording-r2:444` When the trimmed file's first frame…; `recording-r2:663` J. The card shows the row's placeholder…
 - `EDITOR` + `EDPLACE` + `TARGET` + `BGPOP` (1): `phase-7c:187` Open the window capture in the editor…
 - `EDITOR` + `EDPLACE` + `EDSAVEAS` + `BEEP` (1): `phase-4a:145` Slow profile, "Upload and copy URL"…
 - `EDITOR` + `EDPLACE` + `EDSAVEAS` + `CLOSESHEET` (1): `phase-4a:148` Editor open on a capture in the save…
 - `EDITOR` + `EDPLACE` + `BGPOP` (1): `phase-7c:171` Annotate the saved capture again: it…
 - `EDITOR` + `TARGET` + `PINS` (1): `phase-6b:118` action=annotate: the after-capture…
+- `EDITOR` + `SAVEAS` (1): `phase-6a:198` Upload only, after the upload: the card…
 - `EDITOR` + `SAVEAS` + `SCREENS` + `PINS` (1): `coordinator-split:44` Pin, then the pin menu's three items…
+- `EDITOR` + `SAVEAS` + `PINS` (1): `phase-6a:199` An edited capture's drag copy is…
 - `EDITOR` + `SCREENS` (1): `phase-6a:164` A restored card's Annotate opens the…
 - `EDITOR` + `EDSAVEAS` (1): `phase-7c:172` Save As… (⇧⌘S): the file is the…
 - `EDITOR` + `QASTACK` (1): `phase-6a:131` Delete a card in the middle of the…
@@ -930,17 +942,16 @@ Lines (1):
 - `CAPSRC` + `RECCHROME` + `EXTRAS` (1): `recording-r1:102` Stop each way, one recording each…
 - `CAPSRC` + `RECCHROME` + `EXTRAS` + `STAGE` + `COVERS` (1): `recording-r1:124` The covers are gone after Stop, after…
 - `CAPSRC` + `RECCHROME` + `STATUSMENU` (1): `recording-r2:351` With the prompt up: a second Record…
+- `CAPSRC` + `TMPDIRS` + `LOG` (1): `recording-r4:217` The record shortcut during the settle…
 - `CAPSRC` + `EXTRAS` (1): `recording-r3:276` A failed content read: not forceable by…
 - `CAPSRC` + `STAGE` + `STATUSMENU` (1): `phase-6b:75` While the countdown runs, ⌃⇧4, the…
 - `CAPSRC` + `STAGE` + `SCROLL` (1): `phase-6b:159` While a selection is open (⌃⇧4, not…
 - `CAPSRC` + `SELINT` (1): `phase-6b:62` A stored area on a connected display…
 - `CLOP` + `TMPDIRS` (1): `recording-r1:296` Cleanup. ls $C/tmp/Clop is empty after…
-- `SAVEAS` + `SCREENS` (1): `recording-r1:313` Restoring an uploaded upload-only…
 - `SAVEAS` + `WORKSPACE` (1): `recording-r2:264` A GIF's card and row. The card has the…
-- `LOG` + `URLLOG` (1): `recording-r4:192` Two record-screen URLs back to back…
-- `TMPDIRS` + `MUTESTEPS` (1): `recording-r2:320` **(Debug)** kill -9 during a muted…
 - `SCREENS` + `PINS` (1): `phase-6b:83` Pin a window or fullscreen capture…
 - `SCREENS` + `WORKSPACE` (1): `recording-r4:275` A click on the thumbnail opens the link…
+- `TMPDIRS` + `MUTESTEPS` (1): `recording-r2:320` **(Debug)** kill -9 during a muted…
 - `EDSAVEAS` + `CLOSESHEET` (1): `phase-4a:153` On an upload-only capture that finished…
 - `PINS` + `STATUSMENU` (1): `phase-6b:89` Lock: the border goes and clicks pass…
 - `WORKSPACE` + `FOLDER` (1): `recording-r1:303` A card for a temporary file with .none…
@@ -948,7 +959,6 @@ Lines (1):
 ## Seams that unlock three or fewer lines
 
 - Recording chrome's not-filmed mapping (`CHROMEMAP`, effort S), 3 lines: `recording-r3:336` A lookup miss (Not available for this…; `recording-r3:413` 4. The filmed features are bubble and…; `recording-r3:432` A. A bar-disabled bubble button keeps its own…
-- URL command log closure (`URLLOG`, effort S), 3 lines: `phase-6b:152` t 'capture-area?action=%25@%25n%25s': Unknown…; `recording-r4:187` record-screen during a recording is dropped…; `recording-r4:192` Two record-screen URLs back to back (one… (also `LOG`)
 - Save folder chooser (`FOLDER`, effort S), 3 lines: `phase-1:39` Cancelling the folder chooser leaves the image… (also `TARGET`); `recording-r1:303` A card for a temporary file with .none shows… (also `WORKSPACE`); `recording-r1:322` No save folder set, Save and copy image: the…
 - Capture Text's copy step reachable (`COPYTEXT`, effort S), 2 lines: `phase-7b:77` An empty area (the grey box, or a plain part of…; `phase-7b:78` Show notification off, Play sound off: a…
 - Quit reply decision (`APPDELEGATE`, effort S), 2 lines: `phase-4a:155` Quit TidyShot from the menu with a changed… (also `EDITOR`, `CLOSESHEET`); `recording-r1:254` A second quit during a held quit does nothing…

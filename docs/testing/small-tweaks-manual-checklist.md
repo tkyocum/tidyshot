@@ -14,8 +14,11 @@ Run this after any change to `AppCoordinator+Delete.swift`'s confirmation, `Capt
 
 ## Sizes in Recent Captures
 - [ ] A screenshot row reads `<time> · <size>`, for example `2 minutes ago · 412 KB`. The middle dot has a space either side. The size matches Finder's for the file, or the uploaded object's size.
-- [ ] Upload a capture with Clop on: after the upload, the row shows the smaller, optimised size.
-- [ ] A recording row shows its size after it saves, and the optimised size after an upload with Clop on.
+- [ ] Upload a capture with Clop on: after the upload, the row shows the smaller, optimised size. (suite:
+  CoordinatorClopTests.turningClopOffDuringAnOptimisationKeepsThatUploadOptimisedAndNotTheNext)
+- [ ] A recording row shows its size after it saves, and the optimised size after an upload with Clop on. (suite:
+  CoordinatorClopTests.anMP4RecordingGoesThroughClopShowingOptimizingAndUploadsClopsMovie,
+  CoordinatorSaveTests.anMP4sSizeIsTheMovedFilesSize, RecentCaptureFormattingTests.detailIsTheTimeAndTheSize)
 - [ ] An upload-only capture shows a size before and after its upload.
 - [ ] While uploading, a row reads `<time> · <size> · Uploading`. If the menu is narrow, it may show `<time> · Uploading` instead; write down which you see.
 - [ ] Edit a capture in the editor and Save: its row shows the edited file's size. Upload from the editor: after it finishes, the row shows the uploaded size.

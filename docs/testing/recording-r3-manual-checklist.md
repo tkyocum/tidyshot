@@ -160,12 +160,14 @@ Run `tccutil reset Camera io.tky.tidyshot` first (Tim's step), then open the Rel
   CoordinatorRecordingTests.aGIFStartAsksForTheCameraAndNotTheMicrophone)
 - [ ] With the camera prompt up: a second Record press does nothing and logs `Recording: start ignored, the
   camera prompt is open`. A start refused by the lock after its prompt cannot be forced by hand (`ShortcutsTests`
-  pin its notice and rule).
+  pin its notice and rule). (suite: CoordinatorRecordingTests.aStartLogsEachPromptsAnswerAndASecondPressWhileOneIsUp)
 - [ ] Record Screen asks before its selection, so choosing a window after a camera prompt records a window with
   no bubble and no note (design, call 24). Write down what happened: ______
 - [ ] With `Show webcam bubble` off, a start never prompts for the camera, whatever the access.
 - [ ] The microphone pick during a recording behaves as the bubble toggle does: no prompt, `Recording:
-  microphone prompt from Settings deferred, a capture is running` in the log.
+  microphone prompt from Settings deferred, a capture is running` in the log. (suite, in part:
+  CoordinatorRecordingTests.aSettingsPromptLogsItsAnswerOrWhyItWaits; by hand: the microphone pick in Settings reaching
+  the coordinator, a view's call on AppCoordinator.shared (CaptureSettingsView.swift:222))
 
 ## Probes left open
 Each gives its command, a blank for the result and the log line. Copy the results into the R3 design's Probes.
@@ -454,7 +456,10 @@ The plan filled these where the design was silent; each was built as written (th
   and blocks captures while open. (suite: CoordinatorRecordingTests.aSettingsPromptAsksOnlyWhenNothingElseRuns,
   .anOpenPromptRefusesCapturesUntilItIsAnswered, ShortcutsTests.aSettingsPromptWaitsWhileACaptureRecordingOrPromptRuns,
   .aCaptureIsRefusedWhileAnotherRunsOrAPromptIsOpen) ______
-- [ ] 9. The prompts' order and log lines are as the Camera prompt section says. ______
+- [ ] 9. The prompts' order and log lines are as the Camera prompt section says. (suite, in part:
+  CoordinatorRecordingTests.aStartLogsEachPromptsAnswerAndASecondPressWhileOneIsUp,
+  .aSettingsPromptLogsItsAnswerOrWhyItWaits, ShortcutsTests.aStartAsksForTheMicrophoneThenTheCamera; by hand: the
+  prompts on screen and the URL command's own dropped line (`URLLOG`)) ______
 - [ ] 10. A local mouse-down draws only on the bubble; local drags and ups pass from any TidyShot window. (suite:
   ClickHighlighterTests.aLocalEventPasses) ______
 - [ ] 11. A second down for a held button ends that ring first. (suite:

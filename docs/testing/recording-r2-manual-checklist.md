@@ -281,7 +281,9 @@ Format = GIF. ⌃⇧8 and drag an area; the bar is for GIF.
   `Save As…` offers `com.compuserve.gif` and writes a `.gif` (over an existing file too, and on
   `/Volumes/RecOff`). A card press for a drag stages the `.gif` and downloads nothing. The hover preview in
   Recent Captures shows the stored thumbnail at its own size. Drag the card into Finder and Slack: the
-  `.gif` arrives under its name.
+  `.gif` arrives under its name. (suite, in part: CoordinatorSaveAsTests.aGIFsSaveAsWritesTheGIFOverAnExistingFileToo,
+  EditorNamingTests.aGIFPanelAllowsGIFOnly, QuickAccessModelTests.aGIFHasNoImageActionsCopiesItsFileAndHasTheGIFBadge;
+  by hand: the thumbnail click (`WORKSPACE`), `/Volumes/RecOff`, the hover preview, dragging into Finder and Slack)
 - [ ] A GIF's upload and the clipboard. `Upload and copy URL` with Clop **off**: the URL replaces the
   clipboard only when nothing was copied in between; copy text while it uploads and the text stays,
   `Uploaded` posts, and a click copies the link. The link plays the GIF in a browser. Uploading uses the
@@ -292,7 +294,10 @@ Format = GIF. ⌃⇧8 and drag an area; the bar is for GIF.
   object is byte-identical to the saved file (`curl -s -o $W/up.gif "<url>"; cmp $W/up.gif "<saved .gif>"`);
   and `grep 'Clop: GIFs are not sent to Clop' ~/Desktop/rec-r2/tidyshot.err` finds one line, and still one
   after a second GIF upload in the same launch; after a relaunch, one more. An MP4 recording still goes through
-  Clop (`Optimizing…`, a smaller object). With Clop off the GIF line is never logged.
+  Clop (`Optimizing…`, a smaller object). With Clop off the GIF line is never logged. (suite, in part:
+  CoordinatorClopTests.aGIFUploadsAsMadeWithOneClopLinePerLaunch,
+  .anMP4RecordingGoesThroughClopShowingOptimizingAndUploadsClopsMovie; by hand: `cmp` against the bucket object and the
+  real stderr)
 
 ## Mute
 The button shows for `capturesAudio || captureMicrophone`. Settings > Capture > `Record system audio` on,
@@ -748,7 +753,12 @@ Six more, calls E to J, which the build left open. Tim answered all six on 2026-
 - [ ] An MP4 recording with the defaults is what R1 made: `Recording saved`, the file in the save folder, the 244 x 44
   bar (172 x 44 for a window) with no mute button when system audio is off, Clop `Optimizing…` and a smaller object.
 - [ ] A screenshot's save, upload, Retry, Delete, Save As… and Copy Image are as before; a PNG still gets
-  `.png` and `image/png`.
+  `.png` and `image/png`. (suite: CoordinatorSaveAsTests.saveAsOfASavedImageCopiesItsBytesAndChangesNothingElse,
+  CoordinatorSaveTests.aCaptureWithTheOverlayOffShowsNoCardAndStillUploads,
+  CoordinatorDeleteTests.deleteDuringAnUploadCancelsItThenDeletesTheReservedKey,
+  CoordinatorRecordActionsTests.copyImageReadsTheFileOrDownloadsTheObject, CaptureRecordTests.mediaKindTypes,
+  UploadQueueTests.uploadsAndReportsPublicURL,
+  CoordinatorUploadTests.aFailedUploadOnlyImageKeepsItsPendingFileAndSizeUntilARetrySendsIt)
 - [ ] Old history (a `history.json` from before R2) loads, with every record's `unmutedIntervals` empty and
   every R1 video still a video (the `isVideo` to `isTimeBased` rename). (suite:
   CaptureRecordTests.historyWithoutUnmutedIntervalsDecodesEmpty, .historyWithoutMediaKindDecodesAsImages,
