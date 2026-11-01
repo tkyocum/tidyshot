@@ -937,6 +937,58 @@ struct CoordinatorEditorUploadTests {
         try await settledEdit(coordinator, id)
     }
 
+    /// phase-6a:199 (:224), in part, the card's Save As… after an editor upload of an upload-only capture (with
+    /// `CoordinatorEditorSaveTests.saveAsAfterASaveOverTheFileWritesTheEditNotTheOriginal` and CT-2's two tests).
+    /// While the editor's PUT is held, Save As… writes the edit from the pending file; after it, from the drag copy
+    /// the finished upload kept. Neither reads the bucket or posts `Downloading`.
+    /// Stays: the drop, by hand; reaching Save As… after the edit, which only a pin offers (`PINS`). Annotate closes
+    /// the card for good, so the test puts the record back in `FakeCards.showing` for the upload's end to keep a drag
+    /// copy, as CT-2's test does.
+    @Test func saveAsAfterAnEditorUploadOfAnUploadOnlyCaptureWritesTheEditDuringAndAfterThePut() async throws {
+        defer { world.removeAll() }
+        defer { destination.releaseUploads() }
+        let coordinator = world.makeCoordinator()
+        let record = try addPendingImage(to: coordinator)
+        let id = record.id
+        world.cards.showing.insert(id)
+        coordinator.retryUpload(recordID: id)
+        try await eventually { coordinator.history.record(id: id)?.uploadedKey != nil }
+        let k = try #require(coordinator.history.record(id: id)?.uploadedKey)
+        #expect(coordinator.dragFiles.stagedFile(id: id) != nil)
+        destination.state.withLock { $0.holdingUploadsRemaining = 1 }
+        let during = try desktop("During.png")
+        let after = try desktop("After.png")
+        world.saveAsChooser.answers = [during, after]
+
+        coordinator.openEditor(recordID: id)
+        let editor = try await openedEditor(id)
+        editor.draw()
+        let outcome = await editor.upload()
+        #expect(outcome == EditorUploadOutcome(wroteLocally: true, enqueued: true))
+        world.cards.showing.insert(id)
+        try await eventually { destination.state.withLock { $0.heldUploads.count } == 1 }
+        #expect(coordinator.history.record(id: id)?.fileURL == pendingURL(coordinator, id))
+
+        coordinator.saveAs(recordID: id)
+        try await eventually { world.notifier.calls.contains(.saved(title: "Saved", file: "During.png")) }
+        #expect(try EditorPixels.isBlue(png: Data(contentsOf: during)))
+
+        destination.releaseUploads()
+        try await eventually { coordinator.history.record(id: id)?.uploadState == .uploaded(url: publicURL(k), key: k) }
+        #expect(coordinator.history.record(id: id)?.fileURL == nil)
+        #expect(coordinator.dragFiles.stagedFile(id: id) != nil)
+        coordinator.saveAs(recordID: id)
+        try await eventually { world.notifier.calls.contains(.saved(title: "Saved", file: "After.png")) }
+        #expect(try EditorPixels.isBlue(png: Data(contentsOf: after)))
+        #expect(destination.state.withLock { $0.dataDownloadKeys }.isEmpty)
+        let downloading = world.notifier.calls.contains { call in
+            guard case .notice(_, let body, _) = call else { return false }
+            return body.hasPrefix("Downloading ")
+        }
+        #expect(!downloading)
+        try await settledEdit(coordinator, id)
+    }
+
     /// phase-7-clop:28 (:30), its editor half (the Retry half is
     /// `CoordinatorClopTests.turningClopOffDuringAnOptimisationKeepsThatUploadOptimisedAndNotTheNext`). With Clop on
     /// and running, the editor's Upload over a save-folder capture's link sends Clop's bytes for the edited file over

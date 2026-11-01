@@ -10,10 +10,10 @@ nonisolated enum CoordinatorWorldError: Error {
 
 /// A coordinator's world in the suite (harness design 2.4): temp folders, a `UserDefaults` suite named
 /// after the test, settings and a save location over it, credentials in memory, the fakes, the editors
-/// the coordinator opens (`editors`; no window is built), Clop (`clop`, over `<root>/tmp/Clop`), a clock
-/// the test moves, a date it sets, free space it sets, a log it reads and a destination factory. Build it
-/// in the suite's `init`, make the coordinator with `makeCoordinator()`, and `defer { world.removeAll() }`
-/// first thing in each test.
+/// the coordinator opens (`editors`; no window is built), Clop (`clop`, over `<root>/tmp/Clop`), the card's
+/// Save As… panel (`saveAsChooser`; none is built), a clock the test moves, a date it sets, free space it
+/// sets, a log it reads and a destination factory. Build it in the suite's `init`, make the coordinator
+/// with `makeCoordinator()`, and `defer { world.removeAll() }` first thing in each test.
 /// Nothing here reaches the system, except the `ProcessInfo` activity (`Uploading a recording`) the
 /// coordinator begins while `fileUploadIDs` is not empty: the design leaves `ProcessInfo` activities out
 /// of the environment (2.1, Deferred), and it ends when the set empties.
@@ -46,6 +46,8 @@ final class CoordinatorWorld {
     /// Clop's optimiser and running check (`environment.clopOptimiser`, `isClopRunning`), working in
     /// `<root>/tmp/Clop`: running, with no answers scripted.
     let clop: FakeClop
+    /// The card's Save As… panel (`environment.chooseSaveAsURL`); no panel is built.
+    let saveAsChooser = FakeSaveAsChooser()
     /// The coordinator's clock, and its self-timer's.
     let clock = FakeScrollClock()
     let factory = FakeDestinationFactory()
@@ -116,6 +118,7 @@ final class CoordinatorWorld {
         let confirm = confirm
         let editors = editors
         let clop = clop
+        let saveAsChooser = saveAsChooser
         return AppEnvironment(
             historyFileURL: historyFileURL,
             temporaryDirectory: temporaryDirectory,
@@ -137,6 +140,7 @@ final class CoordinatorWorld {
                 editors.make(model: model, actions: actions, title: title, representedURL: representedURL,
                              onClose: onClose)
             },
+            chooseSaveAsURL: { suggestion in await saveAsChooser.choose(suggestion) },
             now: { state.date },
             clock: clock,
             log: { line in state.append(line) })

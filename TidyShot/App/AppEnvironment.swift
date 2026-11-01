@@ -42,6 +42,8 @@ struct AppEnvironment {
     var makeEditor: @MainActor (_ model: EditorModel, _ actions: EditorActions, _ title: String,
                                 _ representedURL: URL?,
                                 _ onClose: @escaping @MainActor (any EditorPresenting) -> Void) -> any EditorPresenting
+    /// A card's Save As… panel: a place for the suggestion, or nil for Cancel.
+    var chooseSaveAsURL: @MainActor (EditorNaming.SaveAsSuggestion) async -> URL?
     var now: @Sendable () -> Date
     /// The coordinator's own waits: the drag folder's clean-up, a replaced lane's poll, a recording's
     /// settle delay without a count-in, and a quit's poll.
@@ -51,10 +53,10 @@ struct AppEnvironment {
 
     /// What the app runs on: the user's Application Support folder (the temporary folder when it
     /// cannot be had), the shared settings, the Keychain, the notification centre, the card stack,
-    /// the general pasteboard, S3, Clop, the alerts, the shutter sound, the editor window, the wall
-    /// clock and `NSLog`. The collaborators are built in the order the coordinator's stored
-    /// properties built them; Clop's optimiser, a value that reaches nothing until a request, is
-    /// built here.
+    /// the general pasteboard, S3, Clop, the alerts, the shutter sound, the editor window, the card's
+    /// Save As… panel, the wall clock and `NSLog`. The collaborators are built in the order the
+    /// coordinator's stored properties built them; Clop's optimiser, a value that reaches nothing
+    /// until a request, is built here.
     static func live() -> AppEnvironment {
         let saveLocation = SaveLocation()
         let settings = AppSettings.shared
@@ -89,9 +91,22 @@ struct AppEnvironment {
                 controller.onClose = { closed in onClose(closed) }
                 return controller
             },
+            chooseSaveAsURL: { await AppEnvironment.chooseSaveAsURLLive($0) },
             now: { Date() },
             clock: SystemScrollClock(),
             log: { NSLog("%@", $0) })
+    }
+
+    /// The card's Save As… panel as `askSaveAsTarget` ran it: the panel for the suggestion
+    /// (`EditorNaming.savePanel(for:)`), the app activated, then the panel as a window (`begin()`,
+    /// not a sheet). Nil when it was cancelled.
+    private static func chooseSaveAsURLLive(_ suggestion: EditorNaming.SaveAsSuggestion) async -> URL? {
+        let panel = EditorNaming.savePanel(for: suggestion)
+        // Reached from a non-activating card while another app is active; a plain activate() can
+        // be refused and the panel would open behind that app (as in SaveLocation.chooseFolder).
+        NSApplication.shared.activate(ignoringOtherApps: true)
+        guard await panel.begin() == .OK else { return nil }
+        return panel.url
     }
 
     /// Delete's alerts as `AppCoordinator+Delete.swift` ran them.

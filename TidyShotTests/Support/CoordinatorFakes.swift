@@ -220,6 +220,32 @@ final class FakeConfirm {
     }
 }
 
+/// A card's Save As… panel in the suite (`environment.chooseSaveAsURL`): no panel is built and the app
+/// is never activated. Every suggestion is kept, in order; each is answered from `answers` (a URL, or
+/// nil for Cancel; Cancel when they run out), or held until `answer(_:)` while `holds` is set. A held
+/// panel whose task is cancelled answers Cancel; a second panel while one is held records an issue.
+final class FakeSaveAsChooser {
+    private(set) var asked: [EditorNaming.SaveAsSuggestion] = []
+    var answers: [URL?] = []
+    var holds = false
+    private let held = SingleWaiter<URL?>(cancelled: nil,
+                                          secondEntry: "FakeSaveAsChooser was asked again while a panel was held")
+
+    var isWaiting: Bool { held.isWaiting }
+
+    func choose(_ suggestion: EditorNaming.SaveAsSuggestion) async -> URL? {
+        asked.append(suggestion)
+        guard holds else { return answers.isEmpty ? nil : answers.removeFirst() }
+        return await held.wait()
+    }
+
+    /// Answers the held panel (nil: Cancel); later ones come from `answers`.
+    func answer(_ url: URL?) {
+        holds = false
+        held.resume(url)
+    }
+}
+
 /// `environment.makeDestination` in the suite: a `FakeDestination` per location, `standard` for the
 /// rest, and every configuration asked for. Called off the main actor, so it is locked.
 nonisolated final class FakeDestinationFactory: Sendable {

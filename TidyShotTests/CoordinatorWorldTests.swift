@@ -29,5 +29,8 @@ struct CoordinatorWorldTests {
         #expect(world.factory.askedLocations == [world.location])
         #expect(world.notifier.calls.isEmpty)
         #expect(world.logLines.isEmpty)
+        #expect(world.clop.runningChecks == 0)
+        #expect(world.clop.requests.isEmpty)
+        #expect(world.saveAsChooser.asked.isEmpty)
     }
 }

@@ -532,6 +532,43 @@ struct CoordinatorEditorSaveTests {
         try await settledEdit(coordinator, id)
     }
 
+    /// phase-6a:199 (:224), in part, the card's Save As… after an edit saved over the file (the line's last
+    /// sentence; with `CoordinatorEditorUploadTests.saveAsAfterAnEditorUploadOfAnUploadOnlyCaptureWritesTheEditDuringAndAfterThePut`
+    /// and CT-2's two tests). After the edit is saved over the save-folder file, which removes the capture's drag copy,
+    /// Save As… (`saveAs(recordID:)`, the panel `world.saveAsChooser`) suggests the capture's own name and writes the
+    /// edited image to the chosen file, never the one before the edit, read from the file and not from the bucket.
+    /// Stays: the drop, by hand; reaching Save As… after the edit, which only a pin offers (`PINS`; Recent Captures
+    /// has no Save As…, RecentCapturesMenu.swift:110-121).
+    @Test func saveAsAfterASaveOverTheFileWritesTheEditNotTheOriginal() async throws {
+        defer { world.removeAll() }
+        let folder = try world.storeSaveFolder()
+        let coordinator = world.makeCoordinator()
+        let (record, original) = try addSavedImage(to: coordinator, in: folder)
+        let id = record.id
+        world.cards.showing.insert(id)
+        coordinator.prepareDragFile(recordID: id)
+        try await eventually { world.cards.dragFiles(for: id).last.flatMap { $0 } != nil }
+        let staged = try #require(world.cards.dragFiles(for: id).last.flatMap { $0 })
+        #expect(try Data(contentsOf: staged) == original)
+        let copy = try desktop("Edited.png")
+        world.saveAsChooser.answers = [copy]
+
+        coordinator.openEditor(recordID: id)
+        let editor = try await openedEditor(id)
+        editor.draw()
+        #expect(await editor.save())
+        #expect(!exists(coordinator.dragFiles.folder(for: id)))
+
+        coordinator.saveAs(recordID: id)
+        try await eventually { world.notifier.calls.contains(.saved(title: "Saved", file: "Edited.png")) }
+        #expect(world.saveAsChooser.asked.map(\.fileName) == ["Shot.png"])
+        #expect(try EditorPixels.isBlue(png: Data(contentsOf: copy)))
+        #expect(try Data(contentsOf: copy) != original)
+        #expect(destination.state.withLock { $0.dataDownloadKeys }.isEmpty)
+        #expect(world.factory.askedConfigs.isEmpty)
+        try await settledEdit(coordinator, id)
+    }
+
     /// phase-4a:97 (:146), in part.
     /// An upload-only capture has no file to write over, so Save stays on and ⌘S runs Save As… (the first push's
     /// `saveCommand` is `.saveAs` and its status `EditorSaveTarget.noFileReason`, EST:16). The suggestion, read through
