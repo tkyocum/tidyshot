@@ -346,10 +346,13 @@ struct CoordinatorRecordingTests {
         #expect(world.notifier.calls == [.waited(.seconds(1))])
     }
 
-    /// recording-r2 :351, the held prompt's part (a B line, left unmarked, D15). With the microphone prompt up, a
-    /// second record press asks nothing, every capture is refused for the prompt, and a quit before the answer
-    /// starts nothing. The disabled menu items, the dropped URL command's log line and the recording that
-    /// starts after the answer stay with the line's seams.
+    /// recording-r2:351 (:386), in part. With the microphone prompt up, a second record press asks nothing and logs
+    /// `Recording: start ignored, the microphone prompt is open`; each of the eight capture entries (⌃⇧1 to ⌃⇧7 and
+    /// the self-timer) is refused for the prompt and reads no content, asks no overlay and captures nothing (C8, over
+    /// the fake capture source and selector); a quit before the answer starts nothing. Stays: the status menu's
+    /// capture items shown disabled (`STATUSMENU`'s), and the recording that starts as usual after the answer
+    /// (`TMPDIRS`' and `RECCHROME`'s). The URL command's dropped line is
+    /// `URLCommandHandlerTests.theLogSaysWhyACaptureCommandWasDropped`.
     @Test func aSecondRecordPressWhileTheMicrophonePromptIsUpAsksNothingAndAQuitStartsNothing() async throws {
         defer { world.removeAll() }
         world.settings.recordingMicrophone = MicrophoneChoice.systemDefaultValue
@@ -363,9 +366,40 @@ struct CoordinatorRecordingTests {
         #expect(coordinator.capturesRefused)
         #expect(coordinator.captureRefusal == .permissionPrompt(.microphone))
 
+        // C8: every capture entry, one at a time, refused at the lock for the prompt.
+        let intent = CaptureIntent(action: .save)
+        let entries: [@MainActor () async -> Void] = [
+            { await coordinator.captureAllInOne(intent: intent) },
+            { await coordinator.captureWindow(intent: intent) },
+            { await coordinator.captureFullscreen(intent: intent) },
+            { await coordinator.captureArea(intent: intent) },
+            { await coordinator.captureScrolling(intent: intent) },
+            { await coordinator.capturePreviousArea(intent: intent) },
+            { await coordinator.captureText() },
+            { await coordinator.captureSelfTimer(intent: intent) },
+        ]
+        for entry in entries {
+            let refused = TaskWatch(Task { await entry() })
+            try await eventually { refused.hasReturned }
+        }
+        #expect(world.source.contentReads == 0)
+        #expect(world.source.captures.isEmpty)
+        #expect(world.source.windowLookups.isEmpty)
+        #expect(world.selector.selects.isEmpty)
+        #expect(world.selector.allInOnes.isEmpty)
+        #expect(world.selector.dismissCount == 0)
+        #expect(world.notifier.calls.isEmpty)
+        #expect(world.cards.calls.isEmpty)
+        #expect(world.clipboard.copies.isEmpty)
+        #expect(coordinator.history.records.isEmpty)
+        #expect(world.shutterCount == 0)
+        #expect(coordinator.askingPermission == .microphone)
+        #expect(!coordinator.isCapturing)
+
         let second = TaskWatch(Task { await coordinator.recordScreen() })
         try await eventually { second.hasReturned }
         #expect(microphones.requestCount == 1)
+        #expect(world.recordingLines == ["Recording: start ignored, the microphone prompt is open"])
 
         // Gated as the GIF test's quit is (D31).
         do {
@@ -377,6 +411,9 @@ struct CoordinatorRecordingTests {
         #expect(!coordinator.isCapturing)
         #expect(coordinator.askingPermission == nil)
         #expect(world.notifier.calls == [.waited(.seconds(1))])
+        #expect(world.recordingLines == ["Recording: start ignored, the microphone prompt is open",
+                                         "Recording: microphone access refused at the prompt"])
+        #expect(world.logLines.isEmpty)
     }
 
     // MARK: The `Recording:` lines (small seams design, LOG)

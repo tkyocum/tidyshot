@@ -6,14 +6,14 @@ import ScreenCaptureKit
 /// maps each of these to an existing capture path.
 enum AllInOneChoice {
     /// Capture (the button, Return or a double-click inside): the area, frozen or live.
-    case area(rect: CGRect, display: SCDisplay)
+    case area(rect: CGRect, display: CaptureDisplay)
     /// The window whose frame a click took, captured from its own surface.
-    case window(SCWindow)
+    case window(CaptureWindow)
     /// The display the rect is on.
-    case fullscreen(SCDisplay)
-    case scrolling(rect: CGRect, display: SCDisplay)
+    case fullscreen(CaptureDisplay)
+    case scrolling(rect: CGRect, display: CaptureDisplay)
     /// The Self-Timer countdown over the rect (Task 3).
-    case timer(rect: CGRect, display: SCDisplay)
+    case timer(rect: CGRect, display: CaptureDisplay)
 }
 
 /// All-in-One's toolbar buttons, left to right after the size fields and the lock (spec 2.9).

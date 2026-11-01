@@ -212,7 +212,7 @@ extension AppCoordinator {
             urlRecordingStartPending = false
             guard let inputs = recordingCanStart(microphone: ask.microphone) else { return }
             guard let content = await loadContent(failureTitle: RecordingEnd.failedTitle) else { return }
-            guard let selection = await selector.select(mode: .recording, content: content,
+            guard let selection = await selector.select(mode: .recording, content: content, freeze: nil,
                                                         preselect: preselect) else { return }
             let target: CaptureTarget
             switch selection {
@@ -251,7 +251,7 @@ extension AppCoordinator {
             recordingCountIn = true
             notifier.holdNotices()
             guard let content = await loadContent(failureTitle: RecordingEnd.failedTitle),
-                  let display = Self.display(under: NSEvent.mouseLocation, in: content.displays) else {
+                  let display = captureSource.displayUnderPointer(in: content.displays) else {
                 recordingCountIn = false
                 endNoticeHold()
                 return
@@ -593,7 +593,7 @@ extension AppCoordinator {
 
     /// The display with `id` in fresh shareable content. When it is gone, `The display is no
     /// longer connected.` posts as a refusal and the result is nil.
-    private func connectedDisplay(_ id: CGDirectDisplayID, in content: SCShareableContent) -> SCDisplay? {
+    private func connectedDisplay(_ id: CGDirectDisplayID, in content: ScreenContent) -> CaptureDisplay? {
         guard let display = content.displays.first(where: { $0.displayID == id }) else {
             notifier.notifyError("The display is no longer connected.", title: RecordingEnd.refusalTitle)
             return nil
@@ -601,7 +601,7 @@ extension AppCoordinator {
         return display
     }
 
-    private static func recordingDisplay(_ display: SCDisplay) -> RecordingDisplay {
+    private static func recordingDisplay(_ display: CaptureDisplay) -> RecordingDisplay {
         RecordingDisplay(id: display.displayID, frame: display.frame, scale: CaptureEngine.scale(forDisplayID: display.displayID))
     }
 

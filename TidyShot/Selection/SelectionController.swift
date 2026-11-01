@@ -16,7 +16,7 @@ final class SelectionController {
     private var picker: WindowPicker?
     private var hoveredWindow: SCWindow?
     private var snapshotTask: Task<Void, Never>?
-    private var cachedOverlayWindows: [SCWindow]?
+    private var cachedOverlayWindows: [CaptureWindow]?
     /// Freeze screen: one snapshot per display, taken before any overlay window existed. Cleared by `dismiss()`.
     private var frozenSnapshots: [CGDirectDisplayID: FrozenSnapshot] = [:]
     /// All-in-One's caller, waiting for a choice (nil: cancelled).
@@ -33,11 +33,11 @@ final class SelectionController {
 
     /// `preselect` (CoreGraphics global points) is used only in `.recording` mode: a URL command's
     /// rect, shown as the preset that a click inside records.
-    func select(mode: SelectionMode, content: SCShareableContent, freeze: CaptureOptions? = nil,
+    func select(mode: SelectionMode, content: ScreenContent, freeze: CaptureOptions? = nil,
                 preselect: CGRect? = nil) async -> Selection? {
         // All-in-One resolves through `selectAllInOne`.
-        guard isIdle, mode != .allInOne, !NSScreen.screens.isEmpty else { return nil }
-        await present(mode: mode, content: content, freeze: freeze, preselect: preselect, armed: true)
+        guard isIdle, mode != .allInOne, !NSScreen.screens.isEmpty, let live = content.live else { return nil }
+        await present(mode: mode, content: live, freeze: freeze, preselect: preselect, armed: true)
         return await withCheckedContinuation { continuation = $0 }
     }
 
@@ -46,10 +46,10 @@ final class SelectionController {
     /// button, Return or a double-click picks the choice. On a choice the overlay stays up until
     /// `dismiss()`; `freeze` works as in area mode. With `armed` false (a URL command) the
     /// preselected rect takes Return and the double-click only after the user touches the overlay.
-    func selectAllInOne(content: SCShareableContent, freeze: CaptureOptions? = nil,
+    func selectAllInOne(content: ScreenContent, freeze: CaptureOptions? = nil,
                         preselect: CGRect? = nil, armed: Bool = true) async -> AllInOneChoice? {
-        guard isIdle, !NSScreen.screens.isEmpty else { return nil }
-        await present(mode: .allInOne, content: content, freeze: freeze, preselect: preselect, armed: armed)
+        guard isIdle, !NSScreen.screens.isEmpty, let live = content.live else { return nil }
+        await present(mode: .allInOne, content: live, freeze: freeze, preselect: preselect, armed: armed)
         return await withCheckedContinuation { allInOneContinuation = $0 }
     }
 
@@ -184,7 +184,7 @@ final class SelectionController {
     /// centre, as an area selection is.
     private func finishAllInOne(_ action: AllInOneAction, appKitRect: CGRect) {
         if action == .window {
-            if let pickedWindow { resumeAllInOne(.window(pickedWindow)) }
+            if let pickedWindow { resumeAllInOne(.window(CaptureWindow(pickedWindow))) }
             return
         }
         let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
@@ -224,11 +224,11 @@ final class SelectionController {
 
     /// `cgRect` clipped to the display under its centre, or the first display; nil when nothing
     /// of it is on that display.
-    private func clippedToDisplay(_ cgRect: CGRect) -> (CGRect, SCDisplay)? {
+    private func clippedToDisplay(_ cgRect: CGRect) -> (CGRect, CaptureDisplay)? {
         let centre = CGPoint(x: cgRect.midX, y: cgRect.midY)
         guard let display = displays.first(where: { $0.frame.contains(centre) }) ?? displays.first else { return nil }
         let clipped = cgRect.intersection(display.frame)
-        return clipped.isEmpty ? nil : (clipped, display)
+        return clipped.isEmpty ? nil : (clipped, CaptureDisplay(display))
     }
 
     /// One `engine.capture(.display(_:))` per display with whatever `overlayWindows()` excludes:
@@ -239,7 +239,7 @@ final class SelectionController {
         let excluded = await overlayWindows()
         var found: [CGDirectDisplayID: FrozenSnapshot] = [:]
         for display in displays {
-            guard let result = try? await engine.capture(.display(display), options: options,
+            guard let result = try? await engine.capture(.display(CaptureDisplay(display)), options: options,
                                                          excludingWindows: excluded) else { continue }
             found[display.displayID] = FrozenSnapshot(displayID: display.displayID, image: result.image,
                                                       scale: result.scale)
@@ -257,14 +257,14 @@ final class SelectionController {
     /// `excludingWindows`, through `OverlayWindowLookup` (by window number, with a short retry).
     /// A complete result is cached until `dismiss()`; it is reused while it covers every window
     /// wanted now, because a card can close (auto-close) or appear (Task 4's restore) meanwhile.
-    func overlayWindows() async -> [SCWindow] {
+    func overlayWindows() async -> [CaptureWindow] {
         let wanted = Set(windows.compactMap { $0.windowNumber > 0 ? CGWindowID($0.windowNumber) : nil })
             .union(cardWindowNumbers())
         if let cachedOverlayWindows, Set(cachedOverlayWindows.map(\.windowID)).isSuperset(of: wanted) {
             return cachedOverlayWindows
         }
         guard !wanted.isEmpty else { return [] }
-        let found = await OverlayWindowLookup.windows(numbers: wanted, engine: engine)
+        let found = await OverlayWindowLookup.windows(numbers: wanted, engine: engine).map(CaptureWindow.init)
         if found.count >= wanted.count { cachedOverlayWindows = found }
         return found
     }
@@ -280,7 +280,7 @@ final class SelectionController {
         for display in pending {
             guard !Task.isCancelled else { return }
             guard let index = windows.firstIndex(where: { $0.displayID == display.displayID }) else { continue }
-            guard let result = try? await engine.capture(.display(display),
+            guard let result = try? await engine.capture(.display(CaptureDisplay(display)),
                                                          options: CaptureOptions(showsCursor: false),
                                                          excludingWindows: overlays) else { continue }
             guard !Task.isCancelled, index < views.count else { return }
@@ -335,7 +335,7 @@ final class SelectionController {
         if mode == .scrolling {
             finishArea(cgRect: window.frame)
         } else {
-            finish(.window(window))
+            finish(.window(CaptureWindow(window)))
         }
     }
 
@@ -366,3 +366,5 @@ final class SelectionController {
         continuation.resume(returning: selection)
     }
 }
+
+extension SelectionController: CaptureSelecting {}

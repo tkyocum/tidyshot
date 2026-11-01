@@ -1,11 +1,27 @@
 import CoreGraphics
 import ScreenCaptureKit
 
+/// A display a capture can use: its id and frame, and the SC display it was read from (`live`, nil for one a test built).
+struct CaptureDisplay: Equatable {
+    let displayID: CGDirectDisplayID
+    let frame: CGRect
+    let live: SCDisplay?
+    init(displayID: CGDirectDisplayID, frame: CGRect) { self.displayID = displayID; self.frame = frame; live = nil }
+    init(_ display: SCDisplay) { displayID = display.displayID; frame = display.frame; live = display }
+}
+/// A window a capture can use: its window number and frame, and the ScreenCaptureKit window (`live`).
+struct CaptureWindow: Equatable {
+    let windowID: CGWindowID
+    let frame: CGRect
+    let live: SCWindow?
+    init(windowID: CGWindowID, frame: CGRect) { self.windowID = windowID; self.frame = frame; live = nil }
+    init(_ window: SCWindow) { windowID = window.windowID; frame = window.frame; live = window }
+}
 /// What to capture. Rects are in CoreGraphics global points (top-left origin).
-enum CaptureTarget {
-    case display(SCDisplay)
-    case area(rect: CGRect, display: SCDisplay)
-    case window(SCWindow)
+enum CaptureTarget: Equatable {
+    case display(CaptureDisplay)
+    case area(rect: CGRect, display: CaptureDisplay)
+    case window(CaptureWindow)
 }
 
 extension CaptureTarget {
@@ -83,10 +99,12 @@ struct CaptureResult {
 
 enum CaptureError: LocalizedError {
     case noImage
+    case notListed
 
     var errorDescription: String? {
         switch self {
         case .noImage: "ScreenCaptureKit returned no image."
+        case .notListed: "The display or window is not one ScreenCaptureKit listed."
         }
     }
 }

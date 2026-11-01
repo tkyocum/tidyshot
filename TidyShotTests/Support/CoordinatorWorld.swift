@@ -11,10 +11,11 @@ nonisolated enum CoordinatorWorldError: Error {
 /// A coordinator's world in the suite (harness design 2.4): temp folders, a `UserDefaults` suite named
 /// after the test, settings and a save location over it, credentials in memory, the fakes, the editors
 /// the coordinator opens (`editors`; no window is built), Clop (`clop`, over `<root>/tmp/Clop`), the card's
-/// Save As… panel (`saveAsChooser`; none is built), a clock the test moves, a date it sets, free space it
-/// sets, the two logs it reads (`logLines`, `recordingLines`) and a destination factory. Build it in the
-/// suite's `init`, make the coordinator with `makeCoordinator()`, and `defer { world.removeAll() }` first
-/// thing in each test.
+/// Save As… panel (`saveAsChooser`; none is built), the capture source and the selection overlay (`source`,
+/// `selector`; no window is built and ScreenCaptureKit is never read), a clock the test moves, a date it
+/// sets, free space it sets, the two logs it reads (`logLines`, `recordingLines`) and a destination factory.
+/// Build it in the suite's `init`, make the coordinator with `makeCoordinator()`, and
+/// `defer { world.removeAll() }` first thing in each test.
 /// Nothing here reaches the system, except the `ProcessInfo` activity (`Uploading a recording`) the
 /// coordinator begins while `fileUploadIDs` is not empty: the design leaves `ProcessInfo` activities out
 /// of the environment (2.1, Deferred), and it ends when the set empties.
@@ -41,6 +42,10 @@ final class CoordinatorWorld {
     let notifier = FakeNotifier()
     let cards = FakeCards()
     let clipboard = FakeClipboard()
+    /// The capture source (`environment.captureSource`): ScreenCaptureKit is never read.
+    let source = FakeCaptureSource()
+    /// The selection overlay (`environment.selector`); no window is built.
+    let selector = FakeSelector()
     let confirm = FakeConfirm()
     /// Every editor the coordinator opened (`environment.makeEditor`); no window is built.
     let editors = FakeEditors()
@@ -131,6 +136,8 @@ final class CoordinatorWorld {
             notifier: notifier,
             overlay: cards,
             clipboard: clipboard,
+            captureSource: source,
+            selector: selector,
             makeDestination: { config, credentials in factory.make(config, credentials) },
             multipartPlan: multipartPlan,
             uploadSleep: { _ in },
