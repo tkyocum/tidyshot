@@ -14,15 +14,22 @@ extension AppCoordinator {
     /// Returns the record, or nil when nothing was recorded.
     @discardableResult
     func save(_ result: CaptureResult, intent: CaptureIntent = .standard) async -> CaptureRecord? {
+        await save(result.scaled, from: result.target.origin, intent: intent)
+    }
+
+    /// `save(_:intent:)` over the image and what the save path reads of its target (`CaptureOrigin`).
+    /// The suite calls it with an origin it builds (seams.md section 3, `TARGET`). The intent has no
+    /// default, so nothing here reads `AppSettings.shared`.
+    @discardableResult
+    func save(_ captured: ScaledImage, from origin: CaptureOrigin, intent: CaptureIntent) async -> CaptureRecord? {
         // Before the copy-only branch, so `action=copy` gets the background too.
-        let result = await withWindowBackground(result)
+        let image = await withWindowBackground(captured, from: origin)
         if intent.copyOnly {
-            await copyOnly(result, sender: intent.sender)
+            await copyOnly(image, sender: intent.sender)
             return nil
         }
         latestCapture = nil
         latestCaptureArea = nil
-        let image = result.scaled
         let action = intent.action
         // One keychain read per capture; persist passes the result to startUpload.
         let destination = action.uploads ? makeDestination() : nil
@@ -59,9 +66,9 @@ extension AppCoordinator {
 
         guard let record = await persist(png: png, image: image, action: action, destination: destination,
                                          alreadyOnClipboard: copyImageNow,
-                                         captureDisplayID: result.target.displayID) else { return nil }
+                                         captureDisplayID: origin.displayID) else { return nil }
         // Before anything below, so a pin of this record opens over the spot it came from.
-        latestCaptureArea = result.target.areaRect.map { (id: record.id, rect: $0) }
+        latestCaptureArea = origin.areaRect.map { (id: record.id, rect: $0) }
         if let copiedChangeCount {
             clipboardOwner = EditorClipboard.Owner(recordID: record.id, changeCount: copiedChangeCount)
         }
@@ -78,12 +85,12 @@ extension AppCoordinator {
     /// capture as it is. The desktop picture is the window's display's, and composing runs detached.
     /// When it fails the capture keeps the plain window image and the reason is logged, with no
     /// notification, since nothing is lost.
-    private func withWindowBackground(_ result: CaptureResult) async -> CaptureResult {
-        guard settings.windowBackground, case .window = result.target else { return result }
+    private func withWindowBackground(_ image: ScaledImage, from origin: CaptureOrigin) async -> ScaledImage {
+        guard settings.windowBackground, origin.isWindow else { return image }
         let style = settings.backgroundStyle
-        let content = result.image
-        let scale = result.scale
-        let fillImage = await BackgroundFillSource.fillImage(for: style.fill, displayID: result.target.displayID)
+        let content = image.image
+        let scale = image.scale
+        let fillImage = await BackgroundFillSource.fillImage(for: style.fill, displayID: origin.displayID)
         let composed = await Task.detached(priority: .userInitiated) {
             BackgroundCompositor.compose(content, style: style, scale: scale, fillImage: fillImage)
         }.value
@@ -92,9 +99,9 @@ extension AppCoordinator {
                                              style: style, scale: scale) != nil
             let reason = fits ? "no bitmap could be made" : "the window is too large for a background"
             log("Background: \(reason), keeping the window capture")
-            return result
+            return image
         }
-        return CaptureResult(image: composed, scale: scale, target: result.target)
+        return ScaledImage(image: composed, scale: scale)
     }
 
     /// The style editor's `Choose Image…` was given a file that does not decode (spec 2.11).
@@ -108,8 +115,7 @@ extension AppCoordinator {
     /// are on, naming the sending app. `latestCapture` and `clipboardOwner` stay: the newest card
     /// still owns its image, and an edit of an earlier capture compares the clipboard's change
     /// count, which this copy has moved on.
-    private func copyOnly(_ result: CaptureResult, sender: String?) async {
-        let image = result.scaled
+    private func copyOnly(_ image: ScaledImage, sender: String?) async {
         let encoded = await Task.detached(priority: .userInitiated) { () -> (png: Data?, tiff: Data?) in
             (try? ImageEncoder.pngData(from: image.image, scale: image.scale),
              Pasteboard.companionTIFF(of: image.image, scale: image.scale))
