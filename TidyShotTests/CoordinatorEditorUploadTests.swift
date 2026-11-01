@@ -936,4 +936,56 @@ struct CoordinatorEditorUploadTests {
         #expect(destination.state.withLock { $0.dataDownloadKeys }.isEmpty)
         try await settledEdit(coordinator, id)
     }
+
+    /// phase-7-clop:28 (:30), its editor half (the Retry half is
+    /// `CoordinatorClopTests.turningClopOffDuringAnOptimisationKeepsThatUploadOptimisedAndNotTheNext`). With Clop on
+    /// and running, the editor's Upload over a save-folder capture's link sends Clop's bytes for the edited file over
+    /// the link's own key with `Cache-Control: no-cache`, and the link stays; Upload as New of a second edit sends
+    /// Clop's bytes for that file under a new key with no `Cache-Control`. Each request is the file the editor wrote.
+    /// Real Clop making each object smaller than the file is line 26.
+    @Test func anEditorUploadAndUploadAsNewEachSendClopsBytesAndTheLinkKeepsItsKey() async throws {
+        defer { world.removeAll() }
+        let folder = try world.storeSaveFolder()
+        world.settings.optimiseWithClop = true
+        world.clop.answers = [.smaller(Data("r1".utf8)), .smaller(Data("n1".utf8))]
+        let coordinator = world.makeCoordinator()
+        let (record, _) = try addSavedImage(to: coordinator, in: folder, uploadState: .uploaded(url: link, key: key),
+                                            objectLocation: world.location)
+        let id = record.id
+        let file = try #require(record.fileURL)
+
+        coordinator.openEditor(recordID: id)
+        let first = try await openedEditor(id)
+        first.draw()
+        let replaced = await first.upload()
+        #expect(replaced == EditorUploadOutcome(wroteLocally: true, enqueued: true))
+        try await eventually { coordinator.history.record(id: id)?.isUploading == false }
+        let firstFile = try Data(contentsOf: file)
+        try await settledEdit(coordinator, id)
+        #expect(world.clop.requests == [.png(firstFile)])
+        let replace = try #require(destination.state.withLock { $0.uploads }.first)
+        #expect(replace.key == key)
+        #expect(replace.data == Data("r1".utf8))
+        #expect(replace.cacheControl == "no-cache")
+        #expect(coordinator.history.record(id: id)?.uploadState == .uploaded(url: link, key: key))
+
+        world.date = world.date.addingTimeInterval(1)
+        coordinator.openEditor(recordID: id)
+        let second = try await reopenedEditor(id, after: first)
+        second.draw()
+        let asNew = await second.upload(asNew: true)
+        #expect(asNew == EditorUploadOutcome(wroteLocally: true, enqueued: true))
+        try await eventually {
+            isUploaded(coordinator, id) && destination.state.withLock { $0.deletedKeys } == [key]
+        }
+        let secondFile = try Data(contentsOf: file)
+        try await settledEdit(coordinator, id)
+        #expect(world.clop.requests == [.png(firstFile), .png(secondFile)])
+        #expect(world.clop.runningChecks == 2)
+        let uploads = destination.state.withLock { $0.uploads }
+        try #require(uploads.count == 2)
+        #expect(uploads[1].key != key)
+        #expect(uploads[1].data == Data("n1".utf8))
+        #expect(uploads[1].cacheControl == nil)
+    }
 }

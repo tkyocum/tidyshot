@@ -30,6 +30,10 @@ struct AppEnvironment {
     var uploadSleep: UploadQueue.Sleeper
     /// Free space on the volume of a URL, nil when it cannot be read.
     var freeBytes: @Sendable (URL) -> Int64?
+    /// Clop's optimiser (spec 2.7): a PNG or a recording rewritten smaller, or why the original uploads.
+    var clopOptimiser: any ClopOptimising
+    /// Whether a Clop build runs now, asked once per upload's Clop decision.
+    var isClopRunning: @MainActor () -> Bool
     /// Delete's two alerts: true for Delete or Remove.
     var confirm: @MainActor (DeleteConfirmation) async -> Bool
     var playShutter: @MainActor () -> Void
@@ -47,9 +51,10 @@ struct AppEnvironment {
 
     /// What the app runs on: the user's Application Support folder (the temporary folder when it
     /// cannot be had), the shared settings, the Keychain, the notification centre, the card stack,
-    /// the general pasteboard, S3, the alerts, the shutter sound, the editor window, the wall clock
-    /// and `NSLog`. The collaborators are built in the order the coordinator's stored properties
-    /// built them.
+    /// the general pasteboard, S3, Clop, the alerts, the shutter sound, the editor window, the wall
+    /// clock and `NSLog`. The collaborators are built in the order the coordinator's stored
+    /// properties built them; Clop's optimiser, a value that reaches nothing until a request, is
+    /// built here.
     static func live() -> AppEnvironment {
         let saveLocation = SaveLocation()
         let settings = AppSettings.shared
@@ -71,6 +76,8 @@ struct AppEnvironment {
             multipartPlan: .standard,
             uploadSleep: { try await Task.sleep(for: $0) },
             freeBytes: { RecordingLimits.freeBytes(at: $0) },
+            clopOptimiser: ClopApp.makeOptimiser(),
+            isClopRunning: { ClopApp.runningBundleID() != nil },
             confirm: { await AppEnvironment.confirmLive($0) },
             playShutter: { SoundPlayer.playShutter() },
             makeEditor: { model, actions, title, representedURL, onClose in

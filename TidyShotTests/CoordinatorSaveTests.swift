@@ -373,6 +373,27 @@ struct CoordinatorSaveTests {
         #expect(record.byteCount == 1_234)
     }
 
+    /// small-tweaks:15 (:18), the save half (the optimised size is
+    /// `CoordinatorClopTests.anMP4RecordingGoesThroughClopShowingOptimizingAndUploadsClopsMovie`). An MP4's size is
+    /// the file's own after its move into the save folder; the row's text from the size is
+    /// `RecentCaptureFormattingTests.detailIsTheTimeAndTheSize`.
+    @Test func anMP4sSizeIsTheMovedFilesSize() async throws {
+        defer { world.removeAll() }
+        let folder = try world.storeSaveFolder()
+        let coordinator = world.makeCoordinator()
+        let recording = try makeRecording(.video, bytes: 1_234)
+
+        let record = try #require(await save(coordinator, recording, CaptureIntent(action: .save)))
+
+        let file = try #require(record.fileURL)
+        #expect(isIn(file, folder))
+        #expect(file.pathExtension == "mp4")
+        #expect(record.mediaKind == .video)
+        let size = try FileManager.default.attributesOfItem(atPath: file.path(percentEncoded: false))[.size] as? Int
+        #expect(record.byteCount == size)
+        #expect(record.byteCount == 1_234)
+    }
+
     /// recording-r4 :313 (gap 6). A recording's notices never name the URL command's sender: not its stop notice,
     /// not its upload's.
     @Test func recordingNoticesNeverNameTheSender() async throws {

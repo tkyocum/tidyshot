@@ -423,7 +423,7 @@ extension AppCoordinator {
 
     /// True when a Clop build is running. Otherwise logs why the original uploads (spec 2.7).
     private func clopIsRunning() -> Bool {
-        guard ClopApp.runningBundleID() != nil else {
+        guard environment.isClopRunning() else {
             log("Clop: \(ClopSkipReason.notRunning.summary), uploading the original")
             return false
         }

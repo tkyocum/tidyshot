@@ -155,9 +155,9 @@ final class AppCoordinator {
     /// finish against the destination they started with (their records store that location),
     /// and Delete can still cancel them.
     @ObservationIgnored var drainingQueues: [UploadLane] = []
-    /// Optimize images and videos with Clop (spec 2.7): one optimiser, sending to whichever Clop
-    /// build runs.
-    let clopOptimiser = ClopApp.makeOptimiser()
+    /// Optimize images and videos with Clop (spec 2.7): the environment's optimiser, which in the
+    /// app sends to whichever Clop build runs.
+    let clopOptimiser: any ClopOptimising
     /// Records whose upload waits for Clop, or a recording's for its size check, each with the
     /// token of the attempt that waits. Delete's cancel takes the record out, and the upload is
     /// then never enqueued; a retry started after that gets a new token, so the first attempt's
@@ -272,6 +272,7 @@ final class AppCoordinator {
         notifier = environment.notifier
         overlay = environment.overlay
         clipboard = environment.clipboard
+        clopOptimiser = environment.clopOptimiser
         let url = environment.historyFileURL
         // The shared settings in the app, read on each prune as before.
         let retentionSettings = environment.settings
