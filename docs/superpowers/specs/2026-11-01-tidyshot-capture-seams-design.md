@@ -464,7 +464,8 @@ save folder before their copy-only save and check that the folder stays empty, w
 folder stored and checks `currentURL` is nil and design rule 2 says "stores a folder first or is copy-only"; with no
 folder stored, a regression that dropped the copy-only branch or moved it after `persist` would reach
 `SaveLocation.ensureFolder` and build a real folder panel rather than fail (plan decision D48, from the fix rounds of
-Tasks 1 and 2; the design and the catalogue are unchanged, the stricter form wins). Tasks 1 to 3 otherwise built the
+Tasks 1 and 2; the design and the catalogue are unchanged, the stricter form wins). T4's intent is `.upload` with
+copy-only, the app's `action=copy` under the Upload setting, so its no-upload check can fail (plan decision D49). Tasks 1 to 3 otherwise built the
 brief's steps verbatim, with no drift from the files they quoted; the other departures from the catalogue and the
 design (the helpers, `UploadFailureCause`, `Canvas`, the five fake members left out, `persist` moving 6 lines, the
 `live()` doc rewrite) are plan decisions D5 to D30. No hand check was run; they are Tim's.

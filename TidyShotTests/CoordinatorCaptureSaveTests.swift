@@ -172,7 +172,7 @@ struct CoordinatorCaptureSaveTests {
     }
 
     /// T4, phase-6b:117 (:143), full. `action=copy` puts the image on the clipboard and nothing else: no file in the
-    /// save folder or `pending`, no card, no record, no upload; the shutter follows Play sound; `Image copied`
+    /// save folder or `pending`, no card, no record, no upload; the shutter plays with Play sound on; `Image copied`
     /// names the pixel size and `From <sender>`, and with Show notification off nothing posts. The newest card's
     /// capture and clipboard owner stay, so its Annotate still opens its own capture. The shutter heard stays by
     /// hand for good.
@@ -188,7 +188,7 @@ struct CoordinatorCaptureSaveTests {
         coordinator.clipboardOwner = owner
 
         let record = await save(coordinator, try CaptureSamples.image(width: 400, height: 300), CaptureSamples.area(),
-                                CaptureIntent(action: .save, copyOnly: true, sender: "Shortcuts"))
+                                CaptureIntent(action: .upload, copyOnly: true, sender: "Shortcuts"))
 
         #expect(record == nil)
         #expect(world.clipboard.copies == [.pngAndTIFF])
