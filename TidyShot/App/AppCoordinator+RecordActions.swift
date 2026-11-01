@@ -188,17 +188,14 @@ extension AppCoordinator {
         await writeSaveAsCopy(png, to: target.url)
     }
 
-    /// A card's Save As… panel, for an image and for a recording: activates the app and asks for a
-    /// place with the record's suggestion (`EditorNaming.savePanel(for:)`). Then the record is read
-    /// again, since the upload may have finished, or the capture been deleted, while the panel was
-    /// open. Nil when the panel was cancelled or the capture is gone.
+    /// A card's Save As… panel, for an image and for a recording: asks for a place with the record's
+    /// suggestion (`environment.chooseSaveAsURL`, which activates the app and shows
+    /// `EditorNaming.savePanel(for:)`). Then the record is read again, since the upload may have
+    /// finished, or the capture been deleted, while the panel was open. Nil when the panel was
+    /// cancelled or the capture is gone.
     private func askSaveAsTarget(recordID: UUID) async -> (record: CaptureRecord, url: URL)? {
         guard history.record(id: recordID) != nil else { return nil }
-        let panel = EditorNaming.savePanel(for: saveAsSuggestion(recordID: recordID))
-        // Reached from a non-activating card while another app is active; a plain activate() can
-        // be refused and the panel would open behind that app (as in SaveLocation.chooseFolder).
-        NSApplication.shared.activate(ignoringOtherApps: true)
-        guard await panel.begin() == .OK, let url = panel.url else { return nil }
+        guard let url = await environment.chooseSaveAsURL(saveAsSuggestion(recordID: recordID)) else { return nil }
         guard let record = history.record(id: recordID) else {
             log("Save As: \(recordID) was deleted while the panel was open")
             return nil

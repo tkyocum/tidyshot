@@ -88,6 +88,7 @@ protocol RecordingStreamDriver: AnyObject {
 /// The `Recording:` lines. They go through `Logger` as public, because `NSLog`'s text shows as
 /// `<private>` in `log show`; read them with
 /// `/usr/bin/log show --last 10m --style compact --predicate 'process == "TidyShot"' | grep "Recording:"`.
+/// The coordinator reaches it through `AppEnvironment.recordingLog`.
 nonisolated enum RecordingLog {
     private static let logger = Logger(subsystem: "io.tky.tidyshot", category: "Recording")
 

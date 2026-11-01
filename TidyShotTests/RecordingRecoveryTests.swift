@@ -63,6 +63,26 @@ struct RecordingRecoveryTests {
         #expect(FileManager.default.fileExists(atPath: playable.path(percentEncoded: false)))
     }
 
+    /// recording-r1:263 (:277), full: the relaunch and the junk file are the set-up. A leftover that does not play
+    /// (`echo junk > "$C/tmp/Recording/x.mp4"`) is removed and logged by its name through `scan`'s `note`; a
+    /// playable file beside it is found, kept and not logged. That `start()` hands `scan` the environment's
+    /// `recordingLog` is read from the code, not driven (`TMPDIRS`, `LAUNCH`); nothing of the line stays by hand.
+    @Test func aLeftoverThatDoesNotPlayIsRemovedAndLogged() async throws {
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let junk = dir.appending(path: "x.mp4")
+        try Data("junk\n".utf8).write(to: junk)
+        let playable = dir.appending(path: "\(UUID().uuidString).mp4")
+        try await VideoFixtures.makeMP4(at: playable, width: 320, height: 200, seconds: 1, audio: false)
+        let lines = LogLines()
+
+        let found = await RecordingRecovery.scan(dir, note: { line in lines.lines.withLock { $0.append(line) } })
+
+        #expect(found.map(\.url.lastPathComponent) == [playable.lastPathComponent])
+        #expect(!FileManager.default.fileExists(atPath: junk.path(percentEncoded: false)))
+        #expect(FileManager.default.fileExists(atPath: playable.path(percentEncoded: false)))
+        #expect(lines.lines.withLock { $0 } == ["Recording: x.mp4 could not be played, removed"])
+    }
+
     /// A crash during a GIF's conversion leaves the MP4 and a partial GIF: the MP4 is recovered
     /// and the GIF, which does not play, removed.
     @Test func anMP4BesideAPartialGIFIsFoundAndTheGIFRemoved() async throws {

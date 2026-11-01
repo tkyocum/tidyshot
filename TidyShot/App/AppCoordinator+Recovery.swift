@@ -124,9 +124,9 @@ extension AppCoordinator {
             guard case .recover(let unmutedIntervals, let bodySuffix, let removesLog) = prepared else {
                 let removed = await Task.detached(priority: .utility) { try FileManager.default.removeItem(at: source) }.result
                 if case .failure(let error) = removed {
-                    RecordingLog.note("Recording: \(source.lastPathComponent) was saved as a GIF and could not be removed: \(error.localizedDescription)")
+                    recordingLog("Recording: \(source.lastPathComponent) was saved as a GIF and could not be removed: \(error.localizedDescription)")
                 } else {
-                    RecordingLog.note("Recording: \(source.lastPathComponent) was saved as a GIF, removed")
+                    recordingLog("Recording: \(source.lastPathComponent) was saved as a GIF, removed")
                 }
                 continue
             }
@@ -140,7 +140,7 @@ extension AppCoordinator {
             }.result
             guard case .success(let (fileURL, byteCount)) = moved else {
                 if case .failure(let error) = moved {
-                    RecordingLog.note("Recording: \(source.lastPathComponent) could not be recovered, kept for the next launch: \(error.localizedDescription)")
+                    recordingLog("Recording: \(source.lastPathComponent) could not be recovered, kept for the next launch: \(error.localizedDescription)")
                 }
                 continue
             }
@@ -158,7 +158,7 @@ extension AppCoordinator {
             if let poster {
                 makeThumbnail(from: poster, for: id)
             }
-            RecordingLog.note("Recording: \(source.lastPathComponent) recovered as \(fileURL.lastPathComponent)")
+            recordingLog("Recording: \(source.lastPathComponent) recovered as \(fileURL.lastPathComponent)")
             let body = "\(fileURL.lastPathComponent), \(RecordingClock.format(found.facts.duration)). Find it in Recent Captures."
             notifier.notifyError(bodySuffix.map { "\(body) \($0)" } ?? body, title: "Recovered a recording")
         }

@@ -105,6 +105,8 @@ nonisolated final class FakeDestination: Destination, Sendable {
         var dataDownloadKeys: [String] = []
         /// Errors for `download(key:)`, one per call, in order; then it returns `downloadedData`.
         var dataDownloadFailures: [any Error & Sendable] = []
+        /// Each `download(key:to:)` (a recording's Save As…, Trim): its key and file, in order.
+        var fileDownloads: [(key: String, file: URL)] = []
         /// Every `delete(key:)`, in order, including ones that throw.
         var deletedKeys: [String] = []
         /// Errors for `delete(key:)`, one per call, in order; then it succeeds.
@@ -168,7 +170,13 @@ nonisolated final class FakeDestination: Destination, Sendable {
         state.withLock { $0.fileUploads.append((key, url, contentType, cacheControl)) }
     }
 
-    func download(key: String, to destination: URL) async throws {}
+    func download(key: String, to destination: URL) async throws {
+        let data = state.withLock { state -> Data in
+            state.fileDownloads.append((key, destination))
+            return state.downloadedData
+        }
+        try data.write(to: destination, options: .atomic)
+    }
 
     func download(key: String) async throws -> Data {
         let (failure, data) = state.withLock { state -> ((any Error & Sendable)?, Data) in

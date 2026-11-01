@@ -106,12 +106,12 @@ extension AppCoordinator {
             // Nil cannot come here: `settingsPromptStep` would have asked.
             let reason = Self.settingsPromptDeferralReason(phase: recordingPhase, isCapturing: isCapturing,
                                                            askingPermission: askingPermission) ?? "a capture is running"
-            RecordingLog.note("Recording: \(prompt.name) prompt from Settings deferred, \(reason)")
+            recordingLog("Recording: \(prompt.name) prompt from Settings deferred, \(reason)")
         case .ask:
             askingPermission = prompt
             let granted = await requestAccess(prompt)
             askingPermission = nil
-            RecordingLog.note("Recording: \(prompt.name) access \(granted ? "allowed" : "refused") at the Settings prompt")
+            recordingLog("Recording: \(prompt.name) access \(granted ? "allowed" : "refused") at the Settings prompt")
         }
     }
 
@@ -157,12 +157,12 @@ extension AppCoordinator {
         guard Self.recordingStartsFromURL(phase: recordingPhase, askingPermission: askingPermission,
                                           isQuitting: isQuitting) else {
             if isQuitting {
-                RecordingLog.note("Recording: URL start ignored, the app is quitting")
+                recordingLog("Recording: URL start ignored, the app is quitting")
             }
             return
         }
         guard !urlRecordingStartPending else {
-            RecordingLog.note("Recording: URL start ignored, a recording is starting")
+            recordingLog("Recording: URL start ignored, a recording is starting")
             return
         }
         urlRecordingStartPending = true
@@ -177,18 +177,18 @@ extension AppCoordinator {
         switch Self.recordingStopCommandAction(for: recordingPhase) {
         case .stop:
             if recorder.isEnding {
-                RecordingLog.note("Recording: stop-recording from \(name) did nothing, no recording is running")
+                recordingLog("Recording: stop-recording from \(name) did nothing, no recording is running")
             } else {
                 recorder.stop()
-                RecordingLog.note("Recording: stop-recording from \(name) stopped the recording")
+                recordingLog("Recording: stop-recording from \(name) stopped the recording")
             }
         case .cancelCountIn:
             // As the shortcut's cancel: the flag holds a cancel the countdown cannot see.
             recordingStartCancelled = true
             selfTimer.cancel()
-            RecordingLog.note("Recording: stop-recording from \(name) cancelled the count-in")
+            recordingLog("Recording: stop-recording from \(name) cancelled the count-in")
         case .nothing:
-            RecordingLog.note("Recording: stop-recording from \(name) did nothing, no recording is running")
+            recordingLog("Recording: stop-recording from \(name) did nothing, no recording is running")
         }
     }
 
@@ -270,7 +270,7 @@ extension AppCoordinator {
     /// that showed none ends silently.
     private func lockRefusedStart(afterPrompt prompted: PermissionPrompt?) {
         guard let prompted, let notice = Self.lockRefusalNotice(afterPrompt: true) else { return }
-        RecordingLog.note("Recording: not started after the \(prompted.name) prompt, another capture was running")
+        recordingLog("Recording: not started after the \(prompted.name) prompt, another capture was running")
         notifier.notifyError(notice.body, title: notice.title)
     }
 
@@ -290,7 +290,7 @@ extension AppCoordinator {
         case .ignore:
             // `.ignore` comes only with a prompt open.
             if let prompt = askingPermission {
-                RecordingLog.note("Recording: start ignored, the \(prompt.name) prompt is open")
+                recordingLog("Recording: start ignored, the \(prompt.name) prompt is open")
             }
         case .cancelCountIn:
             // `selfTimer.cancel()` reaches only the countdown; `record()` reads the flag before
@@ -336,7 +336,7 @@ extension AppCoordinator {
             askingPermission = prompt
             let granted = await requestAccess(prompt)
             askingPermission = nil
-            RecordingLog.note("Recording: \(prompt.name) access \(granted ? "allowed" : "refused") at the prompt")
+            recordingLog("Recording: \(prompt.name) access \(granted ? "allowed" : "refused") at the prompt")
             if isQuitting { return nil }
             prompted = prompt
         }
@@ -355,14 +355,14 @@ extension AppCoordinator {
         do {
             try Recording.makeDirectory()
         } catch {
-            RecordingLog.note("Recording: tmp/Recording could not be made: \(error.localizedDescription)")
+            recordingLog("Recording: tmp/Recording could not be made: \(error.localizedDescription)")
             let notice = RecordingEnd.startFailure(error.localizedDescription)
             notifier.notifyError(notice.body, title: notice.title)
             return nil
         }
         let freeBytes = environment.freeBytes(Recording.directory)
         if freeBytes == nil {
-            RecordingLog.note("Recording: the free space of tmp/Recording could not be read, recording anyway")
+            recordingLog("Recording: the free space of tmp/Recording could not be read, recording anyway")
         }
         guard !RecordingLimits.refusesStart(freeBytes: freeBytes) else {
             notifier.notifyError(RecordingLimits.diskFullText, title: RecordingEnd.refusalTitle)
@@ -408,7 +408,7 @@ extension AppCoordinator {
                                               cancelled: recordingStartCancelled)
         guard let start, proceeds == .start else {
             if proceeds == .stop(logsCancel: true) {
-                RecordingLog.note("Recording: not started, the count-in was cancelled")
+                recordingLog("Recording: not started, the count-in was cancelled")
             }
             endNoticeHold()
             return nil
@@ -465,7 +465,7 @@ extension AppCoordinator {
     private func endNoticeHold() {
         let released = notifier.releaseHeldNotices()
         if released > 0 {
-            RecordingLog.note("Recording: posted \(released) notification\(released == 1 ? "" : "s") held during the recording")
+            recordingLog("Recording: posted \(released) notification\(released == 1 ? "" : "s") held during the recording")
         }
     }
 
@@ -587,7 +587,7 @@ extension AppCoordinator {
     /// `noMicrophone`, reading no CoreAudio property. Logged at the start.
     private func muteLag(for device: MicrophoneDevice?) -> TimeInterval {
         let lag = MicrophoneLatency.lag(forDeviceUID: device?.uniqueID)
-        RecordingLog.note("Recording: mute lag \(String(format: "%.3f", lag)) s (\(device?.name ?? "no microphone"))")
+        recordingLog("Recording: mute lag \(String(format: "%.3f", lag)) s (\(device?.name ?? "no microphone"))")
         return lag
     }
 
@@ -790,13 +790,13 @@ extension AppCoordinator {
             }
         }
         let (source, id, pending, target) = (recording.fileURL, recording.id, pendingFiles, folder)
-        let (kind, recoveryURL) = (recording.mediaKind, recording.recoveryURL)
+        let (kind, recoveryURL, note) = (recording.mediaKind, recording.recoveryURL, environment.recordingLog)
         // The size is the file's after its move, read from its attributes under the save folder's
         // scope when it went there: a GIF's own, or the MP4's after a failed conversion.
         let (result, fileURL, byteCount) = await Task.detached(priority: .userInitiated) {
             let (result, url) = Self.placeRecording(source, kind: kind, id: id, folder: target,
                                                     noFolderReason: noFolderReason, pending: pending,
-                                                    recoveryURL: recoveryURL)
+                                                    recoveryURL: recoveryURL, note: note)
             let scope = if case .saveFolder = result { target?.url } else { URL?.none }
             return (result, url, FileSizes.byteCount(of: url, scope: scope))
         }.value
@@ -870,10 +870,11 @@ extension AppCoordinator {
     /// `pending/<id>.<ext>` as a fallback; with neither, it goes there as `.uploadOnly`'s target.
     /// Only when that rename fails does it stay where it is (`.leftInTmp`, with the rename's error
     /// and the path of `recoveryURL`, the file the launch check recovers). Never reads the file.
+    /// A failed move is logged with `note`, the environment's `recordingLog`.
     nonisolated private static func placeRecording(_ source: URL, kind: MediaKind, id: UUID,
                                                    folder: (url: URL, baseName: String)?, noFolderReason: String?,
-                                                   pending: PendingFileStore,
-                                                   recoveryURL: URL) -> (result: RecordingFileResult, url: URL) {
+                                                   pending: PendingFileStore, recoveryURL: URL,
+                                                   note: @Sendable (String) -> Void) -> (result: RecordingFileResult, url: URL) {
         let ext = kind.fileExtension
         var reason = noFolderReason
         if let folder {
@@ -881,7 +882,7 @@ extension AppCoordinator {
                 return (.saveFolder, try SaveLocation.moveInScoped(source, baseName: folder.baseName, ext: ext,
                                                                    folder: folder.url))
             } catch {
-                RecordingLog.note("Recording: \(source.lastPathComponent) could not be moved into the save folder: \(error.localizedDescription)")
+                note("Recording: \(source.lastPathComponent) could not be moved into the save folder: \(error.localizedDescription)")
                 reason = error.localizedDescription
             }
         }
@@ -889,7 +890,7 @@ extension AppCoordinator {
             let url = try pending.moveIn(source, id: id, ext: ext)
             return (reason.map { .fallback(reason: $0) } ?? .pending, url)
         } catch {
-            RecordingLog.note("Recording: \(source.lastPathComponent) could not be moved to pending: \(error.localizedDescription)")
+            note("Recording: \(source.lastPathComponent) could not be moved to pending: \(error.localizedDescription)")
             return (.leftInTmp(reason: error.localizedDescription, path: recoveryURL.path(percentEncoded: false)), source)
         }
     }

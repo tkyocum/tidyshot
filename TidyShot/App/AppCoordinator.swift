@@ -155,9 +155,9 @@ final class AppCoordinator {
     /// finish against the destination they started with (their records store that location),
     /// and Delete can still cancel them.
     @ObservationIgnored var drainingQueues: [UploadLane] = []
-    /// Optimize images and videos with Clop (spec 2.7): one optimiser, sending to whichever Clop
-    /// build runs.
-    let clopOptimiser = ClopApp.makeOptimiser()
+    /// Optimize images and videos with Clop (spec 2.7): the environment's optimiser, which in the
+    /// app sends to whichever Clop build runs.
+    let clopOptimiser: any ClopOptimising
     /// Records whose upload waits for Clop, or a recording's for its size check, each with the
     /// token of the attempt that waits. Delete's cancel takes the record out, and the upload is
     /// then never enqueued; a retry started after that gets a new token, so the first attempt's
@@ -272,6 +272,7 @@ final class AppCoordinator {
         notifier = environment.notifier
         overlay = environment.overlay
         clipboard = environment.clipboard
+        clopOptimiser = environment.clopOptimiser
         let url = environment.historyFileURL
         // The shared settings in the app, read on each prune as before.
         let retentionSettings = environment.settings
@@ -289,6 +290,11 @@ final class AppCoordinator {
     /// A coordinator log line, through the environment (`NSLog("%@", …)` in the app).
     func log(_ message: String) {
         environment.log(message)
+    }
+
+    /// A `Recording:` line, through the environment (`RecordingLog.note` in the app).
+    func recordingLog(_ message: String) {
+        environment.recordingLog(message)
     }
 
     func start() {
@@ -317,9 +323,11 @@ final class AppCoordinator {
         // two never interleave. tmp/Mute is listed and tmp/Recording scanned first, long before a
         // recording started now could write there, and adopting can take seconds; then pending/ is
         // adopted before any scanned file moves into it or is checked against the records.
+        let note = environment.recordingLog
         Task {
             let leftRecordings = await RecordingRecovery.begin(recordingDirectory: Recording.directory,
-                                                               muteDirectory: MuteLog.directory)
+                                                               muteDirectory: MuteLog.directory,
+                                                               scanning: { await RecordingRecovery.scan($0, note: note) })
             await adoptPendingFiles(pendingListed)
             await recoverRecordings(leftRecordings)
         }

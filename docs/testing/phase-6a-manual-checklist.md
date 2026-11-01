@@ -187,12 +187,24 @@ Bind `Restore closed overlay:` to a combination for this section.
 Keep another app (Safari) frontmost while you click the card.
 - [ ] Click `Save As…` on a card of a capture that has a file in the save folder. TidyShot comes forward with an ordinary save panel (a window, not attached to the card), PNG is the only type, and the name and folder are the capture's own file in the save folder. Open the editor on the same capture and press ⇧⌘S: the suggestion is the same.
 - [ ] Save to the Desktop: `shasum -a 256` of the copy equals that of the original (no re-encode); `Saved` with the copy's name is posted (when notifications are on; nothing is posted when they are off, and the file is still written), and a click on it reveals the copy. Pick the original file instead and confirm Replace: the file is unchanged byte for byte.
+  (suite, in part: CoordinatorSaveAsTests.saveAsOfASavedImageCopiesItsBytesAndChangesNothingElse; by hand: `shasum`, the
+  click on `Saved` revealing the copy, the panel's Replace prompt)
 - [ ] For an upload-only capture the suggestion is the file name template's name with the current counter (none is drawn), in the save folder when one is set, otherwise where the panel last was. While `Uploading…` shows, the copy equals the pending file (`pending/<id>.png`); after a failed upload (`Retry  Save As…`) it writes the pending file too.
+  (suite, in part: CoordinatorSaveAsTests.anUploadOnlyCapturesSaveAsSuggestsTheTemplateNameAndCopiesItsPendingFile,
+  EditorNamingTests.uploadOnlyCaptureWithoutAKeySuggestsTheTemplateName, .counterUsesTheCurrentValue; by hand: where the
+  panel last was)
 - [ ] After the upload, on a card that showed through it: the panel opens, and the copy is written from the card's kept drag copy, with no `Downloading` notification; it equals `curl -s <url> | shasum -a 256`. On a restored upload-only card before its quiet download has landed (Network Link Conditioner on a slow profile): the panel opens first, then after Save `Saving a copy…` with `Downloading <key>` is posted while the download runs, then `Saved`. With Wi-Fi off the failure is posted as `Not saved` and nothing crashes.
+  (suite, in part: CoordinatorSaveAsTests.anUploadOnlyCardsSaveAsWritesTheDragCopyOrDownloadsAfterThePanel; by hand:
+  restoring the card (`SCREENS`), `curl` against the bucket, the slow profile)
 - [ ] Save into a folder other than the save folder (Documents): it works under the sandbox. Cancel the panel: nothing is written and nothing is posted.
 - [ ] Save As… changes nothing about the capture: the card, its link, Recent Captures, `history.json`, Reveal Last Capture and the clipboard are as before.
+  (suite: CoordinatorSaveAsTests.saveAsOfASavedImageCopiesItsBytesAndChangesNothingElse)
 - [ ] Open the panel and wait for the card's auto-close to run out: the panel keeps working and saves the capture.
+  (suite, in part: CoordinatorSaveAsTests.aSaveAsPanelHeldThroughTheCardsAutoCloseStillSaves; by hand: the card's real
+  auto-close timer, the panel window staying usable)
 - [ ] Use Save As… from the button and from the context menu, from a restored card, and from a card in the middle of the stack: each saves that card's capture.
+  (suite, in part: CoordinatorSaveAsTests.saveAsFromAnyCardWritesThatCardsCapture; by hand: restoring the card
+  (`SCREENS`), the button and the menu item both calling `onSaveAs`)
 - [ ] After the panel closes, clicking back into Safari works as usual; a second card's buttons still work without activating TidyShot.
 - [ ] Editor regression: Annotate a capture, draw an arrow, ⇧⌘S: the sheet suggests the same name as before, the edited copy is written, `Saved` appears, and with the capture's image still on the clipboard the clipboard now holds the edit.
 
@@ -219,14 +231,17 @@ Keep another app (Safari) frontmost while you click the card.
 - [ ] Modes, with Finder and Slack: "Save and copy image" (drag at once); "Upload and copy URL" before the upload ends (Network Link Conditioner on a slow profile) and after; "Upload only, keep no local file" before the upload ends and after it (the URL is on the clipboard, the file in `pending` is gone). Each time the dropped file is the capture, whole.
 - [ ] Upload only, after the upload: the card is still on screen, and dragging it still works, from a file in the `Drag` folder that took the place of the pending file. `history.json` shows the record as before (no `fileURL`), and Recent Captures shows no local file. Copy Image, Save As… and Annotate on that card need no download (no `Downloading` notification). 60 seconds after the card closes `ls ~/Library/Containers/io.tky.tidyshot/Data/tmp/Drag` no longer lists the record's folder (Slack may still read the file in those seconds).
   (suite, in part: CoordinatorEditorTests.anUploadedUploadOnlyCardsCopyImageAndAnnotateReadTheDragCopy,
-  CoordinatorUploadTests.anUploadedUploadOnlyImageMovesToItsDragFolderOnlyWithACard; by hand: the card's Save As… panel
-  (`SAVEAS`), and Slack reading the file)
+  CoordinatorUploadTests.anUploadedUploadOnlyImageMovesToItsDragFolderOnlyWithACard,
+  CoordinatorSaveAsTests.anUploadOnlyCardsSaveAsWritesTheDragCopyOrDownloadsAfterThePanel; by hand: Slack reading the
+  file)
 - [ ] An edited capture's drag copy is replaced. Upload-only mode, wait for the upload (the card shows `URL copied` and a drag file is kept), then press Annotate, draw an arrow, and save the edit (⌘S, or ⌘U to upload it): the capture's `Drag/<record id>` folder is gone at once. Then, from the card or Recent Captures: Copy Image, Save As… and Annotate show the edited image (arrow included), never the one before the edit; a drag started after the edit (press on the card, which stages the edit again) drops the edited image. Do the same with "Save and copy image" and an edit saved over the file: the dragged file has the arrow too.
   (suite, in part: CoordinatorEditorSaveTests.saveOverTheFileRemovesTheDragCopyAndEveryReadGivesTheEdit,
-  CoordinatorEditorUploadTests.uploadOfAnUploadOnlyCaptureRemovesItsDragCopyAndEveryReadGivesTheEdit; by hand: the
-  card's Save As… panel (`SAVEAS`), and the drop; the line's "from the card" cannot happen after an Annotate, which
-  closes the card for good, and in upload-only mode ⌘S is Save As…, so the tests read through Recent Captures and remove
-  the drag copy with ⌘U there and ⌘S over a saved file)
+  CoordinatorEditorUploadTests.uploadOfAnUploadOnlyCaptureRemovesItsDragCopyAndEveryReadGivesTheEdit,
+  CoordinatorEditorSaveTests.saveAsAfterASaveOverTheFileWritesTheEditNotTheOriginal,
+  CoordinatorEditorUploadTests.saveAsAfterAnEditorUploadOfAnUploadOnlyCaptureWritesTheEditDuringAndAfterThePut; by hand:
+  the drop, and reaching Save As… after the edit, which only a pin offers (`PINS`); the line's "from the card" cannot
+  happen after an Annotate, which closes the card for good, and in upload-only mode ⌘S is Save As…, so the tests read
+  through Recent Captures and remove the drag copy with ⌘U there and ⌘S over a saved file)
 - [ ] Start a drag during a slow upload, hold the card in the air until the upload finishes, then drop: the file still arrives whole.
 - [ ] A restored card with no local file (upload-only, restored after closing): it starts a quiet download when it appears (no notification). Network Link Conditioner on a slow profile: dragging before the download ends does nothing and the card stays; after it ends, dragging works. With Wi-Fi off the restore still works and dragging does nothing. A restored card with a save-folder file drags at once.
 - [ ] A save folder on an external disk, if one is at hand: drag a fresh capture; the drag starts once the copy is made, and the receiver gets the file whole.

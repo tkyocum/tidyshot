@@ -191,7 +191,9 @@ may be off for all of them; the first must be on.
   stays. During a microphone or camera prompt: `… the microphone prompt is open`. While a GIF converts (saving) it
   starts a new recording, as the shortcut does.
 - [ ] Two `record-screen` URLs back to back (one Keyboard Maestro macro): one selection, no notice, and the second is
-  logged (`Recording: URL start ignored, a recording is starting` or the handler's `dropped` line).
+  logged (`Recording: URL start ignored, a recording is starting` or the handler's `dropped` line). (suite, in part:
+  CoordinatorRecordingTests.aSecondURLStartBeforeTheFirstTakesTheLockIsLogged (the coordinator's text, which the line
+  accepts); by hand: the one selection on screen)
 - [ ] The first microphone or camera prompt (reset with `tccutil reset Microphone io.tky.tidyshot` and `tccutil reset
   Camera io.tky.tidyshot`, which are Tim's) shows on a URL start, before the selection, and never in a video. With
   access already granted the start uses it with no prompt, and the recording takes the microphone and the webcam
@@ -217,9 +219,14 @@ Covered by the U1 rect step; repeat on the second display and with a window unde
 
 - [ ] Turn `Show webcam bubble` on in Settings while a GIF converts (the camera access undecided; reset with `tccutil
   reset Camera io.tky.tidyshot`, Tim's): the log says `Recording: camera prompt from Settings deferred, a recording
-  is being saved`. During a recording it still says `… a capture is running`.
+  is being saved`. During a recording it still says `… a capture is running`. (suite, in part:
+  CoordinatorRecordingTests.aSettingsPromptLogsItsAnswerOrWhyItWaits; by hand: the Show webcam bubble toggle reaching
+  the coordinator, a view's call on AppCoordinator.shared (CaptureSettingsView.swift:253); the GIF conversion is set up
+  as .saving)
 - [ ] The record shortcut during the settle delay with `Count down before recording` off records nothing and logs
-  `Recording: not started, the count-in was cancelled`. (suite, the rule: CoordinatorRecordingTests.recordingProceedsOnlyWhenStartedNotQuittingAndNotCancelled)
+  `Recording: not started, the count-in was cancelled`. (suite, the rule:
+  CoordinatorRecordingTests.recordingProceedsOnlyWhenStartedNotQuittingAndNotCancelled; by hand: the log line, in
+  private record() past the capture lock (`TMPDIRS`, `CAPSRC`))
 
 ## Multipart upload (Tasks 12 and 13; after G1)
 
@@ -265,10 +272,16 @@ Each with the 300 MB and the 6 GB recording, upload-only, Clop off, then Clop on
   CoordinatorUploadTests.aFailedUploadMarksTheRecordOrReturnsItToItsLink,
   MultipartPlanTests.resumesWhenEverythingMatches)
 - [ ] Clop on, `Upload Trimmed` on a trimmed file over 100 MiB, fail it (Wi-Fi off for two minutes), trim again, then
-  `Upload Trimmed`: the log shows `source changed, starting again` and the link plays the second trim, not the first. (suite, in part: CoordinatorUploadTests.anOutdatedKeptClopCopyCountsAsAChangedSource)
+  `Upload Trimmed`: the log shows `source changed, starting again` and the link plays the second trim, not the first.
+  (suite, in part: CoordinatorUploadTests.anOutdatedKeptClopCopyCountsAsAChangedSource,
+  CoordinatorTrimTests.anUploadTrimmedWithClopWhoseFileChangedAsksClopAgainAndSendsTheSecondTrim; by hand: the link
+  playing the second trim)
 - [ ] A Clop result kept in `multipart/<id>.mp4` is used by Retry (no second Clop run, `resumes at`) and is gone after
   the upload. A Clop copy that could not be kept logs `Clop's copy could not be kept for resume: <error>` and the job
-  sends from the throwaway copy. (suite, in part: CoordinatorUploadTests.anUploadedResumeClearsItsStateSidecarAndKeptCopy)
+  sends from the throwaway copy. (suite:
+  CoordinatorClopTests.aRecordingOverThePartThresholdKeepsClopsMovieAndARetryResumesWithoutClop,
+  .aClopMovieThatCannotBeKeptForResumeLogsItAndSendsTheThrowawayCopy,
+  CoordinatorUploadTests.anUploadedResumeClearsItsStateSidecarAndKeptCopy)
 - [ ] Pruning removes the sidecar and the kept copy and aborts nothing. Set After capture to `Upload and copy URL`, fail
   a large upload (Wi-Fi off), quit, set the record's `timestamp` in `history.json` to two days ago, relaunch, set
   Overlay > `Keep history for 1 days` and take a new capture: the record leaves Recent Captures, and `multipart/`
@@ -291,7 +304,8 @@ empty drag folder (`tmp/Drag`), and a copy of the same recording that is longer 
 - [ ] A drag held through a short download starts the session when the file lands.
 - [ ] A click on the thumbnail opens the link and downloads nothing. Neither a restored card's appearance nor Restore
   Closed Overlay downloads a video.
-- [ ] Save As… during the download waits and then saves the landed file (one GET in the log, not two).
+- [ ] Save As… during the download waits and then saves the landed file (one GET in the log, not two). (suite:
+  CoordinatorSaveAsTests.aRecordingsSaveAsDuringItsDragOutDownloadWaitsAndCopiesTheLandedFile)
 - [ ] Close during the download cancels it: `Drag-out download for <id> cancelled` in the log, and `tmp/Drag/<id>` and
   `.downloads/` hold nothing. (suite: CoordinatorDragOutTests.aCloseDuringTheTransferDropsWhatLands)
 - [ ] Delete during the download cancels it and removes the folder. (suite: CoordinatorDragOutTests.deleteCancelsARunningDownloadAndRemovesTheFolder)
@@ -370,7 +384,8 @@ in the design's built notes.
   .createRetriesUnderThePolicy, .completeRetriesUnderThePolicy, .listPartsRetriesUnderThePolicy,
   .anUploadIDGoneOnEveryCreateFailsAfterTwoRestarts, MultipartPlanTests.standardPlanAndLimits) ______
 - [ ] 16. Clop's result is kept in `multipart/<id>.mp4`, and a Retry whose source still matches resumes from it without
-  Clop. ______
+  Clop. (suite: CoordinatorClopTests.aRecordingOverThePartThresholdKeepsClopsMovieAndARetryResumesWithoutClop,
+  CoordinatorUploadTests.anUploadedResumeClearsItsStateSidecarAndKeptCopy) ______
 - [ ] 17. The card and row show no part count, only the byte fraction. (suite:
   QuickAccessModelTests.uploadingShowsTheFraction,
   RecentCaptureFormattingTests.detailIsTheTimeTheSizeAndEachUploadState,
@@ -420,7 +435,7 @@ say how each stands. Write `confirm` or `overrule` and why.
   UploadQueueTests.aFailingPartRetriesAloneWhileTheOthersFinish, .aMultipartJobsAbortThatFindsNothingIsLoggedAsGone; the
   coordinator passing `environment.log` is a code read) ______
 - [ ] 5. `RecordingController.isEnding`, so a second `stop-recording` during the stop wait logs `did nothing`. Check: U1's
-  second stop. ______
+  second stop. (suite: CoordinatorRecordingTests.stopRecordingLogsWhatItDidInEachPhase) ______
 - [ ] 6. `recordingStartCancelled` is reset in `recordingCountIn`'s `didSet`. Internal. (suite:
   CoordinatorRecordingTests.theStartCancelResetsOnlyWhenACountInBegins) ______
 - [ ] 7. The download has its own delegate (`DragDownloadDelegate`). Internal. (suite:
@@ -454,7 +469,8 @@ say how each stands. Write `confirm` or `overrule` and why.
   `download(key:to:expectedBytes:resumeData:progress:)`. Check: the card shows and clears `Downloading…`
   correctly. ______
 - [ ] 18. `urlRecordingStartPending` makes a second `record-screen` handled before the first has taken the lock a logged
-  drop. Check: U1's back-to-back step. ______
+  drop. Check: U1's back-to-back step. (suite:
+  CoordinatorRecordingTests.aSecondURLStartBeforeTheFirstTakesTheLockIsLogged) ______
 
 Calls the build made that neither the design nor the gaps settled (each easy to overrule):
 - [ ] A. A multipart sidecar that cannot be written fails the job (the design's invariant that Complete never goes out

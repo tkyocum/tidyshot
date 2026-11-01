@@ -220,6 +220,32 @@ final class FakeConfirm {
     }
 }
 
+/// A card's Save As… panel in the suite (`environment.chooseSaveAsURL`): no panel is built and the app
+/// is never activated. Every suggestion is kept, in order; each is answered from `answers` (a URL, or
+/// nil for Cancel; Cancel when they run out), or held until `answer(_:)` while `holds` is set. A held
+/// panel whose task is cancelled answers Cancel; a second panel while one is held records an issue.
+final class FakeSaveAsChooser {
+    private(set) var asked: [EditorNaming.SaveAsSuggestion] = []
+    var answers: [URL?] = []
+    var holds = false
+    private let held = SingleWaiter<URL?>(cancelled: nil,
+                                          secondEntry: "FakeSaveAsChooser was asked again while a panel was held")
+
+    var isWaiting: Bool { held.isWaiting }
+
+    func choose(_ suggestion: EditorNaming.SaveAsSuggestion) async -> URL? {
+        asked.append(suggestion)
+        guard holds else { return answers.isEmpty ? nil : answers.removeFirst() }
+        return await held.wait()
+    }
+
+    /// Answers the held panel (nil: Cancel); later ones come from `answers`.
+    func answer(_ url: URL?) {
+        holds = false
+        held.resume(url)
+    }
+}
+
 /// `environment.makeDestination` in the suite: a `FakeDestination` per location, `standard` for the
 /// rest, and every configuration asked for. Called off the main actor, so it is locked.
 nonisolated final class FakeDestinationFactory: Sendable {
@@ -252,13 +278,14 @@ nonisolated final class FakeDestinationFactory: Sendable {
 }
 
 /// The world's values that the coordinator's `@Sendable` closures read and write: the date, the
-/// free space and the log. Locked, as a closure may run off the main actor.
+/// free space and the two logs. Locked, as a closure may run off the main actor.
 nonisolated final class CoordinatorWorldState: Sendable {
     private struct Values {
         var date = Date(timeIntervalSinceReferenceDate: 800_000_000)
         var freeBytes: Int64? = 100_000_000_000
         var freeBytesAsked: [URL] = []
         var lines: [String] = []
+        var recordingLines: [String] = []
     }
 
     private let values = Mutex(Values())
@@ -275,6 +302,7 @@ nonisolated final class CoordinatorWorldState: Sendable {
 
     var freeBytesAsked: [URL] { values.withLock { $0.freeBytesAsked } }
     var lines: [String] { values.withLock { $0.lines } }
+    var recordingLines: [String] { values.withLock { $0.recordingLines } }
 
     func freeBytes(at url: URL) -> Int64? {
         values.withLock { values in
@@ -285,6 +313,10 @@ nonisolated final class CoordinatorWorldState: Sendable {
 
     func append(_ line: String) {
         values.withLock { $0.lines.append(line) }
+    }
+
+    func appendRecording(_ line: String) {
+        values.withLock { $0.recordingLines.append(line) }
     }
 }
 

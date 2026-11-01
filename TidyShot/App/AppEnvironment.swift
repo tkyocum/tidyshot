@@ -30,6 +30,10 @@ struct AppEnvironment {
     var uploadSleep: UploadQueue.Sleeper
     /// Free space on the volume of a URL, nil when it cannot be read.
     var freeBytes: @Sendable (URL) -> Int64?
+    /// Clop's optimiser (spec 2.7): a PNG or a recording rewritten smaller, or why the original uploads.
+    var clopOptimiser: any ClopOptimising
+    /// Whether a Clop build runs now, asked once per upload's Clop decision.
+    var isClopRunning: @MainActor () -> Bool
     /// Delete's two alerts: true for Delete or Remove.
     var confirm: @MainActor (DeleteConfirmation) async -> Bool
     var playShutter: @MainActor () -> Void
@@ -38,18 +42,24 @@ struct AppEnvironment {
     var makeEditor: @MainActor (_ model: EditorModel, _ actions: EditorActions, _ title: String,
                                 _ representedURL: URL?,
                                 _ onClose: @escaping @MainActor (any EditorPresenting) -> Void) -> any EditorPresenting
+    /// A card's Save As… panel: a place for the suggestion, or nil for Cancel.
+    var chooseSaveAsURL: @MainActor (EditorNaming.SaveAsSuggestion) async -> URL?
     var now: @Sendable () -> Date
     /// The coordinator's own waits: the drag folder's clean-up, a replaced lane's poll, a recording's
     /// settle delay without a count-in, and a quit's poll.
     var clock: any ScrollClock
-    /// Every coordinator log line (`RecordingLog.note` keeps its own).
+    /// Every coordinator log line but the `Recording:` ones.
     var log: @Sendable (String) -> Void
+    /// The coordinator's `Recording:` lines, and the launch scan's (`RecordingRecovery.scan`);
+    /// `RecordingLog.note` in the app.
+    var recordingLog: @Sendable (String) -> Void
 
     /// What the app runs on: the user's Application Support folder (the temporary folder when it
     /// cannot be had), the shared settings, the Keychain, the notification centre, the card stack,
-    /// the general pasteboard, S3, the alerts, the shutter sound, the editor window, the wall clock
-    /// and `NSLog`. The collaborators are built in the order the coordinator's stored properties
-    /// built them.
+    /// the general pasteboard, S3, Clop, the alerts, the shutter sound, the editor window, the card's
+    /// Save As… panel, the wall clock, `NSLog` and `RecordingLog`. The collaborators are built in the
+    /// order the coordinator's stored properties built them; Clop's optimiser, a value that reaches
+    /// nothing until a request, is built here.
     static func live() -> AppEnvironment {
         let saveLocation = SaveLocation()
         let settings = AppSettings.shared
@@ -71,6 +81,8 @@ struct AppEnvironment {
             multipartPlan: .standard,
             uploadSleep: { try await Task.sleep(for: $0) },
             freeBytes: { RecordingLimits.freeBytes(at: $0) },
+            clopOptimiser: ClopApp.makeOptimiser(),
+            isClopRunning: { ClopApp.runningBundleID() != nil },
             confirm: { await AppEnvironment.confirmLive($0) },
             playShutter: { SoundPlayer.playShutter() },
             makeEditor: { model, actions, title, representedURL, onClose in
@@ -82,9 +94,23 @@ struct AppEnvironment {
                 controller.onClose = { closed in onClose(closed) }
                 return controller
             },
+            chooseSaveAsURL: { await AppEnvironment.chooseSaveAsURLLive($0) },
             now: { Date() },
             clock: SystemScrollClock(),
-            log: { NSLog("%@", $0) })
+            log: { NSLog("%@", $0) },
+            recordingLog: { RecordingLog.note($0) })
+    }
+
+    /// The card's Save As… panel as `askSaveAsTarget` ran it: the panel for the suggestion
+    /// (`EditorNaming.savePanel(for:)`), the app activated, then the panel as a window (`begin()`,
+    /// not a sheet). Nil when it was cancelled.
+    private static func chooseSaveAsURLLive(_ suggestion: EditorNaming.SaveAsSuggestion) async -> URL? {
+        let panel = EditorNaming.savePanel(for: suggestion)
+        // Reached from a non-activating card while another app is active; a plain activate() can
+        // be refused and the panel would open behind that app (as in SaveLocation.chooseFolder).
+        NSApplication.shared.activate(ignoringOtherApps: true)
+        guard await panel.begin() == .OK else { return nil }
+        return panel.url
     }
 
     /// Delete's alerts as `AppCoordinator+Delete.swift` ran them.

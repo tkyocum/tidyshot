@@ -252,6 +252,14 @@ nonisolated struct ClopOptimiser: Sendable {
     }
 }
 
+/// What the coordinator asks of Clop (small seams design 2.1): `AppEnvironment.clopOptimiser`.
+/// `ClopOptimiser` is the app's; the suite's is `FakeClop`.
+protocol ClopOptimising {
+    func optimisedPNG(_ data: Data) async -> ClopOutcome
+    func optimisedVideo(at source: URL, duration: TimeInterval, scope: URL?) async -> ClopVideoOutcome
+}
+extension ClopOptimiser: ClopOptimising {}
+
 /// Finding Clop (spec 2.7). TidyShot never launches it: a Clop that is not running means the
 /// original uploads.
 nonisolated enum ClopApp {

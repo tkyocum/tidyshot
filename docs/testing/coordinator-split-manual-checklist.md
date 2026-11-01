@@ -47,9 +47,11 @@ The after-capture action is Settings > General > `After capture`; each item says
   body)
 - [ ] Pin, then the pin menu's three items [`+Pins`, `+RecordActions`]. Capture an area and click the card's pin (`Pin to screen`): a pin opens over the spot the area came from. Click the card's pin again: the same pin comes forward and no second one opens. The menu now has `Close Pinned Screenshots`. Right-click the pin: `Copy Image` puts the image on the clipboard and posts `Image copied`; `Save As…` opens a panel that suggests the capture's own name (Cancel it); `Annotate` opens the editor. Choose `Close Pinned Screenshots`: the pin closes and the menu item goes.
   (suite, in part: CoordinatorEditorTests.annotateFromACardOrRecentCapturesLeavesNothingToRestore,
-  CoordinatorRecordActionsTests.copyImageReadsTheFileOrDownloadsTheObject; by hand: the pin, its second click and `Close
-  Pinned Screenshots` (`PINS`, `SCREENS`), and the pin's Save As… panel (`SAVEAS`); the pin menu's Annotate is the
-  card's `openEditorAfterMenuTracking`)
+  CoordinatorRecordActionsTests.copyImageReadsTheFileOrDownloadsTheObject,
+  CoordinatorSaveAsTests.saveAsOfASavedImageCopiesItsBytesAndChangesNothingElse (the Save As… item's suggestion and
+  Cancel, through `saveAs(recordID:)`, which the pin's menu calls); by hand: the pin, its second click and `Close Pinned
+  Screenshots` (`PINS`, `SCREENS`), reaching Save As… through the pin's menu (`PINS`), and the panel itself; the pin
+  menu's Annotate is the card's `openEditorAfterMenuTracking`)
 - [ ] Delete during an upload [`+Delete`, `cancelUpload`]. After capture `Upload and copy URL`; make the upload slow. Capture an area and, while the card shows progress, click its trash (tooltip `Cancel the upload and delete this capture`). Cancel in the alert changes nothing and the upload goes on. Click the trash again and choose Delete: the card closes, the menu bar icon goes back to the camera, the row leaves Recent Captures, the file leaves the save folder, the thumbnail leaves `$D/thumbnails/`, no object for it is left in the bucket (list its prefix), and no `Not deleted` notification posts.
   (suite: CoordinatorDeleteTests.deleteDuringAnUploadCancelsItThenDeletesTheReservedKey)
 - [ ] Restore Closed Overlay [`+Overlay`, and `init`'s `overlay.onDidClose`]. Quit and open TidyShot: `Restore Closed Overlay` is greyed (no card has closed this launch). Take two captures and close both cards with their close buttons: the item is enabled. Choose it: the newest closed card comes back at the corner of the stack with its thumbnail and status. Choose it again: the other one comes back. The item is greyed again.

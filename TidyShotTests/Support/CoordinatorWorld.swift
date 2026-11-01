@@ -10,9 +10,11 @@ nonisolated enum CoordinatorWorldError: Error {
 
 /// A coordinator's world in the suite (harness design 2.4): temp folders, a `UserDefaults` suite named
 /// after the test, settings and a save location over it, credentials in memory, the fakes, the editors
-/// the coordinator opens (`editors`; no window is built), a clock the test moves, a date it sets, free
-/// space it sets, a log it reads and a destination factory. Build it in the suite's `init`, make the
-/// coordinator with `makeCoordinator()`, and `defer { world.removeAll() }` first thing in each test.
+/// the coordinator opens (`editors`; no window is built), Clop (`clop`, over `<root>/tmp/Clop`), the card's
+/// Save As… panel (`saveAsChooser`; none is built), a clock the test moves, a date it sets, free space it
+/// sets, the two logs it reads (`logLines`, `recordingLines`) and a destination factory. Build it in the
+/// suite's `init`, make the coordinator with `makeCoordinator()`, and `defer { world.removeAll() }` first
+/// thing in each test.
 /// Nothing here reaches the system, except the `ProcessInfo` activity (`Uploading a recording`) the
 /// coordinator begins while `fileUploadIDs` is not empty: the design leaves `ProcessInfo` activities out
 /// of the environment (2.1, Deferred), and it ends when the set empties.
@@ -42,6 +44,11 @@ final class CoordinatorWorld {
     let confirm = FakeConfirm()
     /// Every editor the coordinator opened (`environment.makeEditor`); no window is built.
     let editors = FakeEditors()
+    /// Clop's optimiser and running check (`environment.clopOptimiser`, `isClopRunning`), working in
+    /// `<root>/tmp/Clop`: running, with no answers scripted.
+    let clop: FakeClop
+    /// The card's Save As… panel (`environment.chooseSaveAsURL`); no panel is built.
+    let saveAsChooser = FakeSaveAsChooser()
     /// The coordinator's clock, and its self-timer's.
     let clock = FakeScrollClock()
     let factory = FakeDestinationFactory()
@@ -71,6 +78,7 @@ final class CoordinatorWorld {
         self.root = root
         self.historyFileURL = historyFileURL
         self.temporaryDirectory = temporaryDirectory
+        clop = FakeClop(workDirectory: temporaryDirectory.appending(path: "Clop", directoryHint: .isDirectory))
         let suiteName = "io.tky.tidyshot.tests.CoordinatorWorld-\(name)-\(UUID().uuidString)"
         guard let defaults = UserDefaults(suiteName: suiteName) else { throw CoordinatorWorldError.noDefaults }
         defaults.removePersistentDomain(forName: suiteName)
@@ -104,12 +112,16 @@ final class CoordinatorWorld {
 
     var freeBytesAsked: [URL] { state.freeBytesAsked }
     var logLines: [String] { state.lines }
+    /// The `Recording:` lines (`environment.recordingLog`), in order.
+    var recordingLines: [String] { state.recordingLines }
 
     var environment: AppEnvironment {
         let factory = factory
         let state = state
         let confirm = confirm
         let editors = editors
+        let clop = clop
+        let saveAsChooser = saveAsChooser
         return AppEnvironment(
             historyFileURL: historyFileURL,
             temporaryDirectory: temporaryDirectory,
@@ -123,15 +135,19 @@ final class CoordinatorWorld {
             multipartPlan: multipartPlan,
             uploadSleep: { _ in },
             freeBytes: { url in state.freeBytes(at: url) },
+            clopOptimiser: clop,
+            isClopRunning: { clop.checkRunning() },
             confirm: { question in await confirm.confirm(question) },
             playShutter: { [weak self] in self?.shutterCount += 1 },
             makeEditor: { model, actions, title, representedURL, onClose in
                 editors.make(model: model, actions: actions, title: title, representedURL: representedURL,
                              onClose: onClose)
             },
+            chooseSaveAsURL: { suggestion in await saveAsChooser.choose(suggestion) },
             now: { state.date },
             clock: clock,
-            log: { line in state.append(line) })
+            log: { line in state.append(line) },
+            recordingLog: { line in state.appendRecording(line) })
     }
 
     /// A coordinator over this world, with the recorder, the self-timer, the microphones and the

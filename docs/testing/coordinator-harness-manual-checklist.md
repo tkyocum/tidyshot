@@ -26,7 +26,8 @@ Read the log with
   every refusal; the successful start reaches ScreenCaptureKit.)
 - [ ] 4. `stop-recording`'s log lines in each phase (R4 checklist :178-186) read as they did: the suite pins the
   state, not the `RecordingLog` text, and tests 48 and 50 cannot tell the coordinator's own do-nothing branches from
-  the recorder's (plan D24), so the `did nothing` lines are the check.
+  the recorder's (plan D24), so the `did nothing` lines are the check. (suite:
+  CoordinatorRecordingTests.stopRecordingLogsWhatItDidInEachPhase)
 - [ ] 5. Both recoveries in one launch (plan D27). Start a recording, `kill -9` TidyShot mid-recording, copy an orphan
   `<UUID>.png` into `pending/` as in check 2, launch: `Recovered a capture` and `Recovered a recording` both post,
   the log has `Recovery: <name> recovered` and the recording's `Recording:` lines, and nothing is removed as

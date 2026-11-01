@@ -275,6 +275,8 @@ Each row for an `Upload and copy URL` recording (`.upload`) and a `Save and copy
 
   Write down which, and the files you found: ______
 - [ ] A leftover that does not play (`echo junk > "$C/tmp/Recording/x.mp4"`, then relaunch) is removed with `Recording: x.mp4 could not be played, removed`.
+  (suite: RecordingRecoveryTests.aLeftoverThatDoesNotPlayIsRemovedAndLogged; the relaunch and the junk file are the
+  set-up)
 
 ## Upload resilience
 Use `Upload only, keep no local file` for the first and `Upload and copy URL` for the others, with a recording long enough for the upload to take a minute (a 5K or 3 minute recording; cap the upload speed with Network Link Conditioner if needed).
@@ -283,6 +285,8 @@ Use `Upload only, keep no local file` for the first and `Upload and copy URL` fo
 - [ ] Sleep and wake mid-upload (Apple menu > Sleep, wake after a minute): the upload finishes or fails and retries; write down which: ______
 - [ ] The upload never loads the file into memory: with Activity Monitor open, TidyShot's memory stays near its idle size during a 1 GB upload.
 - [ ] Delete (and confirm) during the upload cancels it and removes the file, the record and any object already uploaded. Delete during `Optimizing…` cancels at once, and `tmp/Clop` is empty afterwards.
+  (suite: CoordinatorDeleteTests.deleteDuringAnUploadCancelsItThenDeletesTheReservedKey,
+  CoordinatorClopTests.deletingARecordingWhileClopHoldsItCancelsAtOnceAndLeavesNoMovieOrCounterGap)
 - [ ] R4 changed this (was: refused over 5 GiB). A recording over 625 GB is refused (`Not uploaded` / `The recording is larger than 625 GB, too large to upload.`) and the record is kept as `.none`. This cannot be recorded by hand in reasonable time; `RecordingLimitsTests`, `MultipartPlanTests` and `RecordingSavePlanTests` cover the boundary and the plans, and the hand check is skipped.
   (suite, in part: MultipartPlanTests.partSizeIsNilAbove625GiB, RecordingSavePlanTests.oversizedNotice,
   .oversizedSaveFolderFileStays, .oversizedPendingFileMovesIntoTheSaveFolder; the coordinator's `refuseOversizedUpload`
@@ -326,7 +330,12 @@ Settings > General > Optimization > `Optimize images and videos with Clop` on, C
 - [ ] Audio. Settings > Capture > Record system audio on, Clop on, and Clop's own "Remove audio on optimised videos" preference on. Record a window or area with sound (`afplay`), upload, then `curl -s -o ~/Desktop/rec-r1/out.mp4 "<url>"; afinfo ~/Desktop/rec-r1/out.mp4`. The object still has an audio track and plays with sound. If the sound is gone, the `Clop:` line says `Clop: the result lost its audio, uploading the original`, and the original uploaded (the object is as big as the saved file). Write down which: ______
 - [ ] A silent recording: the same, with no audio track on either side, is accepted and smaller (a 79 % saving on the probe's scrolling page).
 - [ ] Cleanup. `ls $C/tmp/Clop` is empty after an optimised upload, after a failed upload (Wi-Fi off, wait for `Failed`), and after a Delete during optimisation. A Retry runs Clop again from the original.
+  (suite, in part:
+  CoordinatorClopTests.aFailedRecordingUploadAfterClopLeavesNoMovieAndARetryAsksClopAgainFromTheOriginal,
+  .deletingARecordingWhileClopHoldsItCancelsAtOnceAndLeavesNoMovieOrCounterGap; by hand: the real container's tmp/Clop
+  and the launch sweep of it (`TMPDIRS`))
 - [ ] Clop off: the original uploads and the card never says `Optimizing…`. Clop not running (quit it): the original uploads, TidyShot does not launch Clop, and the `Clop:` line reads `Clop: Clop is not running, uploading the original`.
+  (suite: CoordinatorClopTests.aRecordingUploadsItsOriginalWithoutOptimizingWhenClopIsOffOrNotRunning)
 - [ ] With the `tmp` volume short of space (not testable by hand), the line `Clop: not enough free space, uploading the original` is read from the code and its test.
   (suite, in part: ClopOptimiserTests.notEnoughFreeSpaceSkipsClop; the test asserts the outcome
   `.original(.notEnoughSpace)` only, so the log text `Clop: not enough free space, uploading the original`
@@ -351,6 +360,9 @@ Settings > General > Optimization > `Optimize images and videos with Clop` on, C
 
 ## Restore
 - [ ] Restoring an uploaded upload-only video's card after its drag folder is gone (wait a minute past the card closing, or delete `tmp/Drag`) starts no download (check Activity Monitor/Network for a transfer). R4 changed the rest (was: the card cannot be dragged): a drag from that card downloads the file first (see `recording-r4-manual-checklist.md`). Save As… on that card downloads to the file you choose.
+  (suite, in part: CoordinatorSaveAsTests.anUploadOnlyVideosSaveAsDownloadsToTheChosenFile, the Save As… sentence,
+  CoordinatorDragOutTests.aDragOfAShowingUploadedRecordingStartsOneDownload, the drag sentence; by hand: restoring the
+  card starting no download (`SCREENS`), Activity Monitor)
 - [ ] Restore Closed Overlay brings back a video's card with its poster, its state and `Copy File` if there is a local file.
 
 ## No destination
@@ -373,7 +385,8 @@ Settings > Upload with no complete destination (or clear the credentials with Fo
 The plan filled these where the design was silent; each was built as written. Write `confirm` or `overrule` and why, then copy the result to the design's Built notes.
 - [ ] 1. Free space: `tmp/Recording` is created just before the 2 GB check; a fresh container is checked too; a folder that cannot be created gives `Recording failed`; an unreadable free-space value counts as enough, with a log line; the 2 GB check runs before the selection overlay, so a full disk refuses before you select. (Hand check: none possible; read it from `RecordingLimitsTests`.) ______
 - [ ] 2. Extra parameters: `saveRecording(_:intent:stopNotice:mode:)` and `optimisedVideo(at:duration:scope:)`. Internal; nothing to see. ______
-- [ ] 3. Counter: for a recording's upload, `{counter}` is drawn after the 625 GB check (R4; was 5 GiB), just before the enqueue. With `{counter}` in the key template, two recordings uploaded in a row get consecutive keys, and a recording deleted during `Optimizing…` leaves no gap (a refused upload would not either; that cannot be reached by hand). ______
+- [ ] 3. Counter: for a recording's upload, `{counter}` is drawn after the 625 GB check (R4; was 5 GiB), just before the enqueue. With `{counter}` in the key template, two recordings uploaded in a row get consecutive keys, and a recording deleted during `Optimizing…` leaves no gap (a refused upload would not either; that cannot be reached by hand).
+  (suite: CoordinatorClopTests.deletingARecordingWhileClopHoldsItCancelsAtOnceAndLeavesNoMovieOrCounterGap) ______
 - [ ] 4. Fallbacks: `.upload` with no destination falls back exactly as `.save` (a forced file reference, `.none`); a `.save` fallback's clipboard reference points at the pending file; over 625 GB (R4; was 5 GiB), where the file is decides: a pending file moves into the save folder and a save-folder file stays.
   (suite: RecordingSavePlanTests.uploadWithNoDestinationFallsBackAsSave, .saveFallbackKeepsTheRecordingInPending,
   .oversizedSaveFolderFileStays, .oversizedPendingFileMovesIntoTheSaveFolder) ______
@@ -395,6 +408,12 @@ The plan filled these where the design was silent; each was built as written. Wr
 ## Regression
 - [ ] ⌃⇧1 to ⌃⇧7 behave as in the 6a, 6b and 7b checklists after a recording, with and without Hide desktop icons.
 - [ ] A screenshot's save, upload, Retry, Delete, Save As… and Copy Image are as before; a PNG still gets `.png` and `image/png`.
+  (suite: CoordinatorSaveAsTests.saveAsOfASavedImageCopiesItsBytesAndChangesNothingElse,
+  CoordinatorSaveTests.aCaptureWithTheOverlayOffShowsNoCardAndStillUploads,
+  CoordinatorDeleteTests.deleteDuringAnUploadCancelsItThenDeletesTheReservedKey,
+  CoordinatorRecordActionsTests.copyImageReadsTheFileOrDownloadsTheObject, CaptureRecordTests.mediaKindTypes,
+  UploadQueueTests.uploadsAndReportsPublicURL,
+  CoordinatorUploadTests.aFailedUploadOnlyImageKeepsItsPendingFileAndSizeUntilARetrySendsIt)
 - [ ] Old history (a `history.json` from before R1) loads, with every record an image. (suite:
   CaptureRecordTests.historyWithoutMediaKindDecodesAsImages)
 - [ ] The Recent Captures menu opens at once with a video among the rows.
