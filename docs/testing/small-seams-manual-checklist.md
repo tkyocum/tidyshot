@@ -11,9 +11,9 @@ real Clop, the real panel and the real log: that each does what it did before th
 
 ## Checks
 
-- [ ] 1. The real Clop path. With Clop running and `Optimize with Clop` on, a capture's upload shows `Optimizing…` and
-  the row shows the smaller size; an MP4 recording does the same. Quit Clop and capture: the original uploads, the log
-  has `Clop: Clop is not running, uploading the original`, and Clop is not launched.
+- [ ] 1. The real Clop path. With Clop running and `Optimize images and videos with Clop` on, a capture's upload
+  shows `Optimizing…` and the row shows the smaller size; an MP4 recording does the same. Quit Clop and capture: the
+  original uploads, the log has `Clop: Clop is not running, uploading the original`, and Clop is not launched.
 - [ ] 2. The real panel. Save As… on a card while another app is frontmost: the panel opens in front of it, with the
   capture's name in the save folder. Cancel writes nothing; Save writes the copy and posts `Saved`. Save As… on an
   upload-only recording's card downloads to the chosen file.

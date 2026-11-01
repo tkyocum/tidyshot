@@ -408,7 +408,7 @@ None change. `project.yml` takes `TidyShotTests/` whole, less `Fixtures/**` (pro
 
 The three live values never run in the suite, because `live()` builds `AppSettings.shared`, the Keychain store and the notifier. `docs/testing/small-seams-manual-checklist.md`, written at close-out, checks them for Tim:
 
-1. **The real Clop path.** Clop running, `Optimize with Clop` on: a capture's upload shows `Optimizing…` and the row shows the smaller size; an MP4 recording does the same. Quit Clop and capture: the original uploads, the log has `Clop: Clop is not running, uploading the original`, and Clop is not launched.
+1. **The real Clop path.** Clop running, `Optimize images and videos with Clop` on: a capture's upload shows `Optimizing…` and the row shows the smaller size; an MP4 recording does the same. Quit Clop and capture: the original uploads, the log has `Clop: Clop is not running, uploading the original`, and Clop is not launched.
 2. **The real panel.** Save As… on a card while another app is frontmost: the panel opens in front of it, with the capture's name in the save folder. Cancel writes nothing; Save writes the copy and posts `Saved`. Save As… on an upload-only recording's card downloads to the chosen file.
 3. **The real log.** `stop-recording` with nothing running, then `log show --last 5m --style compact --predicate 'process == "TidyShot"' | grep "Recording:"`: one `did nothing, no recording is running` line, public, not `<private>`. Then `echo junk > "$C/tmp/Recording/x.mp4"`, relaunch, and the same command shows `Recording: x.mp4 could not be played, removed`.
 
