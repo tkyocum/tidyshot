@@ -7,7 +7,7 @@ import Testing
 /// `save(_:from:intent:)` and what it runs, `persist`, `writeFile`, `writePendingFile`, `copyOnly` and
 /// `withWindowBackground`. Images and origins come from `CaptureSamples`; no ScreenCaptureKit object is made.
 /// Every save passes an explicit intent (the forwarder's `.standard` reads `AppSettings.shared`) and stores a
-/// folder first unless it is copy-only or upload-only, so no folder panel is built. Overlay is off, since a
+/// folder first unless it is upload-only, so no folder panel is built, even by a copy-only save that regresses. Overlay is off, since a
 /// card on screen reads the screens. A test that saves a record waits for its thumbnail before it ends, so a
 /// late write cannot recreate a folder in the removed root. The one held fake is the destination's upload,
 /// released in a `defer` declared right after `removeAll()`'s.
@@ -179,6 +179,7 @@ struct CoordinatorCaptureSaveTests {
     @Test(arguments: [true, false])
     func copyOnlyPutsTheImageOnTheClipboardAndNothingElse(showNotification: Bool) async throws {
         defer { world.removeAll() }
+        let folder = try world.storeSaveFolder()
         world.settings.showNotification = showNotification
         let coordinator = world.makeCoordinator()
         let previous = UUID()
@@ -201,7 +202,7 @@ struct CoordinatorCaptureSaveTests {
             #expect(world.notifier.calls.isEmpty)
         }
         #expect(coordinator.history.records.isEmpty)
-        #expect(world.saveLocation.currentURL == nil)
+        #expect(CaptureSamples.fileNames(in: folder).isEmpty)
         #expect(CaptureSamples.fileNames(in: coordinator.pendingFiles.directory).isEmpty)
         #expect(world.cards.calls.isEmpty)
         #expect(world.factory.askedConfigs.isEmpty)

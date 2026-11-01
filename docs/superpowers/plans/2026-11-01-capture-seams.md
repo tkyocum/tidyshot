@@ -433,8 +433,8 @@ file (`.superpowers/sdd/ct4/built/TidyShot/App/AppCoordinator+Save.swift`).
   comments filled in; T3 to T10 are written from the catalogue. The rules (TARGET.2) as the bodies apply them: every
   test opens with `defer { world.removeAll() }`; a test that holds the upload (T2, T7, T10) declares
   `defer { destination.releaseUploads() }` right after it, so it runs first, gates on `heldUploads.count == 1`, and
-  gates again on the link after the release; every save passes an explicit intent and stores a folder first, or is
-  copy-only (T4); a test that reads a name sets the template `Shot` (`FileNamer` reads `Date()`, +Save:251); and every
+  gates again on the link after the release; every save passes an explicit intent and stores a folder first, T4's
+  copy-only save too (its check is no file in that folder); a test that reads a name sets the template `Shot` (`FileNamer` reads `Date()`, +Save:251); and every
   test that saves a record ends with `eventually` on each record's `thumbnailFileName` (rule 8; T4 makes none). Doc
   comments name each line by catalogue key and current line, and for an in-part line what stays and whose
   (`lines-capture.md`):
@@ -448,7 +448,7 @@ file (`.superpowers/sdd/ct4/built/TidyShot/App/AppCoordinator+Save.swift`).
   /// `save(_:from:intent:)` and what it runs, `persist`, `writeFile`, `writePendingFile`, `copyOnly` and
   /// `withWindowBackground`. Images and origins come from `CaptureSamples`; no ScreenCaptureKit object is made.
   /// Every save passes an explicit intent (the forwarder's `.standard` reads `AppSettings.shared`) and stores a
-  /// folder first unless it is copy-only or upload-only, so no folder panel is built. Overlay is off, since a
+  /// folder first unless it is upload-only, so no folder panel is built, even by a copy-only save that regresses. Overlay is off, since a
   /// card on screen reads the screens. A test that saves a record waits for its thumbnail before it ends, so a
   /// late write cannot recreate a folder in the removed root. The one held fake is the destination's upload,
   /// released in a `defer` declared right after `removeAll()`'s.
@@ -620,6 +620,7 @@ file (`.superpowers/sdd/ct4/built/TidyShot/App/AppCoordinator+Save.swift`).
       @Test(arguments: [true, false])
       func copyOnlyPutsTheImageOnTheClipboardAndNothingElse(showNotification: Bool) async throws {
           defer { world.removeAll() }
+          let folder = try world.storeSaveFolder()
           world.settings.showNotification = showNotification
           let coordinator = world.makeCoordinator()
           let previous = UUID()
@@ -642,7 +643,7 @@ file (`.superpowers/sdd/ct4/built/TidyShot/App/AppCoordinator+Save.swift`).
               #expect(world.notifier.calls.isEmpty)
           }
           #expect(coordinator.history.records.isEmpty)
-          #expect(world.saveLocation.currentURL == nil)
+          #expect(CaptureSamples.fileNames(in: folder).isEmpty)
           #expect(CaptureSamples.fileNames(in: coordinator.pendingFiles.directory).isEmpty)
           #expect(world.cards.calls.isEmpty)
           #expect(world.factory.askedConfigs.isEmpty)
