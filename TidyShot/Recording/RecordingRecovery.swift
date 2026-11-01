@@ -17,9 +17,10 @@ nonisolated enum RecordingRecovery {
     /// Checks every file in `directory` with `VideoValidation`. Playable files with a video track
     /// are returned, oldest first, and left where they are. Every other file is removed. A missing
     /// or empty folder finds nothing. A crash gives no Stop, so a playable file under the end
-    /// rule's 0.5 s is kept too.
+    /// rule's 0.5 s is kept too. A removal is logged with `note`.
     @concurrent
-    static func scan(_ directory: URL) async -> [Found] {
+    static func scan(_ directory: URL,
+                     note: @Sendable (String) -> Void = { RecordingLog.note($0) }) async -> [Found] {
         let keys: Set<URLResourceKey> = [.isRegularFileKey, .creationDateKey]
         guard let urls = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: Array(keys))
         else { return [] }
@@ -31,9 +32,9 @@ nonisolated enum RecordingRecovery {
             guard facts.isPlayable, facts.videoTracks > 0 else {
                 do {
                     try FileManager.default.removeItem(at: url)
-                    RecordingLog.note("Recording: \(url.lastPathComponent) could not be played, removed")
+                    note("Recording: \(url.lastPathComponent) could not be played, removed")
                 } catch {
-                    RecordingLog.note("Recording: \(url.lastPathComponent) could not be played or removed: \(error.localizedDescription)")
+                    note("Recording: \(url.lastPathComponent) could not be played or removed: \(error.localizedDescription)")
                 }
                 continue
             }
@@ -103,7 +104,7 @@ nonisolated enum RecordingRecovery {
     /// The launch check's start: `muteDirectory` listed (`listMuteFolder`), then `recordingDirectory`
     /// scanned, in that order, so a log written since launch, while the scan or the loop after it runs,
     /// is never in the list `sweepMuteFolder` goes through (Decided 2026-10-24, 6). `scanning` is
-    /// `scan`, injected by tests.
+    /// `scan`: the coordinator passes it with its `recordingLog`, and tests inject their own.
     static func begin(recordingDirectory: URL, muteDirectory: URL,
                       scanning: (URL) async -> [Found] = { await RecordingRecovery.scan($0) })
         async -> (muteFiles: [URL], found: [Found]) {

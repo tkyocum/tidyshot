@@ -50,7 +50,8 @@ struct CoordinatorRecordingTests {
 
     /// 48 (harness design 3.4). R4 checklist, U1: `stop-recording` with nothing recording, or during a save, posts nothing,
     /// cancels no count-in, leaves the phase as it was, and stops no recorder. The recorder drops a stop with no run
-    /// itself, so this does not tell the `.nothing` branch from a stray `recorder.stop()` (D24).
+    /// itself, so the state does not tell the `.nothing` branch from a stray `recorder.stop()` (D24); the line does
+    /// (`stopRecordingLogsWhatItDidInEachPhase`).
     @Test func stopRecordingWhileIdleOrSavingChangesNothing() {
         defer { world.removeAll() }
         let coordinator = world.makeCoordinator()
@@ -87,7 +88,8 @@ struct CoordinatorRecordingTests {
 
     /// 50 (harness design 3.4). R4 checklist, U1: during the recording it stops it, and with a second one during the stop
     /// wait (plan Gap 5 of R4) the recorder still stops once and nothing posts. The recorder drops a repeated stop
-    /// itself, so this does not see the coordinator's `isEnding` check; its log line is Tim's (D24).
+    /// itself, so the state does not see the coordinator's `isEnding` check (D24); its log line does
+    /// (`stopRecordingLogsWhatItDidInEachPhase`).
     @Test func stopRecordingDuringARecordingStopsItOnce() async throws {
         defer { world.removeAll() }
         let coordinator = world.makeCoordinator()
@@ -375,5 +377,251 @@ struct CoordinatorRecordingTests {
         #expect(!coordinator.isCapturing)
         #expect(coordinator.askingPermission == nil)
         #expect(world.notifier.calls == [.waited(.seconds(1))])
+    }
+
+    // MARK: The `Recording:` lines (small seams design, LOG)
+    // The `Recording:` lines the coordinator writes, read from `world.recordingLines`, the environment's
+    // `recordingLog`. Nothing here records; starts end at their prompt.
+
+    /// coordinator-harness:27 (:27), full; recording-r4:347 (:422), full. `stop-recording`'s line in each phase: nothing
+    /// to stop while idle, during a selection (the capture lock held, the phase still idle) and while a recording is
+    /// saved; the count-in cancelled; the recording stopped; and a second one during the stop wait finds the recording
+    /// ending (`recorder.isEnding`) and does nothing. The `did nothing` lines are the coordinator's own two branches,
+    /// which the state alone cannot tell from the recorder's (D24). Nothing stays by hand.
+    @Test func stopRecordingLogsWhatItDidInEachPhase() async throws {
+        defer { world.removeAll() }
+        let coordinator = world.makeCoordinator()
+
+        coordinator.stopRecordingCommand(sender: "Raycast")
+
+        // The lock held as during Record Screen's area selection: the phase is still idle.
+        let gate = TestGate()
+        let lock = Task { await coordinator.withCaptureLock(coversDesktop: false) { await gate.wait() } }
+        defer { lock.cancel() }
+        try await eventually { gate.isWaiting }
+        coordinator.stopRecordingCommand(sender: "Keyboard Maestro")
+        #expect(coordinator.isCapturing)
+        gate.open()
+        let lockEnded = TaskWatch(lock)
+        try await eventually { lockEnded.hasReturned }
+
+        coordinator.recordingSavesInFlight = 1
+        coordinator.stopRecordingCommand(sender: nil)
+        coordinator.recordingSavesInFlight = 0
+
+        coordinator.recordingCountIn = true
+        let countdown = try await beginCountdown(on: coordinator)
+        defer { countdown.cancel() }
+        coordinator.stopRecordingCommand(sender: "Raycast")
+        let ended = TaskWatch(countdown)
+        try await eventually { ended.hasReturned }
+        #expect(coordinator.recordingStartCancelled)
+        coordinator.recordingCountIn = false
+
+        let run = await beginRecording(on: coordinator)
+        defer { run.cancel() }
+        coordinator.stopRecordingCommand(sender: "Raycast")
+        #expect(coordinator.recorder.isEnding)
+        coordinator.stopRecordingCommand(sender: "Raycast")
+        let runEnded = TaskWatch(run)
+        try await eventually { runEnded.hasReturned }
+
+        #expect(world.recordingLines == [
+            "Recording: stop-recording from Raycast did nothing, no recording is running",
+            "Recording: stop-recording from Keyboard Maestro did nothing, no recording is running",
+            "Recording: stop-recording from an unknown app did nothing, no recording is running",
+            "Recording: stop-recording from Raycast cancelled the count-in",
+            "Recording: stop-recording from Raycast stopped the recording",
+            "Recording: stop-recording from Raycast did nothing, no recording is running",
+        ])
+        #expect(world.driver.stopCount == 1)
+        #expect(!coordinator.recorder.isRunning)
+        #expect(world.notifier.calls.isEmpty)
+        #expect(world.logLines.isEmpty)
+    }
+
+    /// recording-r3:156 (:161), full; recording-r3:419 (:457), in part (a start's lines: the order, each answer's text,
+    /// the ignored press). With the microphone and the camera both undecided, a start asks for the microphone, then the
+    /// camera, and logs each answer; a second Record press while the camera prompt is up does nothing and logs why. A
+    /// quit while it is up ends the start once it is answered, before the capture lock, so nothing makes
+    /// `tmp/Recording`. Stays, of :457: the prompts on screen (by hand, Tim's) and the URL handler's own
+    /// `URL command from … dropped, the camera prompt is open` line (URLCommandHandler.swift:155, `NSLog`; `URLLOG`'s).
+    @Test func aStartLogsEachPromptsAnswerAndASecondPressWhileOneIsUp() async throws {
+        defer { world.removeAll() }
+        world.settings.recordingMicrophone = MicrophoneChoice.systemDefaultValue
+        world.settings.recordingWebcamBubble = true
+        world.settings.hideDesktopIconsWhileCapturing = false
+        let microphones = HeldMicrophoneDevices()
+        let cameras = HeldCameraDevices()
+        world.microphones = microphones
+        world.cameras = cameras
+        let coordinator = world.makeCoordinator()
+
+        let start = Task { await coordinator.recordFullscreen() }
+        defer { start.cancel() }
+        let started = TaskWatch(start)
+        try await eventually { microphones.isAsking }
+        #expect(cameras.requestCount == 0)
+        microphones.answer(true)
+        try await eventually { cameras.isAsking }
+        #expect(coordinator.askingPermission == .camera)
+
+        let second = TaskWatch(Task { await coordinator.recordScreen() })
+        try await eventually { second.hasReturned }
+        #expect(microphones.requestCount == 1)
+        #expect(cameras.requestCount == 1)
+
+        // Gated as the GIF test's quit is (D31): the deferred answer frees the start either way.
+        do {
+            defer { cameras.answer(false) }
+            let quit = TaskWatch(Task { await coordinator.finishRecordingForQuit() })
+            try await eventually { quit.hasReturned }
+        }
+        try await eventually { started.hasReturned }
+
+        #expect(world.recordingLines == [
+            "Recording: microphone access allowed at the prompt",
+            "Recording: start ignored, the camera prompt is open",
+            "Recording: camera access refused at the prompt",
+        ])
+        #expect(!coordinator.isCapturing)
+        #expect(coordinator.askingPermission == nil)
+        #expect(world.notifier.calls == [.waited(.seconds(1))])
+        #expect(world.logLines.isEmpty)
+    }
+
+    /// recording-r3:162 (:167), in part; recording-r4:214 (:218), in part; recording-r3:419 (:457), in part (the Settings
+    /// prompt's lines: both answers, and `deferred` with its reason). Settings' prompt logs its answer when it asks, and
+    /// why it waits when it does not: a recording being saved (a GIF converting), a capture holding the lock, a
+    /// recording running inside the lock as the app runs one, or another prompt open. Only the first two asks prompt.
+    /// Stays: of :167, the microphone pick in Settings reaching the coordinator, and of :218, the `Show webcam bubble`
+    /// toggle reaching it, each a view's call on `AppCoordinator.shared` (CaptureSettingsView.swift:222, :253), by
+    /// hand (Tim's), no seam; :218's GIF conversion is set up as `.saving`. Of :457, as the start test says: the prompts
+    /// on screen (by hand) and the handler's `dropped` line (`URLLOG`'s).
+    @Test func aSettingsPromptLogsItsAnswerOrWhyItWaits() async throws {
+        defer { world.removeAll() }
+        let cameras = HeldCameraDevices()
+        world.cameras = cameras
+        let microphones = FakeMicrophoneDevices(access: .notDetermined)
+        world.microphones = microphones
+        let coordinator = world.makeCoordinator()
+        // An ask that must not prompt runs as its own task, gated: one that prompted after all would wait for an
+        // answer that never comes (or is a second entry, an issue), so the test fails in two seconds.
+        func askWithoutAPrompt(_ prompt: PermissionPrompt) async throws {
+            let ask = TaskWatch(Task { await coordinator.requestAccessFromSettings(prompt) })
+            try await eventually { ask.hasReturned }
+        }
+
+        let refusedAsk = Task { await coordinator.requestAccessFromSettings(.camera) }
+        defer { refusedAsk.cancel() }
+        let refused = TaskWatch(refusedAsk)
+        try await eventually { cameras.isAsking }
+        #expect(coordinator.askingPermission == .camera)
+        cameras.answer(false)
+        try await eventually { refused.hasReturned }
+
+        let allowedAsk = Task { await coordinator.requestAccessFromSettings(.camera) }
+        defer { allowedAsk.cancel() }
+        let allowed = TaskWatch(allowedAsk)
+        try await eventually { cameras.isAsking }
+        #expect(coordinator.askingPermission == .camera)
+        cameras.answer(true)
+        try await eventually { allowed.hasReturned }
+
+        coordinator.recordingSavesInFlight = 1
+        #expect(coordinator.recordingPhase == .saving)
+        try await askWithoutAPrompt(.camera)
+        coordinator.recordingSavesInFlight = 0
+
+        // The lock held, as a selection holds it, and still held through the recording below, as the app holds it
+        // for the whole of one.
+        let gate = TestGate()
+        let lock = Task { await coordinator.withCaptureLock(coversDesktop: false) { await gate.wait() } }
+        defer { lock.cancel() }
+        let lockEnded = TaskWatch(lock)
+        try await eventually { gate.isWaiting }
+        try await askWithoutAPrompt(.camera)
+
+        let run = await beginRecording(on: coordinator)
+        defer { run.cancel() }
+        #expect(coordinator.recordingPhase == .recording)
+        #expect(coordinator.isCapturing)
+        try await askWithoutAPrompt(.microphone)
+        try await askWithoutAPrompt(.camera)
+        coordinator.recorder.stop()
+        let runEnded = TaskWatch(run)
+        try await eventually { runEnded.hasReturned }
+        gate.open()
+        try await eventually { lockEnded.hasReturned }
+
+        coordinator.askingPermission = .microphone
+        try await askWithoutAPrompt(.camera)
+        coordinator.askingPermission = nil
+
+        #expect(world.recordingLines == [
+            "Recording: camera access refused at the Settings prompt",
+            "Recording: camera access allowed at the Settings prompt",
+            "Recording: camera prompt from Settings deferred, a recording is being saved",
+            "Recording: camera prompt from Settings deferred, a capture is running",
+            "Recording: microphone prompt from Settings deferred, a capture is running",
+            "Recording: camera prompt from Settings deferred, a capture is running",
+            "Recording: camera prompt from Settings deferred, the microphone prompt is open",
+        ])
+        #expect(cameras.requestCount == 2)
+        #expect(microphones.requestCount == 0)
+        #expect(coordinator.askingPermission == nil)
+        #expect(world.logLines.isEmpty)
+    }
+
+    /// recording-r4:366 (:456), full; recording-r4:192 (:193), in part (the coordinator's text, which the line accepts).
+    /// Two `record-screen` URLs back to back through the handler: the first starts and parks at the camera prompt,
+    /// before the lock; the second comes before that start runs, finds `urlRecordingStartPending` and is logged;
+    /// nothing posts. One sent once the app quits is logged too. Stays, of :193: the one selection on screen, the
+    /// drawn UI, by hand (Tim's), no seam.
+    @Test func aSecondURLStartBeforeTheFirstTakesTheLockIsLogged() async throws {
+        defer { world.removeAll() }
+        world.settings.recordingWebcamBubble = true
+        world.settings.hideDesktopIconsWhileCapturing = false
+        let cameras = HeldCameraDevices()
+        world.cameras = cameras
+        let coordinator = world.makeCoordinator()
+        let handler = URLCommandHandler(settings: world.settings, target: coordinator,
+                                        screens: { URLCommandHandler.Screens(displays: [], pointerIndex: nil) },
+                                        post: { notice in Issue.record("The URL handler posted \(notice.body)") })
+        await handler.ready()
+        let url = try #require(URL(string: "tidyshot://record-screen"))
+
+        // One task, so nothing runs between the two: a `record-screen` reaches `startRecording` with no
+        // suspension, and the first one's start task runs only after both.
+        let sends = Task {
+            await handler.handle(url, sender: "Keyboard Maestro")
+            await handler.handle(url, sender: "Keyboard Maestro")
+        }
+        defer { sends.cancel() }
+        let sent = TaskWatch(sends)
+        try await eventually { sent.hasReturned }
+        try await eventually { cameras.isAsking }
+        #expect(coordinator.urlRecordingStartPending)
+        #expect(cameras.requestCount == 1)
+        #expect(world.notifier.calls.isEmpty)
+
+        // Gated as the GIF test's quit is (D31).
+        do {
+            defer { cameras.answer(false) }
+            let quit = TaskWatch(Task { await coordinator.finishRecordingForQuit() })
+            try await eventually { quit.hasReturned }
+        }
+        try await eventually { !coordinator.urlRecordingStartPending }
+        coordinator.startRecording(intent: CaptureIntent(action: .save), preselect: nil)
+
+        #expect(world.recordingLines == [
+            "Recording: URL start ignored, a recording is starting",
+            "Recording: camera access refused at the prompt",
+            "Recording: URL start ignored, the app is quitting",
+        ])
+        #expect(cameras.requestCount == 1)
+        #expect(!coordinator.isCapturing)
+        #expect(world.notifier.calls == [.waited(.seconds(1))])
+        #expect(world.logLines.isEmpty)
     }
 }

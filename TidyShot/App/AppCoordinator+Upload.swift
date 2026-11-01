@@ -375,7 +375,7 @@ extension AppCoordinator {
         // Before the folder prompt, so nothing offers Retry while it is open.
         history.update(id: recordID) { $0.uploadState = .none }
         refreshOverlay(for: recordID)
-        RecordingLog.note("Recording: \(record.fileURL?.lastPathComponent ?? recordID.uuidString) is too large to upload (over 625 GB)")
+        recordingLog("Recording: \(record.fileURL?.lastPathComponent ?? recordID.uuidString) is too large to upload (over 625 GB)")
 
         var move: RecordingFileResult?
         var movedURL: URL?
@@ -392,7 +392,7 @@ extension AppCoordinator {
                     }.value
                     move = .saveFolder
                 } catch {
-                    RecordingLog.note("Recording: \(source.lastPathComponent) could not be moved into the save folder: \(error.localizedDescription)")
+                    recordingLog("Recording: \(source.lastPathComponent) could not be moved into the save folder: \(error.localizedDescription)")
                     move = .fallback(reason: error.localizedDescription)
                 }
             } else {

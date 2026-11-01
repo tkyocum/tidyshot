@@ -278,13 +278,14 @@ nonisolated final class FakeDestinationFactory: Sendable {
 }
 
 /// The world's values that the coordinator's `@Sendable` closures read and write: the date, the
-/// free space and the log. Locked, as a closure may run off the main actor.
+/// free space and the two logs. Locked, as a closure may run off the main actor.
 nonisolated final class CoordinatorWorldState: Sendable {
     private struct Values {
         var date = Date(timeIntervalSinceReferenceDate: 800_000_000)
         var freeBytes: Int64? = 100_000_000_000
         var freeBytesAsked: [URL] = []
         var lines: [String] = []
+        var recordingLines: [String] = []
     }
 
     private let values = Mutex(Values())
@@ -301,6 +302,7 @@ nonisolated final class CoordinatorWorldState: Sendable {
 
     var freeBytesAsked: [URL] { values.withLock { $0.freeBytesAsked } }
     var lines: [String] { values.withLock { $0.lines } }
+    var recordingLines: [String] { values.withLock { $0.recordingLines } }
 
     func freeBytes(at url: URL) -> Int64? {
         values.withLock { values in
@@ -311,6 +313,10 @@ nonisolated final class CoordinatorWorldState: Sendable {
 
     func append(_ line: String) {
         values.withLock { $0.lines.append(line) }
+    }
+
+    func appendRecording(_ line: String) {
+        values.withLock { $0.recordingLines.append(line) }
     }
 }
 

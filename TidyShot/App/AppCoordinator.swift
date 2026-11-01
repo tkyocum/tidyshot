@@ -292,6 +292,11 @@ final class AppCoordinator {
         environment.log(message)
     }
 
+    /// A `Recording:` line, through the environment (`RecordingLog.note` in the app).
+    func recordingLog(_ message: String) {
+        environment.recordingLog(message)
+    }
+
     func start() {
         // Drag copies from the last run, also after a crash.
         dragFiles.sweep()
@@ -318,9 +323,11 @@ final class AppCoordinator {
         // two never interleave. tmp/Mute is listed and tmp/Recording scanned first, long before a
         // recording started now could write there, and adopting can take seconds; then pending/ is
         // adopted before any scanned file moves into it or is checked against the records.
+        let note = environment.recordingLog
         Task {
             let leftRecordings = await RecordingRecovery.begin(recordingDirectory: Recording.directory,
-                                                               muteDirectory: MuteLog.directory)
+                                                               muteDirectory: MuteLog.directory,
+                                                               scanning: { await RecordingRecovery.scan($0, note: note) })
             await adoptPendingFiles(pendingListed)
             await recoverRecordings(leftRecordings)
         }

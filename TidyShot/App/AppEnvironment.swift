@@ -48,15 +48,18 @@ struct AppEnvironment {
     /// The coordinator's own waits: the drag folder's clean-up, a replaced lane's poll, a recording's
     /// settle delay without a count-in, and a quit's poll.
     var clock: any ScrollClock
-    /// Every coordinator log line (`RecordingLog.note` keeps its own).
+    /// Every coordinator log line but the `Recording:` ones.
     var log: @Sendable (String) -> Void
+    /// The coordinator's `Recording:` lines, and the launch scan's (`RecordingRecovery.scan`);
+    /// `RecordingLog.note` in the app.
+    var recordingLog: @Sendable (String) -> Void
 
     /// What the app runs on: the user's Application Support folder (the temporary folder when it
     /// cannot be had), the shared settings, the Keychain, the notification centre, the card stack,
     /// the general pasteboard, S3, Clop, the alerts, the shutter sound, the editor window, the card's
-    /// Save As… panel, the wall clock and `NSLog`. The collaborators are built in the order the
-    /// coordinator's stored properties built them; Clop's optimiser, a value that reaches nothing
-    /// until a request, is built here.
+    /// Save As… panel, the wall clock, `NSLog` and `RecordingLog`. The collaborators are built in the
+    /// order the coordinator's stored properties built them; Clop's optimiser, a value that reaches
+    /// nothing until a request, is built here.
     static func live() -> AppEnvironment {
         let saveLocation = SaveLocation()
         let settings = AppSettings.shared
@@ -94,7 +97,8 @@ struct AppEnvironment {
             chooseSaveAsURL: { await AppEnvironment.chooseSaveAsURLLive($0) },
             now: { Date() },
             clock: SystemScrollClock(),
-            log: { NSLog("%@", $0) })
+            log: { NSLog("%@", $0) },
+            recordingLog: { RecordingLog.note($0) })
     }
 
     /// The card's Save As… panel as `askSaveAsTarget` ran it: the panel for the suggestion
