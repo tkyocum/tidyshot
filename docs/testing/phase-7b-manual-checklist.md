@@ -84,7 +84,8 @@ Copy some text first, so you can tell when the clipboard changes.
 - [ ] A click without a drag: press ⌃⇧7 and click a TextEdit window with a few lines in it, without dragging. The overlay closes and nothing is copied, as in Capture Area.
   (suite, in part: SelectionOutcomeTests.areaModeCancelsOnAClickOrATinyDrag; `captureText()` stopping before `copyText`
   on a cancelled selection is a code read, and the overlay closing stays by hand)
-- [ ] ⌃⇧6 after a Capture Text captures the previous image area, not the text selection.
+- [ ] ⌃⇧6 after a Capture Text captures the previous image area, not the text selection. (suite:
+  CoordinatorCaptureSourceTests.capturePreviousAreaAfterCaptureTextCapturesTheEarlierImageArea)
 - [ ] URL command, no rect: `t capture-text` opens the selection with the silent toggle off; the result is the same as ⌃⇧7. `t 'capture-text?action=upload'` behaves the same (action is ignored).
   (suite: URLCommandHandlerTests.commandsThatWaitForTheUserRunWithSilentCapturesOff,
   .everyCommandReachesItsCaptureFunction, URLCommandTests.parametersACommandDoesNotTakeAreIgnored,

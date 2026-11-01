@@ -391,7 +391,10 @@ selection overlay or the count-in, and the stream's `Recording: starting …` li
   disabled; `open "tidyshot://capture-area"` (URL commands on) does nothing, and the log has `URL command
   from … dropped, the microphone prompt is open: tidyshot://capture-area` (not `a capture is running`).
   Answer the prompt: the recording starts as usual (the selection overlay or the count-in), and every
-  capture works again once it ends. Write down anything that did start: ______
+  capture works again once it ends. Write down anything that did start: (suite, in part:
+  CoordinatorRecordingTests.aSecondRecordPressWhileTheMicrophonePromptIsUpAsksNothingAndAQuitStartsNothing,
+  URLCommandHandlerTests.theLogSaysWhyACaptureCommandWasDropped; by hand: the status menu's capture items shown disabled
+  (`STATUSMENU`), and the recording that starts as usual after the answer (`TMPDIRS`, `RECCHROME`)) ______
 - [ ] A start refused by the capture lock after its prompt posts `Screen recording` / `The recording did not
   start because another capture was running.` and logs `Recording: not started after the microphone prompt,
   another capture was running`. It cannot be forced by hand: captures are refused while the prompt is up, so

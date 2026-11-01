@@ -209,13 +209,13 @@ resolution without HiDPI); skip the 1x run if neither is available and say so.
   EditorClipboardTests.leavesWhenUserCopiedSomethingElse)
 - [ ] "Upload and copy URL" with no destination (Forget Credentials in Settings > Upload): capture (the image goes to the clipboard), Annotate, Redact, ⌘S: the clipboard holds the redacted image. ⌘U posts `Upload not configured`, changes nothing, and the editor stays open. Enter the credentials again.
   (suite, in part: CoordinatorEditorUploadTests.withNoDestinationSaveTakesTheClipboardAndUploadIsRefused,
-  EditorUploadPlanTests.uploadOutcomeClosesWhenEnqueued; by hand: the editor staying open (`EDPLACE`); the capture's own
-  clipboard copy and owner are set up as `AppCoordinator+Save.swift:32-34` and `:57-67` leave them with no destination,
-  and no test drives that step today (`TARGET`))
+  EditorUploadPlanTests.uploadOutcomeClosesWhenEnqueued,
+  CoordinatorCaptureSaveTests.withNoDestinationTwoCapturesCopyTheImageAndPostOneNotice; by hand: the editor staying open
+  (`EDPLACE`))
 - [ ] "Upload and copy URL" with "Also copy image" on: capture, Annotate, Redact, ⌘U. The editor closes at once; when the upload finishes the clipboard holds the URL.
-  (suite, in part: CoordinatorEditorUploadTests.anUploadAfterTheCapturesOwnClosesAtOnceAndEndsWithTheLinkCopied; by
-  hand: the editor closing (`EDPLACE`); the capture's own clipboard copy and owner are set up as
-  `AppCoordinator+Save.swift:30-31` and `:57-67` leave them, and no test drives that step today (`TARGET`))
+  (suite, in part: CoordinatorEditorUploadTests.anUploadAfterTheCapturesOwnClosesAtOnceAndEndsWithTheLinkCopied,
+  CoordinatorCaptureSaveTests.withAlsoCopyImageTheImageIsOnTheClipboardUntilTheUploadEndsThenTheLink; by hand: the
+  editor closing (`EDPLACE`))
 
 ## Upload
 - [ ] Capture uploaded with "Upload and copy URL": Redact, then the Upload button. The editor closes at once with no unsaved-changes sheet, and the row shows the upload running. When it finishes the clipboard holds the same URL as before, the link shows the redaction, and the file in the save folder shows it too.

@@ -75,10 +75,16 @@ with `defaults read io.tky.tidyshot <key>`.
 - [ ] Window: the clicked window with transparent corners (and the shadow, when `Include window shadow` is on). Fullscreen: the overlay goes first, then the rect's display is captured with no dimming, handles, toolbar or Quick Access card in it. Scrolling: the scrolling panel opens on the rect; a rect under 100 pt tall is refused with `Select an area at least 100 points tall.` Timer: the self-timer countdown runs on the rect, then captures it.
 - [ ] Cancel and Escape (also with a field focused but not editing) close the overlay with nothing captured. While a field is being edited, Return applies the value (the field shows the real size afterwards, even when it was clamped) and Escape drops what you typed, shows the rect's real size again and leaves the field; neither captures or cancels, and a second Escape cancels. ⌘-Tab to another app and back: the overlay is still up (focus loss does not cancel, as in the other modes) and Escape cancels it.
 - [ ] A stored area on a connected display: ⌃⇧1 opens with it selected and adjustable. Store an area on the second display, unplug it, press ⌃⇧1: it opens with no rect.
+  (suite, in part:
+  CoordinatorCaptureSourceTests.allInOneOpensOnThePreviousAreaArmedOrAURLRectDisarmedAndEscapeStoresNothing,
+  SelectionAdjustTests.restoreKeepsARectOnItsDisplay, .restoreRefusesARectOffEveryDisplay; by hand: the rect shown
+  selected and adjustable, and none when its display is unplugged (SelectionController.placePreselected, `SELINT`))
 - [ ] Freeze on: the All-in-One overlay shows the frozen screen (open Safari's File menu first) and Capture cuts from it; Window, Fullscreen, Scrolling and Timer capture live.
 - [ ] Show cursor on, freeze off: the All-in-One Capture and Window captures have no pointer and no crosshair; with freeze on the Capture pointer is where it was when ⌃⇧1 was pressed. Fullscreen shows the pointer as an arrow, never the crosshair.
 - [ ] Two displays: the rect and the toolbar stay on the display the rect started on. Draw a rect on one display, then drag on the other: the selection moves there and the first display loses its rect and toolbar; Return captures on the display holding the rect.
 - [ ] All-in-One captures behave like any other in upload-only mode, in the Quick Access stack and in Recent Captures.
+  (suite, in part: CoordinatorCaptureSaveTests.anUploadOnlyCaptureKeepsOnlyAPendingFileUntilItsUploaded; by hand: Quick
+  Access stack and Recent Captures on screen (`SCREENS`), All-in-One building the captures (`CAPSRC`))
 
 ## Self-Timer
 - [ ] Menu `Self-Timer` (or its recorded shortcut): the overlay shows the crosshair, the loupe and the window highlight. Drag an area: the overlay goes, a 96 pt rounded square appears centred on the area with `5` in large monospaced digits and `Esc to cancel` under it, and a dashed frame marks the area. It counts 5, 4, 3, 2, 1, once a second; at zero both disappear and the capture is saved. Neither is in the image, nor is a Quick Access card. Escape in the selection overlay, before the countdown, still cancels the selection.
@@ -120,7 +126,18 @@ URL commands on, the silent toggle on for this section.
   (suite, in part: URLCommandHandlerTests.everyCommandReachesItsCaptureFunction; what each capture then does (the
   selection, window mode, the display under the pointer, the previous area) is the hotkey path's and stays by hand)
 - [ ] `t all-in-one`: All-in-One with the last area preselected. `t 'all-in-one?x=0&y=0&width=500&height=400'`: All-in-One with that rect preselected at the bottom-left of the display under the pointer, adjustable; Escape leaves the stored previous area unchanged.
+  (suite, in part:
+  CoordinatorCaptureSourceTests.allInOneOpensOnThePreviousAreaArmedOrAURLRectDisarmedAndEscapeStoresNothing,
+  URLCommandHandlerTests.everyCommandReachesItsCaptureFunction,
+  URLCommandGeometryTests.theOriginIsTheBottomLeftOfTheMainDisplay; by hand: the rect shown adjustable on the overlay
+  (`SELINT`))
 - [ ] A URL-opened All-in-One needs a touch before a key captures: run `sleep 3; open 'tidyshot://all-in-one?action=copy&x=0&y=0&width=500&height=400'` in Terminal and keep pressing Return in a TextEdit window as the overlay appears: nothing is captured (no shutter, the clipboard unchanged), the arrows still move the rect and Escape still cancels. Again, then click once inside the rect (or change W, or toggle the lock): Return now captures. A double-click inside the rect as the first touch arms without capturing; a second double-click captures. The same with `t all-in-one` (no rect, previous area preselected). ⌃⇧1 and the menu's All-in-One on the previous area capture on Return at once, as before.
+  (suite, in part:
+  CoordinatorCaptureSourceTests.allInOneOpensOnThePreviousAreaArmedOrAURLRectDisarmedAndEscapeStoresNothing,
+  SelectionViewArmingTests.aDisarmedRectIgnoresReturnUntilAPress, .aDisarmedRectStillNudgesAndCancels,
+  .aDoubleClickCapturesOnlyWhenArmedBeforeIt, .aNewRectIsArmed,
+  URLCommandHandlerTests.everyCommandReachesItsCaptureFunction; by hand: arming by a W change or the lock toggle, and
+  Return typed in another app as the overlay appears)
 - [ ] `t self-timer`: the self-timer selection, then the countdown. (suite, in part:
   URLCommandHandlerTests.everyCommandReachesItsCaptureFunction; the self-timer selection and countdown stay by hand)
 - [ ] `t capture-scrolling`: the scrolling selection. `t 'scrolling-capture?x=0&y=0&width=600&height=800'`: no selection; the dashed frame and the panel open on that rect, TidyShot is not made the active app and the panel does not take the keyboard, so a Return typed in the frontmost app does nothing; nothing is captured until you click Start (or press ⌃⇧5). Escape (global) cancels. Leave it unstarted: after 60 seconds the frame and the panel go by themselves, nothing is saved, and ⌃⇧4 works again. A session started within the minute is not cut short. A cancelled session leaves Previous Area as it was; a finished one sets it to the rect. A rect under 100 pt tall posts `Select an area at least 100 points tall.`
@@ -139,14 +156,20 @@ Use `capture-window` (click a window each time).
   CaptureIntentTests.noActionIsTheAfterCaptureActionInGeneral,
   URLCommandHandlerTests.everyCommandReachesItsCaptureFunction)
 - [ ] `action=upload` with General set to `Save and copy image`: saved, uploaded, URL on the clipboard. With `Upload only, keep no local file`: uploaded with no file in the save folder.
+  (suite: CoordinatorCaptureSaveTests.actionUploadSavesUploadsAndCopiesTheLinkUnderEitherSetting,
+  CaptureIntentTests.uploadUploadsUnderEverySetting)
 - [ ] `action=save` under `Upload only`: saved in the save folder, the image copied (with General's copy toggle on), no upload.
+  (suite: CoordinatorCaptureSaveTests.aSaveAndCopyImageCaptureSavesCopiesAndAsksForNoDestination,
+  CaptureIntentTests.saveIsSaveAndCopyImageUnderEverySetting)
 - [ ] `action=copy`: the image is on the clipboard (Preview > New from Clipboard), and nothing else: no file in the save folder or `pending`, no card, no Recent Captures row, no upload; the shutter sound plays (with Play sound on); `Image copied` shows the pixel size with the subtitle `From <sender>`. With Show notification off, no notification. The newest card's Annotate still opens its own capture.
+  (suite: CoordinatorCaptureSaveTests.copyOnlyPutsTheImageOnTheClipboardAndNothingElse,
+  CaptureIntentTests.copyPutsTheImageOnTheClipboardOnly)
 - [ ] `action=annotate`: the after-capture action runs, then the editor opens on the new capture and its card closes. `action=pin`: the action runs, then a pin opens and the card stays.
   (suite, in part:
   CoordinatorEditorUploadTests.annotateTheNewestCardSaveThenUploadWritesTheFileThenUploadsAndCopiesTheURL,
-  CaptureIntentTests.annotateRunsTheAfterCaptureActionThenOpensTheEditor, .pinRunsTheAfterCaptureActionThenPins; by
-  hand: reaching `save(_:intent:)` (`TARGET`) and the `action=pin` half (`PINS`); the test pins the editor opening on
-  the new capture and its card closing)
+  CaptureIntentTests.annotateRunsTheAfterCaptureActionThenOpensTheEditor, .pinRunsTheAfterCaptureActionThenPins,
+  CoordinatorCaptureSaveTests.annotateRunsTheActionThenOpensTheEditorOnTheNewCapture; by hand: the `action=pin` half
+  (`PINS`))
 - [ ] `action=UPLOAD` works like `upload`. `action=print` posts `Unknown action “print”. Use upload, save, copy, annotate or pin.`
   (suite: URLCommandTests.everyActionParsesOnEveryCaptureCommand, .anUnknownOrEmptyActionIsAnError,
   .errorMessagesAreTheSpecStrings)
@@ -160,6 +183,9 @@ Silent toggle on. Coordinates are points from the display's bottom-left corner (
   (suite: URLCommandGeometryTests.aRectPartlyOffItsDisplayIsClipped, .aRectThatLeavesLessThanAPointIsOutside,
   URLCommandHandlerTests.errorsArePostedAndRunNothing)
 - [ ] A `capture-area` URL rect becomes the previous area: ⌃⇧6 captures it again. A `capture-scrolling` rect becomes it only once the stitched image is saved (see URL scheme: commands).
+  (suite, in part:
+  CoordinatorCaptureSourceTests.windowAndFullscreenCapturesLeaveThePreviousAreaAndAScrollingDragStoresIt; by hand: a
+  capture-scrolling rect becoming the previous area only once the stitched image is saved (`SCROLL`))
 - [ ] Show cursor on: the pointer is in a URL rect capture when it lies inside the rect.
 
 ## URL scheme: security
@@ -208,7 +234,13 @@ Both toggles on. Each line posts the error named and captures nothing; nothing c
 - [ ] Cold launch with the silent toggle off: quit TidyShot, `t capture-fullscreen`: TidyShot starts, then posts the refusal; nothing is captured.
   (suite: URLCommandHandlerTests.urlsWaitUntilTheAppHasStartedThenRunInOrder)
 - [ ] While a selection is open (⌃⇧4, not released), while a self-timer counts, and during a scrolling session before and after Start: `t capture-fullscreen`, `t capture-area` and `t capture-scrolling` do nothing and post nothing (the log reads `dropped, a capture is running`); the scrolling session neither starts nor finishes. `t restore-recently-closed` still restores a card.
-- [ ] `for i in 1 2 3; do t capture-window; done`: one window selection opens; the other two are dropped.
+  (suite, in part:
+  CoordinatorCaptureSourceTests.aHeldSelectionOpensOneWindowAndDropsEveryOtherURLCaptureCommandWithoutReadingOrPosting,
+  URLCommandHandlerTests.captureCommandsAreDroppedWhileCapturesAreRefused, .theLogSaysWhyACaptureCommandWasDropped; by
+  hand: while a self-timer counts (`STAGE`), and during a scrolling session before and after Start (`SCROLL`))
+- [ ] `for i in 1 2 3; do t capture-window; done`: one window selection opens; the other two are dropped. (suite:
+  CoordinatorCaptureSourceTests.aHeldSelectionOpensOneWindowAndDropsEveryOtherURLCaptureCommandWithoutReadingOrPosting,
+  URLCommandHandlerTests.captureCommandsAreDroppedWhileCapturesAreRefused)
 - [ ] Several URLs waiting for a cold launch: quit TidyShot, then `open 'tidyshot://capture-window' 'tidyshot://capture-area' 'tidyshot://restore-recently-closed'`. TidyShot starts, one window selection opens (only the first capture command runs; the log reads `a queued capture command ran first` for the second), and the restore still happens. With the silent toggle off, a refused `capture-fullscreen` ahead of a `capture-window` does not stop the window selection from opening.
   (suite: URLCommandHandlerTests.aGateRefusedCaptureDoesNotCountAsTheFirstQueuedOne,
   .onlyTheFirstQueuedCaptureCommandRuns)
