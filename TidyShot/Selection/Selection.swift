@@ -20,6 +20,15 @@ enum SelectionMode {
 
 /// Result of the selection overlay. Rects are in CoreGraphics global points.
 enum Selection {
-    case area(rect: CGRect, display: SCDisplay)
-    case window(SCWindow)
+    case area(rect: CGRect, display: CaptureDisplay)
+    case window(CaptureWindow)
+}
+
+/// The selection overlay as the capture flows use it. `SelectionController` in the app; `FakeSelector` in the suite.
+protocol CaptureSelecting: AnyObject {
+    func select(mode: SelectionMode, content: ScreenContent, freeze: CaptureOptions?, preselect: CGRect?) async -> Selection?
+    func selectAllInOne(content: ScreenContent, freeze: CaptureOptions?, preselect: CGRect?, armed: Bool) async -> AllInOneChoice?
+    func frozenCapture(for displayID: CGDirectDisplayID) -> FrozenSnapshot?
+    func overlayWindows() async -> [CaptureWindow]
+    func dismiss()
 }

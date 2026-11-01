@@ -226,7 +226,8 @@ Covered by the U1 rect step; repeat on the second display and with a window unde
 - [ ] The record shortcut during the settle delay with `Count down before recording` off records nothing and logs
   `Recording: not started, the count-in was cancelled`. (suite, the rule:
   CoordinatorRecordingTests.recordingProceedsOnlyWhenStartedNotQuittingAndNotCancelled; by hand: the log line, in
-  private record() past the capture lock (`TMPDIRS`, `CAPSRC`))
+  private `record()` past the capture lock (`TMPDIRS`, and the hand-off's `NSScreen` read, +Recording.swift:496, which
+  only `STAGE`'s screen lookup names))
 
 ## Multipart upload (Tasks 12 and 13; after G1)
 

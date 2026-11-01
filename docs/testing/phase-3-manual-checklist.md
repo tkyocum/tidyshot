@@ -87,7 +87,11 @@ history including at least one Phase 2 capture (made before this build).
   (suite: HistoryStoreTests.pruningKeepsUploadOnlyCapturesThatWereNeverUploaded,
   CoordinatorDeleteTests.pruningRemovesTheFilesAndAsksForNoDestination)
 - [ ] Forget Credentials, then capture in upload-only: one "Upload not configured" notification, the image is on the clipboard, the row is Failed and the pending file stays; re-enter credentials, Retry Failed Uploads: Uploaded.
-- [ ] "Also copy image" on: paste gives the image until the upload finishes, then the URL.
+  (suite: CoordinatorCaptureSaveTests.withNoDestinationTwoCapturesCopyTheImageAndPostOneNotice,
+  CoordinatorCaptureSaveTests.anUploadOnlyCaptureThatFailsKeepsItsPendingFileUntilARetrySucceeds,
+  CoordinatorUploadTests.retryFailedUploadsSaysOnceWithoutCredentialsAndEnqueuesWithThem)
+- [ ] "Also copy image" on: paste gives the image until the upload finishes, then the URL. (suite:
+  CoordinatorCaptureSaveTests.withAlsoCopyImageTheImageIsOnTheClipboardUntilTheUploadEndsThenTheLink)
 
 ## Key templates
 - [ ] After updating from Phase 2 with prefix `shots` and length 8 saved, Settings > Upload shows `shots/{random:8}`; after Save, `defaults read ~/Library/Containers/io.tky.tidyshot/Data/Library/Preferences/io.tky.tidyshot.plist s3DestinationConfig` contains `keyTemplate` and no `keyPrefix` or `keyLength`.

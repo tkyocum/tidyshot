@@ -76,6 +76,9 @@ a `⌃⇧4` capture of the same region made with the pointer outside it.
 - [ ] ⌃⇧5 opens the selection overlay with the crosshair, the loupe and the dimension readout of Capture Area, and hovering a window highlights it, as in Capture Window. Escape cancels the overlay and nothing else appears.
 - [ ] Drag an area about 700 by 500 pt: the overlay closes and two things appear, a dashed outline just outside the area (white line, black halo, visible over both light and dark content) and a panel. Click a window instead (no drag): the window's whole frame becomes the area.
 - [ ] Drag an area 400 pt wide and 60 pt tall: no session starts and a notification titled `Scrolling capture` says `Select an area at least 100 points tall.` The next ⌃⇧5 works. An area exactly 100 pt tall is accepted.
+  (suite, in part: CoordinatorCaptureSourceTests.aScrollingAreaUnder100PointsIsRefusedAndTheNextShortcutWorks,
+  CoordinatorCaptureSourceTests.windowAndFullscreenCapturesLeaveThePreviousAreaAndAScrollingDragStoresIt (a 100 pt drag
+  passes the check); by hand: the session starting on the accepted area (`SCROLL`), the drag in the overlay)
 - [ ] A click on a window that is partly off the screen, or taller than the screen, takes the part on its display. Nothing crashes.
 - [ ] While a session is open (panel on screen), the menu's Capture Area, Capture Window, Capture Fullscreen and Capture Scrolling items are disabled and ⌃⇧4, ⌃⇧2 and ⌃⇧3 do nothing; ⌃⇧5 acts as Start, then as Done. All of them work as before after Done or Cancel.
 
@@ -189,6 +192,8 @@ Use the three after-capture actions in turn (Settings > General), each with a Sa
 - [ ] "Save and copy image": the overlay appears with the top of the page in its 96 by 72 well. The PNG is in the save folder, named by the file name template; `sips -g pixelWidth -g pixelHeight -g dpiWidth` reports the stitched size and 144 (or 72 on a 1x display). Preview > File > New from Clipboard shows the whole tall image, and pasting into Notes works.
 - [ ] "Upload and copy URL": the overlay shows the upload; when it finishes the URL is on the clipboard. `curl -s <url> -o /tmp/tall.png && sips -g pixelWidth -g pixelHeight /tmp/tall.png` reports the same size as the file; `history.json` has that `pixelWidth` and `pixelHeight` (the full size, not the thumbnail's).
 - [ ] "Upload only, keep no local file": nothing appears in the save folder, the upload finishes, the URL is on the clipboard and the temporary file is deleted. With Wi-Fi off, the upload fails and `pending/<UUID>.png` keeps the tall PNG until Retry Failed Uploads succeeds.
+  (suite: CoordinatorCaptureSaveTests.anUploadOnlyCaptureKeepsOnlyAPendingFileUntilItsUploaded,
+  CoordinatorCaptureSaveTests.anUploadOnlyCaptureThatFailsKeepsItsPendingFileUntilARetrySucceeds)
 - [ ] With Network Link Conditioner on a slow profile, a tall capture's upload shows progress on the overlay and the overlay's Delete during the upload cancels it and removes what was written.
 - [ ] The overlay's Delete on a stitched capture, after one confirmation: the file, the history row, the thumbnail and (when uploaded) the object are gone.
   (suite: CoordinatorDeleteTests.deleteRemovesTheObjectTheFileTheThumbnailAndTheRow)
@@ -216,6 +221,7 @@ Use the three after-capture actions in turn (Settings > General), each with a Sa
   (suite: ThumbnailMakerTests.cropForThumbnailKeepsTheTopOfTallImages, .targetSizeFitsTheLongestSide)
 - [ ] A normal area, window and fullscreen capture still produce the thumbnails they did before (compare with an earlier row).
 - [ ] `history.json` has the full `pixelWidth` and `pixelHeight` for each stitched row, and the row's subtitle shows the full size.
+  (suite: CoordinatorCaptureSaveTests.aTallCaptureKeepsItsFullPixelSizeInHistory)
 
 ## Other apps and conditions
 Capture each from a start of the content to its end by hand, then by auto-scroll, and write down the result (OK, or what went wrong).

@@ -1,11 +1,27 @@
 import CoreGraphics
 import ScreenCaptureKit
 
+/// A display a capture can use: its id and frame, and the SC display it was read from (`live`, nil for one a test built).
+struct CaptureDisplay: Equatable {
+    let displayID: CGDirectDisplayID
+    let frame: CGRect
+    let live: SCDisplay?
+    init(displayID: CGDirectDisplayID, frame: CGRect) { self.displayID = displayID; self.frame = frame; live = nil }
+    init(_ display: SCDisplay) { displayID = display.displayID; frame = display.frame; live = display }
+}
+/// A window a capture can use: its window number and frame, and the ScreenCaptureKit window (`live`).
+struct CaptureWindow: Equatable {
+    let windowID: CGWindowID
+    let frame: CGRect
+    let live: SCWindow?
+    init(windowID: CGWindowID, frame: CGRect) { self.windowID = windowID; self.frame = frame; live = nil }
+    init(_ window: SCWindow) { windowID = window.windowID; frame = window.frame; live = window }
+}
 /// What to capture. Rects are in CoreGraphics global points (top-left origin).
-enum CaptureTarget {
-    case display(SCDisplay)
-    case area(rect: CGRect, display: SCDisplay)
-    case window(SCWindow)
+enum CaptureTarget: Equatable {
+    case display(CaptureDisplay)
+    case area(rect: CGRect, display: CaptureDisplay)
+    case window(CaptureWindow)
 }
 
 extension CaptureTarget {
@@ -33,11 +49,29 @@ extension CaptureTarget {
 }
 
 extension CaptureTarget {
-    /// The rect of an area capture (CoreGraphics global points), nil for a display or a window.
-    /// A pin of the newest capture opens over it.
-    var areaRect: CGRect? {
-        if case .area(let rect, _) = self { rect } else { nil }
+    /// What the save path reads of this target (`AppCoordinator.save(_:from:intent:)`).
+    var origin: CaptureOrigin {
+        switch self {
+        case .display: CaptureOrigin(kind: .display, displayID: displayID)
+        case .area(let rect, _): CaptureOrigin(kind: .area(rect), displayID: displayID)
+        case .window: CaptureOrigin(kind: .window, displayID: displayID)
+        }
     }
+}
+
+/// Where a capture came from, as the save path reads it: a display, an area or a window, and the
+/// display it came from. A value, not the ScreenCaptureKit objects, so the suite can build one
+/// (seams.md section 3, `TARGET`); `CaptureTarget.origin` makes it from a live target.
+nonisolated struct CaptureOrigin: Equatable, Sendable {
+    /// An area carries its rect, in CoreGraphics global points.
+    enum Kind: Equatable, Sendable { case display, area(CGRect), window }
+    var kind: Kind
+    /// `CaptureTarget.displayID`: the card's screen under `Show on` and the desktop picture's display.
+    var displayID: CGDirectDisplayID
+    /// The rect of an area capture, nil for a display or a window. A pin of the newest capture opens over it.
+    var areaRect: CGRect? { if case .area(let rect) = kind { rect } else { nil } }
+    /// Only a window capture goes on the Capture tab's background.
+    var isWindow: Bool { kind == .window }
 }
 
 struct CaptureOptions: Equatable {
@@ -65,10 +99,12 @@ struct CaptureResult {
 
 enum CaptureError: LocalizedError {
     case noImage
+    case notListed
 
     var errorDescription: String? {
         switch self {
         case .noImage: "ScreenCaptureKit returned no image."
+        case .notListed: "The display or window is not one ScreenCaptureKit listed."
         }
     }
 }

@@ -252,12 +252,21 @@ Keep another app (Safari) frontmost while you click the card.
 
 ## Capture Previous Area
 - [ ] With no stored area (`defaults delete io.tky.tidyshot lastAreaRect`, then quit and reopen TidyShot) ⌃⇧6 posts `Capture an area first.` titled `No previous area`, and nothing is captured.
+  (suite: CoordinatorCaptureSourceTests.capturePreviousAreaWithNoUsableStoredAreaIsRefusedAndCapturesNothing,
+  PreviousAreaTests.noRectResolvesToNone, AppSettingsTests.lastAreaRectRoundTripsThroughASecondInstanceAndClears)
 - [ ] Capture an area with ⌃⇧4, then press ⌃⇧6: no dimmed overlay appears, a second capture of the same region is saved, and both files have the same pixel size. A third press repeats it.
 - [ ] The rect survives a relaunch. A window capture and a fullscreen capture do not change it. A Capture Scrolling area (at least 100 pt tall, window or drag) replaces it; a refused scrolling area (under 100 pt) does not.
+  (suite, in part:
+  CoordinatorCaptureSourceTests.windowAndFullscreenCapturesLeaveThePreviousAreaAndAScrollingDragStoresIt,
+  CoordinatorCaptureSourceTests.aScrollingAreaUnder100PointsIsRefusedAndTheNextShortcutWorks,
+  AppSettingsTests.lastAreaRectRoundTripsThroughASecondInstanceAndClears; by hand: a scrolling session on the accepted
+  area (`SCROLL`), a window click becoming the scrolling area (the overlay's own, `SELINT`))
 - [ ] On a two-display setup: capture an area on the second display, press ⌃⇧6 (it captures there, at that display's scale), unplug the display and press ⌃⇧6: `The previous area is not on a connected display.` titled `No previous area`. Plug it in again: ⌃⇧6 works again, so the stored rect was not shrunk.
 - [ ] A stored area that lies partly beyond a display's edge after a resolution change is clipped to the display and captured.
   (suite: PreviousAreaTests.aRectPartlyOffItsDisplayIsClippedToIt, .aRectBetweenTwoDisplaysGoesToTheOneHoldingItsCentre)
 - [ ] An area that leaves less than 1 point on its display is reported as not on a connected display, not captured at zero size: with TidyShot quit, `defaults write io.tky.tidyshot lastAreaRect -data "$(printf '{"x":-0.4,"y":100,"width":1.2,"height":200}' | xxd -p | tr -d '\n')"` (a strip whose centre is on the main display's left edge, with 0.8 pt of it on the display; this needs the main display's left edge at x 0), reopen and press ⌃⇧6: `The previous area is not on a connected display.` titled `No previous area`, and no capture. Then `defaults delete io.tky.tidyshot lastAreaRect` again.
+  (suite: CoordinatorCaptureSourceTests.capturePreviousAreaWithNoUsableStoredAreaIsRefusedAndCapturesNothing,
+  PreviousAreaTests.aRectLeavingUnderOnePointOnItsDisplayIsOffScreen)
 - [ ] The menu item is disabled while a capture or a scrolling session runs, and ⌃⇧6 does nothing then. (suite, in part:
   CoordinatorCaptureTests.aCaptureWhileTheLockIsHeldReturnsAtOnceAndPostsNothing,
   ShortcutsTests.aCaptureIsRefusedWhileAnotherRunsOrAPromptIsOpen; by hand: the menu item shown disabled)

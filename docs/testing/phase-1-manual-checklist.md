@@ -36,6 +36,8 @@ Setup: fresh build, Screen Recording granted, save folder set to Desktop, defaul
 
 ## Output
 - [ ] File lands in the chosen folder with the template name; same-second captures get " 2", also after a relaunch.
+  (suite: CoordinatorCaptureSaveTests.capturesUnderOneTemplateTakeTheNextFreeNameAlsoAfterARelaunch,
+  FileNamerTests.uniqueURLAppendsCounterWhenFileExists)
 - [ ] Paste into Notes shows the image at point size, not double.
 - [ ] Notification appears; clicking it reveals the file in Finder.
 - [ ] Cancelling the folder chooser leaves the image on the clipboard and shows a "Not saved" notification.
@@ -45,4 +47,6 @@ Setup: fresh build, Screen Recording granted, save folder set to Desktop, defaul
 
 ## Settings
 - [ ] Rebinding a shortcut takes effect immediately and shows in the menu.
-- [ ] Choose… changes the folder and the next capture lands there.
+- [ ] Choose… changes the folder and the next capture lands there. (suite:
+  CoordinatorCaptureSaveTests.theNextCaptureLandsInTheNewlyStoredFolder,
+  SaveLocationStoreTests.storingAFolderMakesItCurrentThenTellsTheHook)

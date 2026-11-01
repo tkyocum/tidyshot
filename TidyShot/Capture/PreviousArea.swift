@@ -22,7 +22,7 @@ nonisolated struct StoredRect: Codable, Equatable, Sendable {
 /// Capture Previous Area (spec 2.9). Pure: which display the stored rect belongs to now, and the
 /// rect clipped to it. All rects are CoreGraphics global points.
 nonisolated enum PreviousArea {
-    /// A connected display as the decision needs it. The coordinator builds these from `SCDisplay`.
+    /// A connected display as the decision needs it. The coordinator builds these from `CaptureDisplay`.
     struct Display: Equatable, Sendable {
         let id: CGDirectDisplayID
         let frame: CGRect

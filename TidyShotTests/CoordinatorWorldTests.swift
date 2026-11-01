@@ -33,5 +33,9 @@ struct CoordinatorWorldTests {
         #expect(world.clop.runningChecks == 0)
         #expect(world.clop.requests.isEmpty)
         #expect(world.saveAsChooser.asked.isEmpty)
+        #expect(world.source.contentReads == 0)
+        #expect(world.source.captures.isEmpty)
+        #expect(world.selector.selects.isEmpty)
+        #expect(world.selector.allInOnes.isEmpty)
     }
 }

@@ -10,7 +10,8 @@ final class CaptureEngine {
 
     /// Captures `target`. `excludingWindows` removes windows (such as our own overlay) from display
     /// and area captures; it is ignored for window captures.
-    func capture(_ target: CaptureTarget, options: CaptureOptions, excludingWindows: [SCWindow] = []) async throws -> CaptureResult {
+    func capture(_ target: CaptureTarget, options: CaptureOptions, excludingWindows: [CaptureWindow] = []) async throws -> CaptureResult {
+        let excludingWindows = excludingWindows.compactMap(\.live)
         let config = SCScreenshotConfiguration()
         config.showsCursor = options.showsCursor
         config.dynamicRange = .sdr
@@ -21,16 +22,19 @@ final class CaptureEngine {
 
         switch target {
         case .display(let display):
-            filter = SCContentFilter(display: display, excludingWindows: excludingWindows)
+            guard let source = display.live else { throw CaptureError.notListed }
+            filter = SCContentFilter(display: source, excludingWindows: excludingWindows)
             scale = Self.scale(forDisplayID: display.displayID)
             pixels = Geometry.pixelSize(points: display.frame.size, scale: scale)
         case .area(let rect, let display):
-            filter = SCContentFilter(display: display, excludingWindows: excludingWindows)
+            guard let source = display.live else { throw CaptureError.notListed }
+            filter = SCContentFilter(display: source, excludingWindows: excludingWindows)
             scale = Self.scale(forDisplayID: display.displayID)
             config.sourceRect = Geometry.displayLocal(rect, in: display.frame)
             pixels = Geometry.pixelSize(points: rect.size, scale: scale)
         case .window(let window):
-            filter = SCContentFilter(desktopIndependentWindow: window)
+            guard let source = window.live else { throw CaptureError.notListed }
+            filter = SCContentFilter(desktopIndependentWindow: source)
             // Off is today's output. On, the shadow lies outside `window.frame`, so the size
             // comes from the filter (see `windowPixelSize`).
             config.ignoreShadows = !options.windowShadow
@@ -97,6 +101,24 @@ final class CaptureEngine {
         CGGetDisplaysWithPoint(CGPoint(x: cgRect.midX, y: cgRect.midY), 1, &id, &count)
         return count > 0 ? id : CGMainDisplayID()
     }
+
+    /// The display under an AppKit-global point, falling back to the first display.
+    static func display(under appKitPoint: CGPoint, in displays: [CaptureDisplay]) -> CaptureDisplay? {
+        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
+        let cgPoint = Geometry.cgPoint(fromAppKit: appKitPoint, primaryHeight: primaryHeight)
+        return displays.first { $0.frame.contains(cgPoint) } ?? displays.first
+    }
+}
+
+extension CaptureEngine: CaptureSource {
+    func screenContent() async throws -> ScreenContent { ScreenContent(try await shareableContent()) }
+    func windows(numbers: Set<CGWindowID>) async -> [CaptureWindow] {
+        await OverlayWindowLookup.windows(numbers: numbers, engine: self).map(CaptureWindow.init)
+    }
+    func displayUnderPointer(in displays: [CaptureDisplay]) -> CaptureDisplay? {
+        Self.display(under: NSEvent.mouseLocation, in: displays)
+    }
+    var isScreenRecordingGranted: Bool { ScreenCapturePermission.isGranted }
 }
 
 extension NSScreen {

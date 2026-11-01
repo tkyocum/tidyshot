@@ -6,7 +6,7 @@ extension AppCoordinator {
     func captureFullscreen(intent: CaptureIntent = .standard) async {
         await withCaptureLock(coversDesktop: true) {
             guard let content = await loadContent() else { return }
-            guard let display = Self.display(under: NSEvent.mouseLocation, in: content.displays) else { return }
+            guard let display = captureSource.displayUnderPointer(in: content.displays) else { return }
             guard let result = await capture(.display(display), excludingWindows: await cardWindows()) else { return }
             await save(result, intent: intent)
         }
@@ -99,7 +99,7 @@ extension AppCoordinator {
                 await runScrolling(rect: preselect.rect, display: display, intent: intent, preselected: true)
                 return
             }
-            guard let selection = await selector.select(mode: .scrolling, content: content) else { return }
+            guard let selection = await selector.select(mode: .scrolling, content: content, freeze: nil, preselect: nil) else { return }
             guard case .area(let rect, let display) = selection else {
                 selector.dismiss()
                 return
@@ -114,7 +114,7 @@ extension AppCoordinator {
     /// opens the panel without making it key, cancels itself when not started within
     /// `ScrollCaptureSession.readyTimeout`, and is stored as the previous area only when the
     /// stitched image is saved, so a cancelled session leaves Previous Area as it was.
-    private func runScrolling(rect: CGRect, display: SCDisplay, intent: CaptureIntent,
+    private func runScrolling(rect: CGRect, display: CaptureDisplay, intent: CaptureIntent,
                               preselected: Bool = false) async {
         guard rect.height >= CGFloat(ScrollCaptureLimits.minimumAreaHeightPoints) else {
             selector.dismiss()
@@ -125,7 +125,9 @@ extension AppCoordinator {
             settings.lastAreaRect = StoredRect(rect)
         }
         selector.dismiss()
-        let outcome = await scrollCapture.run(rect: rect, display: display, makesPanelKey: !preselected,
+        // The session films the ScreenCaptureKit display; a display a test built has none and ends here.
+        guard let liveDisplay = display.live else { return }
+        let outcome = await scrollCapture.run(rect: rect, display: liveDisplay, makesPanelKey: !preselected,
                                               readyTimeout: preselected ? ScrollCaptureSession.readyTimeout : nil)
         if let notice = outcome.failureNotice {
             notifier.notifyError(notice.body, title: notice.title)
@@ -184,7 +186,7 @@ extension AppCoordinator {
     func captureSelfTimer(intent: CaptureIntent = .standard) async {
         await withCaptureLock(coversDesktop: true) {
             guard let content = await loadContent() else { return }
-            guard let selection = await selector.select(mode: .selfTimer, content: content) else { return }
+            guard let selection = await selector.select(mode: .selfTimer, content: content, freeze: nil, preselect: nil) else { return }
             switch selection {
             case .area(let rect, let display):
                 settings.lastAreaRect = StoredRect(rect)
@@ -203,7 +205,7 @@ extension AppCoordinator {
             // taken before the overlay, so the pointer in them is the real one.
             let freeze = mode == .area && settings.freezeScreen
                 ? CaptureOptions(settings: settings, duringSelection: false) : nil
-            guard let selection = await selector.select(mode: mode, content: content, freeze: freeze) else { return }
+            guard let selection = await selector.select(mode: mode, content: content, freeze: freeze, preselect: nil) else { return }
 
             let result: CaptureResult?
             switch selection {
@@ -229,7 +231,7 @@ extension AppCoordinator {
         await withCaptureLock(coversDesktop: false) {
             guard let content = await loadContent() else { return }
             let freeze = settings.freezeScreen ? CaptureOptions(settings: settings, duringSelection: false) : nil
-            guard let selection = await selector.select(mode: .area, content: content, freeze: freeze) else { return }
+            guard let selection = await selector.select(mode: .area, content: content, freeze: freeze, preselect: nil) else { return }
             switch selection {
             case .area(let rect, let display):
                 captured = await selectedAreaResult(rect: rect, display: display)
@@ -339,14 +341,14 @@ extension AppCoordinator {
 
     /// An area chosen in the overlay, which is still up: stores it as the previous area, then cuts
     /// it from the frozen snapshot or captures it live with the overlay and the cards excluded.
-    private func areaResult(rect: CGRect, display: SCDisplay) async -> CaptureResult? {
+    private func areaResult(rect: CGRect, display: CaptureDisplay) async -> CaptureResult? {
         settings.lastAreaRect = StoredRect(rect)
         return await selectedAreaResult(rect: rect, display: display)
     }
 
     /// An area chosen in the overlay, which is still up, cut from the frozen snapshot or captured
     /// live with the overlay and the cards excluded. Stores nothing.
-    private func selectedAreaResult(rect: CGRect, display: SCDisplay) async -> CaptureResult? {
+    private func selectedAreaResult(rect: CGRect, display: CaptureDisplay) async -> CaptureResult? {
         if let frozen = frozenResult(for: rect, display: display) {
             return frozen
         }
@@ -356,7 +358,7 @@ extension AppCoordinator {
 
     /// The selection cut from the display's frozen snapshot, or nil when there is none (freeze off,
     /// or that display's snapshot failed) or the crop failed; the caller then captures live.
-    private func frozenResult(for rect: CGRect, display: SCDisplay) -> CaptureResult? {
+    private func frozenResult(for rect: CGRect, display: CaptureDisplay) -> CaptureResult? {
         guard let frozen = selector.frozenCapture(for: display.displayID) else { return nil }
         guard let image = FreezeCrop.cropped(frozen.image, selection: rect, displayFrame: display.frame,
                                              scale: frozen.scale) else {
@@ -374,11 +376,11 @@ extension AppCoordinator {
     /// Runs the engine. On failure posts a notification and returns nil. `duringSelection` is
     /// true for the live captures taken while the selection overlay is still up; the pointer is
     /// then never captured (`CaptureOptions.init(settings:duringSelection:)`).
-    func capture(_ target: CaptureTarget, excludingWindows: [SCWindow] = [],
+    func capture(_ target: CaptureTarget, excludingWindows: [CaptureWindow] = [],
                  duringSelection: Bool = false) async -> CaptureResult? {
         do {
             let options = CaptureOptions(settings: settings, duringSelection: duringSelection)
-            return try await engine.capture(target, options: options, excludingWindows: excludingWindows)
+            return try await captureSource.capture(target, options: options, excludingWindows: excludingWindows)
         } catch {
             log("Capture failed: \(error.localizedDescription)")
             notifier.notifyError(error.localizedDescription)
@@ -388,16 +390,9 @@ extension AppCoordinator {
 
     /// The Quick Access cards as ScreenCaptureKit sees them, for a capture taken without the
     /// selection overlay; no lookup when no card shows.
-    private func cardWindows() async -> [SCWindow] {
+    private func cardWindows() async -> [CaptureWindow] {
         let numbers = overlay.windowNumbers
         guard !numbers.isEmpty else { return [] }
-        return await OverlayWindowLookup.windows(numbers: numbers, engine: engine)
-    }
-
-    /// The SCDisplay under an AppKit-global point, falling back to the first display.
-    static func display(under appKitPoint: CGPoint, in displays: [SCDisplay]) -> SCDisplay? {
-        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
-        let cgPoint = Geometry.cgPoint(fromAppKit: appKitPoint, primaryHeight: primaryHeight)
-        return displays.first { $0.frame.contains(cgPoint) } ?? displays.first
+        return await captureSource.windows(numbers: numbers)
     }
 }

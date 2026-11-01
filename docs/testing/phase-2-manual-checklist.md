@@ -38,6 +38,9 @@ write to, its public URL base (for example `https://snap.tky.io/`), and an acces
 
 ## Capture and upload (⌃⇧3, ⌃⇧4, ⌃⇧2)
 - [ ] After-capture action "Upload and copy URL": capture, wait for the overlay checkmark, paste into Slack or Notes: a working `https://snap.tky.io/XXXXXX.png` link appears, nothing else.
+  (suite, in part: CoordinatorCaptureSaveTests.uploadAndCopyURLLeavesTheClipboardEmptyUntilTheLink,
+  S3DestinationConfigTests.publicURLFromTemplate, ObjectKeyNamerTests.defaultTemplateIsSixRandomCharactersPlusExtension;
+  by hand: the link in Slack (real bucket), the overlay checkmark (`SCREENS`))
 - [ ] From releasing the mouse to a pasteable link takes about two seconds on a normal connection.
 - [ ] The menu bar icon shows an up-arrow circle while uploading and returns to the viewfinder afterwards.
 - [ ] Notification "Uploaded, URL copied" appears; clicking it opens the URL in the browser.
@@ -45,11 +48,16 @@ write to, its public URL base (for example `https://snap.tky.io/`), and an acces
   (suite, in part: ImageEncoderTests.retinaScaleWrites144DPI; that the uploaded object is that PNG from a real Retina
   capture stays by hand)
 - [ ] With "Also copy image" on: immediately after capture, paste gives the image; after the upload finishes, paste gives the URL.
+  (suite: CoordinatorCaptureSaveTests.withAlsoCopyImageTheImageIsOnTheClipboardUntilTheUploadEndsThenTheLink)
 - [ ] With "Send public-read ACL" on, uploads still succeed on a bucket that allows ACLs, and the object is public.
   (suite, in part: S3DestinationTests.aclHeaderIsSentAndSignedWhenEnabled, .fileUploadSignsCacheControlAndACL; the real
   bucket accepting the ACL and the object being public stay by hand)
 - [ ] After-capture action "Save and copy image": no upload happens, paste gives the image, and the Recent Captures row shows the time and size with no upload state.
+  (suite: CoordinatorCaptureSaveTests.aSaveAndCopyImageCaptureSavesCopiesAndAsksForNoDestination)
 - [ ] Delete the "TidyShot S3 credentials" item in Keychain Access, relaunch, leave the action on "Upload and copy URL", capture twice: one "Upload not configured" notification only, and paste gives the image both times. Settings > Upload then shows empty credential fields and no red keychain error.
+  (suite, in part: CoordinatorCaptureSaveTests.withNoDestinationTwoCapturesCopyTheImageAndPostOneNotice,
+  CoordinatorUploadTests.notConfiguredIsPostedOncePerCoordinator; by hand: Settings > Upload's empty fields
+  (`UPLOADFORM`))
 - [x] Set key prefix `shots`: new objects land under `shots/` and the URL is `https://snap.tky.io/shots/XXXXXX.png`.
   (obsolete: the key prefix is gone; the template `shots/{random:6}` does this now, and a Phase 2 prefix migrates into a
   template)
@@ -75,6 +83,9 @@ write to, its public URL base (for example `https://snap.tky.io/`), and an acces
 
 ## Failures and history
 - [ ] Turn Wi-Fi off, capture: the file is saved, the overlay shows "Upload failed" with Retry, a notification appears, Recent Captures shows the item as `Failed`, nothing is on the clipboard unless "Also copy image" is on.
+  (suite, in part: CoordinatorCaptureSaveTests.aFailingUploadKeepsTheFileAndFailsTheRecord,
+  RecentCaptureFormattingTests.detailIsTheTimeTheSizeAndEachUploadState; by hand: the card drawn with Retry (`SCREENS`),
+  Wi-Fi off for real)
 - [ ] Turn Wi-Fi on, click Retry in the overlay: the upload succeeds and the URL is copied. (suite:
   CoordinatorUploadTests.aScreenshotsURLReplacesTheClipboardEvenAfterACopyElsewhere)
 - [ ] Recent Captures > Retry Failed Uploads retries every `Failed` item. (suite:

@@ -22,6 +22,10 @@ struct AppEnvironment {
     var notifier: any Notifying
     var overlay: any QuickAccessCards
     var clipboard: any Clipboard
+    /// The displays and windows, a capture, the cards as windows, the display under the pointer, the grant.
+    var captureSource: any CaptureSource
+    /// The selection overlay: an area or a window, All-in-One's choice, the freeze snapshots.
+    var selector: any CaptureSelecting
     /// A destination for a configuration, signed with credentials read now.
     var makeDestination: @Sendable (S3DestinationConfig, AWSCredentials) -> any Destination
     /// When a lane's file job goes multipart, and in what parts.
@@ -56,16 +60,18 @@ struct AppEnvironment {
 
     /// What the app runs on: the user's Application Support folder (the temporary folder when it
     /// cannot be had), the shared settings, the Keychain, the notification centre, the card stack,
-    /// the general pasteboard, S3, Clop, the alerts, the shutter sound, the editor window, the card's
-    /// Save As… panel, the wall clock, `NSLog` and `RecordingLog`. The collaborators are built in the
-    /// order the coordinator's stored properties built them; Clop's optimiser, a value that reaches
-    /// nothing until a request, is built here.
+    /// the general pasteboard, ScreenCaptureKit and the selection overlay over it, S3, Clop, the
+    /// alerts, the shutter sound, the editor window, the card's Save As… panel, the wall clock,
+    /// `NSLog` and `RecordingLog`. The collaborators are built in the order the coordinator's stored
+    /// properties built them; Clop's optimiser and the selection overlay, which store what they are
+    /// given and reach nothing until asked, are built here.
     static func live() -> AppEnvironment {
         let saveLocation = SaveLocation()
         let settings = AppSettings.shared
         let credentialStore = KeychainCredentialStore()
         let notifier = Notifier()
         let overlay = QuickAccessController(settings: settings)
+        let engine = CaptureEngine()
         let historyFileURL = (try? HistoryStore.defaultFileURL())
             ?? FileManager.default.temporaryDirectory.appending(path: HistoryStore.fileName)
         return AppEnvironment(
@@ -77,6 +83,10 @@ struct AppEnvironment {
             notifier: notifier,
             overlay: overlay,
             clipboard: SystemClipboard(),
+            captureSource: engine,
+            // Every capture leaves out the cards on screen, as the coordinator's own selector did.
+            selector: SelectionController(engine: engine, settings: settings,
+                                          cardWindowNumbers: { [overlay] in overlay.windowNumbers }),
             makeDestination: { config, credentials in S3Destination(config: config, credentials: credentials) },
             multipartPlan: .standard,
             uploadSleep: { try await Task.sleep(for: $0) },

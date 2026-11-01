@@ -231,19 +231,31 @@ With a background on, Padding 48, a visible fill.
 ## Window captures
 Settings > Capture > `Add background to window captures` on, with a style you can tell (Ocean, Padding 48, radius 12, Shadow on).
 - [ ] Capture Window (⌃⇧2) on a normal window: the saved file, the card's thumbnail, the clipboard image and the upload all show the window on the Ocean background. `sips` reads the file at the window's size plus 2 x 96 px on each axis.
+  (suite, in part: CoordinatorCaptureSaveTests.aWindowCaptureOnOceanIsComposedInTheFileTheClipboardAndTheUpload; by
+  hand: the card's thumbnail (`SCREENS`))
 - [ ] The same for All-in-One's Window button, a Self-Timer window capture and `t capture-window` (click a window).
 - [ ] `Include window shadow` on: the system shadow around the window is part of the image; the background shows round it and the window's shadow stays soft, with no hard rectangle edge. Write down how it looks next to Include window shadow off (a shadow on a shadow).
 - [ ] Not included: Capture Area (⌃⇧4), Capture Fullscreen (⌃⇧3), Capture Previous Area (⌃⇧6) and a scrolling capture have no background, with the setting on. A window picked in All-in-One by a drag (an area) has none either.
+  (suite, in part: CoordinatorCaptureSaveTests.areaAndFullscreenCapturesKeepThePlainImageWithTheBackgroundOn; by hand:
+  which origin Previous Area, a scrolling capture and an All-in-One drag build (`CAPSRC`, `SCROLL`))
 - [ ] Each fill kind on a window capture: a gradient (done), Solid Colour (pick a colour in the sheet first), Desktop Picture (the window's display) and Custom Image. Each of the four shows in the file.
 - [ ] Padding 0, 160, Corner Radius 0, 40, Shadow off, and each Aspect Ratio on a window capture: the sizes follow the arithmetic above.
-- [ ] A portrait window (narrower than tall) with 16:9: the canvas is portrait (inverted ratio).
-- [ ] The setting off: a window capture is the plain window again, at once (no relaunch).
+  (suite: CoordinatorCaptureSaveTests.aWindowCanvasFollowsTheStyle, BackgroundLayoutTests)
+- [ ] A portrait window (narrower than tall) with 16:9: the canvas is portrait (inverted ratio). (suite:
+  CoordinatorCaptureSaveTests.aWindowCanvasFollowsTheStyle, BackgroundLayoutTests.portraitContentInvertsTheRatio)
+- [ ] The setting off: a window capture is the plain window again, at once (no relaunch). (suite:
+  CoordinatorCaptureSaveTests.withTheBackgroundOffEveryCaptureIsPlainAtOnce)
 - [ ] Open the window capture in the editor (the card's Annotate): it opens as the composed image with the background baked in, and the popover's switch is off.
-  (suite, in part: CoordinatorEditorTests.aComposedWindowCaptureOpensFlatWithNoBackground; by hand: producing the window
-  capture (`TARGET`), and the popover's switch as its binding shows it (`BGPOP`) and drawn in the window (`EDPLACE`))
+  (suite, in part: CoordinatorEditorTests.aComposedWindowCaptureOpensFlatWithNoBackground,
+  CoordinatorCaptureSaveTests.aComposedWindowCaptureOpensInTheEditorComposed; by hand: the popover's switch (`BGPOP`),
+  drawn in the window (`EDPLACE`))
 - [ ] `action=copy`: `t 'capture-window?action=copy'`, click a window: the clipboard image is the window on the background, with no file, no card and no history row. `t 'capture-window?action=upload'` uploads the composed image. Paste to check.
+  (suite: CoordinatorCaptureSaveTests.copyAndUploadOfAWindowCarryTheComposedImage)
 - [ ] A window larger than the limit cannot be made, so `Background: the window is too large for a background, keeping the window capture` and `Background: no bitmap could be made, keeping the window capture` have no practical way to force. They are checked by code reading: `withWindowBackground` logs one of the two and returns the plain result, with no notification. Write down any other way you used.
+  (suite, in part: CoordinatorCaptureSaveTests.aWindowTooLargeForABackgroundIsSavedPlainWithOneLine; by hand: `no bitmap
+  could be made`, by code reading)
 - [ ] Two window captures in quick succession (the second before the first's card shows): both get the background, and the saved files do not mix.
+  (suite: CoordinatorCaptureSaveTests.twoWindowCapturesAtOnceAreEachComposedInTheirOwnFile)
 
 ## Toolbar width
 - [ ] Open the editor and drag its left or right edge in as far as it will go. The toolbar shows every item, including `Background`, with no overflow chevron (`»`) at the right. Its minimum width is 1062 pt. On a 1280 pt wide display (or after switching to that resolution) the window opens no wider than 90 % of the display and still shows every item.
@@ -252,6 +264,8 @@ Settings > Capture > `Add background to window captures` on, with a style you ca
 
 ## Regression
 - [ ] With the setting off and the editor's background off, a window capture, an area capture and an edit's Save are as before: the same sizes, no padding.
+  (suite: CoordinatorCaptureSaveTests.withTheBackgroundOffEveryCaptureIsPlainAtOnce,
+  EditorBackgroundExportTests.noBackgroundExportsTheCaptureAsBefore)
 - [ ] Phase 7b: Capture Text and Hide desktop icons still work, and a window capture with Hide desktop icons on and the background setting on has the picture, not icons, in a desktop-picture fill.
 - [ ] An old capture's editor, opened with no background ever set, looks as before (no extra layers, no change in Fit).
   (suite: CanvasFitTests.theFitFramesTheBackgroundsCanvasAndRefitsOnAnAspectChange,

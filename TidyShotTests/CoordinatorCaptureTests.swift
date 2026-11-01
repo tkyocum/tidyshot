@@ -3,8 +3,7 @@ import Testing
 @testable import TidyShot
 
 /// The capture lock on a built coordinator (`withCaptureLock`): a capture command while another capture holds
-/// it returns at once. A capture the lock let through would read the shareable content, which the suite never
-/// reaches.
+/// it returns at once and reads no content (`world.source.contentReads`, the fake capture source).
 @Suite(.timeLimit(.minutes(1)))
 struct CoordinatorCaptureTests {
     let world: CoordinatorWorld
@@ -31,7 +30,7 @@ struct CoordinatorCaptureTests {
         try await eventually { gate.isWaiting }
         let intent = CaptureIntent(action: .save)
 
-        // Gated with `eventually`: a lock that let the capture through would wait on the content read.
+        // Gated with `eventually`: a lock that let the capture through would read the fake content and ask the overlay.
         let capture = TaskWatch(Task {
             switch entry {
             case .area: await coordinator.captureArea(intent: intent)
@@ -44,6 +43,7 @@ struct CoordinatorCaptureTests {
         #expect(world.notifier.calls.isEmpty)
         #expect(world.cards.calls.isEmpty)
         #expect(world.clipboard.copies.isEmpty)
+        #expect(world.source.contentReads == 0)
         #expect(coordinator.isCapturing)
         gate.open()
         _ = await lock.value

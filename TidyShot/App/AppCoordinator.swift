@@ -29,7 +29,11 @@ final class AppCoordinator {
     let overlay: any QuickAccessCards
     /// The general pasteboard, through `Clipboard`.
     let clipboard: any Clipboard
-    @ObservationIgnored lazy var selector = SelectionController(engine: engine, settings: settings, cardWindowNumbers: { [weak self] in self?.overlay.windowNumbers ?? [] })
+    /// The selection overlay, from the environment (CT-4).
+    let selector: any CaptureSelecting
+    /// What every capture and recording start reads of the screen, from the environment (CT-4).
+    /// `engine` stays for the scrolling session and the recording driver.
+    let captureSource: any CaptureSource
     @ObservationIgnored lazy var scrollCapture = ScrollCaptureController(engine: engine, settings: settings)
     /// `tidyshot://` commands (spec 2.9): held until `start()` has run, then parsed, gated and
     /// routed to the capture functions. It holds this coordinator weakly.
@@ -273,6 +277,8 @@ final class AppCoordinator {
         overlay = environment.overlay
         clipboard = environment.clipboard
         clopOptimiser = environment.clopOptimiser
+        selector = environment.selector
+        captureSource = environment.captureSource
         let url = environment.historyFileURL
         // The shared settings in the app, read on each prune as before.
         let retentionSettings = environment.settings
@@ -516,12 +522,12 @@ final class AppCoordinator {
     /// Fetches shareable content, or shows the permission window and returns nil. With the
     /// permission granted, the failure posts under `failureTitle`: a recording's never says
     /// `Capture failed`.
-    func loadContent(failureTitle: String = "Capture failed") async -> SCShareableContent? {
+    func loadContent(failureTitle: String = "Capture failed") async -> ScreenContent? {
         do {
-            return try await engine.shareableContent()
+            return try await captureSource.screenContent()
         } catch {
             log("Shareable content failed: \(error.localizedDescription)")
-            if ScreenCapturePermission.isGranted {
+            if captureSource.isScreenRecordingGranted {
                 notifier.notifyError("Could not list screens and windows: \(error.localizedDescription)", title: failureTitle)
             } else {
                 permissionWindow.show()
