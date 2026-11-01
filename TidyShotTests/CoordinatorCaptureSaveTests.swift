@@ -778,6 +778,7 @@ struct CoordinatorCaptureSaveTests {
     @Test func copyAndUploadOfAWindowCarryTheComposedImage() async throws {
         defer { world.removeAll() }
         turnOceanBackgroundOn()
+        let folder = try world.storeSaveFolder()
         let coordinator = world.makeCoordinator()
 
         let copied = await save(coordinator, try CaptureSamples.image(width: 400, height: 300), CaptureSamples.window,
@@ -792,9 +793,8 @@ struct CoordinatorCaptureSaveTests {
         #expect(CaptureSamples.fileNames(in: coordinator.pendingFiles.directory) == [])
         #expect(world.cards.calls.isEmpty)
         #expect(world.factory.askedConfigs.isEmpty)
-
-        let folder = try world.storeSaveFolder()
         #expect(CaptureSamples.fileNames(in: folder) == [])
+
         let record = try #require(await save(coordinator, try CaptureSamples.image(width: 400, height: 300),
                                              CaptureSamples.window, CaptureIntent(urlAction: .upload, setting: .save)))
         try await eventually { isUploaded(coordinator, record.id) }
