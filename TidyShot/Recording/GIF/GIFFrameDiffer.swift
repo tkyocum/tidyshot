@@ -21,8 +21,9 @@ nonisolated struct GIFFrameChange: Equatable, Sendable {
 /// decoder shows. A shown colour is kept while it is nearly as close to the source as the nearest
 /// entry, so codec noise does not flip pixels between neighbouring entries.
 nonisolated struct GIFFrameDiffer {
-    private static let cacheSize = 1 << 16
-    private static let emptyKey = UInt32.max
+    /// A colour whose nearest entry has not been looked up yet. A palette holds at most 255
+    /// colours, so `nearest` never returns 255.
+    private static let unfilled = UInt8.max
 
     let width: Int
     let height: Int
@@ -37,9 +38,10 @@ nonisolated struct GIFFrameDiffer {
     /// The returned rectangles' storage, reused once the caller lets go of the last change.
     private var changedOnly: [UInt8] = []
     private var opaque: [UInt8] = []
-    /// A direct-mapped cache of `palette.nearest` on the 24-bit colour; it never changes a result.
-    private var cacheKeys: [UInt32]
-    private var cacheValues: [UInt8]
+    /// `palette.nearest` for every 24-bit colour, filled as colours are met; it never changes a
+    /// result. One byte per colour is 16 MB, less than one 4K BGRA frame, and the lookup is one load
+    /// per pixel with no hash and no collision, so the 255-entry scan runs once per distinct colour.
+    private var cache: [UInt8]
 
     init(width: Int, height: Int, palette: GIFPalette, hysteresis: Int = 4) {
         precondition(width > 0 && height > 0)
@@ -49,8 +51,7 @@ nonisolated struct GIFFrameDiffer {
         self.hysteresis = hysteresis
         shown = [UInt8](repeating: palette.transparentIndex, count: width * height)
         changes = [UInt8](repeating: palette.transparentIndex, count: width * height)
-        cacheKeys = [UInt32](repeating: Self.emptyKey, count: Self.cacheSize)
-        cacheValues = [UInt8](repeating: 0, count: Self.cacheSize)
+        cache = [UInt8](repeating: Self.unfilled, count: 1 << 24)
     }
 
     /// The change from `shown` to `rgba` (4 bytes a pixel, the fourth ignored), applied to `shown`,
@@ -64,8 +65,7 @@ nonisolated struct GIFFrameDiffer {
 
         shown.withUnsafeMutableBufferPointer { shown in
         changes.withUnsafeMutableBufferPointer { changes in
-        cacheKeys.withUnsafeMutableBufferPointer { keys in
-        cacheValues.withUnsafeMutableBufferPointer { values in
+        cache.withUnsafeMutableBufferPointer { cache in
         palette.colours.withUnsafeBufferPointer { entries in
             for y in 0..<height {
                 var rowMin = width, rowMax = -1
@@ -73,15 +73,11 @@ nonisolated struct GIFFrameDiffer {
                 for x in 0..<width {
                     let pixel = rowStart &+ x
                     let r = rgba[pixel &* 4], g = rgba[pixel &* 4 &+ 1], b = rgba[pixel &* 4 &+ 2]
-                    let key = UInt32(r) << 16 | UInt32(g) << 8 | UInt32(b)
-                    let slot = Int((key &* 2_654_435_761) >> 16)
-                    let nearest: UInt8
-                    if keys[slot] == key {
-                        nearest = values[slot]
-                    } else {
+                    let key = Int(r) << 16 | Int(g) << 8 | Int(b)
+                    var nearest = cache[key]
+                    if nearest == Self.unfilled {
                         nearest = palette.nearest(GIFColour(r: r, g: g, b: b))
-                        keys[slot] = key
-                        values[slot] = nearest
+                        cache[key] = nearest
                     }
                     let current = shown[pixel]
                     var changed = nearest != current
@@ -108,7 +104,6 @@ nonisolated struct GIFFrameDiffer {
                     if rowMax > maxX { maxX = rowMax }
                 }
             }
-        }
         }
         }
         }
