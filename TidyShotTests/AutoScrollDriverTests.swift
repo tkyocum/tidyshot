@@ -287,6 +287,43 @@ struct AutoScrollDriverTests {
         }
     }
 
+    /// Done after a post moved the page but before the frame settled: the newest frame read is
+    /// still stitched, so the image ends where the screen did, not a step short.
+    @Test func doneKeepsTheNewestFrameReadBeforeItSettled() async throws {
+        let clock = FakeScrollClock()
+        let world = makeWorld(clock: clock)
+        let session = makeSession(world)
+        try await start(session, world)
+        try await clock.run(until: { world.posted.count >= 1 })
+        // The frame the post showed is read, and the driver is still in its burst.
+        try await eventually { session.frameSerial == 2 }
+        #expect(world.offset == 100)
+        await session.done()
+        let comparison = world.page.compare(try image(of: session), reached: world.offset)
+        #expect(comparison.actualHeight == comparison.expectedHeight)
+        #expect(comparison.mismatched == 0)
+    }
+
+    /// The same for a stream that stops by itself: the partial image keeps the newest frame read.
+    @Test func aStreamStopKeepsTheNewestFrameReadBeforeItSettled() async throws {
+        let clock = FakeScrollClock()
+        let world = makeWorld(clock: clock)
+        let session = makeSession(world)
+        try await start(session, world)
+        try await clock.run(until: { world.posted.count >= 1 })
+        try await eventually { session.frameSerial == 2 }
+        #expect(world.offset == 100)
+        world.source.stopByItself(nil)
+        try await eventually { session.phase == .ended }
+        guard case .failed(_, let partial?)? = session.outcome else {
+            Issue.record("no partial image")
+            return
+        }
+        let comparison = world.page.compare(try stitchedPixels(of: partial), reached: world.offset)
+        #expect(comparison.actualHeight == comparison.expectedHeight)
+        #expect(comparison.mismatched == 0)
+    }
+
     @Test func cancelStopsPostingAndDiscards() async throws {
         let clock = FakeScrollClock()
         let world = makeWorld(clock: clock)
