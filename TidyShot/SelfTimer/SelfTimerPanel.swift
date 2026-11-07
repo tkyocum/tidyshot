@@ -31,29 +31,16 @@ struct SelfTimerBadge: View {
 /// Borderless, non-activating and click-through, so the app the user is working in keeps the
 /// focus, its menus and its keys during the countdown. Nothing excludes it from the capture: the
 /// stage orders it and the dashed frame out, and waits for the screen to settle, before capturing.
-final class SelfTimerPanel: NSPanel {
+final class SelfTimerPanel: OverlayPanel {
     init(model: SelfTimerModel, frame: CGRect) {
-        super.init(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel],
-                   backing: .buffered, defer: false)
-        // isFloatingPanel resets the level to .floating, so it must come first.
-        isFloatingPanel = true
-        level = .screenSaver
-        hidesOnDeactivate = false
-        ignoresMouseEvents = true
-        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
-        isOpaque = false
-        backgroundColor = .clear
-        hasShadow = false
-        animationBehavior = .none
-        isReleasedWhenClosed = false
+        super.init(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], level: .screenSaver,
+                   collectionBehavior: [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary], hasShadow: false,
+                   ignoresMouseEvents: true)
         let host = NSHostingView(rootView: SelfTimerBadge(model: model))
         // The panel's frame sizes the view, not the reverse.
         host.sizingOptions = []
         contentView = host
     }
-
-    override var canBecomeKey: Bool { false }
-    override var canBecomeMain: Bool { false }
 }
 
 /// The real stage: the badge and the dashed frame the scrolling capture uses, and the shared

@@ -4,21 +4,16 @@ import AppKit
 /// above the widgets and below every normal window, on every Space. It never becomes key or main
 /// and never activates TidyShot; clicks land on it and do nothing, so hidden icons cannot be
 /// opened or dragged.
-final class DesktopCoverPanel: NSPanel {
+final class DesktopCoverPanel: OverlayPanel {
     /// Above Finder's icons (`desktopIconWindow`), the `underbelly` window (+1) and the widgets (+2).
     static let level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.desktopIconWindow)) + 3)
 
     private let coverView = CoverView()
 
     init(frame: CGRect) {
-        super.init(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        level = Self.level
-        collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
-        isOpaque = true
-        hasShadow = false
-        hidesOnDeactivate = false
-        animationBehavior = .none
-        isReleasedWhenClosed = false
+        // Not floating: that would lift it to `.floating`, above every normal window.
+        super.init(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], floating: false, level: Self.level,
+                   collectionBehavior: [.canJoinAllSpaces, .stationary, .ignoresCycle], hasShadow: false, isOpaque: true)
         contentView = coverView
     }
 
@@ -26,9 +21,6 @@ final class DesktopCoverPanel: NSPanel {
     func setWallpaper(_ wallpaper: CGImage) {
         coverView.layer?.contents = wallpaper
     }
-
-    override var canBecomeKey: Bool { false }
-    override var canBecomeMain: Bool { false }
 }
 
 /// Shows the wallpaper and swallows every click, so nothing reaches the desktop behind it.

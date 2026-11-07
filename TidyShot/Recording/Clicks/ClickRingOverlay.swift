@@ -4,7 +4,7 @@ import QuartzCore
 /// The click rings' window (design, Click highlights, The overlay): one borderless, click-through
 /// panel over the recorded display, above menus, the menu bar and the bubble. The recording films
 /// it as an excepted window, so it stays on screen and empty while highlights are off.
-final class ClickRingOverlay: NSPanel, ClickRingDrawing {
+final class ClickRingOverlay: OverlayPanel, ClickRingDrawing {
     static let growKey = "grow"
     static let fadeKey = "fade"
     static let diameter: CGFloat = 40
@@ -15,19 +15,9 @@ final class ClickRingOverlay: NSPanel, ClickRingDrawing {
     private var held: [ClickButton: (layer: CALayer, down: CFTimeInterval)] = [:]
 
     init(screenFrame: CGRect) {
-        super.init(contentRect: screenFrame, styleMask: [.borderless, .nonactivatingPanel],
-                   backing: .buffered, defer: false)
-        // isFloatingPanel resets the level to .floating, so it must come first.
-        isFloatingPanel = true
-        level = .screenSaver
-        ignoresMouseEvents = true
-        isOpaque = false
-        backgroundColor = .clear
-        hasShadow = false
-        hidesOnDeactivate = false
-        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
-        animationBehavior = .none
-        isReleasedWhenClosed = false
+        super.init(contentRect: screenFrame, styleMask: [.borderless, .nonactivatingPanel], level: .screenSaver,
+                   collectionBehavior: [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle], hasShadow: false,
+                   ignoresMouseEvents: true)
 
         let view = NSView(frame: CGRect(origin: .zero, size: screenFrame.size))
         view.wantsLayer = true
@@ -36,9 +26,6 @@ final class ClickRingOverlay: NSPanel, ClickRingDrawing {
         view.layer?.addSublayer(ringContainer)
         contentView = view
     }
-
-    override var canBecomeKey: Bool { false }
-    override var canBecomeMain: Bool { false }
 
     /// Moves the overlay to the recorded display's frame, AppKit global points.
     func setScreenFrame(_ frame: CGRect) {

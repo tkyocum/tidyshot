@@ -5,7 +5,7 @@ import QuartzCore
 /// the recorded rect that the recording films as an excepted window. It shows the camera's preview
 /// cropped to a circle, drags inside the recorded rect and steps its size on a double-click. While
 /// the bubble is off it stays on screen, draws nothing and lets clicks through.
-final class WebcamBubblePanel: NSPanel {
+final class WebcamBubblePanel: OverlayPanel {
     /// The circle before the first frame and behind the loss symbol.
     static let grey = CGColor(gray: 0.15, alpha: 1)
     static let lossSymbolName = "video.slash"
@@ -39,19 +39,9 @@ final class WebcamBubblePanel: NSPanel {
         self.preview = preview
         self.size = size
         self.recorded = recorded
-        super.init(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel],
-                   backing: .buffered, defer: false)
-        // isFloatingPanel resets the level to .floating, so it comes first.
-        isFloatingPanel = true
-        level = .floating
-        isOpaque = false
-        backgroundColor = .clear
-        // A window shadow would be filmed as a dark halo.
-        hasShadow = false
-        hidesOnDeactivate = false
-        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
-        animationBehavior = .none
-        isReleasedWhenClosed = false
+        // No shadow: it would be filmed as a dark halo.
+        super.init(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], level: .floating,
+                   collectionBehavior: [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle], hasShadow: false)
 
         let view = BubbleView(frame: CGRect(origin: .zero, size: frame.size))
         view.wantsLayer = true
@@ -75,9 +65,6 @@ final class WebcamBubblePanel: NSPanel {
         layoutLayers()
         updateScale()
     }
-
-    override var canBecomeKey: Bool { false }
-    override var canBecomeMain: Bool { false }
 
     // MARK: Mouse
 

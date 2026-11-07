@@ -4,22 +4,14 @@ import AppKit
 /// non-activating and at `.popUpMenu`, the menus' own level, so ordering it front puts it above
 /// the open menu without taking the menu's tracking or activating the app. It ignores the mouse,
 /// so it never takes a hover or a click meant for the menu.
-final class PreviewPanel: NSPanel {
+final class PreviewPanel: OverlayPanel {
     private let imageView = NSImageView()
 
     init() {
-        super.init(contentRect: CGRect(x: 0, y: 0, width: 200, height: 150),
-                   styleMask: [.nonactivatingPanel, .borderless], backing: .buffered, defer: true)
-        // Not a floating panel: `isFloatingPanel = true` would put the level back to `.floating`,
-        // below the menu.
-        level = .popUpMenu
-        hidesOnDeactivate = false
-        ignoresMouseEvents = true
-        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
-        isOpaque = false
-        backgroundColor = .clear
-        hasShadow = true
-        animationBehavior = .none
+        // Not floating: that would put the level back to `.floating`, below the menu.
+        super.init(contentRect: CGRect(x: 0, y: 0, width: 200, height: 150), styleMask: [.nonactivatingPanel, .borderless],
+                   floating: false, level: .popUpMenu, collectionBehavior: [.canJoinAllSpaces, .fullScreenAuxiliary, .transient],
+                   hasShadow: true, ignoresMouseEvents: true, defer: true)
 
         let background = NSVisualEffectView()
         background.material = .menu
@@ -38,9 +30,6 @@ final class PreviewPanel: NSPanel {
         ])
         contentView = background
     }
-
-    override var canBecomeKey: Bool { false }
-    override var canBecomeMain: Bool { false }
 
     /// Shows `image` in `frame` (screen coordinates, from `PreviewPlacement`).
     func show(_ image: NSImage, frame: CGRect) {
