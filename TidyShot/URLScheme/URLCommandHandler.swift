@@ -20,12 +20,12 @@ protocol URLCommandTarget: AnyObject {
     var captureRefusal: CaptureRefusal? { get }
     func captureArea(intent: CaptureIntent) async
     func captureArea(at area: ScreenRect, intent: CaptureIntent) async
-    func captureWindow(intent: CaptureIntent) async
+    func captureWindow(intent: CaptureIntent, fromURLCommand: Bool) async
     func captureFullscreen(intent: CaptureIntent) async
     func capturePreviousArea(intent: CaptureIntent) async
     func captureAllInOne(intent: CaptureIntent, preselect: ScreenRect?, fromURLCommand: Bool) async
-    func captureSelfTimer(intent: CaptureIntent) async
-    func captureScrolling(intent: CaptureIntent, preselect: ScreenRect?) async
+    func captureSelfTimer(intent: CaptureIntent, fromURLCommand: Bool) async
+    func captureScrolling(intent: CaptureIntent, preselect: ScreenRect?, fromURLCommand: Bool) async
     func restoreClosedOverlay() async
     func captureText() async
     func captureText(at area: ScreenRect) async
@@ -184,12 +184,12 @@ final class URLCommandHandler {
             } else {
                 await target.captureArea(intent: intent)
             }
-        case .captureWindow: await target.captureWindow(intent: intent)
+        case .captureWindow: await target.captureWindow(intent: intent, fromURLCommand: true)
         case .captureFullscreen: await target.captureFullscreen(intent: intent)
         case .capturePreviousArea: await target.capturePreviousArea(intent: intent)
         case .allInOne: await target.captureAllInOne(intent: intent, preselect: placement, fromURLCommand: true)
-        case .selfTimer: await target.captureSelfTimer(intent: intent)
-        case .captureScrolling: await target.captureScrolling(intent: intent, preselect: placement)
+        case .selfTimer: await target.captureSelfTimer(intent: intent, fromURLCommand: true)
+        case .captureScrolling: await target.captureScrolling(intent: intent, preselect: placement, fromURLCommand: true)
         case .captureText:
             if let placement {
                 await target.captureText(at: placement)

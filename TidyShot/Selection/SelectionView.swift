@@ -59,8 +59,11 @@ final class SelectionView: NSView {
     /// Return, keypad Enter and a double-click capture only while this is true. A URL command's
     /// rect (spec 2.9) opens disarmed, so a key typed in another app as the overlay appears, or
     /// the second click of a double-click elsewhere, does not capture the sender's rect; a press
-    /// in the view or a toolbar size, lock or action arms it. Arrows and Escape work disarmed.
-    private(set) var keyCaptureArmed = true
+    /// in the view or a toolbar size, lock or action arms it, and a toolbar action pressed
+    /// disarmed does nothing else. Arrows and Escape work disarmed. In the other modes (a URL
+    /// command's window, self-timer or scrolling overlay) the controller sets it false and the
+    /// first press only arms: no window pick and no drag.
+    var keyCaptureArmed = true
     /// The toolbar's lock, from `settings.allInOneAspectLock` when the overlay opens.
     var isAspectLocked = false
     /// Width over height kept while locked. Set when the lock goes on and when a new rect is set while locked.
@@ -142,6 +145,12 @@ final class SelectionView: NSView {
             allInOneMouseDown(event)
             return
         }
+        // Disarmed, the press only arms: it may be the second click of a double-click begun
+        // before the overlay appeared, on whatever window lies under it.
+        guard keyCaptureArmed else {
+            keyCaptureArmed = true
+            return
+        }
         let point = convert(event.locationInWindow, from: nil)
         dragStart = point
         dragRect = nil
@@ -171,6 +180,8 @@ final class SelectionView: NSView {
             allInOneMouseUp(event)
             return
         }
+        // The press only armed (or started before the overlay): nothing to resolve.
+        guard dragStart != nil else { return }
         defer {
             dragStart = nil
             dragRect = nil
@@ -550,9 +561,12 @@ extension SelectionView {
         let toolbar = AllInOneToolbar(timerSeconds: timerSeconds)
         toolbar.onAction = { [weak self] action in
             guard let self else { return }
+            // Disarmed, a button only arms: the sender's rect placed the toolbar, so the second
+            // click of a double-click could land on Fullscreen. Cancel still cancels, as Escape does.
+            let wasArmed = keyCaptureArmed
             keyCaptureArmed = true
             window?.makeFirstResponder(self)
-            if action == .cancel { onCancel?() } else { fireAllInOne(action) }
+            if action == .cancel { onCancel?() } else if wasArmed { fireAllInOne(action) }
         }
         toolbar.onSize = { [weak self] width, height in
             guard let self, let adjustRect else { return }

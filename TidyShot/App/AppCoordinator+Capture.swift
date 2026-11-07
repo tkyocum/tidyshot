@@ -16,8 +16,10 @@ extension AppCoordinator {
         await runSelection(mode: .area, intent: intent)
     }
 
-    func captureWindow(intent: CaptureIntent = .standard) async {
-        await runSelection(mode: .window, intent: intent)
+    /// A URL command's overlay opens disarmed (spec 2.9): one click picks a window, so the
+    /// second click of a double-click must not pick it for the sender.
+    func captureWindow(intent: CaptureIntent = .standard, fromURLCommand: Bool = false) async {
+        await runSelection(mode: .window, intent: intent, armed: !fromURLCommand)
     }
 
     /// All-in-One (spec 2.9): one adjustable selection whose toolbar picks the capture. Opens on
@@ -76,8 +78,10 @@ extension AppCoordinator {
     /// the stitched image like any capture. During a session the shortcut is Start, then Done. A URL
     /// command's rect (`preselect`) skips the selection: the session opens on it and waits for a
     /// click on Start. A URL command never reaches this during a session: the handler drops it
-    /// while a capture runs.
-    func captureScrolling(intent: CaptureIntent = .standard, preselect: ScreenRect? = nil) async {
+    /// while a capture runs. Without a rect, a URL command's overlay opens disarmed, as Capture
+    /// Window's does.
+    func captureScrolling(intent: CaptureIntent = .standard, preselect: ScreenRect? = nil,
+                          fromURLCommand: Bool = false) async {
         // During a session the shortcut is Start, then Done (the lock is held meanwhile).
         if scrollCapture.isRunning {
             scrollCapture.advance()
@@ -99,7 +103,8 @@ extension AppCoordinator {
                 await runScrolling(rect: preselect.rect, display: display, intent: intent, preselected: true)
                 return
             }
-            guard let selection = await selector.select(mode: .scrolling, content: content, freeze: nil, preselect: nil) else { return }
+            guard let selection = await selector.select(mode: .scrolling, content: content, freeze: nil, preselect: nil,
+                                                        armed: !fromURLCommand) else { return }
             guard case .area(let rect, let display) = selection else {
                 selector.dismiss()
                 return
@@ -182,11 +187,13 @@ extension AppCoordinator {
     }
 
     /// Self-Timer: select an area or click a window, then count down and capture it live. The
-    /// lock is held for the selection, the countdown and the capture.
-    func captureSelfTimer(intent: CaptureIntent = .standard) async {
+    /// lock is held for the selection, the countdown and the capture. A URL command's overlay
+    /// opens disarmed, as Capture Window's does.
+    func captureSelfTimer(intent: CaptureIntent = .standard, fromURLCommand: Bool = false) async {
         await withCaptureLock(coversDesktop: true) {
             guard let content = await loadContent() else { return }
-            guard let selection = await selector.select(mode: .selfTimer, content: content, freeze: nil, preselect: nil) else { return }
+            guard let selection = await selector.select(mode: .selfTimer, content: content, freeze: nil, preselect: nil,
+                                                        armed: !fromURLCommand) else { return }
             switch selection {
             case .area(let rect, let display):
                 settings.lastAreaRect = StoredRect(rect)
@@ -198,14 +205,15 @@ extension AppCoordinator {
     }
 
     /// Show the overlay, capture with the overlay excluded (or cut the frozen snapshot), dismiss, then save.
-    private func runSelection(mode: SelectionMode, intent: CaptureIntent) async {
+    private func runSelection(mode: SelectionMode, intent: CaptureIntent, armed: Bool = true) async {
         await withCaptureLock(coversDesktop: true) {
             guard let content = await loadContent() else { return }
             // Freeze applies to area mode only. The snapshots follow the cursor setting: they are
             // taken before the overlay, so the pointer in them is the real one.
             let freeze = mode == .area && settings.freezeScreen
                 ? CaptureOptions(settings: settings, duringSelection: false) : nil
-            guard let selection = await selector.select(mode: mode, content: content, freeze: freeze, preselect: nil) else { return }
+            guard let selection = await selector.select(mode: mode, content: content, freeze: freeze, preselect: nil,
+                                                        armed: armed) else { return }
 
             let result: CaptureResult?
             switch selection {
@@ -231,7 +239,8 @@ extension AppCoordinator {
         await withCaptureLock(coversDesktop: false) {
             guard let content = await loadContent() else { return }
             let freeze = settings.freezeScreen ? CaptureOptions(settings: settings, duringSelection: false) : nil
-            guard let selection = await selector.select(mode: .area, content: content, freeze: freeze, preselect: nil) else { return }
+            guard let selection = await selector.select(mode: .area, content: content, freeze: freeze, preselect: nil,
+                                                        armed: true) else { return }
             switch selection {
             case .area(let rect, let display):
                 captured = await selectedAreaResult(rect: rect, display: display)

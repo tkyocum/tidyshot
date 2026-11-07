@@ -32,12 +32,14 @@ final class SelectionController {
     }
 
     /// `preselect` (CoreGraphics global points) is used only in `.recording` mode: a URL command's
-    /// rect, shown as the preset that a click inside records.
+    /// rect, shown as the preset that a click inside records. With `armed` false (a URL command,
+    /// spec 2.9) the first press only arms, so the second click of a double-click begun elsewhere
+    /// neither picks a window nor starts a drag.
     func select(mode: SelectionMode, content: ScreenContent, freeze: CaptureOptions? = nil,
-                preselect: CGRect? = nil) async -> Selection? {
+                preselect: CGRect? = nil, armed: Bool = true) async -> Selection? {
         // All-in-One resolves through `selectAllInOne`.
         guard isIdle, mode != .allInOne, !NSScreen.screens.isEmpty, let live = content.live else { return nil }
-        await present(mode: mode, content: live, freeze: freeze, preselect: preselect, armed: true)
+        await present(mode: mode, content: live, freeze: freeze, preselect: preselect, armed: armed)
         return await withCheckedContinuation { continuation = $0 }
     }
 
@@ -74,6 +76,7 @@ final class SelectionController {
             let window = SelectionWindow(screen: screen)
             let view = SelectionView(frame: CGRect(origin: .zero, size: screen.frame.size))
             view.mode = mode
+            view.keyCaptureArmed = armed
             if let frozen = frozenSnapshots[window.displayID] {
                 view.snapshotScale = frozen.scale
                 view.snapshot = frozen.image

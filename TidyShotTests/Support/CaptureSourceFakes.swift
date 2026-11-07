@@ -32,7 +32,7 @@ final class FakeCaptureSource: CaptureSource {
 /// `answer(_:)`; a held overlay whose task is cancelled answers Escape, and a second while one is held records an issue.
 /// No freeze snapshot and no overlay window exist.
 final class FakeSelector: CaptureSelecting {
-    struct Select: Equatable { let mode: SelectionMode; let freeze: CaptureOptions?; let preselect: CGRect? }
+    struct Select: Equatable { let mode: SelectionMode; let freeze: CaptureOptions?; let preselect: CGRect?; var armed = true }
     struct AllInOne: Equatable { let freeze: CaptureOptions?; let preselect: CGRect?; let armed: Bool }
     private(set) var selects: [Select] = [], allInOnes: [AllInOne] = [], frozenAsked: [CGDirectDisplayID] = []
     private(set) var overlayLookups = 0, dismissCount = 0
@@ -40,8 +40,9 @@ final class FakeSelector: CaptureSelecting {
     private var heldSelection: Selection?
     private let held = SingleWaiter(cancelled: false, secondEntry: "FakeSelector was asked again while an overlay was held")
     var isWaiting: Bool { held.isWaiting }
-    func select(mode: SelectionMode, content: ScreenContent, freeze: CaptureOptions?, preselect: CGRect?) async -> Selection? {
-        selects.append(Select(mode: mode, freeze: freeze, preselect: preselect))
+    func select(mode: SelectionMode, content: ScreenContent, freeze: CaptureOptions?, preselect: CGRect?,
+                armed: Bool) async -> Selection? {
+        selects.append(Select(mode: mode, freeze: freeze, preselect: preselect, armed: armed))
         guard holds else { return selections.isEmpty ? nil : selections.removeFirst() }
         guard await held.wait() else { return nil }
         defer { heldSelection = nil }; return heldSelection

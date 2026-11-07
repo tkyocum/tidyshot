@@ -213,7 +213,7 @@ extension AppCoordinator {
             guard let inputs = recordingCanStart(microphone: ask.microphone) else { return }
             guard let content = await loadContent(failureTitle: RecordingEnd.failedTitle) else { return }
             guard let selection = await selector.select(mode: .recording, content: content, freeze: nil,
-                                                        preselect: preselect) else { return }
+                                                        preselect: preselect, armed: true) else { return }
             let target: CaptureTarget
             switch selection {
             case .area(let rect, let display):

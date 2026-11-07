@@ -8,13 +8,14 @@ final class URLTargetRecorder: URLCommandTarget {
     enum Call: Equatable {
         case area(CaptureIntent)
         case areaAt(ScreenRect, CaptureIntent)
-        case window(CaptureIntent)
+        /// The handler always passes `fromURLCommand: true` here and below, which the default lets the
+        /// expectations check.
+        case window(CaptureIntent, fromURLCommand: Bool = true)
         case fullscreen(CaptureIntent)
         case previousArea(CaptureIntent)
-        /// The handler always passes `fromURLCommand: true`, which the default lets the expectations check.
         case allInOne(CaptureIntent, ScreenRect?, fromURLCommand: Bool = true)
-        case selfTimer(CaptureIntent)
-        case scrolling(CaptureIntent, ScreenRect?)
+        case selfTimer(CaptureIntent, fromURLCommand: Bool = true)
+        case scrolling(CaptureIntent, ScreenRect?, fromURLCommand: Bool = true)
         case restore
         case text
         case textAt(ScreenRect)
@@ -29,14 +30,20 @@ final class URLTargetRecorder: URLCommandTarget {
 
     func captureArea(intent: CaptureIntent) async { calls.append(.area(intent)) }
     func captureArea(at area: ScreenRect, intent: CaptureIntent) async { calls.append(.areaAt(area, intent)) }
-    func captureWindow(intent: CaptureIntent) async { calls.append(.window(intent)) }
+    func captureWindow(intent: CaptureIntent, fromURLCommand: Bool) async {
+        calls.append(.window(intent, fromURLCommand: fromURLCommand))
+    }
     func captureFullscreen(intent: CaptureIntent) async { calls.append(.fullscreen(intent)) }
     func capturePreviousArea(intent: CaptureIntent) async { calls.append(.previousArea(intent)) }
     func captureAllInOne(intent: CaptureIntent, preselect: ScreenRect?, fromURLCommand: Bool) async {
         calls.append(.allInOne(intent, preselect, fromURLCommand: fromURLCommand))
     }
-    func captureSelfTimer(intent: CaptureIntent) async { calls.append(.selfTimer(intent)) }
-    func captureScrolling(intent: CaptureIntent, preselect: ScreenRect?) async { calls.append(.scrolling(intent, preselect)) }
+    func captureSelfTimer(intent: CaptureIntent, fromURLCommand: Bool) async {
+        calls.append(.selfTimer(intent, fromURLCommand: fromURLCommand))
+    }
+    func captureScrolling(intent: CaptureIntent, preselect: ScreenRect?, fromURLCommand: Bool) async {
+        calls.append(.scrolling(intent, preselect, fromURLCommand: fromURLCommand))
+    }
     func restoreClosedOverlay() async { calls.append(.restore) }
     func captureText() async { calls.append(.text) }
     func captureText(at area: ScreenRect) async { calls.append(.textAt(area)) }
@@ -117,6 +124,20 @@ struct URLCommandHandlerTests {
                                  .text, .textAt(small), .desktopIconsHidden(true), .desktopIconsHidden(false),
                                  .toggleDesktopIcons])
         #expect(log.notices.isEmpty)
+    }
+
+    /// Spec 2.9: capture-window, self-timer and capture-scrolling tell the app they came from a URL, so their
+    /// overlay opens disarmed and the second click of a double-click picks nothing for the sender.
+    @Test func windowSelfTimerAndScrollingCommandsAreMarkedFromAURLCommand() async throws {
+        let handler = await makeHandler()
+        for string in ["capture-window", "self-timer", "capture-scrolling",
+                       "capture-scrolling?x=0&y=0&width=400&height=600"] {
+            try await send(handler, "tidyshot://\(string)")
+        }
+        let tall = ScreenRect(rect: CGRect(x: 0, y: 480, width: 400, height: 600), displayID: 1)
+        #expect(target.calls == [.window(standard, fromURLCommand: true), .selfTimer(standard, fromURLCommand: true),
+                                 .scrolling(standard, nil, fromURLCommand: true),
+                                 .scrolling(standard, tall, fromURLCommand: true)])
     }
 
     @Test func theActionTravelsAsTheIntent() async throws {

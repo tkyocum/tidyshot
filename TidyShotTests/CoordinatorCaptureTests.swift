@@ -49,4 +49,23 @@ struct CoordinatorCaptureTests {
         _ = await lock.value
         #expect(!coordinator.isCapturing)
     }
+
+    /// Spec 2.9. Capture Window, Self-Timer and Capture Scrolling open their overlay armed from the shortcut and the
+    /// menu, and disarmed from a URL command, so the first press there only arms. Each overlay here is Escaped.
+    @Test func urlWindowSelfTimerAndScrollingOverlaysOpenDisarmed() async {
+        defer { world.removeAll() }
+        let coordinator = world.makeCoordinator()
+        let intent = CaptureIntent(action: .save)
+
+        await coordinator.captureWindow(intent: intent)
+        await coordinator.captureWindow(intent: intent, fromURLCommand: true)
+        await coordinator.captureSelfTimer(intent: intent)
+        await coordinator.captureSelfTimer(intent: intent, fromURLCommand: true)
+        await coordinator.captureScrolling(intent: intent)
+        await coordinator.captureScrolling(intent: intent, fromURLCommand: true)
+
+        #expect(world.selector.selects.map(\.mode) == [.window, .window, .selfTimer, .selfTimer, .scrolling, .scrolling])
+        #expect(world.selector.selects.map(\.armed) == [true, false, true, false, true, false])
+        #expect(world.source.captures.isEmpty)
+    }
 }

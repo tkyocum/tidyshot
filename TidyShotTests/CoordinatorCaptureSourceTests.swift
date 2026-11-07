@@ -133,7 +133,7 @@ struct CoordinatorCaptureSourceTests {
         }
         try await eventually { watches.allSatisfy(\.hasReturned) }
 
-        #expect(world.selector.selects == [FakeSelector.Select(mode: .window, freeze: nil, preselect: nil)])
+        #expect(world.selector.selects == [FakeSelector.Select(mode: .window, freeze: nil, preselect: nil, armed: false)])
         #expect(world.selector.allInOnes.isEmpty)
         #expect(world.source.contentReads == 1)
         #expect(world.source.captures.isEmpty)
