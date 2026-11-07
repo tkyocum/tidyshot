@@ -84,7 +84,7 @@ A fresh **Release** build (`xcodebuild -project TidyShot.xcodeproj -scheme TidyS
 (it is signed ad hoc, so every rebuild needs a new grant; see `Config/Local.xcconfig`), "Show
 notification" and "Play sound" on in Settings > General, Allow URL commands on, an upload destination
 that works, and Clop (direct or Setapp) installed and running. Steps marked **(Debug)** need the Debug
-build, because `-MuteFailure` and `-RecordingSpike` are compiled out of Release; build it with
+build, because `-MuteFailure` is compiled out of Release; build it with
 `xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -configuration Debug -derivedDataPath .build
 build` and give `.build/Build/Products/Debug/TidyShot.app` its own Screen Recording grant (and its own
 microphone prompt). Only one TidyShot may run at a time. You also need a Retina display, the 5K display
@@ -597,7 +597,9 @@ footprint TidyShot | head -12
 ```
 30 s ______ 60 s ______ `Full size` 30 s ______ idle/peak footprint ______ / ______ MB
 
-**Probe 4. A sandboxed `RecordingSpike` run with the microphone (H1, Debug).** Grant Screen Recording to
+**Probe 4. A sandboxed `RecordingSpike` run with the microphone (H1, Debug).** Passed on 2026-10-24
+(below); since 2026-11-07 the spike's source lives in `docs/superpowers/research/recording-probes/` and
+is not compiled, so a re-run needs it copied back as that folder's README says. Grant Screen Recording to
 `.build/Build/Products/Debug/TidyShot.app` (from the last full test run; any rebuild needs a new grant), then:
 ```bash
 open ~/git/tidyshot/.build/Build/Products/Debug/TidyShot.app --args -RecordingSpike YES -RecordingSpikeMicrophone default

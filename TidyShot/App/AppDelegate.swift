@@ -41,16 +41,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !Self.isRunningTests else { return }
         AppCoordinator.shared.start()
         statusMenu = StatusMenuController(coordinator: .shared)
-        #if DEBUG
-        // The R1 sandbox spike: `open TidyShot.app --args -RecordingSpike YES`.
-        if UserDefaults.standard.bool(forKey: "RecordingSpike") {
-            Task { await RecordingSpike.run() }
-        }
-        // R3's P4, the click monitors in the sandbox: `open TidyShot.app --args -ClickMonitorSpike YES`.
-        if UserDefaults.standard.bool(forKey: "ClickMonitorSpike") {
-            Task { await ClickMonitorSpike.run() }
-        }
-        #endif
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
