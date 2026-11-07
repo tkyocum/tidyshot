@@ -173,7 +173,7 @@ Before step 2, `drawHighlighterBackdrops` clips to each visible highlighter's st
 
 Output always goes through `createCGImage(_:from:format: .RGBA8, colorSpace: base.colorSpace ?? sRGB, deferred: false)`, so no GPU work runs inside `draw(_:)`. The actor has two more methods: `warmUp(with:)` renders a 1x1 tile when an editor opens, and `clearCaches()` runs when the last editor closes.
 
-Redact is a tile like the others, so a later blur or pixelate that overlaps a redaction blurs black, never the secret. `beneath` holds every earlier effect whose rect meets the later effect's sample rect, `EffectGeometry.sampleRect(of:imageSize:)`:
+Redact is a tile like the others, so a blur or pixelate that overlaps a redaction blurs black, never the secret, whichever was drawn first. For a blur or pixelate, `beneath` holds every earlier effect and every redaction, earlier or later, whose rect meets its sample rect, plus what lies beneath those; a redaction's `beneath` is empty, and redactions render first. The sample rect, `EffectGeometry.sampleRect(of:imageSize:)`:
 - for blur, the rect grown by `ceil(3 * radius)`;
 - for pixelate, the block-snapped rect;
 - for redact, the rect itself.
