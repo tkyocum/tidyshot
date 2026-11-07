@@ -7,6 +7,8 @@ nonisolated enum Luminance {
     static let sampleSide: CGFloat = 24
     /// The sample buffer's largest side; a bigger crop is drawn smaller, which averages it.
     static let maxBufferSide = 32
+    /// The buffer's colour space, made once: `mean` runs on every pointer move.
+    nonisolated(unsafe) private static let sRGB = CGColorSpace(name: CGColorSpace.sRGB)
 
     /// The mean luma of `rect` in `image`, from 0 (black) to 1 (white), using Rec. 709 weights on
     /// the sRGB values. `rect` is in image pixels with the origin at the top left, as for
@@ -15,8 +17,7 @@ nonisolated enum Luminance {
     /// the same at any display scale.
     static func mean(of image: CGImage, in rect: CGRect) -> Double? {
         let visible = rect.integral.intersection(CGRect(x: 0, y: 0, width: image.width, height: image.height))
-        guard !visible.isNull, !visible.isEmpty, let cropped = image.cropping(to: visible),
-              let space = CGColorSpace(name: CGColorSpace.sRGB) else { return nil }
+        guard !visible.isNull, !visible.isEmpty, let cropped = image.cropping(to: visible), let space = sRGB else { return nil }
         let width = min(cropped.width, maxBufferSide)
         let height = min(cropped.height, maxBufferSide)
         var pixels = [UInt8](repeating: 0, count: width * height * 4)

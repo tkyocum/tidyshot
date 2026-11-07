@@ -86,7 +86,10 @@ final class SelectionController {
             view.onComplete = { [weak self] appKitRect in Task { self?.finishArea(appKitRect) } }
             view.onCancel = { [weak self] in Task { self?.cancel() } }
             if mode == .allInOne { configureAllInOne(view) }
-            view.onMouseMoved = { [weak self] globalPoint in self?.updateHover(at: globalPoint) }
+            // Area mode highlights no window, so it has nothing to do with pointer moves.
+            if mode != .area {
+                view.onMouseMoved = { [weak self] globalPoint in self?.updateHover(at: globalPoint) }
+            }
             // Capture the hovered window now; a mouseMoved could change it before the Task runs.
             view.onPickWindow = { [weak self] in
                 let picked = self?.hoveredWindow

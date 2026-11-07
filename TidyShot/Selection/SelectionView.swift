@@ -48,6 +48,11 @@ final class SelectionView: NSView {
     /// Set once an area selection completes; the hole stays open until the view is discarded.
     private var completedRect: CGRect?
     private var trackingArea: NSTrackingArea?
+    /// The area the pointer's artwork covered at the last invalidation: the crosshair's two strips,
+    /// the loupe, the drag or adjust rect with its label and handles, and the highlight or preset
+    /// the pointer can hide or show. A pointer move repaints the union of the old and the new area
+    /// instead of the display, which with Freeze on is a full snapshot blit per move.
+    private var pointerArtwork: CGRect = .null
 
     // MARK: All-in-One state
 
@@ -125,15 +130,15 @@ final class SelectionView: NSView {
 
     override func mouseExited(with event: NSEvent) {
         cursor = nil
-        needsDisplay = true
+        invalidatePointerArtwork()
     }
 
     override func mouseMoved(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         cursor = point
         updateAllInOneCursor(at: point)
-        crosshairStyle = style(at: point)
-        needsDisplay = true
+        restyle(at: point)
+        invalidatePointerArtwork()
         if let window {
             let global = window.convertToScreen(CGRect(origin: event.locationInWindow, size: .zero)).origin
             onMouseMoved?(global)
@@ -165,10 +170,10 @@ final class SelectionView: NSView {
         guard let start = dragStart else { return }
         let point = convert(event.locationInWindow, from: nil)
         cursor = point
-        crosshairStyle = style(at: point)
+        restyle(at: point)
         dragRect = CGRect(x: min(start.x, point.x), y: min(start.y, point.y),
                           width: abs(point.x - start.x), height: abs(point.y - start.y)).integral
-        needsDisplay = true
+        invalidatePointerArtwork()
         if let window {
             let global = window.convertToScreen(CGRect(origin: event.locationInWindow, size: .zero)).origin
             onMouseMoved?(global)
@@ -375,11 +380,51 @@ final class SelectionView: NSView {
         return CrosshairStyle(luminance: Luminance.mean(of: snapshot, in: rect))
     }
 
-    private func drawSizeLabel(for rect: CGRect) {
+    /// Picks the style for `point`. A change recolours every two-tone line, the preset's and the
+    /// completed rect's included, so it repaints the whole view; that happens only when the pointer
+    /// crosses between a light and a dark area.
+    private func restyle(at point: CGPoint?) {
+        let style = style(at: point)
+        guard style != crosshairStyle else { return }
+        crosshairStyle = style
+        needsDisplay = true
+    }
+
+    /// Repaints what the pointer's artwork covered and covers (see `pointerArtwork`).
+    private func invalidatePointerArtwork() {
+        let now = pointerArtworkRect()
+        let dirty = now.union(pointerArtwork)
+        if !dirty.isNull { setNeedsDisplay(dirty) }
+        pointerArtwork = now
+    }
+
+    /// Everything `draw(_:)` paints that the pointer moves or can hide: a superset is fine, a miss
+    /// leaves a stale line.
+    private func pointerArtworkRect() -> CGRect {
+        var area = CGRect.null
+        // A two-tone line is 1 pt plus a halo of one device pixel on each side.
+        let line: CGFloat = 3
+        if let cursor, mode != .window {
+            area = area.union(CGRect(x: bounds.minX, y: cursor.y - line, width: bounds.width, height: 2 * line))
+            area = area.union(CGRect(x: cursor.x - line, y: bounds.minY, width: 2 * line, height: bounds.height))
+            area = area.union(loupeFrame(at: cursor).insetBy(dx: -2, dy: -2))
+        }
+        // Each with its border and handles, and the label it may carry.
+        for rect in [dragRect, mode == .allInOne ? adjustRect : nil, highlightedRect, presetRect].compactMap({ $0 }) {
+            area = area.union(rect.insetBy(dx: -8, dy: -8)).union(sizeLabel(for: rect).frame)
+        }
+        return area
+    }
+
+    private static let labelPadding = CGSize(width: 12, height: 6)
+
+    /// The size label's pill, text and attributes for `rect`: 6 pt under its bottom-left corner,
+    /// else above it, else inside its bottom edge, and kept inside the view.
+    private func sizeLabel(for rect: CGRect) -> (frame: CGRect, text: NSString, attributes: [NSAttributedString.Key: Any]) {
         let text = "\(Int(rect.width)) × \(Int(rect.height))" as NSString
         let attributes: [NSAttributedString.Key: Any] = [.font: labelFont, .foregroundColor: NSColor.white]
         let textSize = text.size(withAttributes: attributes)
-        let padding = CGSize(width: 12, height: 6)
+        let padding = Self.labelPadding
         var origin = CGPoint(x: rect.minX, y: rect.minY - textSize.height - padding.height - 6)
         if origin.y < bounds.minY + 4 {
             origin.y = rect.maxY + 6
@@ -388,18 +433,36 @@ final class SelectionView: NSView {
             origin.y = rect.minY + 6
         }
         origin.x = min(max(origin.x, bounds.minX + 4), bounds.maxX - textSize.width - padding.width - 4)
-        let background = CGRect(origin: origin, size: CGSize(width: textSize.width + padding.width, height: textSize.height + padding.height))
+        let frame = CGRect(origin: origin, size: CGSize(width: textSize.width + padding.width, height: textSize.height + padding.height))
+        return (frame, text, attributes)
+    }
+
+    private func drawSizeLabel(for rect: CGRect) {
+        let label = sizeLabel(for: rect)
         NSColor.black.withAlphaComponent(0.7).setFill()
-        NSBezierPath(roundedRect: background, xRadius: 4, yRadius: 4).fill()
-        text.draw(at: CGPoint(x: origin.x + padding.width / 2, y: origin.y + padding.height / 2), withAttributes: attributes)
+        NSBezierPath(roundedRect: label.frame, xRadius: 4, yRadius: 4).fill()
+        label.text.draw(at: CGPoint(x: label.frame.minX + Self.labelPadding.width / 2, y: label.frame.minY + Self.labelPadding.height / 2),
+                        withAttributes: label.attributes)
+    }
+
+    /// The loupe shows this many points of the screen around the cursor, magnified `loupeZoom` times.
+    private static let loupeRegionPoints: CGFloat = 16
+    private static let loupeZoom: CGFloat = 8
+
+    /// Where the loupe sits for a cursor at `point`: below and to the right of it, else to the
+    /// left, else above.
+    private func loupeFrame(at point: CGPoint) -> CGRect {
+        let diameter = Self.loupeRegionPoints * Self.loupeZoom
+        var origin = CGPoint(x: point.x + 24, y: point.y - 24 - diameter)
+        if origin.x + diameter > bounds.maxX { origin.x = point.x - 24 - diameter }
+        if origin.y < bounds.minY { origin.y = point.y + 24 }
+        return CGRect(origin: origin, size: CGSize(width: diameter, height: diameter))
     }
 
     private func drawLoupe(at point: CGPoint) {
         guard let snapshot, let context = NSGraphicsContext.current?.cgContext else { return }
-        let regionPoints: CGFloat = 16
-        let zoom: CGFloat = 8
-        let diameter = regionPoints * zoom
-        let pixelsToPoints = zoom / snapshotScale
+        let regionPoints = Self.loupeRegionPoints
+        let pixelsToPoints = Self.loupeZoom / snapshotScale
 
         // Source region in snapshot pixels. CGImage rows run top to bottom; the view's y runs bottom to top.
         let half = regionPoints * snapshotScale / 2
@@ -410,10 +473,7 @@ final class SelectionView: NSView {
         let visible = source.intersection(imageRect)
         guard !visible.isEmpty, let cropped = snapshot.cropping(to: visible) else { return }
 
-        var origin = CGPoint(x: point.x + 24, y: point.y - 24 - diameter)
-        if origin.x + diameter > bounds.maxX { origin.x = point.x - 24 - diameter }
-        if origin.y < bounds.minY { origin.y = point.y + 24 }
-        let destination = CGRect(origin: origin, size: CGSize(width: diameter, height: diameter))
+        let destination = loupeFrame(at: point)
 
         // Where the visible part lands inside the circle. Image y is flipped relative to the view.
         let drawRect = CGRect(x: destination.minX + (visible.minX - source.minX) * pixelsToPoints,
@@ -496,7 +556,7 @@ extension SelectionView {
         // The rect stays on this display: the pointer is clamped to it.
         let point = CGPoint(x: min(max(raw.x, bounds.minX), bounds.maxX), y: min(max(raw.y, bounds.minY), bounds.maxY))
         cursor = point
-        crosshairStyle = style(at: point)
+        restyle(at: point)
         switch adjustDrag {
         case .resize(let handle, let original):
             adjustRect = SelectionAdjust.resized(original, handle: handle, to: point, lockedRatio: lockedRatio,
@@ -511,7 +571,7 @@ extension SelectionView {
         }
         toolbar?.isHidden = true
         updateAllInOneCursor(at: point)
-        needsDisplay = true
+        invalidatePointerArtwork()
         if let window {
             onMouseMoved?(window.convertToScreen(CGRect(origin: event.locationInWindow, size: .zero)).origin)
         }
