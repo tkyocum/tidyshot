@@ -159,21 +159,21 @@ final class HistoryStore {
         return false
     }
 
+    /// The file's dates: ISO 8601 in UTC with fractional seconds (`2026-11-07T10:15:30.123Z`),
+    /// read back with or without the fraction. Format styles are values, so a save of hundreds of
+    /// records makes no formatter per record.
+    private static let dateFormat = Date.ISO8601FormatStyle(includingFractionalSeconds: true)
+    private static let plainDateFormat = Date.ISO8601FormatStyle()
+
     private static let dateEncodingStrategy: JSONEncoder.DateEncodingStrategy = .custom { date, encoder in
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         var container = encoder.singleValueContainer()
-        try container.encode(formatter.string(from: date))
+        try container.encode(dateFormat.format(date))
     }
 
     private static let dateDecodingStrategy: JSONDecoder.DateDecodingStrategy = .custom { decoder in
         let text = try decoder.singleValueContainer().decode(String.self)
-        let fractional = ISO8601DateFormatter()
-        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = fractional.date(from: text) { return date }
-        let plain = ISO8601DateFormatter()
-        plain.formatOptions = [.withInternetDateTime]
-        if let date = plain.date(from: text) { return date }
+        if let date = try? dateFormat.parse(text) { return date }
+        if let date = try? plainDateFormat.parse(text) { return date }
         throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Invalid ISO 8601 date: \(text)"))
     }
 
