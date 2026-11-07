@@ -1,3 +1,4 @@
+import Accelerate
 import Foundation
 
 /// One captured frame of the scrolled area: tightly packed BGRA plus a grey plane for matching.
@@ -7,30 +8,37 @@ nonisolated struct ScrollFrame: Sendable {
     let height: Int
     /// `width * height * 4` bytes, rows packed with no padding, blue first.
     let bgra: Data
-    /// `width * height` bytes of luminance, `(77 R + 150 G + 29 B) >> 8` (white stays 255).
+    /// `width * height` bytes of luminance, `(77 R + 150 G + 29 B) >> 8` (white stays 255). Only
+    /// ever compared with other frames' grey, never shown.
     let gray: [UInt8]
     /// The session's serial for this frame (`ScrollCaptureSession.frameSerial` when it took it), 0
-    /// for a frame that has none. For diagnostics only.
+    /// for a frame that has none. `ScrollCaptureSession.addLatestFrame` compares it with the serial
+    /// of the frame last stitched; the diagnostics log it too.
     var serial = 0
 
     /// Copies `height` rows of `width` BGRA pixels out of `source`, whose rows are `bytesPerRow`
-    /// apart, so the caller can release a `CVPixelBuffer` as soon as this returns.
+    /// apart, so the caller can release a `CVPixelBuffer` as soon as this returns. The grey plane is
+    /// one vImage matrix multiply over the source rows, which keeps a Debug build's per-frame cost
+    /// close to Release's.
     init(bgra source: UnsafeRawPointer, width: Int, height: Int, bytesPerRow: Int) {
         precondition(width > 0 && height > 0 && bytesPerRow >= width * 4, "bad frame geometry")
         let rowBytes = width * 4
-        var plane = [UInt8](repeating: 0, count: width * height)
         var packed = Data(count: rowBytes * height)
         packed.withUnsafeMutableBytes { out in
-            plane.withUnsafeMutableBufferPointer { grey in
-                for y in 0..<height {
-                    let row = source.advanced(by: y * bytesPerRow).assumingMemoryBound(to: UInt8.self)
-                    (out.baseAddress! + y * rowBytes).copyMemory(from: row, byteCount: rowBytes)
-                    for x in 0..<width {
-                        let p = row + x * 4
-                        grey[y * width + x] = UInt8((77 * Int(p[2]) + 150 * Int(p[1]) + 29 * Int(p[0])) >> 8)
-                    }
-                }
+            for y in 0..<height {
+                (out.baseAddress! + y * rowBytes).copyMemory(from: source.advanced(by: y * bytesPerRow), byteCount: rowBytes)
             }
+        }
+        var plane = [UInt8](repeating: 0, count: width * height)
+        plane.withUnsafeMutableBufferPointer { grey in
+            var from = vImage_Buffer(data: UnsafeMutableRawPointer(mutating: source), height: vImagePixelCount(height),
+                                     width: vImagePixelCount(width), rowBytes: bytesPerRow)
+            var to = vImage_Buffer(data: grey.baseAddress!, height: vImagePixelCount(height),
+                                   width: vImagePixelCount(width), rowBytes: width)
+            // The matrix follows the memory order, B, G, R, A; the divisor keeps white at 255.
+            let weights: [Int16] = [29, 150, 77, 0]
+            let result = vImageMatrixMultiply_ARGB8888ToPlanar8(&from, &to, weights, 256, nil, 0, vImage_Flags(kvImageNoFlags))
+            precondition(result == kvImageNoError, "grey conversion failed: \(result)")
         }
         self.width = width
         self.height = height

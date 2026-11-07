@@ -56,7 +56,11 @@ nonisolated struct OverlapFinder: Sendable {
         // equal when all but `stillTolerance` of its stripes are, so a spinner, caret or GIF in the
         // band does not break the runs or count as movement; but a differing stripe that shows what the
         // other frame has at another row is a scroll of a narrow column, which is not equal.
-        let fa = rowHashes(a, columns: usable), fb = rowHashes(b, columns: usable)
+        // The grey plane is read once per frame here: each row is hashed per stripe, and a row's
+        // whole hash is the hash of its stripe hashes, which is equal exactly when every stripe is.
+        let stripeColumns = stripeGroups(usable)
+        let sa = stripeColumns.map { rowHashes(a, columns: $0) }, sb = stripeColumns.map { rowHashes(b, columns: $0) }
+        let fa = rowHashes(combining: sa, height: h), fb = rowHashes(combining: sb, height: h)
         func note(_ s: @autoclosure () -> String) {
             ScrollDiag.findNote("find \(a.width)x\(a.height) scrollbarColumns=\(scrollbarColumns) predicted=\(predicted.map(String.init) ?? "nil") \(s())")
         }
@@ -64,11 +68,9 @@ nonisolated struct OverlapFinder: Sendable {
             let sameY = fa.indices.filter { fa[$0] == fb[$0] }.count
             note("rowsEqualAtSameY=\(sameY)/\(h)")
         }
-        // Identical rows throughout: nothing to look at, and the stripe hashes are not worth computing.
+        // Identical rows throughout: nothing to look at.
         if !fa.indices.contains(where: { fa[$0] != fb[$0] }) { note("-> still (identical rows)"); return .still }
         let freqA = counts(fa[...])
-        let stripeColumns = stripeGroups(usable)
-        let sa = stripeColumns.map { rowHashes(a, columns: $0) }, sb = stripeColumns.map { rowHashes(b, columns: $0) }
         let stripeFreqA = sa.map { counts($0[...]) }, stripeFreqB = sb.map { counts($0[...]) }
         func equal(_ y: Int) -> Bool {
             if fa[y] == fb[y] { return true }
@@ -95,22 +97,56 @@ nonisolated struct OverlapFinder: Sendable {
         note("lead=\(lead) trail=\(trail) informative=\(informative) sameAtY=\(same)")
         if informative == 0 || Double(same) / Double(informative) >= stillFraction { note("-> still (stillFraction)"); return .still }
 
-        // 2. Moving columns: drop columns identical at the same position in every row (fixed sidebars).
-        var moving: [Int] = []
+        // 2. Moving columns: drop columns identical at the same position in every row (fixed
+        // sidebars). Row by row, so the reads are sequential; a column leaves `still` at the first
+        // row where it differs, and the scan ends once every column has.
+        var still = usable
         a.gray.withUnsafeBufferPointer { pa in
             b.gray.withUnsafeBufferPointer { pb in
-                for x in usable {
-                    var y = 0
-                    while y < h && pa[y * a.width + x] == pb[y * a.width + x] { y += 1 }
-                    if y < h { moving.append(x) }
+                var y = 0
+                while y < h, !still.isEmpty {
+                    let base = y * a.width
+                    var kept = 0
+                    for i in 0..<still.count {
+                        let x = still[i]
+                        if pa[base + x] == pb[base + x] {
+                            still[kept] = x
+                            kept += 1
+                        }
+                    }
+                    still.removeLast(still.count - kept)
+                    y += 1
                 }
             }
         }
+        let moving: [Int]
+        if still.isEmpty {
+            moving = usable
+        } else {
+            var isStill = [Bool](repeating: false, count: a.width)
+            for x in still { isStill[x] = true }
+            moving = usable.filter { !isStill[$0] }
+        }
         note("movingColumns=\(moving.count)/\(usable.count)")
         if moving.isEmpty { note("-> still (no moving columns)"); return .still }
-        let groups = stripeGroups(moving)
-        let ha = groups.map { rowHashes(a, columns: $0) }, hb = groups.map { rowHashes(b, columns: $0) }
-        let whole = rowHashes(a, columns: moving), wholeB = rowHashes(b, columns: moving)
+        // Every usable column moved (no fixed sidebar, the common page): the stripes hashed above are
+        // the moving stripes, so nothing is read again.
+        let groups: [[Int]]
+        let ha: [[UInt64]], hb: [[UInt64]]
+        let whole: [UInt64], wholeB: [UInt64]
+        if moving.count == usable.count {
+            groups = stripeColumns
+            ha = sa
+            hb = sb
+            whole = fa
+            wholeB = fb
+        } else {
+            groups = stripeGroups(moving)
+            ha = groups.map { rowHashes(a, columns: $0) }
+            hb = groups.map { rowHashes(b, columns: $0) }
+            whole = rowHashes(combining: ha, height: h)
+            wholeB = rowHashes(combining: hb, height: h)
+        }
 
         // 3. Header and footer: rows equal at the same y from each edge.
         let cap = Int(Double(h) * maxStaticFraction)
@@ -127,21 +163,30 @@ nonisolated struct OverlapFinder: Sendable {
         let bandEnd = h - bottom
         guard bandEnd - top >= 16 else { note("-> \(unplaced == .still ? "still" : "lost") (band too short: top=\(top) bandEnd=\(bandEnd) cap=\(cap))"); return unplaced }
 
-        // 4. Vote per stripe cell: B[y] == A[y + dy].
-        var votes: [Int: Int] = [:]
+        // 4. Vote per stripe cell: B[y] == A[y + dy]. The band's informative rows of A are sorted by
+        // hash once per stripe and each row of B finds its matches by binary search; the votes go in
+        // an array indexed by dy + h. Nothing is allocated per row.
+        var votes = [Int](repeating: 0, count: 2 * h + 1)
         var freqs: [[UInt64: Int]] = []
+        var sorted: [(hash: UInt64, y: Int)] = []
         for s in 0..<groups.count {
             let freq = counts(ha[s][top..<bandEnd])
             freqs.append(freq)
-            var index: [UInt64: [Int]] = [:]
-            for y in top..<bandEnd where freq[ha[s][y]]! <= maxRepeat { index[ha[s][y], default: []].append(y) }
+            sorted.removeAll(keepingCapacity: true)
+            for y in top..<bandEnd where freq[ha[s][y]]! <= maxRepeat { sorted.append((ha[s][y], y)) }
+            sorted.sort { $0.hash < $1.hash }
             for y in top..<bandEnd {
-                guard let ys = index[hb[s][y]] else { continue }
-                for ya in ys where ya != y { votes[ya - y, default: 0] += 1 }
+                let hash = hb[s][y]
+                var i = Self.firstIndex(of: hash, in: sorted)
+                while i < sorted.count, sorted[i].hash == hash {
+                    if sorted[i].y != y { votes[sorted[i].y - y + h] += 1 }
+                    i += 1
+                }
             }
         }
+        let candidates = votes.indices.filter { votes[$0] > 0 }.map { (key: $0 - h, value: votes[$0]) }
         // Most votes, then closest to the prediction, then the smaller shift, then forward.
-        let ranked = votes.sorted { l, r in
+        let ranked = candidates.sorted { l, r in
             if l.value != r.value { return l.value > r.value }
             if let p = predicted, abs(l.key - p) != abs(r.key - p) { return abs(l.key - p) < abs(r.key - p) }
             if abs(l.key) != abs(r.key) { return abs(l.key) < abs(r.key) }
@@ -160,7 +205,7 @@ nonisolated struct OverlapFinder: Sendable {
                     if ha[s][ya] == hb[s][y] { ok += 1 }
                 }
             }
-            note("candidate dy=\(dy) votes=\(votes[dy] ?? 0) informativeCells=\(inf) agreeing=\(ok) score=\(inf > 0 ? String(format: "%.3f", Double(ok) / Double(inf)) : "-")")
+            note("candidate dy=\(dy) votes=\(votes[dy + h]) informativeCells=\(inf) agreeing=\(ok) score=\(inf > 0 ? String(format: "%.3f", Double(ok) / Double(inf)) : "-")")
             guard inf >= minInformativeRows * groups.count / 2 else { continue }
             let score = Double(ok) / Double(inf)
             if score >= acceptScore {
@@ -168,7 +213,7 @@ nonisolated struct OverlapFinder: Sendable {
                 return .moved(dy: dy, top: top, bandEnd: bandEnd, score: score)
             }
         }
-        note("-> \(unplaced == .still ? "still" : "lost") (no candidate verified: top=\(top) bandEnd=\(bandEnd) candidates=\(votes.count) lead=\(lead) trail=\(trail))")
+        note("-> \(unplaced == .still ? "still" : "lost") (no candidate verified: top=\(top) bandEnd=\(bandEnd) candidates=\(candidates.count) lead=\(lead) trail=\(trail))")
         return unplaced
     }
 
@@ -190,6 +235,28 @@ nonisolated struct OverlapFinder: Sendable {
             }
         }
         return out
+    }
+
+    /// FNV-1a of each row's stripe hashes: equal exactly when every stripe hash is (bar a
+    /// collision), so a whole row never has to be read again once its stripes are.
+    private func rowHashes(combining stripes: [[UInt64]], height: Int) -> [UInt64] {
+        var out = [UInt64](repeating: 0, count: height)
+        for y in 0..<height {
+            var h: UInt64 = 0xcbf29ce484222325
+            for stripe in stripes { h = (h ^ stripe[y]) &* 0x100000001b3 }
+            out[y] = h
+        }
+        return out
+    }
+
+    /// The first index in `sorted` whose hash is not below `hash` (so `sorted.count` when none is).
+    private static func firstIndex(of hash: UInt64, in sorted: [(hash: UInt64, y: Int)]) -> Int {
+        var low = 0, high = sorted.count
+        while low < high {
+            let mid = (low + high) / 2
+            if sorted[mid].hash < hash { low = mid + 1 } else { high = mid }
+        }
+        return low
     }
 
     private func counts(_ hashes: ArraySlice<UInt64>) -> [UInt64: Int] {
