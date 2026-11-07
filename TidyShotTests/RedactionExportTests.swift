@@ -201,4 +201,40 @@ struct RedactionExportTests {
         #expect(redacted == 20 * 24)
         #expect(wrong == 0, "\(wrong) kept pixels are neither the fill inside the redaction nor the source outside it")
     }
+
+    /// `tool` over the whole image, created before a redaction inside it, exports the same pixels
+    /// around the redaction as the document with the redaction created first: the effect samples
+    /// the fill either way (spec 2.6), so no halo carries what the redaction hides. Inside the
+    /// redaction the later one is drawn last, so there it is the fill.
+    func effectBeforeRedactionMatchesRedactionFirst(_ tool: EditorTool) async throws {
+        let effect = try add(tool, from: .zero, to: CGPoint(x: Self.width, y: Self.height))
+        let secret = try add(.redact, from: CGPoint(x: 8, y: 8), to: CGPoint(x: 40, y: 32))
+        let effectFirst = try await exportedPixels()
+        var reordered = model.document
+        reordered.annotations = [secret, effect]
+        model.commit(reordered, actionName: "Reorder")
+        let redactionFirst = try await exportedPixels()
+
+        let secretRect = try rect(of: secret)
+        let all = positions(in: CGRect(x: 0, y: 0, width: Self.width, height: Self.height))
+        let around = all.filter { !secretRect.contains(CGPoint(x: CGFloat($0.x) + 0.5, y: CGFloat($0.y) + 0.5)) }
+        let differ = around.filter { pixel(effectFirst.bytes, $0.x, $0.y) != pixel(redactionFirst.bytes, $0.x, $0.y) }
+        #expect(differ.isEmpty, "\(differ.count) pixels around the redaction depend on the creation order")
+        let fill = model.redactColor
+        let expected = [fill.red, fill.green, fill.blue, fill.alpha].map { UInt8(($0 * 255).rounded()) }
+        let inside = positions(in: secretRect)
+        #expect(inside.allSatisfy { pixel(effectFirst.bytes, $0.x, $0.y) == expected })
+    }
+
+    @Test func blurBeforeRedactionExportsAsRedactionFirst() async throws {
+        // Sigma 8 px, so the blur's margin reaches 24 px past the redaction's edge.
+        model.blurRadiusPoints = 4
+        try await effectBeforeRedactionMatchesRedactionFirst(.blur)
+    }
+
+    @Test func pixelateBeforeRedactionExportsAsRedactionFirst() async throws {
+        // 12 px blocks, so the cells along the redaction's edges straddle it.
+        model.blockPoints = 6
+        try await effectBeforeRedactionMatchesRedactionFirst(.pixelate)
+    }
 }

@@ -252,12 +252,13 @@ final class AppCoordinator {
     @ObservationIgnored var copyFileCounts: [UUID: Int] = [:]
 
     // MARK: Editor state (AppCoordinator+Editor.swift)
-    // +Save also sets clipboardOwner when a capture goes on the clipboard; the quit, below, reads editors.
+    // +Save and Copy Image (+RecordActions) also set clipboardOwner; the quit, below, reads editors.
     /// Records whose editor image is loading, so a second Annotate does not open a second editor.
     @ObservationIgnored var openingEditorIDs: Set<UUID> = []
     /// What TidyShot last put on the clipboard for a capture: set when `save(_:intent:)` copies the
-    /// image, by the editor's Copy, and after an edit replaced the clipboard. An edit of that
-    /// capture replaces the clipboard only while the count still matches.
+    /// image, by Copy Image and the editor's Copy (`copyOwnedImage`), and after an edit replaced
+    /// the clipboard. An edit of that capture replaces the clipboard only while the count still
+    /// matches.
     @ObservationIgnored var clipboardOwner: EditorClipboard.Owner?
     /// Open annotation editors, one per record: the window in the app, a fake in the suite.
     @ObservationIgnored var editors: [UUID: any EditorPresenting] = [:]

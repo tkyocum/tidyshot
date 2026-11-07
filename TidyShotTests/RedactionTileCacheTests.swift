@@ -286,4 +286,34 @@ struct RedactionTileCacheTests {
         #expect(cache.currentTile(for: blurred, in: later, transient: nil) != nil)
         #expect(await cache.allTiles(for: later).map(\.effect) == [secret, blurred, far])
     }
+
+    /// A redact created after a blur lies under it all the same (spec 2.6): adding it changes the
+    /// blur's key and re-renders the blur over it, and moving it out of reach or deleting it
+    /// changes the key back.
+    @Test func redactAddedAfterBlurChangesBlurKey() async throws {
+        let renderer = FakeTileRenderer()
+        let cache = makeCache(renderer)
+        let blurred = blur(10, 10, 30, 30, radius: 2)   // samples x and y 4..<46
+        let start = document(blurred)
+        cache.reconcile(document: start, transient: nil)
+        await cache.renderTask?.value
+        let plain = try #require(cache.tiles[blurred.id]?.image)
+
+        let secret = redact(42, 20, 10, 10)               // clear of the blur's rect, in its margin
+        let later = start.appending(secret)
+        #expect(RedactionTileCache.keys(for: later.effects, imageSize: size)[blurred.id]
+            == TileKey(effect: blurred, beneath: [secret]))
+        #expect(cache.currentTile(for: blurred, in: later, transient: nil) == nil)
+        cache.reconcile(document: later, transient: nil)
+        await cache.renderTask?.value
+
+        // The redact renders first, then the blur over it.
+        #expect(Array(renderer.calls.dropFirst()) == [TileKey(effect: secret, beneath: []),
+                                                        TileKey(effect: blurred, beneath: [secret])])
+        #expect(try #require(cache.currentTile(for: blurred, in: later, transient: nil)) !== plain)
+        let moved = later.replacing(secret.moved(by: CGVector(dx: 10, dy: 0)))   // x 52..<62
+        #expect(RedactionTileCache.keys(for: moved.effects, imageSize: size)[blurred.id]?.beneath == [])
+        let deleted = later.removing(id: secret.id)
+        #expect(RedactionTileCache.keys(for: deleted.effects, imageSize: size)[blurred.id]?.beneath == [])
+    }
 }

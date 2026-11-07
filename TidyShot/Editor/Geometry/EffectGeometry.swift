@@ -1,8 +1,9 @@
 import CoreGraphics
 
-/// Which image pixels an effect reads, in the model's top-left image pixels. A tile depends on
-/// the base and on every earlier effect whose tile meets its sample rect: `RedactionTileCache`
-/// keys tiles by those effects, and `RedactionRenderer` composites their tiles beneath.
+/// Which image pixels an effect reads, in the model's top-left image pixels. A blur or pixelate
+/// tile depends on the base and on every earlier effect, and every redact, whose tile meets its
+/// sample rect: `RedactionTileCache` keys tiles by those effects, and `RedactionRenderer`
+/// composites their tiles beneath.
 nonisolated enum EffectGeometry {
     /// A Gaussian blur reads this many sigmas beyond its rect.
     static let blurReachInSigmas: CGFloat = 3

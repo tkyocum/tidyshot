@@ -26,7 +26,8 @@ enum Selection {
 
 /// The selection overlay as the capture flows use it. `SelectionController` in the app; `FakeSelector` in the suite.
 protocol CaptureSelecting: AnyObject {
-    func select(mode: SelectionMode, content: ScreenContent, freeze: CaptureOptions?, preselect: CGRect?) async -> Selection?
+    func select(mode: SelectionMode, content: ScreenContent, freeze: CaptureOptions?, preselect: CGRect?,
+                armed: Bool) async -> Selection?
     func selectAllInOne(content: ScreenContent, freeze: CaptureOptions?, preselect: CGRect?, armed: Bool) async -> AllInOneChoice?
     func frozenCapture(for displayID: CGDirectDisplayID) -> FrozenSnapshot?
     func overlayWindows() async -> [CaptureWindow]

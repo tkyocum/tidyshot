@@ -85,6 +85,9 @@ final class ScrollCaptureSession {
     @ObservationIgnored private(set) var latestFrame: ScrollFrame?
     @ObservationIgnored private(set) var latestFrameAt: ContinuousClock.Instant?
     @ObservationIgnored private(set) var frameSerial = 0
+    /// The serial of the last frame handed to the engine. In auto mode the newest frame read can
+    /// be newer, until the driver integrates it; Done and a stream stop add it before finishing.
+    @ObservationIgnored private var addedSerial = 0
     /// Auto-scroll has handed over to manual mode (diagnostics only).
     @ObservationIgnored private var handedOver = false
     /// Called once, when the session ends.
@@ -192,6 +195,7 @@ final class ScrollCaptureSession {
         // `stop()` finishes the events after the frame still buffered; the read loop takes it.
         await readTask?.value
         guard phase != .ended else { return }
+        await addLatestFrame()
         let image = await engine.finish(scale: scale, colorSpace: colorSpace)
         end(image.map(ScrollCaptureOutcome.image) ?? .failed(CaptureError.noImage.localizedDescription, partial: nil))
     }
@@ -242,6 +246,7 @@ final class ScrollCaptureSession {
     /// the session has left auto mode.
     func integrate(_ frame: ScrollFrame, predicted: Int) async -> StitchProgress? {
         guard phase == .capturing(.auto) else { return nil }
+        addedSerial = frame.serial
         let progress = await engine.add(frame, predicted: predicted)
         apply(progress)
         return phase == .capturing(.auto) ? progress : nil
@@ -290,6 +295,7 @@ final class ScrollCaptureSession {
         // The first frame begins the stitch and is the preview: its rows reach `previewDelta`
         // only once a move commits them.
         guard hasFirstFrame else {
+            addedSerial = frame.serial
             await engine.begin(first: frame)
             hasFirstFrame = true
             heightPixels = frame.height
@@ -298,6 +304,7 @@ final class ScrollCaptureSession {
         }
         // In auto mode the driver stitches the settled frames itself (`integrate`).
         guard phase != .capturing(.auto) else { return }
+        addedSerial = frame.serial
         let progress = await engine.add(frame)
         ScrollDiag.log("manual result serial=\(frame.serial) afterHandOver=\(handedOver) -> \(ScrollDiag.describe(progress.step.match)) committed=\(progress.step.committedRows) height=\(progress.heightPixels) status=\(status)")
         apply(progress)
@@ -330,9 +337,19 @@ final class ScrollCaptureSession {
         let reason = error?.localizedDescription ?? Self.streamStoppedReason
         var partial: ScaledImage?
         if hasFirstFrame {
+            // No wait on `readTask`: this runs inside it.
+            await addLatestFrame()
             partial = await engine.finish(scale: scale, colorSpace: colorSpace)
         }
         end(.failed(reason, partial: partial))
+    }
+
+    /// Auto mode: the newest frame read, when the driver had not integrated it yet, so the image
+    /// ends where the screen did. A lost or still result commits nothing.
+    private func addLatestFrame() async {
+        guard let latestFrame, latestFrame.serial > addedSerial else { return }
+        addedSerial = latestFrame.serial
+        _ = await engine.add(latestFrame)
     }
 
     private func end(_ outcome: ScrollCaptureOutcome) {

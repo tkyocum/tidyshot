@@ -891,4 +891,43 @@ struct CoordinatorEditorSaveTests {
         }
         if write == .save { try await settledEdit(coordinator, id) }
     }
+
+    /// Review 2026-11-06, finding 2. Copy Image from the card (`copyImage(recordID:)`) after the capture's own copy
+    /// takes the clipboard for the capture, so a redaction saved from the editor replaces the original there; once
+    /// another app copied since (TextEdit's text), the save leaves it alone. The capture's copy and owner are set up
+    /// as +Save leaves them, as in `aSaveOrSaveAsTakesTheClipboardOnlyWhileItHoldsTheCapture`.
+    @Test(arguments: [false, true])
+    func aSaveAfterCopyImageReplacesTheClipboardUnlessAnotherAppCopiedSince(otherAppCopied: Bool) async throws {
+        defer { world.removeAll() }
+        let folder = try world.storeSaveFolder()
+        let coordinator = world.makeCoordinator()
+        let (record, original) = try addSavedImage(to: coordinator, in: folder)
+        let id = record.id
+        coordinator.latestCapture = (id: id, image: ScaledImage(image: try CoordinatorWorld.image(width: 4, height: 2), scale: 1))
+        let count = world.clipboard.copy(pngData: original, tiffData: nil)
+        coordinator.clipboardOwner = EditorClipboard.Owner(recordID: id, changeCount: count)
+
+        await coordinator.copyImage(recordID: id)
+        #expect(world.clipboard.pngs == [original, original])
+        #expect(coordinator.clipboardOwner == EditorClipboard.Owner(recordID: id, changeCount: 2))
+        if otherAppCopied { world.clipboard.changeCount += 1 }
+
+        coordinator.openEditor(recordID: id)
+        let editor = try #require(world.editors.editor(for: id))
+        editor.draw()
+        #expect(await editor.save())
+        let written = try Data(contentsOf: try #require(record.fileURL))
+        #expect(try EditorPixels.isBlue(png: written))
+        if otherAppCopied {
+            #expect(world.clipboard.copies == [.pngAndTIFF, .pngAndTIFF])
+            #expect(world.clipboard.pngs.last == original)
+            #expect(coordinator.clipboardOwner == EditorClipboard.Owner(recordID: id, changeCount: 2))
+            #expect(world.clipboard.changeCount == 3)
+        } else {
+            #expect(world.clipboard.copies == [.pngAndTIFF, .pngAndTIFF, .pngAndTIFF])
+            #expect(world.clipboard.pngs.last == written)
+            #expect(coordinator.clipboardOwner == EditorClipboard.Owner(recordID: id, changeCount: 3))
+        }
+        try await settledEdit(coordinator, id)
+    }
 }

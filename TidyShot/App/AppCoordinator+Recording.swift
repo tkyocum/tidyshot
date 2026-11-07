@@ -152,7 +152,7 @@ extension AppCoordinator {
     /// own `Task`, and returns at once. The handler has already dropped it in the other phases and
     /// with a prompt open, and logged why; quitting is logged here. A second one before the first
     /// holds the lock is ignored (`urlRecordingStartPending`). The rect is only preselected and is
-    /// never the previous area.
+    /// never the previous area. Its selection opens disarmed, as Capture Window's does.
     func startRecording(intent: CaptureIntent, preselect: ScreenRect?) {
         guard Self.recordingStartsFromURL(phase: recordingPhase, askingPermission: askingPermission,
                                           isQuitting: isQuitting) else {
@@ -166,7 +166,7 @@ extension AppCoordinator {
             return
         }
         urlRecordingStartPending = true
-        Task { await startRecordScreen(intent: intent, preselect: preselect?.rect) }
+        Task { await startRecordScreen(intent: intent, preselect: preselect?.rect, fromURLCommand: true) }
     }
 
     /// `stop-recording` (R4 design, What `stop-recording` does in each phase): stops a recording,
@@ -201,8 +201,11 @@ extension AppCoordinator {
     /// selection (R2 design, At the start; R3 design, Permission). The selection cannot yet know
     /// whether a window will be picked, so a window recording can follow a camera prompt it does not
     /// use. `urlRecordingStartPending` is cleared once the lock is held or refused, or when the
-    /// prompts end the start.
-    private func startRecordScreen(intent: CaptureIntent, preselect: CGRect?) async {
+    /// prompts end the start. A URL command's selection opens disarmed (spec 2.9): a click inside
+    /// the rect or on a window records, so the second click of a double-click must not record for
+    /// the sender.
+    private func startRecordScreen(intent: CaptureIntent, preselect: CGRect?,
+                                   fromURLCommand: Bool = false) async {
         guard let ask = await recordingPrompts() else {
             urlRecordingStartPending = false
             return
@@ -213,7 +216,7 @@ extension AppCoordinator {
             guard let inputs = recordingCanStart(microphone: ask.microphone) else { return }
             guard let content = await loadContent(failureTitle: RecordingEnd.failedTitle) else { return }
             guard let selection = await selector.select(mode: .recording, content: content, freeze: nil,
-                                                        preselect: preselect) else { return }
+                                                        preselect: preselect, armed: !fromURLCommand) else { return }
             let target: CaptureTarget
             switch selection {
             case .area(let rect, let display):
