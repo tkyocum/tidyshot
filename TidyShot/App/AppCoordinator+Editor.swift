@@ -453,8 +453,7 @@ extension AppCoordinator {
                 (try ImageEncoder.pngData(from: image.image, scale: image.scale),
                  Pasteboard.companionTIFF(of: image.image, scale: image.scale))
             }.value
-            let changeCount = clipboard.copy(pngData: encoded.png, tiffData: encoded.tiff)
-            clipboardOwner = EditorClipboard.Owner(recordID: recordID, changeCount: changeCount)
+            copyOwnedImage(png: encoded.png, tiff: encoded.tiff, recordID: recordID)
             if settings.showNotification {
                 let record = history.record(id: recordID)
                 notifier.notify(title: "Image copied", body: record?.uploadedKey ?? record?.fileURL?.lastPathComponent ?? "")

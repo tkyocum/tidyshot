@@ -84,7 +84,8 @@ extension AppCoordinator {
     /// GET from the bucket the record says it went to, with "Copying image…" posted while that
     /// runs. The read, the pixel decode and the TIFF encode run in detached tasks, because a
     /// capture can be tens of megabytes; only the finished PNG and TIFF data are written to the
-    /// clipboard here, on the main actor.
+    /// clipboard here, on the main actor, and the record then owns it (`copyOwnedImage`), so a
+    /// later redaction replaces the original there.
     func copyImage(recordID: UUID) async {
         guard let record = history.record(id: recordID), !record.isTimeBased else { return }
         do {
@@ -94,7 +95,7 @@ extension AppCoordinator {
                 return (true, Pasteboard.companionTIFF(of: decoded.image, scale: decoded.scale))
             }.value
             guard converted.decoded else { throw CopyImageError.notAnImage }
-            clipboard.copy(pngData: png, tiffData: converted.tiff)
+            copyOwnedImage(png: png, tiff: converted.tiff, recordID: recordID)
             if settings.showNotification {
                 // Read again: an upload that finished during the copy has given the record its key.
                 let current = history.record(id: recordID) ?? record
@@ -103,6 +104,14 @@ extension AppCoordinator {
         } catch {
             notifier.notifyError(error.localizedDescription, title: "Could not copy image")
         }
+    }
+
+    /// Puts a capture's PNG and TIFF on the clipboard and makes `recordID` its owner at the new
+    /// change count, so the clipboard rule (spec 2.6) swaps a later edit in. Copy Image and the
+    /// editor's Copy both go through it, so neither leaves the original there unowned.
+    func copyOwnedImage(png: Data, tiff: Data?, recordID: UUID) {
+        let changeCount = clipboard.copy(pngData: png, tiffData: tiff)
+        clipboardOwner = EditorClipboard.Owner(recordID: recordID, changeCount: changeCount)
     }
 
     /// Save As… from a Quick Access card (and from a pin's menu, 6b): runs `saveCopy`, or
