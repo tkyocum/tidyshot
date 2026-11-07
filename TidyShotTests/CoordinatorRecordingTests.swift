@@ -198,6 +198,29 @@ struct CoordinatorRecordingTests {
         #expect(world.notifier.calls == [.waited(.seconds(1))])
     }
 
+    /// Spec 2.9; R4 design, What `record-screen` does. The shortcut's selection opens armed, and a URL start's opens
+    /// disarmed with its rect, so the second click of a double-click begun in the sender records nothing. Access is
+    /// granted, so no prompt shows; each selection is Escaped and nothing records. Each start makes `tmp/Recording` if
+    /// it is missing, an empty folder the app makes anyway.
+    @Test func aURLStartOpensItsSelectionDisarmedAndTheShortcutsArmed() async throws {
+        defer { world.removeAll() }
+        world.settings.hideDesktopIconsWhileCapturing = false
+        let coordinator = world.makeCoordinator()
+        let area = ScreenRect(rect: CGRect(x: 100, y: 100, width: 800, height: 500), displayID: display.id)
+
+        await coordinator.recordScreen()
+        coordinator.startRecording(intent: CaptureIntent(action: .save), preselect: area)
+        try await eventually { world.selector.selects.count == 2 && !coordinator.urlRecordingStartPending }
+        try await eventually { !coordinator.isCapturing }
+
+        #expect(world.selector.selects == [FakeSelector.Select(mode: .recording, freeze: nil, preselect: nil, armed: true),
+                                           FakeSelector.Select(mode: .recording, freeze: nil, preselect: area.rect,
+                                                               armed: false)])
+        #expect(!coordinator.recorder.isRunning)
+        #expect(coordinator.recordingPhase == .idle)
+        #expect(world.notifier.calls.isEmpty)
+    }
+
     /// 54 (harness design 3.4). R3 design, Asking from Settings: Settings asks while nothing else runs, with the prompt held
     /// as `askingPermission`; not while a capture holds the lock, nor while another prompt is open.
     @Test func aSettingsPromptAsksOnlyWhenNothingElseRuns() async throws {
