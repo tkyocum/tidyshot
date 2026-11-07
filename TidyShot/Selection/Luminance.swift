@@ -8,7 +8,7 @@ nonisolated enum Luminance {
     /// The sample buffer's largest side; a bigger crop is drawn smaller, which averages it.
     static let maxBufferSide = 32
     /// The buffer's colour space, made once: `mean` runs on every pointer move.
-    nonisolated(unsafe) private static let sRGB = CGColorSpace(name: CGColorSpace.sRGB)
+    private static let sRGB = CGColorSpace(name: CGColorSpace.sRGB)
 
     /// The mean luma of `rect` in `image`, from 0 (black) to 1 (white), using Rec. 709 weights on
     /// the sRGB values. `rect` is in image pixels with the origin at the top left, as for

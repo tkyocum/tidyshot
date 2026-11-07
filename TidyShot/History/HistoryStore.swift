@@ -162,8 +162,8 @@ final class HistoryStore {
     /// The file's dates: ISO 8601 in UTC with fractional seconds (`2026-11-07T10:15:30.123Z`),
     /// read back with or without the fraction. Format styles are values, so a save of hundreds of
     /// records makes no formatter per record.
-    private static let dateFormat = Date.ISO8601FormatStyle(includingFractionalSeconds: true)
-    private static let plainDateFormat = Date.ISO8601FormatStyle()
+    nonisolated private static let dateFormat = Date.ISO8601FormatStyle(includingFractionalSeconds: true)
+    nonisolated private static let plainDateFormat = Date.ISO8601FormatStyle()
 
     private static let dateEncodingStrategy: JSONEncoder.DateEncodingStrategy = .custom { date, encoder in
         var container = encoder.singleValueContainer()
