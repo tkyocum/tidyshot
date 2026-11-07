@@ -74,42 +74,17 @@ nonisolated enum HitTester {
     /// `square` (Shift) is held. Id, colour, line width, effect parameter and a spotlight's shape
     /// are kept. Kinds without handles come back unchanged.
     static func resized(_ annotation: Annotation, handle: Int, to point: CGPoint, square: Bool) -> Annotation {
-        switch annotation {
-        case .rectangle(var shape):
-            shape.rect = resizedRect(shape.rect, handle: handle, to: point, square: square)
-            return .rectangle(shape)
-        case .arrow(var segment):
+        func resized(_ rect: CGRect) -> CGRect { resizedRect(rect, handle: handle, to: point, square: square) }
+        func moveEnd(_ segment: inout Segment) {
             switch handle {
             case 0: segment.from = DragGeometry.segmentEnd(from: segment.to, to: point, snap45: square)
             case 1: segment.to = DragGeometry.segmentEnd(from: segment.from, to: point, snap45: square)
             default: break
             }
-            return .arrow(segment)
-        case .ellipse(var shape):
-            shape.rect = resizedRect(shape.rect, handle: handle, to: point, square: square)
-            return .ellipse(shape)
-        case .line(var segment):
-            switch handle {
-            case 0: segment.from = DragGeometry.segmentEnd(from: segment.to, to: point, snap45: square)
-            case 1: segment.to = DragGeometry.segmentEnd(from: segment.from, to: point, snap45: square)
-            default: break
-            }
-            return .line(segment)
-        case .pencil, .highlighter, .text, .counter:
-            return annotation
-        case .redact(var region, let fill):
-            region.rect = resizedRect(region.rect, handle: handle, to: point, square: square)
-            return .redact(region, fill: fill)
-        case .blur(var region, let radius):
-            region.rect = resizedRect(region.rect, handle: handle, to: point, square: square)
-            return .blur(region, radius: radius)
-        case .pixelate(var region, let block):
-            region.rect = resizedRect(region.rect, handle: handle, to: point, square: square)
-            return .pixelate(region, block: block)
-        case .spotlight(var shape):
-            shape.rect = resizedRect(shape.rect, handle: handle, to: point, square: square)
-            return .spotlight(shape)
         }
+        // Pencil, highlighter, text and counter have no handles, so they come back unchanged.
+        return annotation.mapping(box: { $0.rect = resized($0.rect) }, segment: moveEnd,
+                                  region: { $0.rect = resized($0.rect) }, spotlight: { $0.rect = resized($0.rect) })
     }
 
     /// `rect` with box handle `handle` dragged to `point`, standardized. The opposite corner (for

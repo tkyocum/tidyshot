@@ -143,49 +143,48 @@ nonisolated enum Annotation: Identifiable, Codable, Equatable, Sendable {
         }
     }
 
+    /// `self` with its payload changed by the closure for the payload's type, run on a copy; a
+    /// blur's radius and a pixelate's block go through `radius` and `block`. The twelve cases are
+    /// seven payload types, so this is the one switch behind `moved`, `scaled`, `withColor`,
+    /// `withLineWidth` and `HitTester.resized`; a kind whose closure is left out comes back
+    /// unchanged.
+    func mapping(box: (inout ShapeBox) -> Void = { _ in },
+                 segment: (inout Segment) -> Void = { _ in },
+                 stroke: (inout Stroke) -> Void = { _ in },
+                 text: (inout TextBox) -> Void = { _ in },
+                 region: (inout Region) -> Void = { _ in },
+                 spotlight: (inout SpotlightShape) -> Void = { _ in },
+                 counter: (inout CounterMark) -> Void = { _ in },
+                 radius: (CGFloat) -> CGFloat = { $0 },
+                 block: (CGFloat) -> CGFloat = { $0 }) -> Annotation {
+        switch self {
+        case .rectangle(var payload): box(&payload); return .rectangle(payload)
+        case .ellipse(var payload): box(&payload); return .ellipse(payload)
+        case .arrow(var payload): segment(&payload); return .arrow(payload)
+        case .line(var payload): segment(&payload); return .line(payload)
+        case .pencil(var payload): stroke(&payload); return .pencil(payload)
+        case .highlighter(var payload): stroke(&payload); return .highlighter(payload)
+        case .text(var payload): text(&payload); return .text(payload)
+        case .redact(var payload, let fill): region(&payload); return .redact(payload, fill: fill)
+        case .blur(var payload, let value): region(&payload); return .blur(payload, radius: radius(value))
+        case .pixelate(var payload, let value): region(&payload); return .pixelate(payload, block: block(value))
+        case .spotlight(var payload): spotlight(&payload); return .spotlight(payload)
+        case .counter(var payload): counter(&payload); return .counter(payload)
+        }
+    }
+
     /// The same annotation shifted by `delta`: a rect's origin, both ends of a segment, or a
     /// counter's centre.
     func moved(by delta: CGVector) -> Annotation {
-        switch self {
-        case .rectangle(var box):
-            box.rect = box.rect.offsetBy(dx: delta.dx, dy: delta.dy)
-            return .rectangle(box)
-        case .arrow(var segment):
-            segment.from = CGPoint(x: segment.from.x + delta.dx, y: segment.from.y + delta.dy)
-            segment.to = CGPoint(x: segment.to.x + delta.dx, y: segment.to.y + delta.dy)
-            return .arrow(segment)
-        case .ellipse(var box):
-            box.rect = box.rect.offsetBy(dx: delta.dx, dy: delta.dy)
-            return .ellipse(box)
-        case .line(var segment):
-            segment.from = CGPoint(x: segment.from.x + delta.dx, y: segment.from.y + delta.dy)
-            segment.to = CGPoint(x: segment.to.x + delta.dx, y: segment.to.y + delta.dy)
-            return .line(segment)
-        case .pencil(var stroke):
-            stroke.points = stroke.points.map { CGPoint(x: $0.x + delta.dx, y: $0.y + delta.dy) }
-            return .pencil(stroke)
-        case .highlighter(var stroke):
-            stroke.points = stroke.points.map { CGPoint(x: $0.x + delta.dx, y: $0.y + delta.dy) }
-            return .highlighter(stroke)
-        case .text(var box):
-            box.origin = CGPoint(x: box.origin.x + delta.dx, y: box.origin.y + delta.dy)
-            return .text(box)
-        case .redact(var region, let fill):
-            region.rect = region.rect.offsetBy(dx: delta.dx, dy: delta.dy)
-            return .redact(region, fill: fill)
-        case .blur(var region, let radius):
-            region.rect = region.rect.offsetBy(dx: delta.dx, dy: delta.dy)
-            return .blur(region, radius: radius)
-        case .pixelate(var region, let block):
-            region.rect = region.rect.offsetBy(dx: delta.dx, dy: delta.dy)
-            return .pixelate(region, block: block)
-        case .spotlight(var shape):
-            shape.rect = shape.rect.offsetBy(dx: delta.dx, dy: delta.dy)
-            return .spotlight(shape)
-        case .counter(var mark):
-            mark.center = CGPoint(x: mark.center.x + delta.dx, y: mark.center.y + delta.dy)
-            return .counter(mark)
-        }
+        func shifted(_ point: CGPoint) -> CGPoint { CGPoint(x: point.x + delta.dx, y: point.y + delta.dy) }
+        func shifted(_ rect: CGRect) -> CGRect { rect.offsetBy(dx: delta.dx, dy: delta.dy) }
+        return mapping(box: { $0.rect = shifted($0.rect) },
+                       segment: { $0.from = shifted($0.from); $0.to = shifted($0.to) },
+                       stroke: { $0.points = $0.points.map(shifted) },
+                       text: { $0.origin = shifted($0.origin) },
+                       region: { $0.rect = shifted($0.rect) },
+                       spotlight: { $0.rect = shifted($0.rect) },
+                       counter: { $0.center = shifted($0.center) })
     }
 
     /// The same annotation under another id, for duplicate and paste. Every other field is kept,
@@ -225,58 +224,19 @@ nonisolated enum Annotation: Identifiable, Codable, Equatable, Sendable {
     /// that is not a positive number.
     func scaled(by factor: CGFloat) -> Annotation {
         guard factor != 1, factor > 0, factor.isFinite else { return self }
-        func point(_ p: CGPoint) -> CGPoint { CGPoint(x: p.x * factor, y: p.y * factor) }
-        func rect(_ r: CGRect) -> CGRect {
-            CGRect(x: r.minX * factor, y: r.minY * factor, width: r.width * factor, height: r.height * factor)
+        func scaled(_ point: CGPoint) -> CGPoint { CGPoint(x: point.x * factor, y: point.y * factor) }
+        func scaled(_ rect: CGRect) -> CGRect {
+            CGRect(x: rect.minX * factor, y: rect.minY * factor, width: rect.width * factor, height: rect.height * factor)
         }
-        switch self {
-        case .rectangle(var box):
-            box.rect = rect(box.rect)
-            box.lineWidth *= factor
-            return .rectangle(box)
-        case .ellipse(var box):
-            box.rect = rect(box.rect)
-            box.lineWidth *= factor
-            return .ellipse(box)
-        case .arrow(var segment):
-            segment.from = point(segment.from)
-            segment.to = point(segment.to)
-            segment.lineWidth *= factor
-            return .arrow(segment)
-        case .line(var segment):
-            segment.from = point(segment.from)
-            segment.to = point(segment.to)
-            segment.lineWidth *= factor
-            return .line(segment)
-        case .pencil(var stroke):
-            stroke.points = stroke.points.map(point)
-            stroke.lineWidth *= factor
-            return .pencil(stroke)
-        case .highlighter(var stroke):
-            stroke.points = stroke.points.map(point)
-            stroke.lineWidth *= factor
-            return .highlighter(stroke)
-        case .text(var box):
-            box.origin = point(box.origin)
-            box.fontSize *= factor
-            return .text(box)
-        case .redact(var region, let fill):
-            region.rect = rect(region.rect)
-            return .redact(region, fill: fill)
-        case .blur(var region, let radius):
-            region.rect = rect(region.rect)
-            return .blur(region, radius: radius * factor)
-        case .pixelate(var region, let block):
-            region.rect = rect(region.rect)
-            return .pixelate(region, block: max(1, (block * factor).rounded()))
-        case .spotlight(var shape):
-            shape.rect = rect(shape.rect)
-            return .spotlight(shape)
-        case .counter(var mark):
-            mark.center = point(mark.center)
-            mark.diameter *= factor
-            return .counter(mark)
-        }
+        return mapping(box: { $0.rect = scaled($0.rect); $0.lineWidth *= factor },
+                       segment: { $0.from = scaled($0.from); $0.to = scaled($0.to); $0.lineWidth *= factor },
+                       stroke: { $0.points = $0.points.map(scaled); $0.lineWidth *= factor },
+                       text: { $0.origin = scaled($0.origin); $0.fontSize *= factor },
+                       region: { $0.rect = scaled($0.rect) },
+                       spotlight: { $0.rect = scaled($0.rect) },
+                       counter: { $0.center = scaled($0.center); $0.diameter *= factor },
+                       radius: { $0 * factor },
+                       block: { max(1, ($0 * factor).rounded()) })
     }
 
     /// The stroke colour of a shape, the fill of a redaction or a counter. A highlighter keeps its
@@ -284,62 +244,23 @@ nonisolated enum Annotation: Identifiable, Codable, Equatable, Sendable {
     /// come back unchanged.
     func withColor(_ color: RGBA) -> Annotation {
         switch self {
-        case .rectangle(var box):
-            box.color = color
-            return .rectangle(box)
-        case .arrow(var segment):
-            segment.color = color
-            return .arrow(segment)
-        case .ellipse(var box):
-            box.color = color
-            return .ellipse(box)
-        case .line(var segment):
-            segment.color = color
-            return .line(segment)
-        case .pencil(var stroke):
-            stroke.color = color
-            return .pencil(stroke)
         case .highlighter(var stroke):
             stroke.color = EditorPalette.highlighterColor(from: color)
             return .highlighter(stroke)
-        case .text(var box):
-            box.color = color
-            return .text(box)
         case .redact(let region, _):
             return .redact(region, fill: color)
-        case .counter(var mark):
-            mark.color = color
-            return .counter(mark)
         case .blur, .pixelate, .spotlight:
             return self
+        case .rectangle, .ellipse, .arrow, .line, .pencil, .text, .counter:
+            return mapping(box: { $0.color = color }, segment: { $0.color = color }, stroke: { $0.color = color },
+                           text: { $0.color = color }, counter: { $0.color = color })
         }
     }
 
     /// The line width of a shape, in image pixels. Effects, text, spotlights and counters come back
     /// unchanged: text and a counter have a size, not a line width, and a spotlight has no line.
     func withLineWidth(_ width: CGFloat) -> Annotation {
-        switch self {
-        case .rectangle(var box):
-            box.lineWidth = width
-            return .rectangle(box)
-        case .arrow(var segment):
-            segment.lineWidth = width
-            return .arrow(segment)
-        case .ellipse(var box):
-            box.lineWidth = width
-            return .ellipse(box)
-        case .line(var segment):
-            segment.lineWidth = width
-            return .line(segment)
-        case .pencil(var stroke):
-            stroke.lineWidth = width
-            return .pencil(stroke)
-        case .highlighter(var stroke):
-            stroke.lineWidth = width
-            return .highlighter(stroke)
-        case .text, .redact, .blur, .pixelate, .spotlight, .counter:
-            return self
-        }
+        mapping(box: { $0.lineWidth = width }, segment: { $0.lineWidth = width }, stroke: { $0.lineWidth = width })
     }
 
     /// A blur's radius or a pixelate's block, in image pixels. Everything else comes back
