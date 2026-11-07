@@ -61,6 +61,10 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
     var colorPopover: NSPopover?
     var optionsPopover: NSPopover?
     var backgroundPopover: NSPopover?
+    /// What the toolbar's swatch and zoom title last showed (EditorToolbar.swift), so a pan or a
+    /// pinch, which changes the transform on every event, redraws neither.
+    var reflectedColor: RGBA?
+    var reflectedZoomPercent: Int?
     /// One document action at a time; another one beeps until it finishes.
     private var isPerformingAction = false
     /// What the editor may do now. Empty until the coordinator's first push, which presentEditor

@@ -152,12 +152,18 @@ extension EditorWindowController: NSToolbarDelegate, NSToolbarItemValidation {
         control.selectedSegment = index
     }
 
+    /// A new swatch image only when the colour changed: one observation covers the tool, the colour
+    /// and the zoom, so this also runs on every pan and pinch event.
     private func reflectColor(_ color: RGBA) {
+        guard color != reflectedColor else { return }
+        reflectedColor = color
         toolbarItem(.color)?.image = swatchImage(color)
     }
 
     /// A pull-down shows its first item's title, which `setTitle(_:)` sets.
     private func reflectZoom(percent: Int) {
+        guard percent != reflectedZoomPercent else { return }
+        reflectedZoomPercent = percent
         (toolbarItem(.zoom)?.view as? NSPopUpButton)?.setTitle("\(percent) %")
     }
 

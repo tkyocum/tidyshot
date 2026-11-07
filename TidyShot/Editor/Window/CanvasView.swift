@@ -53,6 +53,12 @@ final class CanvasView: NSView {
     /// The tile each effect showed at the last `syncTiles`, as `BaseImageView` keeps its own. The
     /// highlighter backdrop copies these, so a replaced or moved tile repaints the area it covered.
     private var shownTiles: [UUID: TileRepaint.Shown] = [:]
+    /// The shown tiles in the cache's order, which `backdropLayers` draws after the base tiles.
+    private var shownTileList: [(rect: CGRect, image: CGImage)] = []
+    /// Each stroke's smoothed path and painted bounds, by annotation id, rebuilt only when its
+    /// points or width change. The model stores no CGPath (its types are Sendable values), so the
+    /// canvas keeps its own, and drops an entry with its annotation.
+    private var strokeCache: [UUID: (stroke: Stroke, path: CGPath, bounds: CGRect)] = [:]
     /// Fit zoom is kept across window resizes until the user zooms or pans.
     private var fitsOnResize = true
     private var isTrackingMouse = false
@@ -543,18 +549,17 @@ final class CanvasView: NSView {
         }
         baseView.transform = now.transform
         baseView.setBackground(now.background, captureScale: model.scale)
-        // The effect being dragged is rendered on every change; commits reconcile in the model.
-        if now.transient != previous.transient, now.transient?.isEffect == true || previous.transient?.isEffect == true {
-            model.tileCache.reconcile(document: now.document, transient: now.transient)
-        }
-        if now.document != previous.document || now.transient != previous.transient {
+        // The model reconciles the tile cache on every change to the document or to a transient
+        // effect (`EditorModel.transient`, `apply`), so the tiles need syncing only when the effects
+        // shown could have changed: a drawing's drag or a selection change leaves them alone.
+        if now.document != previous.document || now.transient != previous.transient,
+           now.document.effects != previous.document.effects
+            || now.transient?.isEffect == true || previous.transient?.isEffect == true {
             syncTiles()
         }
-        #if DEBUG
         if now.document != previous.document {
-            NSLog("Editor: undo \"\(model.undoManager.undoActionName)\", redo \"\(model.undoManager.redoActionName)\"")
+            strokeCache = strokeCache.filter { id, _ in now.document.annotation(id: id) != nil || now.transient?.id == id }
         }
-        #endif
         if now.allowsPartialRepaint(since: previous) {
             setNeedsDisplay(repaintRect(for: previous.transient, in: previous.document)
                 .union(repaintRect(for: now.transient, in: now.document)))
@@ -589,7 +594,27 @@ final class CanvasView: NSView {
     }
 
     private func imageBounds(of annotation: Annotation) -> CGRect {
-        annotation.effectRect ?? AnnotationGeometry.bounds(of: annotation, scale: model.scale)
+        switch annotation {
+        case .pencil(let stroke), .highlighter(let stroke):
+            let margin = AnnotationGeometry.antialiasMargin
+            return strokeGeometry(stroke).bounds.insetBy(dx: -margin, dy: -margin)
+        default:
+            return annotation.effectRect ?? AnnotationGeometry.bounds(of: annotation, scale: model.scale)
+        }
+    }
+
+    /// The stroke's smoothed path and painted bounds, from `strokeCache` while its points and
+    /// width are unchanged, so a frame builds each stroke's curve at most once instead of once per
+    /// bounds test, backdrop clip and draw.
+    private func strokeGeometry(_ stroke: Stroke) -> (path: CGPath, bounds: CGRect) {
+        if let cached = strokeCache[stroke.id], cached.stroke.points == stroke.points,
+           cached.stroke.lineWidth == stroke.lineWidth {
+            return (cached.path, cached.bounds)
+        }
+        let path = StrokeSmoothing.path(for: stroke.points)
+        let bounds = AnnotationGeometry.strokeBounds(ofPath: path, lineWidth: stroke.lineWidth)
+        strokeCache[stroke.id] = (stroke, path, bounds)
+        return (path, bounds)
     }
 
     private func tilesDidChange() {
@@ -601,33 +626,35 @@ final class CanvasView: NSView {
     /// have a tile, and tiles that went stale, are repainted.
     private func syncTiles() {
         let effects = displayedEffects
-        var tiles: [UUID: (rect: CGRect, image: CGImage)] = [:]
+        var current: [UUID: TileRepaint.Shown] = [:]
+        var list: [(rect: CGRect, image: CGImage)] = []
+        var layers: [(id: UUID, rect: CGRect, image: CGImage?)] = []
+        var pending: Set<UUID> = []
         for effect in effects {
-            tiles[effect.id] = shownTile(for: effect)
-        }
-        baseView.setTiles(effects.map { effect -> (id: UUID, rect: CGRect, image: CGImage?) in
-            if let tile = tiles[effect.id] {
-                return (id: effect.id, rect: tile.rect, image: tile.image)
+            if let tile = shownTile(for: effect) {
+                current[effect.id] = TileRepaint.Shown(image: tile.image, rect: tile.rect)
+                list.append(tile)
+                layers.append((id: effect.id, rect: tile.rect, image: tile.image))
+            } else {
+                pending.insert(effect.id)
+                layers.append((id: effect.id, rect: ImageRects.integral(effect.effectRect ?? .zero, clippedTo: imagePixelSize),
+                               image: nil))
             }
-            return (id: effect.id, rect: ImageRects.integral(effect.effectRect ?? .zero, clippedTo: imagePixelSize), image: nil)
-        })
-        let pending = Set(effects.filter { tiles[$0.id] == nil }.map(\.id))
+        }
+        baseView.setTiles(layers)
         for effect in effects where pending.contains(effect.id) != pendingIDs.contains(effect.id) {
             if let rect = effect.effectRect {
                 setNeedsDisplay(model.transform.viewRect(rect).insetBy(dx: -8, dy: -8))
             }
         }
         pendingIDs = pending
-        var current: [UUID: TileRepaint.Shown] = [:]
-        for (id, tile) in tiles {
-            current[id] = TileRepaint.Shown(image: tile.image, rect: tile.rect)
-        }
         for id in Set(shownTiles.keys).union(current.keys) {
             if let dirty = TileRepaint.dirtyRect(old: shownTiles[id], new: current[id]) {
                 setNeedsDisplay(model.transform.viewRect(dirty).insetBy(dx: -8, dy: -8))
             }
         }
         shownTiles = current
+        shownTileList = list
     }
 
     /// The tile to show for `effect` and the image-pixel rect it covers, or nil for the placeholder.
@@ -637,8 +664,7 @@ final class CanvasView: NSView {
     private func shownTile(for effect: Annotation) -> (rect: CGRect, image: CGImage)? {
         let size = imagePixelSize
         if case .redact = effect {
-            guard let image = model.tileCache.currentTile(for: effect, in: model.document, transient: model.transient),
-                  let rect = effect.effectRect else { return nil }
+            guard let image = model.tileCache.currentTile(for: effect.id), let rect = effect.effectRect else { return nil }
             return (rect: ImageRects.integral(rect, clippedTo: size), image: image)
         }
         guard let tile = model.tileCache.tiles[effect.id], let rect = tile.key.effect.effectRect else { return nil }
@@ -821,14 +847,11 @@ final class CanvasView: NSView {
 
     /// The capture as the canvas shows it, in image pixels: the base view's layer crops
     /// (`baseView.baseTiles`, one for most captures, 16,384 px strips for a taller one), then the
-    /// shown effect tiles. The highlighter backdrop copies it, and the spotlight overlay is masked
-    /// by its alpha. Nothing new is decoded or rendered; these are the images the layers hold.
+    /// shown effect tiles as of the last `syncTiles`. The highlighter backdrop copies it, and the
+    /// spotlight overlay is masked by its alpha. Nothing new is decoded or rendered; these are the
+    /// images the layers hold.
     private var backdropLayers: [(rect: CGRect, image: CGImage)] {
-        var layers = baseView.baseTiles
-        for effect in displayedEffects {
-            if let tile = shownTile(for: effect) { layers.append((rect: tile.rect, image: tile.image)) }
-        }
-        return layers
+        baseView.baseTiles + shownTileList
     }
 
     /// How `backdropLayers` are drawn, following `BaseImageView`: nearest from 2 device pixels per
@@ -846,19 +869,20 @@ final class CanvasView: NSView {
     /// export, and the spotlight overlay drawn after it dims the copy once, as the export dims its
     /// bitmap. The CTM is image pixels, top-left origin. The clip is stroked 1 view point wider on
     /// each side so anti-aliased edge pixels get a whole backdrop, as in the export.
-    private func drawHighlighterBackdrops(in context: CGContext, visible: CGRect) {
-        var strokes: [Stroke] = []
-        for drawing in displayedDrawings {
-            if case .highlighter(let stroke) = drawing, AnnotationGeometry.strokeBounds(of: stroke).intersects(visible) {
-                strokes.append(stroke)
+    private func drawHighlighterBackdrops(in context: CGContext, visible: CGRect, drawings: [Annotation],
+                                          layers: [(rect: CGRect, image: CGImage)]) {
+        var strokes: [(path: CGPath, lineWidth: CGFloat)] = []
+        for drawing in drawings {
+            if case .highlighter(let stroke) = drawing {
+                let geometry = strokeGeometry(stroke)
+                if geometry.bounds.intersects(visible) { strokes.append((geometry.path, stroke.lineWidth)) }
             }
         }
         guard !strokes.isEmpty else { return }
         let quality = backdropInterpolationQuality
-        let layers = backdropLayers
         for stroke in strokes {
             context.saveGState()
-            context.addPath(StrokeSmoothing.path(for: stroke.points))
+            context.addPath(stroke.path)
             context.setLineWidth(stroke.lineWidth + 2 / model.transform.zoom)
             context.setLineCap(.round)
             context.setLineJoin(.round)
@@ -876,15 +900,15 @@ final class CanvasView: NSView {
     /// miss the dirty rect are skipped. The view's clip bounds the overlay's layer. It is masked by
     /// `backdropLayers`, so a transparent corner stays undimmed, unless the base has no alpha
     /// channel to mask with.
-    private func drawSpotlightOverlay(in context: CGContext, visible: CGRect) {
-        let spotlights = displayedSpotlights
+    private func drawSpotlightOverlay(in context: CGContext, visible: CGRect, spotlights: [Annotation],
+                                      coverage: [(rect: CGRect, image: CGImage)]) {
         guard !spotlights.isEmpty else { return }
         let shapes = spotlights.compactMap(\.spotlightShape).filter { $0.rect.standardized.intersects(visible) }
         context.saveGState()
         context.interpolationQuality = backdropInterpolationQuality
         AnnotationDrawing.drawSpotlightOverlay(shapes, dim: model.document.effectiveSpotlightDim, in: context,
                                                imageRect: CGRect(origin: .zero, size: imagePixelSize),
-                                               coverage: baseHasAlpha ? backdropLayers : [])
+                                               coverage: baseHasAlpha ? coverage : [])
         context.restoreGState()
     }
 
@@ -900,6 +924,11 @@ final class CanvasView: NSView {
         guard let context = NSGraphicsContext.current?.cgContext else { return }
         let transform = model.transform
         let visible = transform.imageRect(dirtyRect)
+        // Each list once per draw: the backdrops, the overlay and the outlines read them too.
+        let effects = displayedEffects
+        let drawings = displayedDrawings
+        let spotlights = displayedSpotlights
+        let backdrop = backdropLayers
         context.saveGState()
         context.concatenate(transform.affine)
         if let background = shown.background {
@@ -908,14 +937,19 @@ final class CanvasView: NSView {
             context.addPath(CGPath(roundedRect: content, cornerWidth: radius, cornerHeight: radius, transform: nil))
             context.clip()
         }
-        drawHighlighterBackdrops(in: context, visible: visible)
-        for effect in displayedEffects where pendingIDs.contains(effect.id) {
+        drawHighlighterBackdrops(in: context, visible: visible, drawings: drawings, layers: backdrop)
+        for effect in effects where pendingIDs.contains(effect.id) {
             guard let rect = effect.effectRect, rect.intersects(visible) else { continue }
             AnnotationDrawing.drawPlaceholder(for: effect, in: context)
         }
-        drawSpotlightOverlay(in: context, visible: visible)
-        for drawing in displayedDrawings where imageBounds(of: drawing).intersects(visible) {
-            AnnotationDrawing.draw(drawing, in: context, scale: model.scale)
+        drawSpotlightOverlay(in: context, visible: visible, spotlights: spotlights, coverage: backdrop)
+        for drawing in drawings where imageBounds(of: drawing).intersects(visible) {
+            switch drawing {
+            case .pencil(let stroke), .highlighter(let stroke):
+                AnnotationDrawing.draw(drawing, in: context, scale: model.scale, strokePath: strokeGeometry(stroke).path)
+            default:
+                AnnotationDrawing.draw(drawing, in: context, scale: model.scale)
+            }
         }
         context.restoreGState()
         if let draft = model.cropDraft {
@@ -933,7 +967,7 @@ final class CanvasView: NSView {
         if model.tool == .spotlight {
             // Every displayed spotlight's edge, the one being drawn included; chrome, never exported,
             // and not clipped to an applied crop, as the selection outline is not.
-            for shape in displayedSpotlights.compactMap(\.spotlightShape) {
+            for shape in spotlights.compactMap(\.spotlightShape) {
                 AnnotationDrawing.drawSpotlightOutline(shape, transform: transform, scale: backingScale, in: context)
             }
         }

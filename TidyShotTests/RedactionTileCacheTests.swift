@@ -72,7 +72,7 @@ struct RedactionTileCacheTests {
         let start = document(secret)
         cache.reconcile(document: start, transient: nil)
         await cache.renderTask?.value
-        let tile = try #require(cache.currentTile(for: secret, in: start, transient: nil))
+        let tile = try #require(cache.currentTile(for: secret.id))
         #expect(renderer.calls == [TileKey(effect: secret, beneath: [])])
         #expect(changes == 1)
 
@@ -87,7 +87,7 @@ struct RedactionTileCacheTests {
         await cache.renderTask?.value
 
         #expect(renderer.calls.map(\.effect) == [secret, far])
-        #expect(cache.currentTile(for: secret, in: more, transient: dragging) === tile)
+        #expect(cache.currentTile(for: secret.id) === tile)
         #expect(changes == 2)
     }
 
@@ -107,7 +107,7 @@ struct RedactionTileCacheTests {
         let after = before.replacing(moved)
         cache.reconcile(document: after, transient: nil)
         // Until the new tiles land, the old ones are pending, never shown.
-        #expect(cache.currentTile(for: blurred, in: after, transient: nil) == nil)
+        #expect(cache.currentTile(for: blurred.id) == nil)
         await cache.renderTask?.value
 
         // All three re-render in creation order, each over the new tiles beneath it.
@@ -115,8 +115,8 @@ struct RedactionTileCacheTests {
                                                          TileKey(effect: blurred, beneath: [moved]),
                                                          TileKey(effect: mosaic, beneath: [blurred])])
         #expect(cache.tiles[mosaic.id]?.key == TileKey(effect: mosaic, beneath: [moved, blurred]))
-        #expect(try #require(cache.currentTile(for: blurred, in: after, transient: nil)) !== oldBlur)
-        #expect(try #require(cache.currentTile(for: mosaic, in: after, transient: nil)) !== oldMosaic)
+        #expect(try #require(cache.currentTile(for: blurred.id)) !== oldBlur)
+        #expect(try #require(cache.currentTile(for: mosaic.id)) !== oldMosaic)
     }
 
     @Test func nonOverlappingLaterKeepsTile() async throws {
@@ -135,7 +135,7 @@ struct RedactionTileCacheTests {
         await cache.renderTask?.value
 
         #expect(renderer.calls.dropFirst(2).map(\.effect) == [moved])
-        #expect(cache.currentTile(for: blurred, in: after, transient: nil) === kept)
+        #expect(cache.currentTile(for: blurred.id) === kept)
     }
 
     /// The first render is held at the gate while a second reconcile moves the blur. The second
@@ -152,12 +152,12 @@ struct RedactionTileCacheTests {
 
         cache.reconcile(document: document(second), transient: nil)
         await cache.renderTask?.value
-        let latest = try #require(cache.currentTile(for: second, in: document(second), transient: nil))
+        let latest = try #require(cache.currentTile(for: second.id))
 
         await gate.open()
         await held.value
         #expect(cache.tiles[second.id]?.key == TileKey(effect: second, beneath: []))
-        #expect(cache.currentTile(for: second, in: document(second), transient: nil) === latest)
+        #expect(cache.currentTile(for: second.id) === latest)
         #expect(renderer.calls.map(\.effect) == [first, second])
     }
 
@@ -183,20 +183,20 @@ struct RedactionTileCacheTests {
         await gate.open()
         await pass.value
         #expect(renderer.calls == [TileKey(effect: secret, beneath: []), TileKey(effect: dragged, beneath: [secret])])
-        let tile = try #require(cache.currentTile(for: dragged, in: committed, transient: nil))
+        let tile = try #require(cache.currentTile(for: dragged.id))
 
         let nudged = secret.moved(by: CGVector(dx: 1, dy: 0))
         #expect(RedactionTileCache.orderedEffects(in: committed, transient: nudged) == [nudged, dragged])
         cache.reconcile(document: committed, transient: nudged)
         await cache.renderTask?.value
         #expect(renderer.calls.dropFirst(2).map(\.effect) == [nudged, dragged])
-        #expect(cache.currentTile(for: dragged, in: committed, transient: nudged) !== tile)
-        let movedTile = try #require(cache.currentTile(for: nudged, in: committed, transient: nudged))
+        #expect(cache.currentTile(for: dragged.id) !== tile)
+        let movedTile = try #require(cache.currentTile(for: nudged.id))
         let moveCommitted = committed.replacing(nudged)
         cache.reconcile(document: moveCommitted, transient: nil)
         await cache.renderTask?.value
         #expect(renderer.calls.count == 4)
-        #expect(cache.currentTile(for: nudged, in: moveCommitted, transient: nil) === movedTile)
+        #expect(cache.currentTile(for: nudged.id) === movedTile)
     }
 
     @Test func allTilesRendersMissingInOrder() async throws {
@@ -268,7 +268,7 @@ struct RedactionTileCacheTests {
         // The pass ended at the failed redact: nothing was rendered over it, nothing is shown.
         #expect(cache.tiles[secret.id] == nil)
         #expect(cache.tiles[blurred.id] == nil)
-        #expect(cache.currentTile(for: blurred, in: start, transient: nil) == nil)
+        #expect(cache.currentTile(for: blurred.id) == nil)
         #expect(renderer.calls.map(\.effect) == [secret])
 
         // The export leaves the blur out too, and never renders it without the redact beneath.
@@ -283,7 +283,7 @@ struct RedactionTileCacheTests {
         await cache.renderTask?.value
         #expect(renderer.calls.contains(TileKey(effect: blurred, beneath: [secret])))
         #expect(cache.tiles[blurred.id]?.key == TileKey(effect: blurred, beneath: [secret]))
-        #expect(cache.currentTile(for: blurred, in: later, transient: nil) != nil)
+        #expect(cache.currentTile(for: blurred.id) != nil)
         #expect(await cache.allTiles(for: later).map(\.effect) == [secret, blurred, far])
     }
 
@@ -303,14 +303,15 @@ struct RedactionTileCacheTests {
         let later = start.appending(secret)
         #expect(RedactionTileCache.keys(for: later.effects, imageSize: size)[blurred.id]
             == TileKey(effect: blurred, beneath: [secret]))
-        #expect(cache.currentTile(for: blurred, in: later, transient: nil) == nil)
         cache.reconcile(document: later, transient: nil)
+        // Until the new tile lands, the stored one is stale and never shown.
+        #expect(cache.currentTile(for: blurred.id) == nil)
         await cache.renderTask?.value
 
         // The redact renders first, then the blur over it.
         #expect(Array(renderer.calls.dropFirst()) == [TileKey(effect: secret, beneath: []),
                                                         TileKey(effect: blurred, beneath: [secret])])
-        #expect(try #require(cache.currentTile(for: blurred, in: later, transient: nil)) !== plain)
+        #expect(try #require(cache.currentTile(for: blurred.id)) !== plain)
         let moved = later.replacing(secret.moved(by: CGVector(dx: 10, dy: 0)))   // x 52..<62
         #expect(RedactionTileCache.keys(for: moved.effects, imageSize: size)[blurred.id]?.beneath == [])
         let deleted = later.removing(id: secret.id)

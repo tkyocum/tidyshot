@@ -109,13 +109,18 @@ nonisolated enum AnnotationGeometry {
         return CGRect(x: mark.center.x - radius, y: mark.center.y - radius, width: mark.diameter, height: mark.diameter)
     }
 
-    /// A stroke's smoothed path grown by half its width. The path is built here and dropped.
+    /// A stroke's smoothed path grown by half its width. The path is built here and dropped (the
+    /// canvas, which draws it too, keeps its own and calls `strokeBounds(ofPath:lineWidth:)`).
     /// Catmull-Rom can overshoot its points a little, so the bounds come from the curve, not from
     /// the points.
     static func strokeBounds(of stroke: Stroke) -> CGRect {
         guard !stroke.points.isEmpty else { return .null }
-        let box = StrokeSmoothing.path(for: stroke.points).boundingBoxOfPath
-        return box.insetBy(dx: -stroke.lineWidth / 2, dy: -stroke.lineWidth / 2)
+        return strokeBounds(ofPath: StrokeSmoothing.path(for: stroke.points), lineWidth: stroke.lineWidth)
+    }
+
+    /// `strokeBounds(of:)` for a stroke whose smoothed path the caller already holds.
+    static func strokeBounds(ofPath path: CGPath, lineWidth: CGFloat) -> CGRect {
+        path.boundingBoxOfPath.insetBy(dx: -lineWidth / 2, dy: -lineWidth / 2)
     }
 
     /// The box the selection outline draws around a stroke; nil for every other annotation.

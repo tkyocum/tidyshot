@@ -30,11 +30,19 @@ final class BaseImageView: NSView {
 
     /// One layer per entry of `baseTiles`, in the same order.
     private var imageLayers: [CALayer] = []
-    /// Tile layers by effect id, the image each shows and the rect it covers in image pixels.
-    private var tileLayers: [UUID: CALayer] = [:]
-    private var tileImages: [UUID: CGImage] = [:]
-    private var tileRects: [UUID: CGRect] = [:]
-    private var tileOrder: [UUID] = []
+    /// An effect's tile: its layer, the image it shows and the rect it covers in image pixels.
+    private struct Tile {
+        let id: UUID
+        let layer: CALayer
+        var image: CGImage?
+        var rect: CGRect
+    }
+    /// The effect tiles in creation order.
+    private var tiles: [Tile] = []
+    /// The magnification filter every image and tile layer has: nearest from 2 device pixels per
+    /// image pixel up, so redacted pixels read exactly when zoomed in, linear below. A new layer
+    /// gets it at once; a pan or zoom that keeps it writes nothing.
+    private var magnificationFilter: CALayerContentsFilter = .linear
 
     /// The background shown behind the capture, nil for none, and the capture's scale, which
     /// sizes the shadow.
@@ -68,6 +76,8 @@ final class BaseImageView: NSView {
         wantsLayer = true
         layerContentsRedrawPolicy = .never
         backgroundLayer.contentsGravity = .resize
+        backgroundLayer.magnificationFilter = .linear
+        backgroundLayer.minificationFilter = .trilinear
         backgroundLayer.isHidden = true
         shadowLayer.shadowColor = CGColor(gray: 0, alpha: 1)
         shadowLayer.shadowOpacity = Float(BackgroundCompositor.shadowAlpha)
@@ -116,59 +126,56 @@ final class BaseImageView: NSView {
     }
 
     /// One entry per effect on screen, in creation order. A nil image hides that tile; the canvas
-    /// draws its placeholder. Layers for ids no longer listed are removed.
-    func setTiles(_ tiles: [(id: UUID, rect: CGRect, image: CGImage?)]) {
+    /// draws its placeholder. Layers for ids no longer listed are removed; a layer whose image is
+    /// the same object keeps its contents.
+    func setTiles(_ shown: [(id: UUID, rect: CGRect, image: CGImage?)]) {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        var layers: [UUID: CALayer] = [:]
-        var images: [UUID: CGImage] = [:]
-        var rects: [UUID: CGRect] = [:]
-        for tile in tiles {
-            let tileLayer = tileLayers[tile.id] ?? makeTileLayer()
-            if tileImages[tile.id] !== tile.image {
-                tileLayer.contents = tile.image
-            }
-            tileLayer.isHidden = tile.image == nil
-            layers[tile.id] = tileLayer
-            images[tile.id] = tile.image
-            rects[tile.id] = tile.rect
+        var existing = Dictionary(tiles.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
+        tiles = shown.map { entry in
+            var tile = existing.removeValue(forKey: entry.id)
+                ?? Tile(id: entry.id, layer: makeTileLayer(), image: nil, rect: .zero)
+            if tile.image !== entry.image { tile.layer.contents = entry.image }
+            tile.layer.isHidden = entry.image == nil
+            tile.image = entry.image
+            tile.rect = entry.rect
+            return tile
         }
-        tileLayers = layers
-        tileImages = images
-        tileRects = rects
-        tileOrder = tiles.map(\.id)
         installLayers()
-        contentLayer.sublayers = imageLayers + tileOrder.compactMap { layers[$0] }
+        contentLayer.sublayers = imageLayers + tiles.map(\.layer)
         CATransaction.commit()
         layoutLayers()
     }
 
     /// Replaces the image layers with one per tile, under the effect tiles.
-    private func setBaseTiles(_ tiles: [(rect: CGRect, image: CGImage)]) {
+    private func setBaseTiles(_ crops: [(rect: CGRect, image: CGImage)]) {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        baseTiles = tiles
-        imageLayers = tiles.map { tile in
+        baseTiles = crops
+        imageLayers = crops.map { crop in
             let imageLayer = makeTileLayer()
-            imageLayer.contents = tile.image
+            imageLayer.contents = crop.image
             return imageLayer
         }
         installLayers()
-        contentLayer.sublayers = imageLayers + tileOrder.compactMap { tileLayers[$0] }
+        contentLayer.sublayers = imageLayers + tiles.map(\.layer)
         CATransaction.commit()
         layoutLayers()
     }
 
+    /// A layer with the filters of the moment: `magnificationFilter`, and trilinear minification.
     private func makeTileLayer() -> CALayer {
         let tileLayer = CALayer()
         tileLayer.contentsGravity = .resize
+        tileLayer.magnificationFilter = magnificationFilter
+        tileLayer.minificationFilter = .trilinear
         return tileLayer
     }
 
     /// Frames every layer at `transform.viewRect` of its image-pixel rect, so the image's layers
-    /// meet edge to edge at any zoom and pan. Nearest-neighbour magnification from 2 device pixels
-    /// per image pixel up, so redacted pixels read exactly when zoomed in; linear below; trilinear
-    /// minification. The background's layers follow the same transform.
+    /// meet edge to edge at any zoom and pan, and gives every layer the new magnification filter
+    /// when the zoom crosses 2 device pixels per image pixel. The background's layers follow the
+    /// same transform.
     private func layoutLayers() {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
@@ -176,16 +183,15 @@ final class BaseImageView: NSView {
         contentLayer.frame = bounds
         layoutBackground()
         let filter: CALayerContentsFilter = transform.zoom * (window?.backingScaleFactor ?? 2) >= 2 ? .nearest : .linear
-        for (imageLayer, tile) in zip(imageLayers, baseTiles) {
-            imageLayer.frame = transform.viewRect(tile.rect)
-            imageLayer.magnificationFilter = filter
-            imageLayer.minificationFilter = .trilinear
+        let filterChanged = filter != magnificationFilter
+        magnificationFilter = filter
+        for (imageLayer, crop) in zip(imageLayers, baseTiles) {
+            imageLayer.frame = transform.viewRect(crop.rect)
+            if filterChanged { imageLayer.magnificationFilter = filter }
         }
-        for id in tileOrder {
-            guard let tileLayer = tileLayers[id], let rect = tileRects[id] else { continue }
-            tileLayer.frame = transform.viewRect(rect)
-            tileLayer.magnificationFilter = filter
-            tileLayer.minificationFilter = .trilinear
+        for tile in tiles {
+            tile.layer.frame = transform.viewRect(tile.rect)
+            if filterChanged { tile.layer.magnificationFilter = filter }
         }
         CATransaction.commit()
     }
@@ -207,8 +213,6 @@ final class BaseImageView: NSView {
         let radius = min(background.radius * zoom, content.width / 2, content.height / 2)
         backgroundLayer.isHidden = false
         backgroundLayer.frame = transform.viewRect(background.canvasRect)
-        backgroundLayer.magnificationFilter = .linear
-        backgroundLayer.minificationFilter = .trilinear
 
         shadowLayer.isHidden = !background.style.shadow
         let points = captureScale * zoom  // view points per point of the style

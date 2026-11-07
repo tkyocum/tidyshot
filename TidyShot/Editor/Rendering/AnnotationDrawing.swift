@@ -17,8 +17,9 @@ nonisolated enum AnnotationDrawing {
     /// Draws a drawing in image pixels. Effects draw nothing here, because they are tiles on the
     /// base layer, and neither does a spotlight, which the overlay draws. `scale` is the capture
     /// scale, which sizes the arrow head and a counter's ring only; the other drawings are sized by
-    /// their stored line widths.
-    static func draw(_ annotation: Annotation, in context: CGContext, scale: CGFloat) {
+    /// their stored line widths. `strokePath` is a pencil's or highlighter's smoothed path when the
+    /// caller already built it (the canvas keeps one per stroke); nil builds it here, as the export does.
+    static func draw(_ annotation: Annotation, in context: CGContext, scale: CGFloat, strokePath: CGPath? = nil) {
         switch annotation {
         case .rectangle(let box):
             drawRectangle(box, in: context)
@@ -29,9 +30,9 @@ nonisolated enum AnnotationDrawing {
         case .line(let segment):
             strokeLine(segment, in: context)
         case .pencil(let stroke):
-            drawStroke(stroke, blend: .normal, in: context)
+            drawStroke(stroke, path: strokePath, blend: .normal, in: context)
         case .highlighter(let stroke):
-            drawStroke(stroke, blend: .multiply, in: context)
+            drawStroke(stroke, path: strokePath, blend: .multiply, in: context)
         case .text(let box):
             drawText(box, in: context)
         case .counter(let mark):
@@ -161,12 +162,12 @@ nonisolated enum AnnotationDrawing {
         context.saveGState()
         defer { context.restoreGState() }
         context.setLineWidth(1)
+        context.setFillColor(CGColor(gray: 1, alpha: 1))
+        context.setStrokeColor(CGColor(gray: 0, alpha: 0.6))
         for point in points {
             let centre = transform.viewPoint(point)
             let square = CGRect(x: snap(centre.x - half), y: snap(centre.y - half), width: handleSide, height: handleSide)
-            context.setFillColor(CGColor(gray: 1, alpha: 1))
             context.fill(square)
-            context.setStrokeColor(CGColor(gray: 0, alpha: 0.6))
             context.stroke(square.insetBy(dx: 0.5, dy: 0.5))
         }
     }
@@ -260,7 +261,7 @@ nonisolated enum AnnotationDrawing {
     /// matrix is not part of the graphics state, so it is put back by hand.
     private static func drawText(_ box: TextBox, in context: CGContext) {
         guard box.fontSize > 0, !box.string.isEmpty else { return }
-        let font = TextLayout.font(size: box.fontSize)
+        let metrics = TextLayout.Metrics(fontSize: box.fontSize)
         let colour = box.color.cgColor
         let savedTextMatrix = context.textMatrix
         context.saveGState()
@@ -269,9 +270,10 @@ nonisolated enum AnnotationDrawing {
             context.textMatrix = savedTextMatrix
         }
         context.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
-        for (text, origin) in zip(TextLayout.lines(of: box.string), TextLayout.baselineOrigins(for: box)) where !text.isEmpty {
+        let origins = TextLayout.baselineOrigins(for: box, metrics: metrics)
+        for (text, origin) in zip(TextLayout.lines(of: box.string), origins) where !text.isEmpty {
             context.textPosition = origin
-            CTLineDraw(TextLayout.line(text, font: font, color: colour), context)
+            CTLineDraw(TextLayout.line(text, font: metrics.font, color: colour), context)
         }
     }
 
@@ -314,7 +316,7 @@ nonisolated enum AnnotationDrawing {
     /// painted twice. `.multiply` multiplies the colour with what is already in the context, so
     /// the highlighter can only darken: black stays black, white becomes the colour. The flattener
     /// draws into the capture's bitmap, where that is exactly what multiplies.
-    private static func drawStroke(_ stroke: Stroke, blend: CGBlendMode, in context: CGContext) {
+    private static func drawStroke(_ stroke: Stroke, path: CGPath?, blend: CGBlendMode, in context: CGContext) {
         guard !stroke.points.isEmpty, stroke.lineWidth > 0 else { return }
         context.saveGState()
         defer { context.restoreGState() }
@@ -323,7 +325,7 @@ nonisolated enum AnnotationDrawing {
         context.setLineWidth(stroke.lineWidth)
         context.setLineCap(.round)
         context.setLineJoin(.round)
-        context.addPath(StrokeSmoothing.path(for: stroke.points))
+        context.addPath(path ?? StrokeSmoothing.path(for: stroke.points))
         context.strokePath()
     }
 

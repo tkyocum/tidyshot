@@ -81,15 +81,13 @@ final class RedactionTileCache {
         return keys
     }
 
-    /// The tile to show for `effect` now, or nil while it is pending (the canvas then draws the
-    /// placeholder). A stored tile counts only when its key equals the key the effect wants in
-    /// `document` with `transient`.
-    func currentTile(for effect: Annotation, in document: AnnotationDocument, transient: Annotation?) -> CGImage? {
-        guard let entry = tiles[effect.id] else { return nil }
-        // Every effect, not only those up to this one: a later redact can lie beneath it.
-        let effects = Self.orderedEffects(in: document, transient: transient)
-        guard let wanted = Self.keys(for: effects, imageSize: imageSize)[effect.id] else { return nil }
-        return entry.key == wanted ? entry.image : nil
+    /// The tile to show for the effect `id` now, or nil while it is pending (the canvas then draws
+    /// the placeholder). A stored tile counts only when its key equals the one the latest
+    /// `reconcile` asked for, which is the key the effect wants now: the model reconciles on every
+    /// change to the document or to a transient effect, so nothing is recomputed here.
+    func currentTile(for id: UUID) -> CGImage? {
+        guard let entry = tiles[id], entry.key == wanted[id] else { return nil }
+        return entry.image
     }
 
     /// Brings the tiles in line with `document` and `transient`. Tiles of effects that are gone
