@@ -57,8 +57,9 @@ actor RedactionRenderer: TileRendering {
             }
             output = CIImage(color: colour)
         case .blur(_, let radius):
-            // Only the sample rect is read. `beneath` holds every earlier effect that meets it, so a
-            // hidden pixel never reaches the blur, whatever the reach of Core Image's kernel.
+            // Only the sample rect is read. `beneath` holds every earlier effect and every redact,
+            // earlier or later, that meets it, so a hidden pixel never reaches the blur, whatever
+            // the reach of Core Image's kernel.
             let sample = ImageRects.bottomLeft(EffectGeometry.sampleRect(of: effect, imageSize: size), imageHeight: height)
             output = composite(base, beneath: beneath).cropped(to: sample)
                 .clampedToExtent()

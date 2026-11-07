@@ -1,9 +1,9 @@
 import CoreGraphics
 import Foundation
 
-/// What a redaction tile was rendered from: the effect's own value and the values of the earlier
-/// effects whose pixels reach it, in creation order. Equal keys mean equal tile pixels, so a tile
-/// is reused exactly when its key is unchanged.
+/// What a redaction tile was rendered from: the effect's own value and the values of the effects
+/// whose pixels reach it, in creation order. Equal keys mean equal tile pixels, so a tile is
+/// reused exactly when its key is unchanged.
 nonisolated struct TileKey: Equatable, Sendable {
     let effect: Annotation
     let beneath: [Annotation]
@@ -13,10 +13,11 @@ nonisolated struct TileKey: Equatable, Sendable {
 /// `TileRendering` (the app's `RedactionRenderer`) off the main actor.
 ///
 /// There is no invalidation pass. `reconcile(document:transient:)` computes the key every effect
-/// wants now and renders the effects whose stored key differs. A change to an earlier effect
-/// changes the key of every later effect that samples it, so those re-render too. The renders of
-/// one call run in creation order in one task, each over the tiles beneath it, and a later call
-/// wins: every result is checked against the cache-wide generation before it is stored.
+/// wants now and renders the effects whose stored key differs. A change to an effect changes the
+/// key of every blur and pixelate that samples it, so those re-render too. The renders of one call
+/// run in one task, the redacts first and the rest in creation order, each over the tiles beneath
+/// it, and a later call wins: every result is checked against the cache-wide generation before it
+/// is stored.
 final class RedactionTileCache {
     /// The newest tile for each effect id and the key it was rendered for. An entry whose key
     /// differs from the effect's current key is stale and is never shown; `currentTile` checks.
@@ -54,19 +55,25 @@ final class RedactionTileCache {
         return effects
     }
 
-    /// The key each effect's tile needs, by id. `beneath` lists, in creation order, every earlier
-    /// effect whose rect meets the effect's sample rect (`EffectGeometry.sampleRect`), plus
-    /// everything beneath those: the earlier tile's pixels came from them, so a change to any of
-    /// them must change this key too.
+    /// The key each effect's tile needs, by id. A redact's tile is its fill alone, so its `beneath`
+    /// is empty. A blur's or pixelate's lists, in creation order, every earlier effect and every
+    /// redact, earlier or later, whose rect meets its sample rect (`EffectGeometry.sampleRect`),
+    /// plus everything beneath those: the tile's pixels came from them, so a change to any of them
+    /// must change this key too. A redact drawn after a blur still lies under it, so the blur's
+    /// margin never smears in the pixels the redact hides (spec 2.6), whatever the order.
     nonisolated static func keys(for effects: [Annotation], imageSize: CGSize) -> [UUID: TileKey] {
         var keys: [UUID: TileKey] = [:]
         var reach: [Set<Int>] = []
         for (index, effect) in effects.enumerated() {
-            let sample = sampleArea(of: effect, imageSize: imageSize)
             var below = Set<Int>()
-            for earlier in 0..<index where meets(effects[earlier], sample, imageSize: imageSize) {
-                below.insert(earlier)
-                below.formUnion(reach[earlier])
+            if !isRedact(effect) {
+                let sample = sampleArea(of: effect, imageSize: imageSize)
+                for other in effects.indices where (other < index || (other > index && isRedact(effects[other])))
+                    && meets(effects[other], sample, imageSize: imageSize) {
+                    below.insert(other)
+                    // A later one is a redact, which has nothing beneath.
+                    if other < index { below.formUnion(reach[other]) }
+                }
             }
             reach.append(below)
             keys[effect.id] = TileKey(effect: effect, beneath: below.sorted().map { effects[$0] })
@@ -79,14 +86,14 @@ final class RedactionTileCache {
     /// `document` with `transient`.
     func currentTile(for effect: Annotation, in document: AnnotationDocument, transient: Annotation?) -> CGImage? {
         guard let entry = tiles[effect.id] else { return nil }
+        // Every effect, not only those up to this one: a later redact can lie beneath it.
         let effects = Self.orderedEffects(in: document, transient: transient)
-        guard let index = effects.firstIndex(where: { $0.id == effect.id }) else { return nil }
-        let wanted = Self.keys(for: Array(effects[...index]), imageSize: imageSize)[effect.id]
+        guard let wanted = Self.keys(for: effects, imageSize: imageSize)[effect.id] else { return nil }
         return entry.key == wanted ? entry.image : nil
     }
 
     /// Brings the tiles in line with `document` and `transient`. Tiles of effects that are gone
-    /// are dropped at once; the effects whose key changed render in creation order in one task.
+    /// are dropped at once; the effects whose key changed render in `renderOrder` in one task.
     /// Call it after every change to the document or to the transient shape.
     func reconcile(document: AnnotationDocument, transient: Annotation?) {
         let effects = Self.orderedEffects(in: document, transient: transient)
@@ -98,7 +105,7 @@ final class RedactionTileCache {
         let gone = tiles.keys.filter { keys[$0] == nil }
         for id in gone { tiles[id] = nil }
         if !gone.isEmpty { onChange() }
-        let stale = effects.filter { tiles[$0.id]?.key != keys[$0.id] }
+        let stale = Self.renderOrder(effects.filter { tiles[$0.id]?.key != keys[$0.id] })
         guard !stale.isEmpty else {
             renderTask = nil
             return
@@ -116,8 +123,7 @@ final class RedactionTileCache {
         let effects = document.effects
         let keys = Self.keys(for: effects, imageSize: imageSize)
         var done: [UUID: EffectTile] = [:]
-        var result: [EffectTile] = []
-        for effect in effects {
+        for effect in Self.renderOrder(effects) {
             guard let key = keys[effect.id] else { continue }
             // Fail closed: an effect whose direct beneath is missing a tile is left out, never
             // rendered over the raw pixels (a redact under it that failed to render).
@@ -130,11 +136,9 @@ final class RedactionTileCache {
             }
             // nil is a failure when the effect has pixels in the image: leave it out.
             guard let image else { continue }
-            let tile = EffectTile(effect: effect, image: image)
-            done[effect.id] = tile
-            result.append(tile)
+            done[effect.id] = EffectTile(effect: effect, image: image)
         }
-        return result
+        return effects.compactMap { done[$0.id] }
     }
 
     // MARK: Private
@@ -174,9 +178,10 @@ final class RedactionTileCache {
         onChange()
     }
 
-    /// The tiles the renderer composites under `key.effect`: those of the earlier effects whose
-    /// rects meet its sample rect, in creation order. `tile` returns a tile only when it matches
-    /// the current key of that effect. Nil when one of those effects has no tile: the effect must
+    /// The tiles the renderer composites under `key.effect`: those of the effects in `beneath`
+    /// whose rects meet its sample rect, in creation order, so a redact created after the effect
+    /// is drawn over every earlier tile. `tile` returns a tile only when it matches the current key
+    /// of that effect. Nil when one of those effects has no tile: the effect must
     /// not be rendered over the pixels that tile should have covered.
     private func directlyBeneath(_ key: TileKey, tile: (UUID) -> EffectTile?) -> [EffectTile]? {
         let sample = Self.sampleArea(of: key.effect, imageSize: imageSize)
@@ -186,6 +191,17 @@ final class RedactionTileCache {
             result.append(found)
         }
         return result
+    }
+
+    /// `effects` with the redacts first, each part in creation order: a blur or pixelate may sample
+    /// a redact created after it, and a redact's tile needs no other.
+    nonisolated private static func renderOrder(_ effects: [Annotation]) -> [Annotation] {
+        effects.filter(isRedact) + effects.filter { !isRedact($0) }
+    }
+
+    nonisolated private static func isRedact(_ effect: Annotation) -> Bool {
+        if case .redact = effect { return true }
+        return false
     }
 
     /// The pixels an effect reads, rounded out to whole pixels and clipped to the image.
