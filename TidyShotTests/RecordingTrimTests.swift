@@ -457,10 +457,6 @@ struct RecordingTrimTests {
         try? FileManager.default.removeItem(at: folder)
     }
 
-    func exists(_ url: URL) -> Bool {
-        FileManager.default.fileExists(atPath: url.path(percentEncoded: false))
-    }
-
     func contents(of folder: URL) throws -> [String] {
         try FileManager.default.contentsOfDirectory(atPath: folder.path(percentEncoded: false)).sorted()
     }
@@ -481,20 +477,6 @@ struct RecordingTrimTests {
                                         tone: tone, keyframeInterval: keyframeInterval, reordersFrames: reorders,
                                         sampleRate: sampleRate, channels: channels)
         return url
-    }
-
-    /// The time of the first frame between `start` and `end` s with a channel louder than a tenth of
-    /// full scale, or with `last` of the last one; nil when none is (the mute tests' timing method).
-    func loud(_ audio: MovieSamples.Audio, from start: TimeInterval, to end: TimeInterval,
-              last: Bool = false) -> TimeInterval? {
-        let first = max(0, Int((start * audio.sampleRate).rounded(.down)))
-        let stop = min(audio.samples.count / audio.channels, Int((end * audio.sampleRate).rounded(.up)))
-        guard stop > first else { return nil }
-        func isLoud(_ frame: Int) -> Bool {
-            (0..<audio.channels).contains { abs(Int(audio.samples[frame * audio.channels + $0])) > 3_277 }
-        }
-        let frame = last ? (first..<stop).reversed().first(where: isLoud) : (first..<stop).first(where: isLoud)
-        return frame.map { Double($0) / audio.sampleRate }
     }
 
     /// Sample frames of the first audio track stored before the media time its edit list starts at,
@@ -872,8 +854,8 @@ struct RecordingTrimTests {
             (1.9...2.1, 0.9...1.1, false), (2.9...3.0, 1.9...2.0, true),
         ]
         for (was, now, last) in edges {
-            let sourceEdge = try #require(loud(before, from: was.lowerBound, to: was.upperBound, last: last))
-            let outputEdge = try #require(loud(after, from: now.lowerBound, to: now.upperBound, last: last))
+            let sourceEdge = try #require(before.loudEdge(from: was.lowerBound, to: was.upperBound, last: last))
+            let outputEdge = try #require(after.loudEdge(from: now.lowerBound, to: now.upperBound, last: last))
             #expect(abs(outputEdge - (sourceEdge - 1.0)) < 0.001, "the edge at \(sourceEdge) s is at \(outputEdge) s")
         }
         #expect(after.peak(from: 0.55, to: 0.95) < 0.01)

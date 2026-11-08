@@ -82,10 +82,6 @@ struct CoordinatorClopTests {
         coordinator.history.record(id: id)?.uploadedURL != nil
     }
 
-    func exists(_ url: URL) -> Bool {
-        FileManager.default.fileExists(atPath: url.path(percentEncoded: false))
-    }
-
     /// The last `Optimizing…` flag the card was given for `id`, or nil when it was given none.
     func lastOptimizing(_ id: UUID) -> Bool? {
         for call in world.cards.calls.reversed() {

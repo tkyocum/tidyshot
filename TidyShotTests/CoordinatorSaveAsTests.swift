@@ -24,8 +24,6 @@ struct CoordinatorSaveAsTests {
     /// The public URL of a key (`FakeDestination.publicURL(for:)`).
     func publicURL(_ key: String) -> URL { URL(string: "https://snap.tky.io/\(key)")! }
 
-    func exists(_ url: URL) -> Bool { FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) }
-
     /// `<root>/Desktop/<name>`, its folder made: the URL a save panel would return.
     func desktop(_ name: String) throws -> URL {
         let folder = world.root.appending(path: "Desktop", directoryHint: .isDirectory)

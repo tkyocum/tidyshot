@@ -61,10 +61,6 @@ struct CoordinatorDragOutTests {
         return record
     }
 
-    func exists(_ url: URL) -> Bool {
-        FileManager.default.fileExists(atPath: url.path(percentEncoded: false))
-    }
-
     /// The file Copy File put on the clipboard, when that is the clipboard's only write.
     var copiedFile: URL? {
         guard world.clipboard.copies.count == 1, case .fileURL(let url) = world.clipboard.copies[0] else { return nil }

@@ -33,10 +33,6 @@ struct GIFMakerTests {
         [size.width, size.height]
     }
 
-    func exists(_ url: URL) -> Bool {
-        FileManager.default.fileExists(atPath: url.path(percentEncoded: false))
-    }
-
     // MARK: Pure parts
 
     @Test func theOutputFrameCountRoundsUpAndIsNeverZero() {

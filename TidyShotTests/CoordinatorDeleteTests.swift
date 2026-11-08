@@ -45,10 +45,6 @@ struct CoordinatorDeleteTests {
         return record
     }
 
-    func exists(_ url: URL) -> Bool {
-        FileManager.default.fileExists(atPath: url.path(percentEncoded: false))
-    }
-
     /// An upload-only screenshot in `pending/` with a thumbnail, added to history: failed, so a Retry
     /// starts it.
     func addPendingImage(to coordinator: AppCoordinator) throws -> CaptureRecord {

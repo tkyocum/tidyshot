@@ -15,10 +15,6 @@ struct FileReplacementTests {
         try FileManager.default.contentsOfDirectory(atPath: folder.path(percentEncoded: false)).sorted()
     }
 
-    func exists(_ url: URL) -> Bool {
-        FileManager.default.fileExists(atPath: url.path(percentEncoded: false))
-    }
-
     /// A new destination gets the file directly.
     @Test func putsANewFileInPlace() throws {
         defer { try? FileManager.default.removeItem(at: folder) }

@@ -3,11 +3,6 @@ import Foundation
 import Testing
 @testable import TidyShot
 
-/// A renderer that never produces a tile, standing in for a Core Image failure.
-nonisolated struct NoTileRenderer: TileRendering {
-    func tile(for effect: Annotation, over base: CGImage, beneath: [EffectTile]) async -> CGImage? { nil }
-}
-
 struct EditorModelTests {
     let red = RGBA(red: 1, green: 0, blue: 0, alpha: 1)
     let blue = RGBA(red: 0, green: 0, blue: 1, alpha: 1)

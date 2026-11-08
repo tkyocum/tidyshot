@@ -30,6 +30,19 @@ nonisolated enum MovieSamples {
             }
             return Double(peak) / 32_768
         }
+
+        /// The time of the first frame between `start` and `end` seconds with a channel louder than
+        /// a tenth of full scale, or with `last` of the last one; nil when none is.
+        func loudEdge(from start: TimeInterval, to end: TimeInterval, last: Bool = false) -> TimeInterval? {
+            let first = max(0, Int((start * sampleRate).rounded(.down)))
+            let stop = min(samples.count / channels, Int((end * sampleRate).rounded(.up)))
+            guard stop > first else { return nil }
+            func isLoud(_ frame: Int) -> Bool {
+                (0..<channels).contains { abs(Int(samples[frame * channels + $0])) > 3_277 }
+            }
+            let frame = last ? (first..<stop).reversed().first(where: isLoud) : (first..<stop).first(where: isLoud)
+            return frame.map { Double($0) / sampleRate }
+        }
     }
 
     /// One stored video sample: its presentation time and its size in bytes.

@@ -7,6 +7,13 @@ options:
     macOS: "26.0"
   createIntermediateGroups: true
 
+# The language mode, shared by the app and the tests so the two cannot drift apart.
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
+    SWIFT_APPROACHABLE_CONCURRENCY: YES
+
 configFiles:
   Debug: Config/Base.xcconfig
   Release: Config/Base.xcconfig
@@ -26,9 +33,6 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.tky.tidyshot
         PRODUCT_NAME: TidyShot
-        SWIFT_VERSION: "6.0"
-        SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
-        SWIFT_APPROACHABLE_CONCURRENCY: YES
         ENABLE_APP_SANDBOX: YES
         ENABLE_HARDENED_RUNTIME: YES
         MARKETING_VERSION: "0.1.0"
@@ -98,9 +102,6 @@ targets:
         buildPhase: resources
     settings:
       base:
-        SWIFT_VERSION: "6.0"
-        SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
-        SWIFT_APPROACHABLE_CONCURRENCY: YES
         GENERATE_INFOPLIST_FILE: YES
     dependencies:
       - target: TidyShot

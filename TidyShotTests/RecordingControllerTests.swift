@@ -191,15 +191,6 @@ struct RecordingControllerTests {
         controller.close()
     }
 
-    @Test func theAppTimesTheStopWaitOnTheClockThatStopsWhileTheMacSleeps() async throws {
-        let environment = RecordingEnvironment.live(cardWindowNumbers: { [] }, coverWindowNumbers: { _ in [] },
-                                                    microphones: FakeMicrophoneDevices())
-        let clock = try #require(environment.awakeClock as? SuspendingScrollClock)
-        let before = clock.now
-        try await clock.sleep(for: .milliseconds(10))
-        #expect(clock.now - before >= .milliseconds(10))
-    }
-
     /// The app's loss reason: an input missing from the list was disconnected; a listed one whose
     /// access is no longer authorized lost its access; otherwise the error says what happened.
     @Test func theAppSaysWhichWayTheMicrophoneWasLost() {

@@ -21,10 +21,6 @@ struct DragFileStoreTests {
         return url
     }
 
-    func exists(_ url: URL) -> Bool {
-        FileManager.default.fileExists(atPath: url.path(percentEncoded: false))
-    }
-
     /// The names in `id`'s folder, sorted.
     func names(_ id: UUID) -> [String] {
         ((try? FileManager.default.contentsOfDirectory(atPath: store.folder(for: id).path(percentEncoded: false))) ?? []).sorted()

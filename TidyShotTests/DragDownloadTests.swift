@@ -30,10 +30,6 @@ struct DragDownloadTests {
         Data((0..<count).map { _ in UInt8.random(in: 0...255) })
     }
 
-    func exists(_ url: URL) -> Bool {
-        FileManager.default.fileExists(atPath: url.path(percentEncoded: false))
-    }
-
     /// What is in `Drag/.downloads`.
     func landed() -> [String] {
         let downloads = store.directory.appending(path: ".downloads", directoryHint: .isDirectory)
@@ -66,7 +62,7 @@ struct DragDownloadTests {
         let body = Self.uniqueBody(80_000)
         let (session, stub) = StubSession.make(headerHandler: { _ in
             (200, ["Content-Length": String(body.count)], body)
-        }, chunkSize: 10_000, chunkDelay: 0.12)
+        }, chunkSize: 10_000, chunkDelay: 0.01)
         let landing = try store.landingURL()
         let fractions = Fractions()
         try await destination(session: session).download(key: "aSIS7.png", to: landing, expectedBytes: 4 * Int64(body.count)) {
@@ -154,7 +150,7 @@ struct DragDownloadTests {
         let body = Self.uniqueBody(80_000)
         let (session, _) = StubSession.make(headerHandler: { _ in
             (200, ["Content-Length": String(body.count)], body)
-        }, chunkSize: 10_000, chunkDelay: 0.2)
+        }, chunkSize: 10_000, chunkDelay: 0.02)
         let landing = try store.landingURL()
         let fractions = Fractions()
         let destination = destination(session: session)
@@ -182,7 +178,7 @@ struct DragDownloadTests {
         defer { try? FileManager.default.removeItem(at: root) }
         let body = Self.uniqueBody(40_000)
         let (session, _) = StubSession.make(headerHandler: { _ in (200, [:], body) },
-                                            chunkSize: 10_000, chunkDelay: 0.12)
+                                            chunkSize: 10_000, chunkDelay: 0.01)
         let destination = destination(session: session)
 
         let quarter = Fractions()
@@ -209,7 +205,7 @@ struct DragDownloadTests {
         let headers = ["Content-Length": String(body.count), "ETag": "\"5d41402abc4b2a76b9719d911017c592\"",
                        "Last-Modified": "Mon, 19 Oct 2026 12:00:00 GMT", "Accept-Ranges": "bytes"]
         let (session, stub) = StubSession.make(headerHandler: { _ in (200, headers, body) },
-                                               chunkSize: 100_000, chunkDelay: 0.1, failAfterBytes: 500_000,
+                                               chunkSize: 100_000, chunkDelay: 0.01, failAfterBytes: 500_000,
                                                servesRanges: true)
         let destination = destination(session: session)
 

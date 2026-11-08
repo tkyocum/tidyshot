@@ -21,10 +21,6 @@ struct SaveLocationMoveTests {
         try FileManager.default.contentsOfDirectory(atPath: folder.path(percentEncoded: false)).sorted()
     }
 
-    func exists(_ url: URL) -> Bool {
-        FileManager.default.fileExists(atPath: url.path(percentEncoded: false))
-    }
-
     /// From a detached task, as `saveRecording` runs it.
     @Test func theFileMovesInUnderItsNameAndTheSourceIsGone() async throws {
         defer { try? FileManager.default.removeItem(at: dir) }

@@ -135,10 +135,6 @@ struct RecordingRecoveryTests {
         try MuteLog.write(log, to: mute.appending(path: "\(id.uuidString).json"))
     }
 
-    func exists(_ url: URL) -> Bool {
-        FileManager.default.fileExists(atPath: url.path(percentEncoded: false))
-    }
-
     /// What `prepare`'s ladder was asked: the file, its duration, the intervals and the lag.
     final class LadderCalls {
         var calls: [(file: URL, duration: TimeInterval, intervals: [MuteInterval], lag: TimeInterval)] = []

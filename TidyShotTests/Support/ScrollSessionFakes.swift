@@ -115,11 +115,11 @@ final class FakeScrollClock: ScrollClock {
     }
 
     /// Lets `duration` pass, waking sleepers as `run(until:)` does. When nothing sleeps on the
-    /// clock for 250 ms of real time, the rest of the time passes at once.
+    /// clock for 100 ms of real time, the rest of the time passes at once.
     func run(for duration: Duration) async throws {
         let target = now + duration
         while true {
-            guard try await waitForSleeper(orUntil: { false }, realTime: .milliseconds(250)),
+            guard try await waitForSleeper(orUntil: { false }, realTime: .milliseconds(100)),
                   let next = earliest(), next.deadline <= target else { break }
             now = max(now, next.deadline)
             resume(next.id, throwing: nil)

@@ -35,14 +35,9 @@ xcodebuild -project TidyShot.xcodeproj -scheme TidyShot -destination 'platform=m
 
 TidyShot needs Screen Recording permission (System Settings > Privacy & Security > Screen & System
 Audio Recording). With ad-hoc signing (the default), macOS asks again after every rebuild. To avoid that,
-sign in to Xcode with an Apple ID, then switch to Apple Development signing:
-
-```bash
-cp Config/Local.xcconfig.example Config/Local.xcconfig
-```
-
-Edit `Config/Local.xcconfig` to set `CODE_SIGN_IDENTITY = Apple Development` and your
-`DEVELOPMENT_TEAM`, then run `xcodegen generate` again.
+sign in to Xcode with an Apple ID, then switch to Apple Development signing: create
+`Config/Local.xcconfig` (gitignored; `Config/Base.xcconfig` shows the two lines) setting
+`CODE_SIGN_IDENTITY = Apple Development` and your `DEVELOPMENT_TEAM`, then run `xcodegen generate` again.
 
 Auto-scroll in Scrolling capture needs a second, optional permission: Accessibility (the "post
 event" privilege that lets TidyShot send scroll-wheel events), under the same Privacy & Security

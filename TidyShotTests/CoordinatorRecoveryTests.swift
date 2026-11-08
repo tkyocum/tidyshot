@@ -32,10 +32,6 @@ struct CoordinatorRecoveryTests {
         #expect(CGImageDestinationFinalize(destination))
     }
 
-    func exists(_ url: URL) -> Bool {
-        FileManager.default.fileExists(atPath: url.path(percentEncoded: false))
-    }
-
     /// Harness design 4.2 (a `.png`) and 4.3: an orphan PNG gets a record of its pixel size and byte count,
     /// kept until the user acts, with a thumbnail, `Recovery: <name> recovered` and `Recovered a capture`.
     @Test func anOrphanPNGIsAdoptedWithItsSizeAThumbnailAndANotice() async throws {

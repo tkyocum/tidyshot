@@ -21,10 +21,6 @@ struct MultipartStoreTests {
         return Set(entries)
     }
 
-    private func exists(_ url: URL) -> Bool {
-        FileManager.default.fileExists(atPath: url.path(percentEncoded: false))
-    }
-
     @Test func theFolderIsMultipartNextToTheHistoryAndFilesAreNamedByID() {
         let id = UUID()
         #expect(MultipartStore.directoryName == "multipart")

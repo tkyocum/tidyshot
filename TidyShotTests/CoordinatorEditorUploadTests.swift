@@ -6,106 +6,10 @@ import Testing
 /// The editor's Upload through the editor seam: the local write first, then the live lane over the link's own key or
 /// a new one; the window's close is the fake's (`closesWindow`), the controller's `performUpload` does not run.
 @Suite(.timeLimit(.minutes(1)))
-struct CoordinatorEditorUploadTests {
+struct CoordinatorEditorUploadTests: CoordinatorSuite {
     let world: CoordinatorWorld
-    let key = "s/SHOT.png"
-
     init() throws {
         world = try CoordinatorWorld()
-    }
-
-    var destination: FakeDestination { world.factory.standard }
-    var link: URL { URL(string: "https://snap.tky.io/\(key)")! }
-    var all: Set<EditorAction> { Set(EditorAction.allCases) }
-
-    func publicURL(_ key: String) -> URL { URL(string: "https://snap.tky.io/\(key)")! }
-
-    func openedEditor(_ id: UUID) async throws -> FakeEditor {
-        try await eventually { world.editors.editor(for: id) != nil }
-        return try #require(world.editors.editor(for: id))
-    }
-
-    func reopenedEditor(_ id: UUID, after first: FakeEditor) async throws -> FakeEditor {
-        try await eventually { world.editors.editor(for: id).map { $0 !== first } ?? false }
-        return try #require(world.editors.editor(for: id))
-    }
-
-    /// The last edit's thumbnail named on the record (+Editor:249-275), so its task does not outlive the test.
-    func settledEdit(_ coordinator: AppCoordinator, _ id: UUID) async throws {
-        try await eventually {
-            coordinator.history.record(id: id)?.thumbnailFileName == coordinator.thumbnails.fileName(for: id, editedAt: world.date)
-        }
-    }
-
-    func addSavedImage(to coordinator: AppCoordinator, in folder: URL, name: String = "Shot.png",
-                       uploadState: CaptureRecord.UploadState = .none, objectLocation: ObjectLocation? = nil,
-                       uploadIsStale: Bool = false, timestamp: Date = Date(),
-                       scale: CGFloat = 1) throws -> (record: CaptureRecord, original: Data) {
-        let original = try ImageEncoder.pngData(from: CoordinatorWorld.image(width: 4, height: 2), scale: scale)
-        let file = folder.appending(path: name)
-        try original.write(to: file)
-        let record = CaptureRecord(timestamp: timestamp, fileURL: file, pixelWidth: 4, pixelHeight: 2, appName: nil,
-                                   uploadState: uploadState, objectLocation: objectLocation,
-                                   uploadIsStale: uploadIsStale, byteCount: original.count)
-        coordinator.history.add(record)
-        return (record, original)
-    }
-
-    func addPendingImage(to coordinator: AppCoordinator) throws -> CaptureRecord {
-        let id = UUID()
-        let png = try CoordinatorWorld.pngData(width: 4, height: 2)
-        let url = try coordinator.pendingFiles.write(png, id: id, ext: "png")
-        let record = CaptureRecord(id: id, fileURL: url, fileIsTemporary: true, pixelWidth: 4, pixelHeight: 2,
-                                   appName: nil, uploadState: .failed(message: "Upload was interrupted."),
-                                   byteCount: png.count)
-        coordinator.history.add(record)
-        return record
-    }
-
-    func desktop(_ name: String) throws -> URL {
-        let folder = world.root.appending(path: "Desktop", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        return folder.appending(path: name)
-    }
-
-    func pendingURL(_ coordinator: AppCoordinator, _ id: UUID) -> URL {
-        coordinator.pendingFiles.directory.appending(path: "\(id.uuidString).png")
-    }
-
-    func addUploadOnly(to coordinator: AppCoordinator) throws -> CaptureRecord {
-        let png = try CoordinatorWorld.pngData(width: 4, height: 2)
-        destination.state.withLock { $0.downloadedData = png }
-        let record = CaptureRecord(fileURL: nil, pixelWidth: 4, pixelHeight: 2, appName: nil,
-                                   uploadState: .uploaded(url: link, key: key), objectLocation: world.location)
-        coordinator.history.add(record)
-        return record
-    }
-
-    func isUploaded(_ coordinator: AppCoordinator, _ id: UUID) -> Bool {
-        if case .uploaded = coordinator.history.record(id: id)?.uploadState { return true }
-        return false
-    }
-
-    func title(of record: CaptureRecord) -> String {
-        "Capture \(record.timestamp.formatted(date: .omitted, time: .shortened))"
-    }
-
-    func exists(_ url: URL) -> Bool { FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) }
-
-    func crop(_ model: EditorModel, to rect: CGRect, apply: Bool) {
-        model.tool = .crop
-        model.cropDraft = rect
-        if apply { model.applyCrop() }
-    }
-
-    func addText(_ model: EditorModel, _ string: String, at point: CGPoint) throws -> TextBox {
-        model.beginTextEditing(at: point, existing: nil)
-        model.updateEditingText(string)
-        model.commitTextEditing()
-        for annotation in model.document.annotations {
-            if case .text(let box) = annotation { return box }
-        }
-        throw CoordinatorWorldError.noFile
     }
 
     /// phase-4a:123 (:176), in part; phase-4b:74 (:102); phase-4b:106 (:150), in part. Upload on a save-folder

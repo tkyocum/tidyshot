@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import Testing
 @testable import TidyShot
@@ -162,4 +163,9 @@ final class FakeEditors {
     func editor(for id: UUID) -> FakeEditor? {
         built.last { $0.model.recordID == id }
     }
+}
+
+/// A renderer that never produces a tile, standing in for a Core Image failure.
+nonisolated struct NoTileRenderer: TileRendering {
+    func tile(for effect: Annotation, over base: CGImage, beneath: [EffectTile]) async -> CGImage? { nil }
 }

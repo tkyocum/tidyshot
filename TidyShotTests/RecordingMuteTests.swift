@@ -15,10 +15,6 @@ struct RecordingMuteTests {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     }
 
-    func exists(_ url: URL) -> Bool {
-        FileManager.default.fileExists(atPath: url.path(percentEncoded: false))
-    }
-
     func cleanUp() {
         try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dir.path(percentEncoded: false))
         try? FileManager.default.removeItem(at: dir)
@@ -31,20 +27,6 @@ struct RecordingMuteTests {
         try await VideoFixtures.makeMP4(at: url, width: 320, height: 200, seconds: seconds, audio: true, tone: tone,
                                         sampleRate: sampleRate, channels: channels)
         return url
-    }
-
-    /// The time of the first frame between `start` and `end` s with a channel louder than a tenth of
-    /// full scale, or with `last` of the last one; nil when none is.
-    func loud(_ audio: MovieSamples.Audio, from start: TimeInterval, to end: TimeInterval,
-              last: Bool = false) -> TimeInterval? {
-        let first = max(0, Int((start * audio.sampleRate).rounded(.down)))
-        let stop = min(audio.samples.count / audio.channels, Int((end * audio.sampleRate).rounded(.up)))
-        guard stop > first else { return nil }
-        func isLoud(_ frame: Int) -> Bool {
-            (0..<audio.channels).contains { abs(Int(audio.samples[frame * audio.channels + $0])) > 3_277 }
-        }
-        let frame = last ? (first..<stop).reversed().first(where: isLoud) : (first..<stop).first(where: isLoud)
-        return frame.map { Double($0) / audio.sampleRate }
     }
 
     /// Closed intervals from pairs.
@@ -189,8 +171,8 @@ struct RecordingMuteTests {
         #expect(after.channels == channels)
 
         for (edge, last) in [(0.5, false), (1.5, true), (2.0, false), (3.5, true)] {
-            let was = try #require(loud(before, from: edge - 0.1, to: edge + 0.1, last: last))
-            let now = try #require(loud(after, from: edge - 0.1, to: edge + 0.1, last: last))
+            let was = try #require(before.loudEdge(from: edge - 0.1, to: edge + 0.1, last: last))
+            let now = try #require(after.loudEdge(from: edge - 0.1, to: edge + 0.1, last: last))
             #expect(abs(was - edge) < 0.005, "the source's edge at \(edge) s is at \(was) s")
             #expect(abs(now - was) < 0.001, "the edge at \(edge) s moved from \(was) s to \(now) s")
         }
@@ -258,8 +240,8 @@ struct RecordingMuteTests {
         #expect(after.peak(from: silence.lowerBound, to: silence.upperBound) < 0.01)
         for (edge, last) in [(0.5, false), (1.5, true), (2.0, false), (3.5, true)]
         where sound.contains(edge - 0.1) && sound.contains(edge + 0.1) {
-            let was = try #require(loud(before, from: edge - 0.1, to: edge + 0.1, last: last))
-            let now = try #require(loud(after, from: edge - 0.1, to: edge + 0.1, last: last))
+            let was = try #require(before.loudEdge(from: edge - 0.1, to: edge + 0.1, last: last))
+            let now = try #require(after.loudEdge(from: edge - 0.1, to: edge + 0.1, last: last))
             #expect(abs(was - edge) < 0.005, "the source's edge at \(edge) s is at \(was) s")
             #expect(abs(now - was) < 0.001, "the edge at \(edge) s moved from \(was) s to \(now) s")
         }

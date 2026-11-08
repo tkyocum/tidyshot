@@ -79,10 +79,6 @@ struct CoordinatorUploadTests {
         return false
     }
 
-    func exists(_ url: URL) -> Bool {
-        FileManager.default.fileExists(atPath: url.path(percentEncoded: false))
-    }
-
     /// 17 (harness design 3.2). R4 checklist, Multipart: Retry resumes, from the sidecar's parts, with no Create, no
     /// ListParts and no counter drawn; the record stores the stored size.
     @Test func aStoredUploadWhoseSourceMatchesResumes() async throws {
