@@ -168,10 +168,13 @@ actor UploadQueue {
                 return await deliverCancelled(job.id)
             }
         }
-        var attempt = 1
-        while true {
-            await events(.started(id: job.id, attempt: attempt, fraction: 0))
-            do {
+        // Each attempt is one `.started`, a key, the PUT and the URL; `withRetries` sleeps between
+        // them, and a backoff sleep that fails on its own ends the job instead of retrying.
+        var attempt = 0
+        do {
+            return try await Self.withRetries(policy: policy, sleep: sleep) {
+                attempt += 1
+                await events(.started(id: job.id, attempt: attempt, fraction: 0))
                 let key = try await objectKey(for: job, retryingHEADs: false)
                 reservedKeys[job.id] = key
                 let progress = throttledProgress(for: job.id)
@@ -180,36 +183,34 @@ actor UploadQueue {
                     try await destination.upload(data, key: key, contentType: job.contentType,
                                                  cacheControl: job.cacheControl, progress: progress)
                 case .file(let url, let folder):
-                    try await uploadFile(at: url, holding: folder, key: key, job: job, progress: progress)
-                }
-                let url = try destination.publicURL(for: key)
-                reservedKeys[job.id] = nil
-                await events(.uploaded(id: job.id, url: url, key: key))
-                return .uploaded
-            } catch {
-                if cancelledIDs.contains(job.id) {
-                    return await deliverCancelled(job.id)
-                }
-                if UploadError.isRetryable(error), attempt < policy.maxAttempts {
-                    attempt += 1
-                    do {
-                        try await sleep(policy.delay(beforeAttempt: attempt))
-                    } catch {
-                        if cancelledIDs.contains(job.id) {
-                            return await deliverCancelled(job.id)
-                        }
-                        // A backoff sleep that fails on its own ends the job instead of retrying.
-                        reservedKeys[job.id] = nil
-                        await events(.failed(id: job.id, message: error.localizedDescription))
-                        return .failed
+                    try await holdingScope(folder, readable: url, name: url.lastPathComponent) {
+                        try await destination.upload(fileAt: url, key: key, contentType: job.contentType,
+                                                     cacheControl: job.cacheControl, progress: progress)
                     }
-                    continue
                 }
-                reservedKeys[job.id] = nil
-                await events(.failed(id: job.id, message: error.localizedDescription))
-                return .failed
+                return await deliverUploaded(job.id, key: key, url: try destination.publicURL(for: key))
             }
+        } catch {
+            return await deliverEnd(job.id, error)
         }
+    }
+
+    /// Clears the job's reserved key and delivers `.uploaded`.
+    func deliverUploaded(_ id: UUID, key: String, url: URL) async -> JobOutcome {
+        reservedKeys[id] = nil
+        await events(.uploaded(id: id, url: url, key: key))
+        return .uploaded
+    }
+
+    /// Ends a job whose attempt threw `error`: `.cancelled` when a cancel is what made it throw,
+    /// else `.failed` with the error's text, the reserved key cleared either way.
+    func deliverEnd(_ id: UUID, _ error: any Error) async -> JobOutcome {
+        if cancelledIDs.contains(id) {
+            return await deliverCancelled(id)
+        }
+        reservedKeys[id] = nil
+        await events(.failed(id: id, message: error.localizedDescription))
+        return .failed
     }
 
     /// Aborts an upload the job no longer uses, in one try. A 404 means nothing was left, and is logged
@@ -251,20 +252,19 @@ actor UploadQueue {
         }
     }
 
-    /// One attempt at a file upload, holding `folder`'s scope from before the readability check
-    /// until `upload(fileAt:)` returns or throws: one hold covers the hash and the streamed PUT,
-    /// and a job waiting in the queue or in backoff holds nothing.
-    private func uploadFile(at url: URL, holding folder: URL?, key: String, job: UploadJob,
-                            progress: @escaping @Sendable (Double) -> Void) async throws {
+    /// Runs `body` holding `folder`'s security scope, from before the check that `url` is readable
+    /// (`fileUnreadable(name)` otherwise) until `body` returns or throws. One attempt of a single
+    /// PUT holds it over the hash and the streamed upload; a multipart job holds it over its whole
+    /// pass; a job waiting in the queue or in backoff holds nothing.
+    func holdingScope<T>(_ folder: URL?, readable url: URL, name: String, _ body: () async throws -> T) async throws -> T {
         let accessing = folder.map(scope.start) ?? false
         defer {
             if accessing, let folder { scope.stop(folder) }
         }
         guard FileManager.default.isReadableFile(atPath: url.path(percentEncoded: false)) else {
-            throw UploadError.fileUnreadable(url.lastPathComponent)
+            throw UploadError.fileUnreadable(name)
         }
-        try await destination.upload(fileAt: url, key: key, contentType: job.contentType,
-                                     cacheControl: job.cacheControl, progress: progress)
+        return try await body()
     }
 
     /// The progress callback for one attempt. It runs on the transport's thread, so its throttle

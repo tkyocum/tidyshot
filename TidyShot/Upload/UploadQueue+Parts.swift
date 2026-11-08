@@ -53,10 +53,8 @@ extension UploadQueue {
         guard !numbers.isEmpty else { return }
         let doneBytes = sidecar.parts.reduce(0) { $0 + $1.size }
         let sender = PartSender(destination: destination, policy: filePolicy, sleep: sleep, log: log,
-                                name: pass.name, file: pass.file, key: target.key, uploadID: target.uploadID,
-                                partSize: target.partSize, byteCount: target.byteCount, count: target.count,
-                                progress: MultipartProgress(total: target.byteCount, done: doneBytes),
-                                report: pass.report)
+                                target: target, pass: pass,
+                                progress: MultipartProgress(total: target.byteCount, done: doneBytes))
         do {
             try await withThrowingTaskGroup(of: MultipartPart.self) { group in
                 var next = numbers.startIndex
@@ -151,37 +149,32 @@ extension UploadQueue {
         let policy: RetryPolicy
         let sleep: Sleeper
         let log: Logger
-        /// For the log: the file's name.
-        let name: String
-        let file: URL
-        let key: String
-        let uploadID: String
-        let partSize: Int64
-        let byteCount: Int64
-        let count: Int
+        let target: MultipartTarget
+        let pass: MultipartPass
         let progress: MultipartProgress
+
         /// The job's throttled `.progress` events.
-        let report: @Sendable (Double) -> Void
+        var report: @Sendable (Double) -> Void { pass.report }
 
         /// Part `number`, sent. Any failure is thrown as a `PartFailure`.
         @concurrent func send(_ number: Int) async throws -> MultipartPart {
             do {
                 // A part the loop adds after a cancel reads and sends nothing (harness design 5.4).
                 try Task.checkCancellation()
-                let range = MultipartPlan.range(ofPart: number, partSize: partSize, byteCount: byteCount)
-                let data = try await UploadQueue.readPart(of: file, range: range)
+                let range = MultipartPlan.range(ofPart: number, partSize: target.partSize, byteCount: target.byteCount)
+                let data = try await UploadQueue.readPart(of: pass.file, range: range)
                 let progress = progress
-                let report = report
+                let report = pass.report
                 let etag = try await UploadQueue.withRetries(policy: policy, sleep: sleep, onRetry: { attempt, error in
                     progress.restart(part: number)
-                    log("Upload: \(name) part \(number) failed, retry \(attempt): \(error.localizedDescription)")
+                    log("Upload: \(pass.name) part \(number) failed, retry \(attempt): \(error.localizedDescription)")
                 }) {
-                    try await destination.uploadPart(key: key, uploadID: uploadID, number: number, data: data,
+                    try await destination.uploadPart(key: target.key, uploadID: target.uploadID, number: number, data: data,
                                                      progress: { report(progress.sent($0, part: number)) })
                 }
                 return MultipartPart(number: number, etag: etag, size: Int64(data.count))
             } catch {
-                throw PartFailure(number: number, count: count, error: error)
+                throw PartFailure(number: number, count: target.count, error: error)
             }
         }
     }

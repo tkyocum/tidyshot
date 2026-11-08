@@ -24,8 +24,9 @@ nonisolated enum MultipartRequests {
         }
     }
 
-    /// CreateMultipartUpload. The object's headers go here, signed, as the single PUT sends them.
-    static func create(contentType: String, cacheControl: String?, publicRead: Bool) -> Call {
+    /// The object's headers, all signed so a change in transit fails the signature: the single PUT
+    /// and Create send the same ones.
+    static func objectHeaders(contentType: String, cacheControl: String?, publicRead: Bool) -> [(name: String, value: String)] {
         var headers = [(name: "content-type", value: contentType)]
         if let cacheControl {
             headers.append((name: "cache-control", value: cacheControl))
@@ -33,7 +34,13 @@ nonisolated enum MultipartRequests {
         if publicRead {
             headers.append((name: "x-amz-acl", value: "public-read"))
         }
-        return Call(method: "POST", query: [(name: "uploads", value: "")], headers: headers)
+        return headers
+    }
+
+    /// CreateMultipartUpload, with the object's headers.
+    static func create(contentType: String, cacheControl: String?, publicRead: Bool) -> Call {
+        Call(method: "POST", query: [(name: "uploads", value: "")],
+             headers: objectHeaders(contentType: contentType, cacheControl: cacheControl, publicRead: publicRead))
     }
 
     static func uploadPart(uploadID: String, number: Int, data: Data) -> Call {

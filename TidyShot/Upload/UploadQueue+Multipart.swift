@@ -64,10 +64,6 @@ extension UploadQueue {
     func processMultipart(_ job: UploadJob, file url: URL, holding folder: URL?,
                                   source: MultipartSource, store: MultipartStore) async -> JobOutcome {
         let name = url.lastPathComponent
-        let accessing = folder.map(scope.start) ?? false
-        defer {
-            if accessing, let folder { scope.stop(folder) }
-        }
         let pass = MultipartPass(job: job, name: name, file: url, source: source, store: store,
                                  report: throttledProgress(for: job.id))
         // A resume starts its bar once it knows the parts done.
@@ -75,54 +71,45 @@ extension UploadQueue {
             await events(.started(id: job.id, attempt: 1, fraction: 0))
         }
         do {
-            guard FileManager.default.isReadableFile(atPath: url.path(percentEncoded: false)) else {
-                throw UploadError.fileUnreadable(name)
-            }
-            if let ref = job.abortFirst {
-                await abortUpload(key: ref.key, uploadID: ref.uploadID, name: name)
-                try Task.checkCancellation()
-            }
-            var step: MultipartStep = job.resume.map { .resume($0) } ?? .create(reusing: nil)
-            var restarts = 0
-            var rejectedOnce = false
-            while true {
-                do {
-                    let key: String
-                    switch step {
-                    case .resume(let stored):
-                        key = try await resumeUpload(stored, pass, rejectedOnce: &rejectedOnce)
-                    case .create(let reusing):
-                        key = try await createUpload(pass, reusing: reusing, rejectedOnce: &rejectedOnce)
-                    }
-                    let publicURL = try destination.publicURL(for: key)
-                    reservedKeys[job.id] = nil
-                    await events(.uploaded(id: job.id, url: publicURL, key: key))
-                    return .uploaded
-                } catch let restart as Restart {
-                    if cancelledIDs.contains(job.id) { return await deliverCancelled(job.id) }
-                    guard restarts < MultipartPlan.restartLimit else { throw restart.cause }
-                    restarts += 1
-                    reservedKeys[job.id] = nil
-                    if let abort = restart.abort {
-                        await abortUpload(key: abort.key, uploadID: abort.uploadID, name: name)
-                    }
-                    if let reason = restart.reason {
-                        log("Upload: \(name) \(reason), starting again")
-                    }
+            return try await holdingScope(folder, readable: url, name: name) {
+                if let ref = job.abortFirst {
+                    await abortUpload(key: ref.key, uploadID: ref.uploadID, name: name)
                     try Task.checkCancellation()
-                    // `attempt` counts restarts.
-                    await events(.started(id: job.id, attempt: restarts + 1, fraction: 0))
-                    step = .create(reusing: restart.key)
+                }
+                var step: MultipartStep = job.resume.map { .resume($0) } ?? .create(reusing: nil)
+                var restarts = 0
+                var rejectedOnce = false
+                while true {
+                    do {
+                        let key: String
+                        switch step {
+                        case .resume(let stored):
+                            key = try await resumeUpload(stored, pass, rejectedOnce: &rejectedOnce)
+                        case .create(let reusing):
+                            key = try await createUpload(pass, reusing: reusing, rejectedOnce: &rejectedOnce)
+                        }
+                        return await deliverUploaded(job.id, key: key, url: try destination.publicURL(for: key))
+                    } catch let restart as Restart {
+                        if cancelledIDs.contains(job.id) { return await deliverCancelled(job.id) }
+                        guard restarts < MultipartPlan.restartLimit else { throw restart.cause }
+                        restarts += 1
+                        reservedKeys[job.id] = nil
+                        if let abort = restart.abort {
+                            await abortUpload(key: abort.key, uploadID: abort.uploadID, name: name)
+                        }
+                        if let reason = restart.reason {
+                            log("Upload: \(name) \(reason), starting again")
+                        }
+                        try Task.checkCancellation()
+                        // `attempt` counts restarts.
+                        await events(.started(id: job.id, attempt: restarts + 1, fraction: 0))
+                        step = .create(reusing: restart.key)
+                    }
                 }
             }
         } catch {
             // The task group has awaited every part by now, so a cancel's event comes after the last.
-            if cancelledIDs.contains(job.id) {
-                return await deliverCancelled(job.id)
-            }
-            reservedKeys[job.id] = nil
-            await events(.failed(id: job.id, message: error.localizedDescription))
-            return .failed
+            return await deliverEnd(job.id, error)
         }
     }
 

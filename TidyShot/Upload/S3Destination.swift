@@ -42,12 +42,26 @@ nonisolated struct S3Destination: Destination {
     /// Any other status is an error. HEAD has no body, so when S3 sends `x-amz-bucket-region`
     /// (as it does when the configured region is wrong) that region becomes the error text.
     func exists(key: String) async throws -> Bool {
-        let request = try signedRequest(method: "HEAD", key: key, body: nil, extraHeaders: [])
-        let (_, response) = try await session.data(for: request, delegate: UploadProgressDelegate())
-        let http = try Self.httpResponse(response)
+        try await head(key: key) != nil
+    }
+
+    /// HEAD Object. 403 and 404 both mean missing, as in `exists`. A 200 with no readable
+    /// `Content-Length` is an error, not a size.
+    func objectSize(key: String) async throws -> Int64? {
+        guard let http = try await head(key: key) else { return nil }
+        guard let size = http.value(forHTTPHeaderField: "Content-Length").flatMap({ Int64($0) }) else {
+            throw UploadError.httpStatus(200, body: "no Content-Length")
+        }
+        return size
+    }
+
+    /// HEAD Object: the response for 200, nil for 403 and 404, and otherwise the usual error, whose
+    /// text is the region hint when there is one, because HEAD has no body to summarise.
+    private func head(key: String) async throws -> HTTPURLResponse? {
+        let (_, http) = try await send("HEAD", key: key)
         switch http.statusCode {
-        case 200: return true
-        case 403, 404: return false
+        case 200: return http
+        case 403, 404: return nil
         default:
             let regionHint = http.value(forHTTPHeaderField: "x-amz-bucket-region").map { "the bucket is in region \($0)" }
             throw Self.failure(http, bodyText: regionHint ?? "")
@@ -75,16 +89,10 @@ nonisolated struct S3Destination: Destination {
         try Self.checkPut(body, response)
     }
 
-    /// The PUT's extra headers, all signed, so a change in transit fails the signature.
+    /// The PUT's extra headers, all signed, so a change in transit fails the signature; Create
+    /// sends the same ones.
     private func putHeaders(contentType: String, cacheControl: String?) -> [(name: String, value: String)] {
-        var headers = [(name: "content-type", value: contentType)]
-        if let cacheControl {
-            headers.append((name: "cache-control", value: cacheControl))
-        }
-        if config.sendPublicReadACL {
-            headers.append((name: "x-amz-acl", value: "public-read"))
-        }
-        return headers
+        MultipartRequests.objectHeaders(contentType: contentType, cacheControl: cacheControl, publicRead: config.sendPublicReadACL)
     }
 
     private static func checkPut(_ body: Data, _ response: URLResponse) throws {
@@ -95,9 +103,7 @@ nonisolated struct S3Destination: Destination {
     }
 
     func delete(key: String) async throws {
-        let request = try signedRequest(method: "DELETE", key: key, body: nil, extraHeaders: [])
-        let (body, response) = try await session.data(for: request, delegate: UploadProgressDelegate())
-        let http = try Self.httpResponse(response)
+        let (body, http) = try await send("DELETE", key: key)
         guard (200..<300).contains(http.statusCode) || http.statusCode == 404 else {
             throw Self.failure(http, bodyText: Self.excerpt(body))
         }
@@ -107,13 +113,18 @@ nonisolated struct S3Destination: Destination {
     /// it for captures that have no local file. Unlike `delete`, a 404 is an error: there is
     /// nothing to copy.
     func download(key: String) async throws -> Data {
-        let request = try signedRequest(method: "GET", key: key, body: nil, extraHeaders: [])
-        let (body, response) = try await session.data(for: request, delegate: UploadProgressDelegate())
-        let http = try Self.httpResponse(response)
+        let (body, http) = try await send("GET", key: key)
         guard (200..<300).contains(http.statusCode) else {
             throw Self.failure(http, bodyText: Self.excerpt(body))
         }
         return body
+    }
+
+    /// A bodiless request for `key` (HEAD, GET or DELETE), signed, sent and unwrapped.
+    private func send(_ method: String, key: String) async throws -> (Data, HTTPURLResponse) {
+        let request = try signedRequest(method: method, key: key, payloadHash: S3Signer.emptyPayloadHash, extraHeaders: [])
+        let (body, response) = try await session.data(for: request, delegate: UploadProgressDelegate())
+        return (body, try Self.httpResponse(response))
     }
 
     /// GET Object streamed to a temporary file, for a recording, which is never loaded into
@@ -154,18 +165,11 @@ nonisolated struct S3Destination: Destination {
                           extraHeaders: extraHeaders)
     }
 
-    /// Builds the request for `key` and signs it with a payload hash worked out already (a file's,
-    /// from `S3Signer.sha256Hex(fileAt:)`). Visible for tests.
-    func signedRequest(method: String, key: String, payloadHash: String,
-                       extraHeaders: [(name: String, value: String)]) throws -> URLRequest {
-        try signedRequest(method: method, key: key, query: [], payloadHash: payloadHash, extraHeaders: extraHeaders)
-    }
-
-    /// Builds the request for `key` with `query` (decoded pairs) and signs it with `payloadHash`.
-    /// The URL's query and the canonical query both come from `query`, so they cannot disagree.
-    /// `host` and `x-amz-content-sha256` are always signed; `extraHeaders` are signed too.
-    /// Visible for tests.
-    func signedRequest(method: String, key: String, query: [(name: String, value: String)], payloadHash: String,
+    /// Builds the request for `key` with `query` (decoded pairs) and signs it with a payload hash
+    /// worked out already (a file's, from `S3Signer.sha256Hex(fileAt:)`, or a call's). The URL's
+    /// query and the canonical query both come from `query`, so they cannot disagree. `host` and
+    /// `x-amz-content-sha256` are always signed; `extraHeaders` are signed too. Visible for tests.
+    func signedRequest(method: String, key: String, query: [(name: String, value: String)] = [], payloadHash: String,
                        extraHeaders: [(name: String, value: String)]) throws -> URLRequest {
         let url = try config.objectURL(for: key, query: query)
         var headers = extraHeaders
@@ -210,26 +214,20 @@ nonisolated struct S3Destination: Destination {
     ///
     /// SECURITY: the 200-character cap is load-bearing. A `SignatureDoesNotMatch` body echoes
     /// the canonical request and string to sign, and the canonical request can include the
-    /// `x-amz-security-token` header, that is, the session token. The structured parse below
-    /// must only ever read `<Code>` and `<Message>`; never add `<CanonicalRequest>`,
-    /// `<StringToSign>` or any other element to it. A body without a usable `<Code>` falls back
-    /// to its first 200 characters.
+    /// `x-amz-security-token` header, that is, the session token. `MultipartXML.error(in:)` reads
+    /// only `<Code>` and `<Message>`; never add `<CanonicalRequest>`, `<StringToSign>` or any
+    /// other element to it. A body without a usable `<Code>` falls back to its first 200 characters.
     static func excerpt(_ body: Data) -> String {
-        let text = String(decoding: body, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-        if let code = elementText("Code", in: text) {
-            let summary = elementText("Message", in: text).map { "\(code): \($0)" } ?? code
-            return String(summary.prefix(200))
-        }
-        return String(text.prefix(200))
+        excerpt(body, error: MultipartXML.error(in: body))
     }
 
-    /// The text of the first `<name>…</name>` in `text`, or nil when it is missing, empty, or
-    /// contains markup (which would mean other elements are nested inside it).
-    private static func elementText(_ name: String, in text: String) -> String? {
-        guard let open = text.firstRange(of: "<\(name)>"),
-              let close = text[open.upperBound...].firstRange(of: "</\(name)>") else { return nil }
-        let value = text[open.upperBound..<close.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !value.isEmpty, !value.contains("<") else { return nil }
-        return value
+    /// `excerpt(_:)` for a body whose `<Error>` the caller has already read.
+    static func excerpt(_ body: Data, error: MultipartXML.ErrorBody?) -> String {
+        if let error {
+            let summary = error.message.map { "\(error.code): \($0)" } ?? error.code
+            return String(summary.prefix(200))
+        }
+        let text = String(decoding: body, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        return String(text.prefix(200))
     }
 }

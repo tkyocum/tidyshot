@@ -54,11 +54,12 @@ nonisolated enum S3Signer {
         let amzDate = amzDateString(date)
         let dateStamp = String(amzDate.prefix(8))
 
-        var headers = request.headers
-        headers.append((name: "x-amz-date", value: amzDate))
+        // The headers the signature adds; they are signed too, so they go in the canonical list.
+        var added: [(name: String, value: String)] = [(name: "x-amz-date", value: amzDate)]
         if let token = credentials.sessionToken, !token.isEmpty {
-            headers.append((name: "x-amz-security-token", value: token))
+            added.append((name: "x-amz-security-token", value: token))
         }
+        let headers = request.headers + added
 
         let canonicalHeaders = canonicalHeaders(headers)
         let canonicalRequest = [
@@ -83,11 +84,6 @@ nonisolated enum S3Signer {
 
         let authorization = "\(algorithm) Credential=\(credentials.accessKeyID)/\(scope), "
             + "SignedHeaders=\(canonicalHeaders.signed), Signature=\(signature)"
-
-        var added: [(name: String, value: String)] = [(name: "x-amz-date", value: amzDate)]
-        if let token = credentials.sessionToken, !token.isEmpty {
-            added.append((name: "x-amz-security-token", value: token))
-        }
         added.append((name: "authorization", value: authorization))
 
         return Signed(canonicalRequest: canonicalRequest, stringToSign: stringToSign, signature: signature, headers: added)
@@ -178,7 +174,7 @@ nonisolated enum S3Signer {
     // MARK: Crypto helpers
 
     static func sha256Hex(_ data: Data) -> String {
-        SHA256.hash(data: data).map { byteHex($0) }.joined()
+        hex(SHA256.hash(data: data))
     }
 
     /// The size of each read when hashing a file: 4 MiB.
@@ -205,7 +201,7 @@ nonisolated enum S3Signer {
             if count == 0 { break }
             hasher.update(bufferPointer: UnsafeRawBufferPointer(rebasing: buffer[..<count]))
         }
-        return hasher.finalize().map { byteHex($0) }.joined()
+        return hex(hasher.finalize())
     }
 
     static func signingKey(secret: String, dateStamp: String, region: String, service: String) -> SymmetricKey {
@@ -218,24 +214,31 @@ nonisolated enum S3Signer {
     }
 
     static func hmacHex(key: SymmetricKey, message: String) -> String {
-        HMAC<SHA256>.authenticationCode(for: Data(message.utf8), using: key).map { byteHex($0) }.joined()
+        hex(HMAC<SHA256>.authenticationCode(for: Data(message.utf8), using: key))
     }
 
-    /// `yyyyMMdd'T'HHmmss'Z'` in UTC.
+    /// `yyyyMMdd'T'HHmmss'Z'` in UTC: ISO 8601 basic format, which the format style, a value, gives
+    /// without a formatter per signature.
+    static let amzDateFormat = Date.ISO8601FormatStyle(dateSeparator: .omitted, timeSeparator: .omitted)
+
     static func amzDateString(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = TimeZone(identifier: "UTC")
-        formatter.dateFormat = "yyyyMMdd'T'HHmmss'Z'"
-        return formatter.string(from: date)
+        amzDateFormat.format(date)
     }
 
     private static func hexDigit(_ value: UInt8) -> Character {
         Character(UnicodeScalar(value < 10 ? 0x30 + value : 0x41 + value - 10))
     }
 
-    private static func byteHex(_ byte: UInt8) -> String {
-        let digits = Array("0123456789abcdef")
-        return String([digits[Int(byte >> 4)], digits[Int(byte & 0x0F)]])
+    private static let lowercaseHexDigits = Array("0123456789abcdef".utf8)
+
+    /// `bytes` as lowercase hex, built in one buffer: three digests go into every signed request.
+    static func hex(_ bytes: some Sequence<UInt8>) -> String {
+        var out: [UInt8] = []
+        out.reserveCapacity(64)
+        for byte in bytes {
+            out.append(lowercaseHexDigits[Int(byte >> 4)])
+            out.append(lowercaseHexDigits[Int(byte & 0x0F)])
+        }
+        return String(decoding: out, as: UTF8.self)
     }
 }
