@@ -19,7 +19,7 @@ struct AutoScrollEnvironment {
             pointerLocation: {
                 Geometry.cgPoint(fromAppKit: NSEvent.mouseLocation, primaryHeight: NSScreen.screens.first?.frame.height ?? 0)
             },
-            isPermitted: { PostEventPermission.isGranted })
+            isPermitted: { TCCPermission.postEvent.isGranted() })
     }
 }
 

@@ -25,7 +25,7 @@ final class AppCoordinator {
     let dragFiles: DragFileStore
     let credentialStore: any CredentialStore
     let notifier: any Notifying
-    private let permissionWindow = PermissionWindowController()
+    private let permissionWindow = PermissionWindowController(.screenRecording, copy: .screenRecording)
     let overlay: any QuickAccessCards
     /// The general pasteboard, through `Clipboard`.
     let clipboard: any Clipboard
@@ -64,7 +64,7 @@ final class AppCoordinator {
     /// without Screen Recording, which is why nothing could be read, the permission window shows instead.
     @ObservationIgnored lazy var covers = DesktopCoverController(source: WallpaperSource(), reportFailure: { [weak self] in
         guard let self else { return }
-        if !ScreenCapturePermission.isGranted {
+        if !TCCPermission.screenRecording.isGranted() {
             self.showPermissionWindow()
         } else {
             self.notifier.notifyError("TidyShot could not read the desktop picture.", title: "Desktop icons still showing")
@@ -265,7 +265,7 @@ final class AppCoordinator {
     /// True while a save-folder observation is registered (`observeSaveFolderForEditors`).
     @ObservationIgnored var isObservingSaveFolder = false
 
-    var permissionGranted: Bool { ScreenCapturePermission.isGranted }
+    var permissionGranted: Bool { TCCPermission.screenRecording.isGranted() }
 
     // MARK: Lifecycle
 
@@ -343,7 +343,7 @@ final class AppCoordinator {
         if settings.desktopIconsHidden {
             Task { await covers.show(for: .persistent) }
         }
-        if !ScreenCapturePermission.isGranted {
+        if !TCCPermission.screenRecording.isGranted() {
             permissionWindow.show()
         }
         // A URL that launched the app arrived before this point and waits in the handler.

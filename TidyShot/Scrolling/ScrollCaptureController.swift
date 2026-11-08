@@ -9,7 +9,7 @@ import ScreenCaptureKit
 final class ScrollCaptureController {
     private let engine: CaptureEngine
     private let settings: AppSettings
-    private let permissionWindow = AutoScrollPermissionWindowController()
+    private let permissionWindow = PermissionWindowController(.postEvent, copy: .autoScroll)
     private var session: ScrollCaptureSession?
     private var panel: ScrollCapturePanel?
     private var frameWindow: ScrollAreaFrameWindow?

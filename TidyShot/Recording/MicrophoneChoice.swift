@@ -62,7 +62,7 @@ nonisolated enum MicrophoneChoice {
     /// The `Recording stopped` body when the recorded input went during the recording.
     static let disconnectedText = "The microphone was disconnected."
     static let unknownName = "Unknown microphone"
-    static let privacySettingsURL = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!
+    static let privacySettingsURL = PrivacyPane.microphone.url
 
     static func recordedWithTitle(_ name: String) -> String {
         "Recorded with \(name)"

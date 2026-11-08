@@ -47,7 +47,7 @@ nonisolated enum CameraChoice {
     static let noCameraText = "No camera is connected."
     static let couldNotStartText = "The camera could not be started."
     static let notFilmedText = "The bubble could not be filmed."
-    static let privacySettingsURL = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera")!
+    static let privacySettingsURL = PrivacyPane.camera.url
 
     static func recordedWithTitle(_ name: String) -> String {
         "Recorded with \(name)"

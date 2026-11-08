@@ -118,7 +118,7 @@ extension CaptureEngine: CaptureSource {
     func displayUnderPointer(in displays: [CaptureDisplay]) -> CaptureDisplay? {
         Self.display(under: NSEvent.mouseLocation, in: displays)
     }
-    var isScreenRecordingGranted: Bool { ScreenCapturePermission.isGranted }
+    var isScreenRecordingGranted: Bool { TCCPermission.screenRecording.isGranted() }
 }
 
 extension NSScreen {
