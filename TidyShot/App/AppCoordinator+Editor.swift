@@ -162,9 +162,7 @@ extension AppCoordinator {
         }
         let png: Data
         do {
-            png = try await Task.detached(priority: .userInitiated) {
-                try ImageEncoder.pngData(from: image.image, scale: image.scale)
-            }.value
+            png = try await image.encodedPNG()
         } catch {
             await keepFailedEditOnClipboard(image, png: nil, recordID: recordID, error: error)
             return false
@@ -229,9 +227,7 @@ extension AppCoordinator {
             changeCount = clipboard.copy(image: image.image, pngData: png, scale: image.scale)
         } else {
             // No PNG: the TIFF is the only copy, at any size, made off the main actor.
-            let tiff = await Task.detached(priority: .userInitiated) {
-                Pasteboard.tiffData(of: image.image, scale: image.scale)
-            }.value
+            let tiff = await image.encodedTIFF()
             changeCount = clipboard.copy(tiffData: tiff)
         }
         clipboardOwner = EditorClipboard.Owner(recordID: recordID, changeCount: changeCount)
@@ -289,9 +285,7 @@ extension AppCoordinator {
         }
         let png: Data
         do {
-            png = try await Task.detached(priority: .userInitiated) {
-                try ImageEncoder.pngData(from: image.image, scale: image.scale)
-            }.value
+            png = try await image.encodedPNG()
         } catch {
             log("Save As failed: \(error.localizedDescription)")
             notifier.notifyError(error.localizedDescription, title: "Not saved")
@@ -319,9 +313,7 @@ extension AppCoordinator {
         }
         let png: Data
         do {
-            png = try await Task.detached(priority: .userInitiated) {
-                try ImageEncoder.pngData(from: image.image, scale: image.scale)
-            }.value
+            png = try await image.encodedPNG()
         } catch {
             notifier.notifyError(error.localizedDescription, title: "Not uploaded")
             return .refused
@@ -338,17 +330,10 @@ extension AppCoordinator {
             // gets pending/<id>.png and the record switches to it, so Retry and a replace retry read
             // the edited bytes, a failed upload keeps them (keepsUnuploadedEdit), and
             // handle(.uploaded) removes the file. A save-folder original is left where it is.
-            do {
-                let url = try pendingFiles.write(png, id: recordID, ext: "png")
-                history.update(id: recordID) { record in
-                    record.fileURL = url
-                    record.fileIsTemporary = true
-                }
-            } catch {
-                log("Pending write failed: \(error.localizedDescription)")
-                keepOnClipboard(image, png: png, alreadyOnClipboard: false)
-                notifier.notifyError("\(error.localizedDescription) The image is on the clipboard.", title: "Not saved")
-                return .refused
+            guard let url = writePendingFile(png, id: recordID, image: image, alreadyOnClipboard: false) else { return .refused }
+            history.update(id: recordID) { record in
+                record.fileURL = url
+                record.fileIsTemporary = true
             }
             // Now a pending-file target: applyLocalEdit rewrites the same bytes and does the
             // bookkeeping (pixel size, editedAt, uploadIsStale, thumbnail, clipboard, editor state).
@@ -435,9 +420,7 @@ extension AppCoordinator {
     private func replaceClipboardIfStillOriginal(recordID: UUID, png: Data, image: ScaledImage) async {
         guard EditorClipboard.shouldReplace(owner: clipboardOwner, recordID: recordID,
                                             currentChangeCount: clipboard.changeCount) else { return }
-        let tiff = await Task.detached(priority: .userInitiated) {
-            Pasteboard.companionTIFF(of: image.image, scale: image.scale)
-        }.value
+        let tiff = await image.companionTIFF()
         guard EditorClipboard.shouldReplace(owner: clipboardOwner, recordID: recordID,
                                             currentChangeCount: clipboard.changeCount) else { return }
         let changeCount = clipboard.copy(pngData: png, tiffData: tiff)
@@ -449,10 +432,7 @@ extension AppCoordinator {
     /// Save or Save As… puts the newer edit there. The window stays open.
     private func editorCopy(recordID: UUID, image: ScaledImage) async {
         do {
-            let encoded = try await Task.detached(priority: .userInitiated) { () throws -> (png: Data, tiff: Data?) in
-                (try ImageEncoder.pngData(from: image.image, scale: image.scale),
-                 Pasteboard.companionTIFF(of: image.image, scale: image.scale))
-            }.value
+            let encoded = try await image.encodedForClipboard()
             copyOwnedImage(png: encoded.png, tiff: encoded.tiff, recordID: recordID)
             if settings.showNotification {
                 let record = history.record(id: recordID)

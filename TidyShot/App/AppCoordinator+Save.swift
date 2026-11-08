@@ -47,16 +47,11 @@ extension AppCoordinator {
         // 16,384 px the clipboard gets the PNG only (`Pasteboard.companionTIFF`).
         let encoded: (png: Data, tiff: Data?)
         do {
-            encoded = try await Task.detached(priority: .userInitiated) { () throws -> (png: Data, tiff: Data?) in
-                (try ImageEncoder.pngData(from: image.image, scale: image.scale),
-                 copyImageNow ? Pasteboard.companionTIFF(of: image.image, scale: image.scale) : nil)
-            }.value
+            encoded = try await image.encodedForClipboard(tiff: copyImageNow)
         } catch {
             log("Encode failed: \(error.localizedDescription)")
             // Never drop a capture: without PNG data the clipboard still gets the image as TIFF.
-            let tiff = await Task.detached(priority: .userInitiated) {
-                Pasteboard.tiffData(of: image.image, scale: image.scale)
-            }.value
+            let tiff = await image.encodedTIFF()
             clipboard.copy(tiffData: tiff)
             notifier.notifyError(error.localizedDescription)
             return nil
@@ -116,18 +111,11 @@ extension AppCoordinator {
     /// still owns its image, and an edit of an earlier capture compares the clipboard's change
     /// count, which this copy has moved on.
     private func copyOnly(_ image: ScaledImage, sender: String?) async {
-        let encoded = await Task.detached(priority: .userInitiated) { () -> (png: Data?, tiff: Data?) in
-            (try? ImageEncoder.pngData(from: image.image, scale: image.scale),
-             Pasteboard.companionTIFF(of: image.image, scale: image.scale))
-        }.value
-        if let png = encoded.png {
-            clipboard.copy(pngData: png, tiffData: encoded.tiff)
+        if let encoded = try? await image.encodedForClipboard() {
+            clipboard.copy(pngData: encoded.png, tiffData: encoded.tiff)
         } else {
             // As `save` does when the PNG fails: the TIFF alone, so the capture is not lost.
-            let tiff = await Task.detached(priority: .userInitiated) {
-                Pasteboard.tiffData(of: image.image, scale: image.scale)
-            }.value
-            clipboard.copy(tiffData: tiff)
+            clipboard.copy(tiffData: await image.encodedTIFF())
         }
         if settings.playSound {
             environment.playShutter()
@@ -264,9 +252,10 @@ extension AppCoordinator {
         }
     }
 
-    /// Upload-only mode: writes the PNG into the container's `pending` folder as `<id>.png`, no
-    /// folder prompt.
-    private func writePendingFile(_ png: Data, id: UUID, image: ScaledImage, alreadyOnClipboard: Bool) -> URL? {
+    /// Upload-only mode, and the editor's Upload of a save-folder original: writes the PNG into the
+    /// container's `pending` folder as `<id>.png`, no folder prompt. A failed write keeps the image
+    /// on the clipboard, posts `Not saved` and gives nil.
+    func writePendingFile(_ png: Data, id: UUID, image: ScaledImage, alreadyOnClipboard: Bool) -> URL? {
         do {
             return try pendingFiles.write(png, id: id, ext: "png")
         } catch {

@@ -110,15 +110,10 @@ extension AppCoordinator {
     /// Keychain read that fails is reported as such, not as missing credentials.
     func deleteObjects(_ keys: [String], at location: ObjectLocation) async -> String? {
         guard !keys.isEmpty else { return nil }
-        let stored: AWSCredentials?
-        do {
-            stored = try storedCredentials()
-        } catch {
-            log("Keychain read failed: \(error.localizedDescription)")
-            return Self.keychainReadFailure(error)
-        }
-        guard let credentials = stored else {
-            return "No credentials are saved in Settings > Upload."
+        let credentials: AWSCredentials
+        switch credentialsForStoredObjects() {
+        case .failure(let failure): return failure.reason
+        case .success(let stored): credentials = stored
         }
         let destination = environment.makeDestination(location.config, credentials)
         for key in keys {
@@ -138,19 +133,12 @@ extension AppCoordinator {
     /// reason for the first failure, which is logged too. `name` is the record's file name, or its id.
     func abortUploads(_ refs: [MultipartRef], name: String) async -> String? {
         guard !refs.isEmpty else { return nil }
-        let stored: AWSCredentials?
-        do {
-            stored = try storedCredentials()
-        } catch {
-            log("Keychain read failed: \(error.localizedDescription)")
-            let reason = Self.keychainReadFailure(error)
-            log("Upload: \(name) multipart abort failed: \(reason)")
-            return reason
-        }
-        guard let credentials = stored else {
-            let reason = "No credentials are saved in Settings > Upload."
-            log("Upload: \(name) multipart abort failed: \(reason)")
-            return reason
+        let credentials: AWSCredentials
+        switch credentialsForStoredObjects() {
+        case .failure(let failure):
+            log("Upload: \(name) multipart abort failed: \(failure.reason)")
+            return failure.reason
+        case .success(let stored): credentials = stored
         }
         for ref in refs {
             let destination = environment.makeDestination(ref.location.config, credentials)
@@ -193,21 +181,47 @@ extension AppCoordinator {
             thumbnails.remove(fileName: name)
         }
         thumbnails.remove(fileName: defaultName)
-        removeMultipartFiles(of: id)
         history.remove(id: id)
+        forgetRecordState(id)
+        overlay.close(recordID: id, reason: .deleted)
+        // Also cancels a drag-out download and drops its resume data.
+        removeDragFolder(id)
+        pushEditorState(for: id)
+    }
+
+    /// What a delete and a prune both drop for a record: its in-memory marks, its cached
+    /// thumbnails, its multipart files, the retained image when it is this record's, its pin, and
+    /// its Trim window (which cancels a pass before its put; Delete refuses while one writes, and a
+    /// put under way after a prune finishes and removes its pending file, `RecordingTrim.afterPut`).
+    private func forgetRecordState(_ id: UUID) {
         optimizingVideoIDs.remove(id)
         fileUploadIDs.remove(id)
         videoClipboardCounts[id] = nil
         linkNotCopiedIDs.remove(id)
         thumbnailProvider.forget(id)
+        removeMultipartFiles(of: id)
         forgetLatestCapture(id)
-        overlay.close(recordID: id, reason: .deleted)
         pins.close(recordID: id)
-        // Cancels a pass before its put; Delete refuses while one writes.
         trimWindows[id]?.close()
-        // Also cancels a drag-out download and drops its resume data.
-        removeDragFolder(id)
-        pushEditorState(for: id)
+    }
+
+    /// The credentials stored now, for a request at where an object went (a delete, an abort),
+    /// never through the current Upload settings. A Keychain read that fails, or no stored
+    /// credentials, is the reason the caller reports.
+    private func credentialsForStoredObjects() -> Result<AWSCredentials, StoredObjectsFailure> {
+        do {
+            guard let stored = try storedCredentials() else {
+                return .failure(StoredObjectsFailure(reason: "No credentials are saved in Settings > Upload."))
+            }
+            return .success(stored)
+        } catch {
+            log("Keychain read failed: \(error.localizedDescription)")
+            return .failure(StoredObjectsFailure(reason: Self.keychainReadFailure(error)))
+        }
+    }
+
+    private struct StoredObjectsFailure: Error {
+        let reason: String
     }
 
     /// Removes a temporary file from `pending`. A file that is already gone counts as removed.
@@ -241,25 +255,15 @@ extension AppCoordinator {
     /// not show yet, is never pruned.)
     func removeFiles(ofPruned records: [CaptureRecord]) {
         for record in records {
-            optimizingVideoIDs.remove(record.id)
-            fileUploadIDs.remove(record.id)
-            videoClipboardCounts[record.id] = nil
-            linkNotCopiedIDs.remove(record.id)
+            // The upload itself is not aborted: the bucket's lifecycle rule removes it.
+            forgetRecordState(record.id)
             copyFileCounts[record.id] = nil
-            thumbnailProvider.forget(record.id)
             if let name = record.thumbnailFileName {
                 thumbnails.remove(fileName: name)
             }
             if record.fileIsTemporary, let fileURL = record.fileURL {
                 removePendingFile(at: fileURL, context: "after pruning")
             }
-            // The upload itself is not aborted: the bucket's lifecycle rule removes it.
-            removeMultipartFiles(of: record.id)
-            forgetLatestCapture(record.id)
-            pins.close(recordID: record.id)
-            // Cancels a pass before its put; a put under way finishes and removes its pending file
-            // (`RecordingTrim.afterPut`).
-            trimWindows[record.id]?.close()
             pushEditorState(for: record.id)
         }
     }

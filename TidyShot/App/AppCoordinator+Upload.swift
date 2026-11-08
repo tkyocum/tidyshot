@@ -505,17 +505,11 @@ extension AppCoordinator {
         }
     }
 
-    /// Starts the record's upload again from its file with `destination`. A record whose delete
-    /// is in progress is never re-enqueued, so a retry cannot re-upload what Delete is removing.
-    /// An interrupted or failed replace re-PUTs its own key, so its URL stays. A record
-    /// `uploadRefusal` refuses posts `Not uploaded` with the reason instead.
+    /// Starts the record's upload again from its file with `destination`. Both callers have already
+    /// refused what `uploadRefusal` refuses and posted `Not uploaded`, with no suspension since. A
+    /// record whose delete is in progress is never re-enqueued, so a retry cannot re-upload what
+    /// Delete is removing. An interrupted or failed replace re-PUTs its own key, so its URL stays.
     private func retry(recordID: UUID, destination: UploadTarget) {
-        if let refusal = history.record(id: recordID).flatMap({
-            Self.uploadRefusal(for: $0, isTrimming: trimmingIDs.contains(recordID))
-        }) {
-            notifier.notifyError(refusal, title: "Not uploaded")
-            return
-        }
         guard !deletingIDs.contains(recordID), let record = history.record(id: recordID) else { return }
         let payload: UploadPayload
         do {

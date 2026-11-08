@@ -58,16 +58,6 @@ extension AppCoordinator {
         return cancelled ? .stop(logsCancel: true) : .start
     }
 
-    /// What a record function does about the microphone or the camera prompt, before the capture
-    /// lock (R2 design, At the start; R3 design, Permission): with no access to ask for it goes on;
-    /// with a prompt to show while another capture holds the lock it ends there, with no prompt, as
-    /// the lock would refuse the start and the prompt would land in that capture; otherwise the
-    /// prompt shows.
-    nonisolated static func permissionPromptStep(asksForAccess: Bool, isCapturing: Bool) -> PermissionPromptStep {
-        guard asksForAccess else { return .goOn }
-        return isCapturing ? .end : .prompt
-    }
-
     /// The prompts a start shows before the capture lock, in order (R3 design, Permission; plan
     /// Gap 9): the microphone first, then the camera.
     nonisolated static func startPrompts(microphone: Bool, camera: Bool) -> [PermissionPrompt] {
@@ -121,13 +111,6 @@ extension AppCoordinator {
         case .microphone: await microphones.requestAccess()
         case .camera: await cameras.requestAccess()
         }
-    }
-
-    /// What a record start the capture lock refused posts (R2 design, Decided 2026-10-24, 9): after
-    /// the microphone or the camera prompt, which the user answered, `RecordingEnd.busyAfterPrompt`;
-    /// otherwise nothing, as any capture the lock refuses ends silently.
-    nonisolated static func lockRefusalNotice(afterPrompt: Bool) -> RecordingNotice? {
-        afterPrompt ? RecordingEnd.busyAfterPrompt : nil
     }
 
     /// The stored microphone a start reads before the capture lock, and the last prompt it showed.
@@ -268,11 +251,13 @@ extension AppCoordinator {
     }
 
     /// A start the capture lock refused (R2 design, Decided 2026-10-24, 9). One that showed the
-    /// microphone or the camera prompt posts and logs why it did not start, naming the last prompt,
-    /// as the user answered it; captures are refused while a prompt is up, so this is a backstop. One
-    /// that showed none ends silently.
+    /// microphone or the camera prompt posts `RecordingEnd.busyAfterPrompt` and logs why it did not
+    /// start, naming the last prompt, as the user answered it; captures are refused while a prompt
+    /// is up, so this is a backstop. One that showed none ends silently, as any capture the lock
+    /// refuses.
     private func lockRefusedStart(afterPrompt prompted: PermissionPrompt?) {
-        guard let prompted, let notice = Self.lockRefusalNotice(afterPrompt: true) else { return }
+        guard let prompted else { return }
+        let notice = RecordingEnd.busyAfterPrompt
         recordingLog("Recording: not started after the \(prompted.name) prompt, another capture was running")
         notifier.notifyError(notice.body, title: notice.title)
     }
@@ -328,14 +313,11 @@ extension AppCoordinator {
         var prompted: PermissionPrompt?
         for prompt in Self.startPrompts(microphone: asksMicrophone, camera: asksCamera) {
             // A screenshot's selection or self-timer, or a scrolling capture, with a prompt to show:
-            // the start ends here, as `withCaptureLock` ends any start while another capture runs.
-            // The real lock, not `capturesRefused`: no other start or Settings can be at a prompt
+            // the start ends here, with no prompt, as `withCaptureLock` ends any start while another
+            // capture runs and the prompt would land in that capture (R2 design, At the start). The
+            // real lock, not `capturesRefused`: no other start or Settings can be at a prompt
             // (`recordShortcutStarts`, `settingsPromptStep`).
-            switch Self.permissionPromptStep(asksForAccess: true, isCapturing: isCapturing) {
-            case .goOn: continue
-            case .end: return nil
-            case .prompt: break
-            }
+            guard !isCapturing else { return nil }
             askingPermission = prompt
             let granted = await requestAccess(prompt)
             askingPermission = nil
@@ -544,7 +526,7 @@ extension AppCoordinator {
             extras?.place(at: Self.extrasPlace(cgArea: nil, displayID: displayID, cgDisplayFrame: current.frame,
                                                primaryHeight: primaryHeight))
         case .window(let window):
-            guard let current = content.windows.first(where: { $0.windowID == window.windowID }) else {
+            guard let current = content.window(id: window.windowID) else {
                 notifier.notifyError("The window is no longer on screen.", title: RecordingEnd.refusalTitle)
                 return nil
             }
@@ -597,7 +579,7 @@ extension AppCoordinator {
     /// The display with `id` in fresh shareable content. When it is gone, `The display is no
     /// longer connected.` posts as a refusal and the result is nil.
     private func connectedDisplay(_ id: CGDirectDisplayID, in content: ScreenContent) -> CaptureDisplay? {
-        guard let display = content.displays.first(where: { $0.displayID == id }) else {
+        guard let display = content.display(id: id) else {
             notifier.notifyError("The display is no longer connected.", title: RecordingEnd.refusalTitle)
             return nil
         }
@@ -915,16 +897,6 @@ nonisolated enum RecordingPhase: Equatable, Sendable {
     case recording
     /// A kept recording on its way to `history.add`.
     case saving
-}
-
-/// What a start does about the microphone or the camera prompt
-/// (`AppCoordinator.permissionPromptStep(asksForAccess:isCapturing:)`).
-nonisolated enum PermissionPromptStep: Equatable, Sendable {
-    case prompt
-    /// Nothing to ask: on to the capture lock.
-    case goOn
-    /// Another capture runs: nothing starts, and no prompt shows.
-    case end
 }
 
 /// What Settings does about a prompt (`AppCoordinator.settingsPromptStep(phase:isCapturing:askingPermission:)`).

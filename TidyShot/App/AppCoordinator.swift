@@ -407,38 +407,39 @@ final class AppCoordinator {
 
     // MARK: Shortcuts
 
+    /// A capture the user starts: its hotkey, its title in the status menu, and what it runs. The
+    /// hotkeys and the menu are both made from `captureCommands`, so a new capture is added there
+    /// alone. Either record command also cancels a count-in and stops a recording, whichever of the
+    /// two started it (each function checks the phase first), and the menu leaves both out while
+    /// a recording runs.
+    struct CaptureCommand {
+        let shortcut: KeyboardShortcuts.Name
+        let title: String
+        var hiddenWhileRecording = false
+        let run: (AppCoordinator) async -> Void
+    }
+
+    static let captureCommands: [CaptureCommand] = [
+        CaptureCommand(shortcut: .allInOne, title: "All-in-One") { await $0.captureAllInOne() },
+        CaptureCommand(shortcut: .captureArea, title: "Capture Area") { await $0.captureArea() },
+        CaptureCommand(shortcut: .captureWindow, title: "Capture Window") { await $0.captureWindow() },
+        CaptureCommand(shortcut: .captureFullscreen, title: "Capture Fullscreen") { await $0.captureFullscreen() },
+        CaptureCommand(shortcut: .captureScrolling, title: "Capture Scrolling") { await $0.captureScrolling() },
+        CaptureCommand(shortcut: .capturePreviousArea, title: "Capture Previous Area") { await $0.capturePreviousArea() },
+        CaptureCommand(shortcut: .selfTimer, title: "Self-Timer") { await $0.captureSelfTimer() },
+        CaptureCommand(shortcut: .captureText, title: "Capture Text") { await $0.captureText() },
+        CaptureCommand(shortcut: .recordScreen, title: "Record Screen", hiddenWhileRecording: true) { await $0.recordScreen() },
+        CaptureCommand(shortcut: .recordFullscreen, title: "Record Fullscreen", hiddenWhileRecording: true) {
+            await $0.recordFullscreen()
+        },
+    ]
+
     private func registerShortcuts() {
-        KeyboardShortcuts.onKeyUp(for: .allInOne) { [weak self] in
-            Task { await self?.captureAllInOne() }
-        }
-        KeyboardShortcuts.onKeyUp(for: .captureFullscreen) { [weak self] in
-            Task { await self?.captureFullscreen() }
-        }
-        KeyboardShortcuts.onKeyUp(for: .captureArea) { [weak self] in
-            Task { await self?.captureArea() }
-        }
-        KeyboardShortcuts.onKeyUp(for: .captureWindow) { [weak self] in
-            Task { await self?.captureWindow() }
-        }
-        KeyboardShortcuts.onKeyUp(for: .captureScrolling) { [weak self] in
-            Task { await self?.captureScrolling() }
-        }
-        KeyboardShortcuts.onKeyUp(for: .capturePreviousArea) { [weak self] in
-            Task { await self?.capturePreviousArea() }
-        }
-        KeyboardShortcuts.onKeyUp(for: .selfTimer) { [weak self] in
-            Task { await self?.captureSelfTimer() }
-        }
-        KeyboardShortcuts.onKeyUp(for: .captureText) { [weak self] in
-            Task { await self?.captureText() }
-        }
-        // Either record shortcut also cancels a count-in and stops a recording, whichever of the
-        // two started it: each function checks the phase first.
-        KeyboardShortcuts.onKeyUp(for: .recordScreen) { [weak self] in
-            Task { await self?.recordScreen() }
-        }
-        KeyboardShortcuts.onKeyUp(for: .recordFullscreen) { [weak self] in
-            Task { await self?.recordFullscreen() }
+        for command in Self.captureCommands {
+            KeyboardShortcuts.onKeyUp(for: command.shortcut) { [weak self] in
+                guard let self else { return }
+                Task { await command.run(self) }
+            }
         }
         KeyboardShortcuts.onKeyUp(for: .restoreOverlay) { [weak self] in
             Task { await self?.restoreClosedOverlay() }

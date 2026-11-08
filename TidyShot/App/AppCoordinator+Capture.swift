@@ -90,7 +90,7 @@ extension AppCoordinator {
         await withCaptureLock(coversDesktop: false) {
             guard let content = await loadContent() else { return }
             if let preselect {
-                guard let display = content.displays.first(where: { $0.displayID == preselect.displayID }) else {
+                guard let display = content.display(id: preselect.displayID) else {
                     log("Capture Scrolling: display \(preselect.displayID) is gone")
                     return
                 }
@@ -160,7 +160,7 @@ extension AppCoordinator {
             case .offScreen:
                 notifier.notifyError("The previous area is not on a connected display.", title: "No previous area")
             case .area(let rect, let displayID):
-                guard let display = content.displays.first(where: { $0.displayID == displayID }) else { return }
+                guard let display = content.display(id: displayID) else { return }
                 let cards = await cardWindows()
                 guard let result = await capture(.area(rect: rect, display: display), excludingWindows: cards) else { return }
                 await save(result, intent: intent)
@@ -174,7 +174,7 @@ extension AppCoordinator {
     func captureArea(at area: ScreenRect, intent: CaptureIntent) async {
         await withCaptureLock(coversDesktop: true) {
             guard let content = await loadContent() else { return }
-            guard let display = content.displays.first(where: { $0.displayID == area.displayID }) else {
+            guard let display = content.display(id: area.displayID) else {
                 log("URL capture-area: display \(area.displayID) is gone")
                 return
             }
@@ -261,7 +261,7 @@ extension AppCoordinator {
         var captured: CaptureResult?
         await withCaptureLock(coversDesktop: false) {
             guard let content = await loadContent() else { return }
-            guard let display = content.displays.first(where: { $0.displayID == area.displayID }) else {
+            guard let display = content.display(id: area.displayID) else {
                 log("URL capture-text: display \(area.displayID) is gone")
                 return
             }
@@ -323,26 +323,9 @@ extension AppCoordinator {
     /// pointer follows Show cursor and the cards are left out, as for a fullscreen capture.
     private func captureAfterCountdown(_ target: CaptureTarget, intent: CaptureIntent) async {
         guard let content = await loadContent() else { return }
-        let fresh: CaptureTarget
-        switch target {
-        case .display(let display):
-            guard let current = content.displays.first(where: { $0.displayID == display.displayID }) else {
-                notifier.notifyError("The display is no longer connected.", title: "Self-timer")
-                return
-            }
-            fresh = .display(current)
-        case .area(let rect, let display):
-            guard let current = content.displays.first(where: { $0.displayID == display.displayID }) else {
-                notifier.notifyError("The display is no longer connected.", title: "Self-timer")
-                return
-            }
-            fresh = .area(rect: rect, display: current)
-        case .window(let window):
-            guard let current = content.windows.first(where: { $0.windowID == window.windowID }) else {
-                notifier.notifyError("The window is no longer on screen.", title: "Self-timer")
-                return
-            }
-            fresh = .window(current)
+        guard let fresh = target.refreshed(in: content) else {
+            notifier.notifyError(target.missingText, title: "Self-timer")
+            return
         }
         guard let result = await capture(fresh, excludingWindows: await cardWindows()) else { return }
         await save(result, intent: intent)

@@ -10,6 +10,16 @@ struct ScreenContent {
     init(_ content: SCShareableContent) {
         displays = content.displays.map(CaptureDisplay.init); windows = content.windows.map(CaptureWindow.init); live = content
     }
+
+    /// The display with `id`; nil once it is disconnected.
+    func display(id: CGDirectDisplayID) -> CaptureDisplay? {
+        displays.first { $0.displayID == id }
+    }
+
+    /// The window with `id`; nil once it has closed or left the screen.
+    func window(id: CGWindowID) -> CaptureWindow? {
+        windows.first { $0.windowID == id }
+    }
 }
 /// What the capture flows read of the screen. `CaptureEngine` in the app; `FakeCaptureSource` in the suite.
 protocol CaptureSource: AnyObject {

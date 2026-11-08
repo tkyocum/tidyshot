@@ -95,17 +95,10 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
             menu.addItem(item("Screen Recording permission needed…", #selector(showPermission)))
             menu.addItem(.separator())
         }
-        menu.addItem(captureItem("All-in-One", .allInOne, #selector(allInOne)))
-        menu.addItem(captureItem("Capture Area", .captureArea, #selector(captureArea)))
-        menu.addItem(captureItem("Capture Window", .captureWindow, #selector(captureWindow)))
-        menu.addItem(captureItem("Capture Fullscreen", .captureFullscreen, #selector(captureFullscreen)))
-        menu.addItem(captureItem("Capture Scrolling", .captureScrolling, #selector(captureScrolling)))
-        menu.addItem(captureItem("Capture Previous Area", .capturePreviousArea, #selector(capturePreviousArea)))
-        menu.addItem(captureItem("Self-Timer", .selfTimer, #selector(captureSelfTimer)))
-        menu.addItem(captureItem("Capture Text", .captureText, #selector(captureText)))
-        if !recording {
-            menu.addItem(captureItem("Record Screen", .recordScreen, #selector(recordScreen)))
-            menu.addItem(captureItem("Record Fullscreen", .recordFullscreen, #selector(recordFullscreen)))
+        for (index, command) in AppCoordinator.captureCommands.enumerated() where !(recording && command.hiddenWhileRecording) {
+            let item = captureItem(command.title, command.shortcut, #selector(runCaptureCommand(_:)))
+            item.tag = index
+            menu.addItem(item)
         }
         menu.addItem(.separator())
         recentCaptures.rebuild()
@@ -159,16 +152,11 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     // MARK: Actions (AppKit calls these after the menu has closed)
 
     @objc private func showPermission() { coordinator.showPermissionWindow() }
-    @objc private func allInOne() { Task { await coordinator.captureAllInOne() } }
-    @objc private func captureArea() { Task { await coordinator.captureArea() } }
-    @objc private func captureWindow() { Task { await coordinator.captureWindow() } }
-    @objc private func captureFullscreen() { Task { await coordinator.captureFullscreen() } }
-    @objc private func captureScrolling() { Task { await coordinator.captureScrolling() } }
-    @objc private func capturePreviousArea() { Task { await coordinator.capturePreviousArea() } }
-    @objc private func captureSelfTimer() { Task { await coordinator.captureSelfTimer() } }
-    @objc private func captureText() { Task { await coordinator.captureText() } }
-    @objc private func recordScreen() { Task { await coordinator.recordScreen() } }
-    @objc private func recordFullscreen() { Task { await coordinator.recordFullscreen() } }
+    /// A capture item: its tag is its row in `AppCoordinator.captureCommands`.
+    @objc private func runCaptureCommand(_ sender: NSMenuItem) {
+        let command = AppCoordinator.captureCommands[sender.tag]
+        Task { await command.run(coordinator) }
+    }
     @objc private func stopRecording() { coordinator.stopRecording() }
     @objc private func stopMakingGIFs() { coordinator.stopMakingGIFs() }
     @objc private func retryFailedUploads() { coordinator.retryFailedUploads() }

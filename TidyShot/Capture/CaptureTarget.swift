@@ -49,6 +49,25 @@ extension CaptureTarget {
 }
 
 extension CaptureTarget {
+    /// The same target over `content`'s display or window with its id, read again after a wait (a
+    /// count-in): a window may have moved or closed meanwhile, and an `SCWindow` from before would
+    /// size the image from its old frame. Nil when the display or window is gone; `missingText`
+    /// says so.
+    func refreshed(in content: ScreenContent) -> CaptureTarget? {
+        switch self {
+        case .display(let display): content.display(id: display.displayID).map { .display($0) }
+        case .area(let rect, let display): content.display(id: display.displayID).map { .area(rect: rect, display: $0) }
+        case .window(let window): content.window(id: window.windowID).map { .window($0) }
+        }
+    }
+
+    /// Why `refreshed(in:)` gave nil, for the user.
+    var missingText: String {
+        if case .window = self { "The window is no longer on screen." } else { "The display is no longer connected." }
+    }
+}
+
+extension CaptureTarget {
     /// What the save path reads of this target (`AppCoordinator.save(_:from:intent:)`).
     var origin: CaptureOrigin {
         switch self {

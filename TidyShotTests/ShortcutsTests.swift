@@ -95,16 +95,6 @@ struct ShortcutsTests {
         #expect(AppCoordinator.recordingShortcutAction(for: .recording, askingPermission: prompt) == .stop)
     }
 
-    /// Before the capture lock (R2 design, At the start), for either prompt: a start with no access
-    /// to ask for goes on, also while another capture runs, whose lock then refuses it; one that would
-    /// prompt while another capture runs ends there, with no prompt; otherwise the prompt shows.
-    @Test func aPromptShowsOnlyWithNoCaptureRunning() {
-        #expect(AppCoordinator.permissionPromptStep(asksForAccess: true, isCapturing: false) == .prompt)
-        #expect(AppCoordinator.permissionPromptStep(asksForAccess: true, isCapturing: true) == .end)
-        #expect(AppCoordinator.permissionPromptStep(asksForAccess: false, isCapturing: false) == .goOn)
-        #expect(AppCoordinator.permissionPromptStep(asksForAccess: false, isCapturing: true) == .goOn)
-    }
-
     /// The prompts a start shows (plan Gap 9): the microphone first, then the camera, then on to
     /// the lock.
     @Test func aStartAsksForTheMicrophoneThenTheCamera() {
@@ -211,17 +201,6 @@ struct ShortcutsTests {
         #expect(AppCoordinator.settingsPromptDeferralReason(phase: .saving, isCapturing: false, askingPermission: nil)
                 == "a recording is being saved")
         #expect(AppCoordinator.settingsPromptDeferralReason(phase: .idle, isCapturing: false, askingPermission: nil) == nil)
-    }
-
-    /// A record start the capture lock refuses posts only when it showed the microphone or the
-    /// camera prompt, which the user answered; one that showed none ends silently, as any capture the
-    /// lock refuses.
-    @Test func aRefusedStartPostsOnlyAfterAPrompt() {
-        #expect(AppCoordinator.lockRefusalNotice(afterPrompt: true)
-                == RecordingNotice(title: "Screen recording",
-                                   body: "The recording did not start because another capture was running."))
-        #expect(AppCoordinator.lockRefusalNotice(afterPrompt: true)?.title == RecordingEnd.refusalTitle)
-        #expect(AppCoordinator.lockRefusalNotice(afterPrompt: false) == nil)
     }
 
     /// The Escape name serves scrolling and the self-timer now; the stored name is the old one,
