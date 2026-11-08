@@ -130,25 +130,15 @@ final class FakeRecordingChrome: RecordingChrome {
     private(set) var filmedShown: [Set<FilmedFeature>] = []
     /// The two R3 buttons each `show` laid out.
     private(set) var shownToggles: [(highlights: BarToggle, bubble: BarToggle)] = []
-    private var onStop: (() -> Void)?
-    private var onCancel: (() -> Void)?
-    private var onMute: (() -> Void)?
-    private var onHighlights: (() -> Void)?
-    private var onBubble: (() -> Void)?
+    private var actions = RecordingBarActions.none
     private var askGate: CheckedContinuation<Bool, Never>?
 
     init(log: RecordingTestLog) {
         self.log = log
     }
 
-    func show(onStop: @escaping () -> Void, onCancel: @escaping () -> Void, onMute: @escaping () -> Void,
-              onHighlights: @escaping () -> Void, onBubble: @escaping () -> Void,
-              bar: RecordingPanelLayout.Bar, highlights: BarToggle, bubble: BarToggle) {
-        self.onStop = onStop
-        self.onCancel = onCancel
-        self.onMute = onMute
-        self.onHighlights = onHighlights
-        self.onBubble = onBubble
+    func show(actions: RecordingBarActions, bar: RecordingPanelLayout.Bar, highlights: BarToggle, bubble: BarToggle) {
+        self.actions = actions
         shownBars.append(bar)
         shownToggles.append((highlights, bubble))
         calls.append("show")
@@ -202,27 +192,27 @@ final class FakeRecordingChrome: RecordingChrome {
 
     /// The panel's Stop button.
     func pressStop() {
-        onStop?()
+        actions.stop()
     }
 
     /// The panel's Cancel button.
     func pressCancel() {
-        onCancel?()
+        actions.cancel()
     }
 
     /// The panel's mute button. The real button is disabled with Stop; the controller ignores a
     /// press once the recording is ending all the same.
     func pressMute() {
-        onMute?()
+        actions.mute()
     }
 
     /// The bar's highlights and bubble buttons, which the real bar disables with Stop.
     func pressHighlights() {
-        onHighlights?()
+        actions.highlights()
     }
 
     func pressBubble() {
-        onBubble?()
+        actions.bubble()
     }
 }
 

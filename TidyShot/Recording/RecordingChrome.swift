@@ -8,6 +8,19 @@ nonisolated struct BarToggle: Equatable, Sendable {
     var disabledToolTip: String?
 }
 
+/// What the bar's buttons call: Stop, Cancel, the mute button, and the R3 highlights and bubble
+/// buttons. The controller hands them to the chrome at `show`; `none` is the model's before and
+/// after a recording.
+struct RecordingBarActions {
+    var stop: () -> Void
+    var cancel: () -> Void
+    var mute: () -> Void
+    var highlights: () -> Void
+    var bubble: () -> Void
+
+    static let none = RecordingBarActions(stop: {}, cancel: {}, mute: {}, highlights: {}, bubble: {})
+}
+
 /// What a recording puts on screen: the control panel, the dashed frame of an area recording, and
 /// the Cancel question. `RecordingScreenChrome` is the real one; tests use a fake.
 protocol RecordingChrome: AnyObject {
@@ -17,12 +30,10 @@ protocol RecordingChrome: AnyObject {
     /// no window is missing (plan Gap 4).
     var filmedWindowNumbers: [FilmedFeature: CGWindowID] { get }
     /// Orders the frame and the panel front, laid out as `bar`, with Stop enabled, the time at
-    /// `0:00` and the sound not muted. `onMute` is the mute button's, which only a bar with it has;
-    /// `onHighlights` and `onBubble` are the R3 buttons', shown as `highlights` and `bubble` on a bar
-    /// with the overlay buttons.
-    func show(onStop: @escaping () -> Void, onCancel: @escaping () -> Void, onMute: @escaping () -> Void,
-              onHighlights: @escaping () -> Void, onBubble: @escaping () -> Void,
-              bar: RecordingPanelLayout.Bar, highlights: BarToggle, bubble: BarToggle)
+    /// `0:00` and the sound not muted. `actions.mute` is the mute button's, which only a bar with
+    /// it has; `actions.highlights` and `actions.bubble` are the R3 buttons', shown as `highlights`
+    /// and `bubble` on a bar with the overlay buttons.
+    func show(actions: RecordingBarActions, bar: RecordingPanelLayout.Bar, highlights: BarToggle, bubble: BarToggle)
     func update(elapsed: TimeInterval)
     /// Stop, Cancel, the mute button and the R3 buttons together.
     func setStopEnabled(_ enabled: Bool)
@@ -94,14 +105,8 @@ final class RecordingScreenChrome: RecordingChrome {
         return Set(windows.compactMap { $0.isVisible && $0.windowNumber > 0 ? CGWindowID($0.windowNumber) : nil })
     }
 
-    func show(onStop: @escaping () -> Void, onCancel: @escaping () -> Void, onMute: @escaping () -> Void,
-              onHighlights: @escaping () -> Void, onBubble: @escaping () -> Void,
-              bar: RecordingPanelLayout.Bar, highlights: BarToggle, bubble: BarToggle) {
-        model.onStop = onStop
-        model.onCancel = onCancel
-        model.onMute = onMute
-        model.onHighlights = onHighlights
-        model.onBubble = onBubble
+    func show(actions: RecordingBarActions, bar: RecordingPanelLayout.Bar, highlights: BarToggle, bubble: BarToggle) {
+        model.actions = actions
         model.elapsed = 0
         model.stopEnabled = true
         model.isMuted = false
@@ -195,11 +200,7 @@ final class RecordingScreenChrome: RecordingChrome {
     /// The bubble and the rings go with the bar.
     func close() {
         extras?.close()
-        model.onStop = {}
-        model.onCancel = {}
-        model.onMute = {}
-        model.onHighlights = {}
-        model.onBubble = {}
+        model.actions = .none
         panel.orderOut(nil)
         frameWindow?.orderOut(nil)
     }

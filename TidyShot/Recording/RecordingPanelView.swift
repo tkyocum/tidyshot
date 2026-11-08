@@ -15,11 +15,8 @@ final class RecordingPanelModel {
     /// The R3 buttons, which only an area or fullscreen recording's bar has.
     var highlights = BarToggle(isOn: false, isEnabled: true, disabledToolTip: nil)
     var bubble = BarToggle(isOn: false, isEnabled: true, disabledToolTip: nil)
-    @ObservationIgnored var onStop: () -> Void = {}
-    @ObservationIgnored var onCancel: () -> Void = {}
-    @ObservationIgnored var onMute: () -> Void = {}
-    @ObservationIgnored var onHighlights: () -> Void = {}
-    @ObservationIgnored var onBubble: () -> Void = {}
+    /// What the buttons call; `none` outside a recording.
+    @ObservationIgnored var actions = RecordingBarActions.none
 
     /// The mute button's symbol shows the state; its tool tip and label say what a press does.
     var muteSymbol: String {
@@ -96,63 +93,21 @@ struct RecordingPanelView: View {
                 .lineLimit(1)
                 .placed(in: RecordingPanelLayout.timeFrame(of: bar), alignment: .leading)
             if let highlights = RecordingPanelLayout.highlightsFrame(of: bar) {
-                Button {
-                    model.onHighlights()
-                } label: {
-                    Image(systemName: model.highlightsSymbol)
-                        .frame(width: 28, height: 28)
-                        .contentShape(Rectangle())
-                }
-                .help(model.highlightsToolTip)
-                .accessibilityLabel(model.highlightsAccessibilityLabel)
-                .disabled(!model.highlights.isEnabled)
-                .placed(in: highlights)
+                barButton(model.highlightsSymbol, in: highlights, label: model.highlightsAccessibilityLabel,
+                          help: model.highlightsToolTip, enabled: model.highlights.isEnabled, action: model.actions.highlights)
             }
             if let bubble = RecordingPanelLayout.bubbleFrame(of: bar) {
-                Button {
-                    model.onBubble()
-                } label: {
-                    Image(systemName: model.bubbleSymbol)
-                        .frame(width: 28, height: 28)
-                        .contentShape(Rectangle())
-                }
-                .help(model.bubbleToolTip)
-                .accessibilityLabel(model.bubbleAccessibilityLabel)
-                .disabled(!model.bubble.isEnabled)
-                .placed(in: bubble)
+                barButton(model.bubbleSymbol, in: bubble, label: model.bubbleAccessibilityLabel,
+                          help: model.bubbleToolTip, enabled: model.bubble.isEnabled, action: model.actions.bubble)
             }
             if let mute = RecordingPanelLayout.muteFrame(of: bar) {
-                Button {
-                    model.onMute()
-                } label: {
-                    Image(systemName: model.muteSymbol)
-                        .frame(width: 28, height: 28)
-                        .contentShape(Rectangle())
-                }
-                .help(model.muteToolTip)
-                .accessibilityLabel(model.muteAccessibilityLabel)
-                .placed(in: mute)
+                barButton(model.muteSymbol, in: mute, label: model.muteAccessibilityLabel, help: model.muteToolTip,
+                          action: model.actions.mute)
             }
-            Button {
-                model.onStop()
-            } label: {
-                Image(systemName: "stop.fill")
-                    .foregroundStyle(.red)
-                    .frame(width: 28, height: 28)
-                    .contentShape(Rectangle())
-            }
-            .accessibilityLabel("Stop")
-            .placed(in: RecordingPanelLayout.stopFrame(of: bar))
-            Button {
-                model.onCancel()
-            } label: {
-                Image(systemName: "xmark")
-                    .frame(width: 28, height: 28)
-                    .contentShape(Rectangle())
-            }
-            .help("Discard the recording")
-            .accessibilityLabel("Cancel")
-            .placed(in: RecordingPanelLayout.cancelFrame(of: bar))
+            barButton("stop.fill", in: RecordingPanelLayout.stopFrame(of: bar), label: "Stop", tint: .red,
+                      action: model.actions.stop)
+            barButton("xmark", in: RecordingPanelLayout.cancelFrame(of: bar), label: "Cancel", help: "Discard the recording",
+                      action: model.actions.cancel)
         }
         .frame(width: size.width, height: size.height, alignment: .topLeading)
         .buttonStyle(.borderless)
@@ -164,6 +119,22 @@ struct RecordingPanelView: View {
         // `isMovableByWindowBackground`.
         .gesture(WindowDragGesture())
     }
+
+    /// A bar button: `symbol` filling `frame` (the layout's square), with its accessibility
+    /// label, its tool tip when it has one, its enabled state and its tint.
+    private func barButton(_ symbol: String, in frame: CGRect, label: String, help: String? = nil,
+                           enabled: Bool = true, tint: Color? = nil, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .tinted(tint)
+                .frame(width: frame.width, height: frame.height)
+                .contentShape(Rectangle())
+        }
+        .helped(by: help)
+        .accessibilityLabel(label)
+        .disabled(!enabled)
+        .placed(in: frame)
+    }
 }
 
 private extension View {
@@ -171,5 +142,15 @@ private extension View {
     func placed(in frame: CGRect, alignment: Alignment = .center) -> some View {
         self.frame(width: frame.width, height: frame.height, alignment: alignment)
             .position(x: frame.midX, y: frame.midY)
+    }
+
+    /// `help(_:)` when there is a tool tip.
+    @ViewBuilder func helped(by text: String?) -> some View {
+        if let text { help(text) } else { self }
+    }
+
+    /// `foregroundStyle(_:)` when there is a tint; the button style's colour otherwise.
+    @ViewBuilder func tinted(_ color: Color?) -> some View {
+        if let color { foregroundStyle(color) } else { self }
     }
 }

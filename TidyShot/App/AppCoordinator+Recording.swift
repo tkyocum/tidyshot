@@ -443,7 +443,7 @@ extension AppCoordinator {
         return RecordingExtras(
             options: settings.recordingOptions, camera: camera, insets: settings.bubbleInsets,
             clickSource: { ClickMonitor(isFilmedWindow: $0) },
-            elapsed: { [weak self] in self?.recorder.elapsedTime ?? 0 },
+            elapsed: { [weak self] in self?.recorder.elapsed ?? 0 },
             storeInsets: { [weak self] insets in
                 self?.settings.recordingBubbleInsetRight = Double(insets.right)
                 self?.settings.recordingBubbleInsetBottom = Double(insets.bottom)

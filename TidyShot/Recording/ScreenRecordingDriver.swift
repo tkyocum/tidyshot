@@ -13,8 +13,6 @@ nonisolated enum RecordingStreamEvent: Equatable, Sendable {
     case outputFailed(String)
     /// `stream(_:didStopWithError:)`, with the error's description.
     case streamStopped(String)
-    case streamInactive
-    case streamActive
 }
 
 /// The two TidyShot windows an area or fullscreen recording films (R3 design, Filming the bubble
@@ -239,17 +237,20 @@ nonisolated private final class RecordingStreamDelegate: NSObject, SCRecordingOu
                .streamStopped(error.localizedDescription), recorded: output?.recordedDuration)
     }
 
+    // An inactive or active stream is logged and nothing more: window loss is polled.
     func streamDidBecomeInactive(_ stream: SCStream) {
-        report("streamDidBecomeInactive", .streamInactive, recorded: output?.recordedDuration)
+        report("streamDidBecomeInactive", nil, recorded: output?.recordedDuration)
     }
 
     func streamDidBecomeActive(_ stream: SCStream) {
-        report("streamDidBecomeActive", .streamActive, recorded: output?.recordedDuration)
+        report("streamDidBecomeActive", nil, recorded: output?.recordedDuration)
     }
 
-    private func report(_ callback: String, _ event: RecordingStreamEvent, recorded: CMTime?) {
+    /// Logs the callback with the output's duration, and sends `event`, when there is one, to the controller.
+    private func report(_ callback: String, _ event: RecordingStreamEvent?, recorded: CMTime?) {
         let seconds = recorded.map { $0.isNumeric ? $0.seconds : 0 } ?? 0
         RecordingLog.note("Recording: \(callback), recordedDuration \(String(format: "%.2f", seconds)) s")
+        guard let event else { return }
         // The main queue keeps the callbacks in order: a start is never seen after its finish.
         let send = send
         DispatchQueue.main.async {

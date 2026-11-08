@@ -65,12 +65,8 @@ nonisolated enum TrackPass {
             for index in tracks.indices {
                 group.addTask { try await tracks[index]() }
             }
-            do {
-                while try await group.next() != nil {}
-            } catch {
-                group.cancelAll()
-                throw error
-            }
+            // A throw here cancels the tasks still running and waits for them before it propagates.
+            for try await _ in group {}
         }
     }
 }

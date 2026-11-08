@@ -145,11 +145,9 @@ final class RecordingController {
     /// Set at `recordingStarted`; nil before the first frame.
     private var firstFrame: ContinuousClock.Instant?
     private var startedAt: Date?
-    /// The output finished or failed: it writes nothing more.
+    /// The output finished or failed: it writes nothing more. With the driver's stop returned, it
+    /// ends the stop wait, whether it came before the end or after.
     private var outputEnded = false
-    /// The stop wait's one-shot waiter, armed at the end, has fired: a finish or a fail since
-    /// then, or an output that had already ended.
-    private var waitIsOver = false
     /// The driver's stop has returned or thrown.
     private var stopReturned = false
     private var stopWaiter: CheckedContinuation<Bool, Never>?
@@ -194,10 +192,11 @@ final class RecordingController {
         observeWorkspace()
         // The chrome is on screen before the driver reads the shareable content, so the
         // fallback exclusion can find it. The mute button is live from here.
-        chrome.show(onStop: { [weak self] in self?.stop() }, onCancel: { [weak self] in self?.cancel() },
-                    onMute: { [weak self] in self?.toggleMute() },
-                    onHighlights: { [weak self] in self?.toggleHighlights() },
-                    onBubble: { [weak self] in self?.toggleBubble() },
+        chrome.show(actions: RecordingBarActions(stop: { [weak self] in self?.stop() },
+                                                 cancel: { [weak self] in self?.cancel() },
+                                                 mute: { [weak self] in self?.toggleMute() },
+                                                 highlights: { [weak self] in self?.toggleHighlights() },
+                                                 bubble: { [weak self] in self?.toggleBubble() }),
                     bar: RecordingPanelLayout.bar(showsMute: request.configuration.showsMuteButton,
                                                   isGIF: request.gif != nil,
                                                   showsOverlayButtons: request.extras != nil),
@@ -334,7 +333,6 @@ final class RecordingController {
         firstFrame = nil
         startedAt = nil
         outputEnded = false
-        waitIsOver = false
         stopReturned = false
         isMuted = false
         muteIntervals = []
@@ -399,20 +397,17 @@ final class RecordingController {
             onStarted()
         case .recordingFinished:
             outputEnded = true
-            stopWaitEnded()
+            resumeStopWaiter()
             end(.end(.failed(Self.streamStoppedReason)))
         case .outputFailed(let description):
             outputEnded = true
-            stopWaitEnded()
+            resumeStopWaiter()
             end(.end(.failed(failureReason(description))))
         case .streamStopped(let description):
             // It never ends the stop wait: the output may still be finishing the file, which
             // cannot be opened until the finish (290 ms after the stop, in the 5K probe). The
             // wait takes the output's finish or fail, or the timeout.
             end(.end(.failed(failureReason(description))))
-        case .streamInactive, .streamActive:
-            // The driver's log lines are their only trace: window loss is polled.
-            break
         }
     }
 
@@ -461,15 +456,11 @@ final class RecordingController {
         }
     }
 
-    private var elapsed: TimeInterval {
+    /// Seconds since the first frame, 0 before it and after `close()`; R3's log lines and the
+    /// camera's loss note read it too (plan Gap 7).
+    var elapsed: TimeInterval {
         guard let firstFrame else { return 0 }
         return (environment.clock.now - firstFrame) / .seconds(1)
-    }
-
-    /// Seconds since the first frame, 0 before it and after `close()`, for R3's log lines and the
-    /// camera's loss note (plan Gap 7).
-    var elapsedTime: TimeInterval {
-        elapsed
     }
 
     // MARK: Ending
@@ -484,19 +475,11 @@ final class RecordingController {
         if isMuted, let last = muteIntervals.indices.last {
             muteIntervals[last].end = elapsedAtEnd
         }
-        waitIsOver = outputEnded
         ticking?.cancel()
         ticking = nil
         chrome?.setStopEnabled(false)
         endWaiter?.resume()
         endWaiter = nil
-    }
-
-    /// The output's finish or fail. Once the end has armed the waiter, it fires it.
-    private func stopWaitEnded() {
-        guard cause != nil else { return }
-        waitIsOver = true
-        resumeStopWaiter()
     }
 
     /// Stops the stream, waits, then applies the end rule. Nothing touches the file before the
@@ -596,10 +579,11 @@ final class RecordingController {
         return await withCheckedContinuation { stopWaiter = $0 }
     }
 
-    /// Ends the stop wait once the driver's stop has returned and the waiter has fired, or at
-    /// the timeout.
+    /// Ends the stop wait once the driver's stop has returned and the output has ended, or at the
+    /// timeout. Before the end there is no waiter, so an output that ends early changes nothing here
+    /// until `stopAndWait` arms one.
     private func resumeStopWaiter(timedOut: Bool = false) {
-        guard timedOut || (stopReturned && waitIsOver), let waiter = stopWaiter else { return }
+        guard timedOut || (stopReturned && outputEnded), let waiter = stopWaiter else { return }
         stopWaiter = nil
         waiter.resume(returning: timedOut)
     }

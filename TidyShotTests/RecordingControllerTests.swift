@@ -1122,10 +1122,10 @@ struct RecordingControllerTests {
         let chrome = FakeRecordingChrome(log: world.log)
         let (controller, run) = await begin(extrasRequest, driver: driver, chrome: chrome)
         await world.advance(by: .seconds(2))
-        #expect(controller.elapsedTime == 0)
+        #expect(controller.elapsed == 0)
         driver.send(.recordingStarted)
         await world.advance(by: .seconds(3))
-        #expect(controller.elapsedTime == 3)
+        #expect(controller.elapsed == 3)
         chrome.pressStop()
         _ = await run.value
         controller.close()
@@ -1143,7 +1143,7 @@ struct RecordingControllerTests {
         _ = await run.value
         controller.close()
         await world.advance(by: .seconds(5))
-        #expect(controller.elapsedTime == 0)
+        #expect(controller.elapsed == 0)
     }
 
     // MARK: One controller, two runs
@@ -1272,24 +1272,6 @@ struct RecordingControllerTests {
         chrome.pressStop()
         let outcome = await run.value
         #expect(outcome.kept?.startedAt == firstFrame)
-        controller.close()
-    }
-
-    @Test func inactiveAndActiveStreamsEndNothing() async throws {
-        let driver = FakeRecordingDriver(log: world.log)
-        let chrome = FakeRecordingChrome(log: world.log)
-        let (controller, run) = await begin(areaRequest, driver: driver, chrome: chrome)
-        driver.send(.recordingStarted)
-        driver.send(.streamInactive)
-        await world.advance(by: .seconds(2))
-        driver.send(.streamActive)
-        await world.advance(by: .seconds(2))
-        #expect(driver.stopCount == 0)
-
-        chrome.pressStop()
-        let outcome = await run.value
-        #expect(outcome.kept != nil)
-        #expect(outcome.notice == nil)
         controller.close()
     }
 
