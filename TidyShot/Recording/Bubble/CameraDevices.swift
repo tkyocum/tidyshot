@@ -1,20 +1,8 @@
 import AVFoundation
 
-/// A camera as `Camera` lists it: the device's `uniqueID` and `localizedName`.
-nonisolated struct CameraDevice: Equatable, Sendable {
-    var uniqueID: String
-    var name: String
-}
-
-/// TidyShot's camera access (`AVCaptureDevice.authorizationStatus(for: .video)`).
-nonisolated enum CameraAccess: Equatable, Sendable {
-    case authorized
-    case denied
-    case restricted
-    case notDetermined
-}
-
 /// The cameras, the preferred camera and the access, live on `AVCaptureDevice` and faked in tests.
+/// The types are `CaptureDeviceInfo` and `CaptureAccess`, shared with the microphone
+/// (CaptureDevices.swift).
 protocol CameraDevices: AnyObject {
     func list() -> [CameraDevice]
     /// Nil when there is no camera at all.
@@ -30,12 +18,10 @@ final class LiveCameraDevices: CameraDevices {
     /// left out, as a downward view is not a face.
     static let deviceTypes: [AVCaptureDevice.DeviceType] = [.builtInWideAngleCamera, .external, .continuityCamera]
 
-    /// Posted when a camera is plugged in or unplugged. The pop-up's list refreshes on these.
-    static let changeNotifications = [AVCaptureDevice.wasConnectedNotification,
-                                      AVCaptureDevice.wasDisconnectedNotification]
+    static let changeNotifications = AVCaptureDevice.changeNotifications
 
     func list() -> [CameraDevice] {
-        discovered().map(Self.device)
+        discovered().map(CaptureDeviceInfo.init)
     }
 
     /// `systemPreferredCamera` when it is one of the listed types, else the first listed camera,
@@ -43,19 +29,13 @@ final class LiveCameraDevices: CameraDevices {
     /// were listed.
     func preferred() -> CameraDevice? {
         if let system = AVCaptureDevice.systemPreferredCamera, Self.deviceTypes.contains(system.deviceType) {
-            return Self.device(system)
+            return CaptureDeviceInfo(system)
         }
-        return discovered().first.map(Self.device)
+        return discovered().first.map(CaptureDeviceInfo.init)
     }
 
     func access() -> CameraAccess {
-        switch AVCaptureDevice.authorizationStatus(for: .video) {
-        case .authorized: .authorized
-        case .denied: .denied
-        case .restricted: .restricted
-        case .notDetermined: .notDetermined
-        @unknown default: .denied
-        }
+        CaptureAccess(AVCaptureDevice.authorizationStatus(for: .video))
     }
 
     func requestAccess() async -> Bool {
@@ -64,9 +44,5 @@ final class LiveCameraDevices: CameraDevices {
 
     private func discovered() -> [AVCaptureDevice] {
         AVCaptureDevice.DiscoverySession(deviceTypes: Self.deviceTypes, mediaType: .video, position: .unspecified).devices
-    }
-
-    private static func device(_ device: AVCaptureDevice) -> CameraDevice {
-        CameraDevice(uniqueID: device.uniqueID, name: device.localizedName)
     }
 }

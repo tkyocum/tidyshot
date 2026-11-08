@@ -1,21 +1,8 @@
 import AVFoundation
 
-/// An audio input as `Microphone` lists it: the device's `uniqueID` and `localizedName`.
-nonisolated struct MicrophoneDevice: Equatable, Sendable {
-    var uniqueID: String
-    var name: String
-}
-
-/// TidyShot's microphone access (`AVCaptureDevice.authorizationStatus(for: .audio)`).
-nonisolated enum MicrophoneAccess: Equatable, Sendable {
-    case authorized
-    case denied
-    case restricted
-    case notDetermined
-}
-
 /// The audio inputs, the default input and the access, live on `AVCaptureDevice` and faked in
-/// tests (plan Gap 6).
+/// tests (plan Gap 6). The types are `CaptureDeviceInfo` and `CaptureAccess`, shared with the
+/// camera (CaptureDevices.swift).
 protocol MicrophoneDevices: AnyObject {
     func list() -> [MicrophoneDevice]
     /// Nil when there is no input at all.
@@ -27,35 +14,22 @@ protocol MicrophoneDevices: AnyObject {
 
 /// The inputs from the discovery session the probes used (design, Probes, Microphone, Inputs).
 final class LiveMicrophoneDevices: MicrophoneDevices {
-    /// Posted when an input is plugged in or unplugged. A SwiftUI `Picker` has no menu-will-open
-    /// hook, so the list refreshes on these.
-    static let changeNotifications = [AVCaptureDevice.wasConnectedNotification,
-                                      AVCaptureDevice.wasDisconnectedNotification]
+    static let changeNotifications = AVCaptureDevice.changeNotifications
 
     func list() -> [MicrophoneDevice] {
         AVCaptureDevice.DiscoverySession(deviceTypes: [.microphone, .external], mediaType: .audio, position: .unspecified)
-            .devices.map(Self.device)
+            .devices.map(CaptureDeviceInfo.init)
     }
 
     func defaultDevice() -> MicrophoneDevice? {
-        AVCaptureDevice.default(for: .audio).map(Self.device)
+        AVCaptureDevice.default(for: .audio).map(CaptureDeviceInfo.init)
     }
 
     func access() -> MicrophoneAccess {
-        switch AVCaptureDevice.authorizationStatus(for: .audio) {
-        case .authorized: .authorized
-        case .denied: .denied
-        case .restricted: .restricted
-        case .notDetermined: .notDetermined
-        @unknown default: .denied
-        }
+        CaptureAccess(AVCaptureDevice.authorizationStatus(for: .audio))
     }
 
     func requestAccess() async -> Bool {
         await AVCaptureDevice.requestAccess(for: .audio)
-    }
-
-    private static func device(_ device: AVCaptureDevice) -> MicrophoneDevice {
-        MicrophoneDevice(uniqueID: device.uniqueID, name: device.localizedName)
     }
 }
