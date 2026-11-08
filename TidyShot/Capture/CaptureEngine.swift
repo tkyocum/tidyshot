@@ -21,17 +21,16 @@ final class CaptureEngine {
         let pixels: (width: Int, height: Int)
 
         switch target {
-        case .display(let display):
+        case .display(let display), .area(_, let display):
             guard let source = display.live else { throw CaptureError.notListed }
             filter = SCContentFilter(display: source, excludingWindows: excludingWindows)
             scale = Self.scale(forDisplayID: display.displayID)
-            pixels = Geometry.pixelSize(points: display.frame.size, scale: scale)
-        case .area(let rect, let display):
-            guard let source = display.live else { throw CaptureError.notListed }
-            filter = SCContentFilter(display: source, excludingWindows: excludingWindows)
-            scale = Self.scale(forDisplayID: display.displayID)
-            config.sourceRect = Geometry.displayLocal(rect, in: display.frame)
-            pixels = Geometry.pixelSize(points: rect.size, scale: scale)
+            var points = display.frame.size
+            if case .area(let rect, _) = target {
+                config.sourceRect = Geometry.displayLocal(rect, in: display.frame)
+                points = rect.size
+            }
+            pixels = Geometry.pixelSize(points: points, scale: scale)
         case .window(let window):
             guard let source = window.live else { throw CaptureError.notListed }
             filter = SCContentFilter(desktopIndependentWindow: source)

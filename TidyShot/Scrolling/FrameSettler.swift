@@ -10,14 +10,6 @@ import Foundation
 /// which shows the page unmoved however long the wait; a slow stream (or a slow build) must not
 /// make that frame the settled one. At the timeout without one, the step reads as still.
 nonisolated struct FrameSettler: Sendable {
-    enum Observation: Equatable, Sendable {
-        /// A complete frame that arrived after the step began, whose content hash is `hash`.
-        case frame(hash: UInt64, at: ContinuousClock.Instant)
-        /// No new frame: the driver's poll, or the stream reporting that the display did not
-        /// change. It counts as unchanged, and is not a frame from after the step.
-        case idle(at: ContinuousClock.Instant)
-    }
-
     static let defaultQuiet: Duration = .milliseconds(150)
     static let defaultTimeout: Duration = .milliseconds(1500)
 
@@ -40,22 +32,18 @@ nonisolated struct FrameSettler: Sendable {
         lastChange = stepStart
     }
 
-    /// Records an observation and reports whether the area has settled as of its time.
-    mutating func observe(_ observation: Observation) -> Bool {
-        switch observation {
-        case .frame(let hash, let time):
-            sawFrameAfterStep = true
-            if hash != lastHash {
-                lastHash = hash
-                lastChange = time
-            }
-            return isSettled(at: time)
-        case .idle(let time):
-            return isSettled(at: time)
+    /// A complete frame that arrived after the step began, at `time`, whose content hash is `hash`.
+    /// No new frame (the driver's poll, or the stream reporting that the display did not change)
+    /// counts as unchanged and is not recorded: `isSettled(at:)` answers for it.
+    mutating func record(hash: UInt64, at time: ContinuousClock.Instant) {
+        sawFrameAfterStep = true
+        if hash != lastHash {
+            lastHash = hash
+            lastChange = time
         }
     }
 
-    /// For a timer that wakes the driver when no frames arrive at all.
+    /// Whether the area has settled as of `now`.
     func isSettled(at now: ContinuousClock.Instant) -> Bool {
         (sawFrameAfterStep && now - lastChange >= quiet) || now - stepStart >= timeout
     }

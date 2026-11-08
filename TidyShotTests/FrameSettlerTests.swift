@@ -7,7 +7,14 @@ struct FrameSettlerTests {
 
     func at(_ milliseconds: Int) -> ContinuousClock.Instant { t0 + .milliseconds(milliseconds) }
 
-    func frame(_ hash: UInt64, _ milliseconds: Int) -> FrameSettler.Observation {
+    /// What the driver tells the settler: a frame from after the step with its content hash, or a
+    /// poll with no new frame.
+    enum Observation {
+        case frame(hash: UInt64, at: ContinuousClock.Instant)
+        case idle(at: ContinuousClock.Instant)
+    }
+
+    func frame(_ hash: UInt64, _ milliseconds: Int) -> Observation {
         .frame(hash: hash, at: at(milliseconds))
     }
 
@@ -25,11 +32,19 @@ struct FrameSettlerTests {
     }
 
     /// The answer to each observation, in order, from a fresh settler.
-    func settled(_ observations: [FrameSettler.Observation], baseline: UInt64? = nil,
+    func settled(_ observations: [Observation], baseline: UInt64? = nil,
                  quiet: Duration = FrameSettler.defaultQuiet,
                  timeout: Duration = FrameSettler.defaultTimeout) -> [Bool] {
         var settler = FrameSettler(stepStart: t0, baselineHash: baseline, quiet: quiet, timeout: timeout)
-        return observations.map { settler.observe($0) }
+        return observations.map { observation in
+            switch observation {
+            case .frame(let hash, let time):
+                settler.record(hash: hash, at: time)
+                return settler.isSettled(at: time)
+            case .idle(let time):
+                return settler.isSettled(at: time)
+            }
+        }
     }
 
     @Test func settlesOnceNothingNewArrivedForTheQuietTime() {
@@ -81,8 +96,8 @@ struct FrameSettlerTests {
         #expect(!settler.isSettled(at: at(1499)))
         #expect(settler.isSettled(at: at(1500)))
         var busy = FrameSettler(stepStart: t0)
-        let answer = busy.observe(frame(1, 1000))
-        #expect(!answer)
+        busy.record(hash: 1, at: at(1000))
+        #expect(!busy.isSettled(at: at(1000)))
         #expect(!busy.isSettled(at: at(1100)))
         #expect(busy.isSettled(at: at(1500)))
     }

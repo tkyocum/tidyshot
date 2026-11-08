@@ -8,8 +8,9 @@ enum Geometry {
         CGRect(x: rect.minX, y: primaryHeight - rect.maxY, width: rect.width, height: rect.height)
     }
 
+    /// The same flip: it is its own inverse.
     static func appKitRect(fromCG rect: CGRect, primaryHeight: CGFloat) -> CGRect {
-        CGRect(x: rect.minX, y: primaryHeight - rect.maxY, width: rect.width, height: rect.height)
+        cgRect(fromAppKit: rect, primaryHeight: primaryHeight)
     }
 
     static func cgPoint(fromAppKit point: CGPoint, primaryHeight: CGFloat) -> CGPoint {

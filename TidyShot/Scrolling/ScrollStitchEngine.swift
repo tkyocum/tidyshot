@@ -20,10 +20,6 @@ actor ScrollStitchEngine {
     private let finder: OverlapFinder
     private let maxPixelHeight: Int
     private var stitcher: ScrollStitcher?
-    /// Content row of the last accepted frame's row 0, advanced exactly as the stitcher advances
-    /// its own (a forward `.moved`), and that frame's height, for `heightPixels`.
-    private var offset = 0
-    private var frameHeight = 0
 
     /// `finder` carries the scrollbar strip for the display's scale: `OverlapFinder(scale:)`.
     init(finder: OverlapFinder = OverlapFinder(), maxPixelHeight: Int = ScrollCaptureLimits.maxPixelHeight) {
@@ -35,47 +31,25 @@ actor ScrollStitchEngine {
     /// discards what was stitched before.
     func begin(first: ScrollFrame) {
         stitcher = ScrollStitcher(first: first, maxPixelHeight: maxPixelHeight, finder: finder)
-        offset = 0
-        frameHeight = first.height
     }
 
     /// Matches `frame` against the last accepted frame and commits what it newly shows.
     /// `predicted` is auto mode's posted step in pixels; manual mode passes nil and the stitcher
-    /// uses the previous shift. A frame before `begin` begins the stitch and reports `.still`.
+    /// uses the previous shift. `begin` has run: the session begins with its first frame.
     func add(_ frame: ScrollFrame, predicted: Int? = nil) -> StitchProgress {
-        guard stitcher != nil else {
-            begin(first: frame)
-            return progress(StitchStep(match: .still, committedRows: 0, isFull: false))
-        }
         let step = stitcher!.add(frame, predicted: predicted)
-        if case .moved(let dy, _, _, _) = step.match, dy > 0 {
-            offset += dy
-        }
-        return progress(step)
+        return StitchProgress(heightPixels: stitcher!.heightPixels, step: step, previewDelta: stitcher!.previewRows())
     }
 
     /// Commits the last frame, footer included, and wraps the rows in a CGImage at native pixels
-    /// without copying them: `bitsPerComponent` 8, `bytesPerRow` width x 4, BGRA in memory
-    /// (`byteOrder32Little | noneSkipFirst`), tagged with `colorSpace`, the space the stream
+    /// without copying them (`ScrollFrame.cgImage`), tagged with `colorSpace`, the space the stream
     /// delivered the frames in. Returns it with `scale`, the display's. Nil before `begin`; the
     /// engine is empty afterwards, so a second call is nil too.
     func finish(scale: CGFloat, colorSpace: CGColorSpace) -> ScaledImage? {
         guard var stitcher else { return nil }
         self.stitcher = nil
         let stitched = stitcher.finish()
-        guard stitched.width > 0, stitched.height > 0,
-              let provider = CGDataProvider(data: stitched.bgra as CFData) else { return nil }
-        let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipFirst.rawValue
-                                      | CGBitmapInfo.byteOrder32Little.rawValue)
-        guard let image = CGImage(width: stitched.width, height: stitched.height, bitsPerComponent: 8,
-                                  bitsPerPixel: 32, bytesPerRow: stitched.width * 4, space: colorSpace,
-                                  bitmapInfo: bitmapInfo, provider: provider, decode: nil,
-                                  shouldInterpolate: false, intent: .defaultIntent) else { return nil }
-        return ScaledImage(image: image, scale: scale)
-    }
-
-    private func progress(_ step: StitchStep) -> StitchProgress {
-        StitchProgress(heightPixels: min(offset + frameHeight, maxPixelHeight), step: step,
-                       previewDelta: stitcher!.previewRows())
+        return ScrollFrame.cgImage(bgra: stitched.bgra, width: stitched.width, height: stitched.height,
+                                   colorSpace: colorSpace, interpolate: false).map { ScaledImage(image: $0, scale: scale) }
     }
 }

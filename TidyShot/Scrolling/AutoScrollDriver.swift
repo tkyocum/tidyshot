@@ -156,21 +156,17 @@ final class AutoScrollDriver {
             ScrollDiag.log("auto post event=\(event)pt postedSoFar=\(posted)pt of \(points)pt serial=\(session.frameSerial)")
         }
         let stepStart = ContinuousClock.now
-        var frames = 0, changes = 0
-        var lastHash = baseline
         var settler = FrameSettler(stepStart: clock.now, baselineHash: baseline)
         while session.phase == .capturing(.auto) {
             guard await pause(Self.pollInterval) else { return nil }
             if session.frameSerial != seen, let frame = session.latestFrame {
                 seen = session.frameSerial
                 let hash = FrameSettler.contentHash(of: frame, ignoringRightColumns: ignored)
-                frames += 1
-                if hash != lastHash { changes += 1; lastHash = hash }
-                ScrollDiag.log("settler frame serial=\(seen) changed=\(hash != baseline ? "vsBaseline" : "sameAsBaseline") changesSoFar=\(changes) sinceStep=\(ScrollDiag.ms(since: stepStart))ms")
-                _ = settler.observe(.frame(hash: hash, at: session.latestFrameAt ?? clock.now))
+                ScrollDiag.log("settler frame serial=\(seen) \(hash == baseline ? "same as" : "changed from") the baseline, sinceStep=\(ScrollDiag.ms(since: stepStart))ms")
+                settler.record(hash: hash, at: session.latestFrameAt ?? clock.now)
             }
-            if settler.observe(.idle(at: clock.now)) {
-                ScrollDiag.log("settler SETTLED after \(ScrollDiag.ms(since: stepStart))ms framesSeen=\(frames) contentChanges=\(changes) serial=\(session.frameSerial) settledFrameIsBaseline=\(session.latestFrame.map { FrameSettler.contentHash(of: $0, ignoringRightColumns: ignored) } == baseline)")
+            if settler.isSettled(at: clock.now) {
+                ScrollDiag.log("settler SETTLED after \(ScrollDiag.ms(since: stepStart))ms serial=\(session.frameSerial) settledFrameIsBaseline=\(session.latestFrame.map { FrameSettler.contentHash(of: $0, ignoringRightColumns: ignored) } == baseline)")
                 return session.latestFrame.map { ($0, posted) }
             }
         }

@@ -113,17 +113,10 @@ final class ScrollCaptureController {
         if panel.frame != frame { panel.setFrame(frame, display: true) }
     }
 
-    /// Lays the panel out again whenever the preview changes. Observation calls `onChange` once
-    /// per registration, so it registers again, as `StatusMenuController.updateIcon` does.
+    /// Lays the panel out again whenever the preview changes.
     private func observePreview() {
-        guard let session else { return }
-        withObservationTracking {
-            _ = session.preview
-        } onChange: { [weak self] in
-            Task { @MainActor in
-                self?.layoutPanel()
-                self?.observePreview()
-            }
-        }
+        follow({ _ = $0.session?.preview }) { controller, _ in controller.layoutPanel() }
     }
 }
+
+extension ScrollCaptureController: ModelObserving {}

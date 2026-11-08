@@ -88,8 +88,6 @@ final class ScrollCaptureSession {
     /// The serial of the last frame handed to the engine. In auto mode the newest frame read can
     /// be newer, until the driver integrates it; Done and a stream stop add it before finishing.
     @ObservationIgnored private var addedSerial = 0
-    /// Auto-scroll has handed over to manual mode (diagnostics only).
-    @ObservationIgnored private var handedOver = false
     /// Called once, when the session ends.
     @ObservationIgnored var onEnd: ((ScrollCaptureOutcome) -> Void)?
     /// The Scroll automatically checkbox (`AppSettings.scrollingAutoScroll`). It takes effect
@@ -217,19 +215,17 @@ final class ScrollCaptureSession {
         }
     }
 
-    /// Shows an end line for `endLineDelay`, then finishes as Done does.
-    func finish(showing line: ScrollCaptureStatus) async {
-        guard case .capturing = phase else { return }
-        status = line
-        try? await clock.sleep(for: Self.endLineDelay)
-        await done()
-    }
-
-    /// `finish(showing:)` in a task of the session's own, once, so the caller returns at once. The
-    /// driver ends this way: Done cancels the driver's task, which must not be the one finishing.
+    /// Shows `line` for `endLineDelay`, then finishes as Done does, in a task of the session's own,
+    /// once, so the caller returns at once. The driver ends this way: Done cancels the driver's
+    /// task, which must not be the one finishing.
     func finishSoon(showing line: ScrollCaptureStatus) {
         guard case .capturing = phase, endTask == nil else { return }
-        endTask = Task { await self.finish(showing: line) }
+        endTask = Task {
+            guard case .capturing = phase else { return }
+            status = line
+            try? await clock.sleep(for: Self.endLineDelay)
+            await done()
+        }
     }
 
     // MARK: Auto-scroll
@@ -256,7 +252,6 @@ final class ScrollCaptureSession {
     func handOver() {
         guard phase == .capturing(.auto) else { return }
         ScrollDiag.log("session hand over to manual at serial=\(frameSerial)")
-        handedOver = true
         phase = .capturing(.manual)
         status = .autoHandedOver
     }
@@ -287,11 +282,11 @@ final class ScrollCaptureSession {
 
     private func take(_ frame: ScrollFrame) async {
         var frame = frame
-        frame.serial = frameSerial + 1
+        frameSerial += 1
+        frame.serial = frameSerial
         ScrollDiag.log("session take serial=\(frame.serial) \(frame.width)x\(frame.height) phase=\(phase) sincePrevious=\(latestFrameAt.map { ScrollDiag.ms(clock.now - $0) } ?? "-")ms")
         latestFrame = frame
         latestFrameAt = clock.now
-        frameSerial += 1
         // The first frame begins the stitch and is the preview: its rows reach `previewDelta`
         // only once a move commits them.
         guard hasFirstFrame else {
@@ -299,14 +294,15 @@ final class ScrollCaptureSession {
             await engine.begin(first: frame)
             hasFirstFrame = true
             heightPixels = frame.height
-            preview = Self.image(bgra: frame.bgra, width: frame.width, height: frame.height, colorSpace: colorSpace)
+            preview = ScrollFrame.cgImage(bgra: frame.bgra, width: frame.width, height: frame.height,
+                                          colorSpace: colorSpace, interpolate: true)
             return
         }
         // In auto mode the driver stitches the settled frames itself (`integrate`).
         guard phase != .capturing(.auto) else { return }
         addedSerial = frame.serial
         let progress = await engine.add(frame)
-        ScrollDiag.log("manual result serial=\(frame.serial) afterHandOver=\(handedOver) -> \(ScrollDiag.describe(progress.step.match)) committed=\(progress.step.committedRows) height=\(progress.heightPixels) status=\(status)")
+        ScrollDiag.log("manual result serial=\(frame.serial) status=\(status) -> \(ScrollDiag.describe(progress.step.match)) committed=\(progress.step.committedRows) height=\(progress.heightPixels) status=\(status)")
         apply(progress)
     }
 
@@ -383,18 +379,6 @@ final class ScrollCaptureSession {
         preview = previewRows.image(colorSpace: colorSpace)
         lastPreviewAt = now
     }
-
-    /// A CGImage over packed BGRA rows (`byteOrder32Little | noneSkipFirst`), as the engine
-    /// builds the stitched image.
-    nonisolated static func image(bgra: Data, width: Int, height: Int, colorSpace: CGColorSpace) -> CGImage? {
-        guard width > 0, height > 0, bgra.count >= width * height * 4,
-              let provider = CGDataProvider(data: bgra as CFData) else { return nil }
-        let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipFirst.rawValue
-                                      | CGBitmapInfo.byteOrder32Little.rawValue)
-        return CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: width * 4,
-                       space: colorSpace, bitmapInfo: bitmapInfo, provider: provider, decode: nil,
-                       shouldInterpolate: true, intent: .defaultIntent)
-    }
 }
 
 /// The preview's newest rows: each `PreviewStrip` appended below the last. The image is the newest
@@ -430,7 +414,7 @@ nonisolated struct PreviewRows {
     /// rows because this image still shares them.
     func image(colorSpace: CGColorSpace) -> CGImage? {
         let rows = min(height, maxRows)
-        return ScrollCaptureSession.image(bgra: Data(bgra.suffix(rows * width * 4)), width: width, height: rows,
-                                          colorSpace: colorSpace)
+        return ScrollFrame.cgImage(bgra: Data(bgra.suffix(rows * width * 4)), width: width, height: rows,
+                                   colorSpace: colorSpace, interpolate: true)
     }
 }

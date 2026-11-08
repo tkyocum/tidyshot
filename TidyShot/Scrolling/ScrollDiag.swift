@@ -19,7 +19,6 @@ nonisolated enum ScrollDiag {
     static let maxLostPairs = 30
 
     private struct State {
-        var enabled = false
         var compared = 0
         var lostDumped = 0
         var dumps = 0
@@ -27,6 +26,8 @@ nonisolated enum ScrollDiag {
     }
 
     private static let state = Mutex(State())
+    /// Read on every frame, some twenty times, so an atomic rather than the mutex.
+    private static let isEnabled = Atomic<Bool>(false)
     private static let origin = ContinuousClock.now
     /// NSTemporaryDirectory()/scrolldiag.log, in the app's container.
     static let logURL = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("scrolldiag.log")
@@ -34,7 +35,7 @@ nonisolated enum ScrollDiag {
     private static let logFile = Mutex<FileHandle?>(nil)
 
     /// Whether this session logs: decided by `beginSession()`, false before the first one.
-    static var enabled: Bool { state.withLock { $0.enabled } }
+    static var enabled: Bool { isEnabled.load(ordering: .relaxed) }
 
     private static var underTests: Bool {
         let env = ProcessInfo.processInfo.environment
@@ -79,7 +80,8 @@ nonisolated enum ScrollDiag {
     static func beginSession() {
         let defaults = UserDefaults.standard
         let on = !underTests && defaults.bool(forKey: "ScrollDiag") && !defaults.bool(forKey: "ScrollDiagOff")
-        state.withLock { $0 = State(enabled: on) }
+        isEnabled.store(on, ordering: .relaxed)
+        state.withLock { $0 = State() }
         logFile.withLock { handle in
             guard on else {
                 try? handle?.close()
@@ -148,12 +150,8 @@ nonisolated enum ScrollDiag {
 
     /// The frame's bytes as they are (BGRA, tagged sRGB so nothing converts them), losslessly.
     private static func writePNG(_ frame: ScrollFrame, to url: URL) -> Bool {
-        guard let provider = CGDataProvider(data: frame.bgra as CFData),
-              let image = CGImage(width: frame.width, height: frame.height, bitsPerComponent: 8, bitsPerPixel: 32,
-                                  bytesPerRow: frame.width * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
-                                  bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipFirst.rawValue
-                                                           | CGBitmapInfo.byteOrder32Little.rawValue),
-                                  provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent),
+        guard let image = ScrollFrame.cgImage(bgra: frame.bgra, width: frame.width, height: frame.height,
+                                              colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!, interpolate: false),
               let dest = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil)
         else { return false }
         CGImageDestinationAddImage(dest, image, nil)

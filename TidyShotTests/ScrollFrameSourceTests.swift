@@ -59,11 +59,11 @@ struct ScrollFrameSourceTests {
         var iterator = events.makeAsyncIterator()
 
         ScrollFrameSource.send(.frame(frame(1)), to: continuation)
-        ScrollFrameSource.send(.idle(.now), to: continuation)
-        ScrollFrameSource.send(.idle(.now), to: continuation)
+        ScrollFrameSource.send(.idle, to: continuation)
+        ScrollFrameSource.send(.idle, to: continuation)
         #expect(value(of: await iterator.next(isolation: #isolation)) == 1)
 
-        ScrollFrameSource.send(.idle(.now), to: continuation)
+        ScrollFrameSource.send(.idle, to: continuation)
         guard case .idle? = await iterator.next(isolation: #isolation) else {
             Issue.record("an idle with nothing pending is delivered")
             return

@@ -1,4 +1,5 @@
 import Accelerate
+import CoreGraphics
 import Foundation
 
 /// One captured frame of the scrolled area: tightly packed BGRA plus a grey plane for matching.
@@ -51,5 +52,21 @@ nonisolated struct ScrollFrame: Sendable {
         self = source.withUnsafeBytes {
             ScrollFrame(bgra: $0.baseAddress!, width: width, height: height, bytesPerRow: bytesPerRow)
         }
+    }
+}
+
+extension ScrollFrame {
+    /// A CGImage over packed BGRA rows (`bitsPerComponent` 8, `bytesPerRow` width x 4,
+    /// `byteOrder32Little | noneSkipFirst`) without copying them, tagged with `colorSpace`. Nil for
+    /// an empty size or too few bytes.
+    nonisolated static func cgImage(bgra: Data, width: Int, height: Int, colorSpace: CGColorSpace,
+                                    interpolate: Bool) -> CGImage? {
+        guard width > 0, height > 0, bgra.count >= width * height * 4,
+              let provider = CGDataProvider(data: bgra as CFData) else { return nil }
+        let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipFirst.rawValue
+                                      | CGBitmapInfo.byteOrder32Little.rawValue)
+        return CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: width * 4,
+                       space: colorSpace, bitmapInfo: bitmapInfo, provider: provider, decode: nil,
+                       shouldInterpolate: interpolate, intent: .defaultIntent)
     }
 }

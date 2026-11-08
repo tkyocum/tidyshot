@@ -9,7 +9,7 @@ nonisolated enum FrameEvent: Sendable {
     /// A complete frame whose pixels changed, copied out of the stream's buffer.
     case frame(ScrollFrame)
     /// The display did not change since the last frame (`SCFrameStatus.idle`).
-    case idle(ContinuousClock.Instant)
+    case idle
 }
 
 /// Where a session's frames come from: the stream in the app, synthetic frames in tests. One
@@ -143,9 +143,9 @@ nonisolated final class ScrollFrameSource: NSObject, FrameSource, SCStreamOutput
                 as? [[SCStreamFrameInfo: Any]],
               let raw = attachments.first?[.status] as? Int,
               let status = SCFrameStatus(rawValue: raw) else { return }
-        let copyStart = ContinuousClock.now
+        let copyStart = ScrollDiag.enabled ? ContinuousClock.now : nil
         var latency = 0.0
-        if ScrollDiag.enabled {
+        if copyStart != nil {
             let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
             latency = CMTimeGetSeconds(CMTimeSubtract(CMClockGetTime(CMClockGetHostTimeClock()), pts)) * 1000
         }
@@ -155,12 +155,12 @@ nonisolated final class ScrollFrameSource: NSObject, FrameSource, SCStreamOutput
                 ScrollDiag.log("source complete frame NOT copied (format \(sampleBuffer.imageBuffer.map { CVPixelBufferGetPixelFormatType($0) } ?? 0))")
                 return
             }
-            if ScrollDiag.enabled, let buffer = sampleBuffer.imageBuffer {
+            if let copyStart, let buffer = sampleBuffer.imageBuffer {
                 ScrollDiag.log("source frame \(CVPixelBufferGetWidth(buffer))x\(CVPixelBufferGetHeight(buffer)) bytesPerRow=\(CVPixelBufferGetBytesPerRow(buffer)) captureToHandler=\(String(format: "%.1f", latency))ms copy=\(ScrollDiag.ms(since: copyStart))ms")
             }
             Self.send(.frame(frame), to: continuation)
         case .idle:
-            Self.send(.idle(.now), to: continuation)
+            Self.send(.idle, to: continuation)
         default:
             ScrollDiag.log("source status \(raw)")
             break

@@ -114,11 +114,7 @@ struct ScrollStitchEngineTests {
         #expect(before == nil)
 
         let first = page.frame(at: 300, animated: false)
-        let progress = await engine.add(first)
-        #expect(progress.step == StitchStep(match: .still, committedRows: 0, isFull: false))
-        #expect(progress.heightPixels == page.height)
-        #expect(progress.previewDelta.isEmpty)
-
+        await engine.begin(first: first)
         let image = try #require(await engine.finish(scale: 1, colorSpace: sRGB))
         #expect(image.scale == 1)
         #expect(image.image.width == page.width)

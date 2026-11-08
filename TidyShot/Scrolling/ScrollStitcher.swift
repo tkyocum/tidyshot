@@ -38,6 +38,9 @@ nonisolated struct ScrollStitcher: Sendable {
     /// Output rows written so far.
     private(set) var committedHeight = 0
     var isFull: Bool { committedHeight >= maxPixelHeight }
+    /// The height Done would give now: the last accepted frame's content offset plus its height,
+    /// at most the cap. Before any movement, the first frame's height.
+    var heightPixels: Int { min(lastOffset + last.height, maxPixelHeight) }
 
     private var output = Data()
     private var last: ScrollFrame
@@ -65,11 +68,13 @@ nonisolated struct ScrollStitcher: Sendable {
     mutating func add(_ frame: ScrollFrame, predicted: Int? = nil) -> StitchStep {
         if isFull { return StitchStep(match: .still, committedRows: 0, isFull: true) }
         ScrollDiag.beginFind()
-        let findStart = ContinuousClock.now
+        let findStart = ScrollDiag.enabled ? ContinuousClock.now : nil
         let match = finder.find(previous: last, current: frame, predicted: predicted ?? lastDy)
-        ScrollDiag.compared(previous: last, previousOffset: lastOffset, current: frame, predicted: predicted,
-                            lastDy: lastDy, committedHeight: committedHeight,
-                            findDuration: ContinuousClock.now - findStart, match: match)
+        if let findStart {
+            ScrollDiag.compared(previous: last, previousOffset: lastOffset, current: frame, predicted: predicted,
+                                lastDy: lastDy, committedHeight: committedHeight,
+                                findDuration: ContinuousClock.now - findStart, match: match)
+        }
         var committed = 0
         if case .moved(let dy, _, let bandEnd, _) = match, dy > 0 {
             committed = commit(from: last, offset: lastOffset, upTo: bandEnd)
