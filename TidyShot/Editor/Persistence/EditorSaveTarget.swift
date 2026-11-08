@@ -11,6 +11,9 @@ nonisolated enum EditorSaveTarget {
         case pendingFile(URL)
         /// Nothing to write over, for this reason (the window subtitle). ⌘S then runs Save As….
         case unavailable(String)
+
+        /// Whether there is a file to write over; `unavailable` says why not.
+        var writesOverFile: Bool { if case .unavailable = self { false } else { true } }
     }
 
     static let noFileReason = "This capture has no local file to save over."
@@ -38,10 +41,7 @@ nonisolated enum EditorSaveTarget {
     }
 
     static func uploadWrite(for record: CaptureRecord, saveFolder: URL?) -> UploadWrite {
-        switch plan(for: record, saveFolder: saveFolder) {
-        case .saveFolderFile, .pendingFile: .saveTarget
-        case .unavailable: .newPendingFile
-        }
+        plan(for: record, saveFolder: saveFolder).writesOverFile ? .saveTarget : .newPendingFile
     }
 
     /// True when a Save As… to `url` lands on the record's own file and ⌘S could write over that
@@ -52,7 +52,7 @@ nonisolated enum EditorSaveTarget {
               url.standardizedFileURL == fileURL.standardizedFileURL,
               EditorAvailability.refusal(for: .save, record: record, saveFolder: saveFolder, isDeleting: isDeleting) == nil
         else { return false }
-        return EditorSaveCommand.forSave(record: record, saveFolder: saveFolder) == .writeOver
+        return plan(for: record, saveFolder: saveFolder).writesOverFile
     }
 
     /// The subtitle note for an edit that was saved locally but that the link does not show yet.
@@ -76,11 +76,8 @@ nonisolated enum EditorSaveCommand: Equatable, Sendable {
     case saveAs
 
     static func forSave(record: CaptureRecord?, saveFolder: URL?) -> EditorSaveCommand {
-        guard let record else { return .saveAs }
-        switch EditorSaveTarget.plan(for: record, saveFolder: saveFolder) {
-        case .saveFolderFile, .pendingFile: return .writeOver
-        case .unavailable: return .saveAs
-        }
+        guard let record, EditorSaveTarget.plan(for: record, saveFolder: saveFolder).writesOverFile else { return .saveAs }
+        return .writeOver
     }
 
     /// The unsaved-changes sheet's first button.

@@ -152,10 +152,14 @@ nonisolated enum HitTester {
         ]
     }
 
-    /// The nearest handle within `tolerance` of `point`.
     private static func handleIndex(of annotation: Annotation, at point: CGPoint, tolerance: CGFloat) -> Int? {
+        nearestHandle(in: handles(for: annotation), to: point, tolerance: tolerance)
+    }
+
+    /// The index of the handle nearest `point` within `tolerance`, or nil when none is that close.
+    static func nearestHandle(in handles: [CGPoint], to point: CGPoint, tolerance: CGFloat) -> Int? {
         var best: (index: Int, distance: CGFloat)?
-        for (index, handle) in handles(for: annotation).enumerated() {
+        for (index, handle) in handles.enumerated() {
             let distance = hypot(point.x - handle.x, point.y - handle.y)
             if distance <= tolerance, distance < (best?.distance ?? .infinity) {
                 best = (index, distance)

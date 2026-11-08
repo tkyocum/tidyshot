@@ -121,6 +121,7 @@ final class EditorModel: CanvasEditing {
     /// `commitBackgroundDraft()` makes it one step. Nil otherwise. Not part of the document or of undo.
     var backgroundDraft: BackgroundStyle?
     var imageSize: CGSize { CGSize(width: base.width, height: base.height) }
+    var imageRect: CGRect { CGRect(origin: .zero, size: imageSize) }
     /// Redaction is the reason the editor exists, so it opens with Redact. A tool change commits the
     /// text being typed and applies a crop draft.
     var tool: EditorTool = .redact {
@@ -133,7 +134,7 @@ final class EditorModel: CanvasEditing {
             if tool == .crop {
                 toolBeforeCrop = oldValue
                 selection = nil
-                cropDraft = document.crop ?? CGRect(origin: .zero, size: imageSize)
+                cropDraft = contentRect
             }
         }
     }
@@ -223,7 +224,7 @@ final class EditorModel: CanvasEditing {
         apply(snapshot)
         // Undo while cropping: the open draft follows the restored crop, or Return would re-apply the undone one.
         // An unrelated step (a rectangle drawn before Crop opened) leaves the crop alone, so the draft stays.
-        if cropDraft != nil, snapshot.crop != current.crop { cropDraft = snapshot.crop ?? CGRect(origin: .zero, size: imageSize) }
+        if cropDraft != nil, snapshot.crop != current.crop { cropDraft = snapshot.crop ?? imageRect }
     }
 
     private func apply(_ new: AnnotationDocument) {
@@ -279,7 +280,7 @@ final class EditorModel: CanvasEditing {
         case .counter:
             // Placed at the press; the drag's other end is ignored.
             let diameter = counterDiameterPoints * scale
-            let bounds = document.crop ?? CGRect(origin: .zero, size: imageSize)
+            let bounds = contentRect
             return .counter(CounterMark(id: id, center: CounterLayout.center(forPress: start, diameter: diameter, within: bounds),
                                         number: document.nextCounterNumber, diameter: diameter, color: strokeColor))
         }
@@ -298,7 +299,8 @@ final class EditorModel: CanvasEditing {
         }
     }
 
-    private var selectedAnnotation: Annotation? {
+    /// The selected annotation as the document holds it; a transient copy being dragged is the canvas's.
+    var selectedAnnotation: Annotation? {
         selection.flatMap { document.annotation(id: $0) }
     }
 
@@ -361,7 +363,7 @@ final class EditorModel: CanvasEditing {
         guard tool != .crop else { return }
         let visible: (Annotation) -> Bool = { [document, scale] annotation in
             guard let crop = document.crop else { return true }
-            let bounds = annotation.effectRect ?? AnnotationGeometry.bounds(of: annotation, scale: scale)
+            let bounds = AnnotationGeometry.displayBounds(of: annotation, scale: scale)
             return bounds.intersects(crop)
         }
         selection = (document.drawings.last(where: visible) ?? document.effects.last(where: visible)
@@ -396,14 +398,12 @@ final class EditorModel: CanvasEditing {
 
     // MARK: Background
 
-    /// The part of the capture a background frames: the applied crop, or the whole capture.
-    var backgroundContentRect: CGRect {
-        document.crop ?? CGRect(origin: .zero, size: imageSize)
-    }
+    /// The part of the capture that is shown and exported: the applied crop, or the whole capture.
+    var contentRect: CGRect { document.crop ?? imageRect }
 
     /// Whether `style` can be laid out around the content; false over 16,384 px on a side.
     func backgroundFits(_ style: BackgroundStyle) -> Bool {
-        BackgroundLayout.make(contentSize: backgroundContentRect.size, style: style, scale: scale) != nil
+        BackgroundLayout.make(contentSize: contentRect.size, style: style, scale: scale) != nil
     }
 
     /// The background the canvas shows: the draft being dragged, else the document's. Nil with no
@@ -412,7 +412,7 @@ final class EditorModel: CanvasEditing {
     var shownBackground: ShownBackground? {
         guard cropDraft == nil, let committed = document.background else { return nil }
         let style = backgroundDraft ?? committed
-        let content = backgroundContentRect
+        let content = contentRect
         guard let layout = BackgroundLayout.make(contentSize: content.size, style: style, scale: scale) else { return nil }
         let canvas = CGRect(x: content.minX - layout.contentRect.minX, y: content.minY - layout.contentRect.minY,
                             width: layout.canvasSize.width, height: layout.canvasSize.height)
@@ -565,15 +565,13 @@ final class EditorModel: CanvasEditing {
         }
         if textEditing != nil { textEditing?.box.color = color }
         guard let selected = selectedAnnotation else { return }
-        commit(document.replacing(selected.withColor(color)), actionName: ActionName.color,
-               coalescingKey: "\(ActionName.color)-\(selected.id.uuidString)")
+        commitToSelection(selected.withColor(color), actionName: ActionName.color)
     }
 
     func applyLineWidth(points: CGFloat) {
         if editsHighlighter { highlightWidthPoints = points } else { lineWidthPoints = points }
         guard let selected = selectedAnnotation else { return }
-        commit(document.replacing(selected.withLineWidth(points * scale)), actionName: ActionName.lineWidth,
-               coalescingKey: "\(ActionName.lineWidth)-\(selected.id.uuidString)")
+        commitToSelection(selected.withLineWidth(points * scale), actionName: ActionName.lineWidth)
     }
 
     /// Keys 1 to 6 with the Text tool: the size for new text, and for the selected text as one
@@ -581,8 +579,7 @@ final class EditorModel: CanvasEditing {
     func applyTextSize(points: CGFloat) {
         textSizePoints = points
         guard let selected = selectedAnnotation, case .text = selected else { return }
-        commit(document.replacing(selected.withFontSize(points * scale)), actionName: ActionName.textSize,
-               coalescingKey: "\(ActionName.textSize)-\(selected.id.uuidString)")
+        commitToSelection(selected.withFontSize(points * scale), actionName: ActionName.textSize)
     }
 
     func applyEffectParameter(_ parameter: EffectParameter, points: CGFloat) {
@@ -603,8 +600,7 @@ final class EditorModel: CanvasEditing {
         default:
             return
         }
-        commit(document.replacing(changed), actionName: actionName,
-               coalescingKey: "\(actionName)-\(selected.id.uuidString)")
+        commitToSelection(changed, actionName: actionName)
     }
 
     /// The options popover's Shape row is enabled while Spotlight is the tool or a spotlight is
@@ -628,8 +624,7 @@ final class EditorModel: CanvasEditing {
     func applySpotlightShape(isEllipse: Bool) {
         spotlightEllipse = isEllipse
         guard let selected = selectedAnnotation, selected.isSpotlight else { return }
-        commit(document.replacing(selected.withSpotlightShape(isEllipse: isEllipse)), actionName: ActionName.spotlightShape,
-               coalescingKey: "\(ActionName.spotlightShape)-\(selected.id.uuidString)")
+        commitToSelection(selected.withSpotlightShape(isEllipse: isEllipse), actionName: ActionName.spotlightShape)
     }
 
     /// The options popover's Size row is enabled while Counter is the tool or a counter is selected.
@@ -648,8 +643,12 @@ final class EditorModel: CanvasEditing {
     func applyCounterSize(points: CGFloat) {
         counterDiameterPoints = points
         guard let selected = selectedAnnotation, selected.counterMark != nil else { return }
-        commit(document.replacing(selected.withCounterDiameter(points * scale)), actionName: ActionName.counterSize,
-               coalescingKey: "\(ActionName.counterSize)-\(selected.id.uuidString)")
+        commitToSelection(selected.withCounterDiameter(points * scale), actionName: ActionName.counterSize)
+    }
+
+    /// A change to the selected annotation: a run of the same `actionName` on it is one coalesced step.
+    private func commitToSelection(_ changed: Annotation, actionName: String) {
+        commit(document.replacing(changed), actionName: actionName, coalescingKey: "\(actionName)-\(changed.id.uuidString)")
     }
 
     /// The overlay's dim, one value for the whole document, so it is not an editor default.
@@ -684,7 +683,6 @@ final class EditorModel: CanvasEditing {
     func renderExport(displayID: CGDirectDisplayID? = nil) async throws(EditorExportFailure) -> ScaledImage {
         let document = self.document
         let tiles = await tileCache.allTiles(for: document)
-        let imageSize = CGSize(width: base.width, height: base.height)
         for effect in document.effects where !tiles.contains(where: { $0.effect == effect }) {
             // An effect that covers image pixels but has no tile would export them unredacted.
             guard let rect = effect.effectRect, ImageRects.integral(rect, clippedTo: imageSize).isEmpty else {

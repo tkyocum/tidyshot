@@ -29,22 +29,22 @@ struct SpotlightDisplayTests {
         let line = arrow()
         let second = spotlight(50)
         let document = AnnotationDocument(annotations: [first, line, second])
-        #expect(SpotlightGeometry.displayedSpotlights(in: document, transient: nil) == [first, second])
+        #expect(document.displayed(inLayer: { $0.isSpotlight }, transient: nil) == [first, second])
 
         // Moved or resized: in place of its document copy, so the creation order is kept.
         let moved = first.moved(by: CGVector(dx: 5, dy: 5))
-        #expect(SpotlightGeometry.displayedSpotlights(in: document, transient: moved) == [moved, second])
+        #expect(document.displayed(inLayer: { $0.isSpotlight }, transient: moved) == [moved, second])
 
         // New: last.
         let new = spotlight(100)
-        #expect(SpotlightGeometry.displayedSpotlights(in: document, transient: new) == [first, second, new])
-        #expect(SpotlightGeometry.displayedSpotlights(in: AnnotationDocument(annotations: []), transient: new) == [new])
+        #expect(document.displayed(inLayer: { $0.isSpotlight }, transient: new) == [first, second, new])
+        #expect(AnnotationDocument(annotations: []).displayed(inLayer: { $0.isSpotlight }, transient: new) == [new])
 
         // A transient of another kind is ignored, a drawing or an effect.
-        #expect(SpotlightGeometry.displayedSpotlights(in: document, transient: line.moved(by: CGVector(dx: 1, dy: 0)))
+        #expect(document.displayed(inLayer: { $0.isSpotlight }, transient: line.moved(by: CGVector(dx: 1, dy: 0)))
                 == [first, second])
         let effect = Annotation.blur(Region(id: UUID(), rect: CGRect(x: 0, y: 0, width: 10, height: 10)), radius: 8)
-        #expect(SpotlightGeometry.displayedSpotlights(in: document, transient: effect) == [first, second])
+        #expect(document.displayed(inLayer: { $0.isSpotlight }, transient: effect) == [first, second])
     }
 
     /// The first spotlight appearing or the last going changes the dim everywhere, and the tool's

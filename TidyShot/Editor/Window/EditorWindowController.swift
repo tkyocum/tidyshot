@@ -57,10 +57,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
     var onClose: ((EditorWindowController) -> Void)?
 
     private let actions: EditorActions
-    /// The toolbar's popovers (EditorToolbar.swift), kept so only one is shown at a time.
-    var colorPopover: NSPopover?
-    var optionsPopover: NSPopover?
-    var backgroundPopover: NSPopover?
+    /// The toolbar's popover (EditorToolbar.swift): one at a time, closed before the next shows.
+    var popover: NSPopover?
     /// What the toolbar's swatch and zoom title last showed (EditorToolbar.swift), so a pan or a
     /// pinch, which changes the transform on every event, redraws neither.
     var reflectedColor: RGBA?
@@ -79,10 +77,6 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
     private var fillSource: (key: BackgroundFillKey, image: CGImage?)?
     /// Watches for a Space change, which can show another wallpaper; removed when the window closes.
     private var spaceObserver: NSObjectProtocol?
-
-    #if DEBUG
-    private static var loggedMainMenu = false
-    #endif
 
     init(model: EditorModel, actions: EditorActions, title: String, representedURL: URL?, cascadeFrom: NSWindow?) {
         self.model = model
@@ -152,14 +146,9 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
                         display: false)
     }
 
-    /// `isDocumentEdited` mirrors `hasUnsavedChanges`, re-registering on each change.
+    /// `isDocumentEdited` mirrors `hasUnsavedChanges`.
     private func observeEdited() {
-        let edited = withObservationTracking {
-            model.hasUnsavedChanges
-        } onChange: { [weak self] in
-            Task { @MainActor in self?.observeEdited() }
-        }
-        window?.isDocumentEdited = edited
+        follow({ $0.model.hasUnsavedChanges }) { $0.window?.isDocumentEdited = $1 }
     }
 
     /// The codebase's activation idiom: a plain `activate()` is refused when called from the
@@ -170,12 +159,6 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
         if !NSApp.isActive {
             window?.orderFrontRegardless()
         }
-        #if DEBUG
-        if !Self.loggedMainMenu {
-            Self.loggedMainMenu = true
-            NSLog("Editor: main menu items \(NSApp.mainMenu?.items.map(\.title) ?? [])")
-        }
-        #endif
     }
 
     // MARK: Record state
@@ -205,16 +188,12 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
 
     /// ⌘S: writes over the record's file, or runs Save As… when there is none to write over.
     @objc func saveDocument(_ sender: Any?) {
-        canvasView.commitTextEditing()
-        guard permits(#selector(saveDocument(_:))) else { return }
-        runDocumentTask { await self.performSave() }
+        runDocumentAction(#selector(saveDocument(_:))) { await self.performSave() }
     }
 
     /// ⇧⌘S: always available, also while the record uploads or is deleted.
     @objc func saveDocumentAs(_ sender: Any?) {
-        canvasView.commitTextEditing()
-        guard permits(#selector(saveDocumentAs(_:))) else { return }
-        runDocumentTask { await self.performSaveAs() }
+        runDocumentAction(#selector(saveDocumentAs(_:))) { await self.performSaveAs() }
     }
 
     /// ⌘C with nothing selected: copies the flattened image, like ⇧⌘C. With a selection CanvasView
@@ -225,9 +204,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
     }
 
     @objc func copyImage(_ sender: Any?) {
-        canvasView.commitTextEditing()
-        guard permits(#selector(copyImage(_:))) else { return }
-        runDocumentTask {
+        runDocumentAction(#selector(copyImage(_:))) {
             await self.exportAndDeliver(marksSaved: false, failureTitle: "Could not copy image") { image in
                 await self.actions.copy(image)
                 return true
@@ -238,20 +215,19 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
     /// ⌘U: uploads the edit at once. Once the upload is enqueued the window closes; the link
     /// reaches the clipboard when the upload finishes.
     @objc func uploadDocument(_ sender: Any?) {
-        canvasView.commitTextEditing()
-        guard permits(#selector(uploadDocument(_:))) else { return }
-        runDocumentTask { await self.performUpload(asNew: false) }
+        runDocumentAction(#selector(uploadDocument(_:))) { await self.performUpload(asNew: false) }
     }
 
     /// ⌥⌘U, a shortcut only: as ⌘U, under a new link.
     @objc func uploadDocumentAsNew(_ sender: Any?) {
-        canvasView.commitTextEditing()
-        guard permits(#selector(uploadDocumentAsNew(_:))) else { return }
-        runDocumentTask { await self.performUpload(asNew: true) }
+        runDocumentAction(#selector(uploadDocumentAsNew(_:))) { await self.performUpload(asNew: true) }
     }
 
-    /// One document action at a time: another one beeps until `work` finishes.
-    private func runDocumentTask(_ work: @escaping () async -> Bool) {
+    /// A document action: typing is committed first, then `permits` (the second guard), then one
+    /// action at a time, another one beeping until `work` finishes.
+    private func runDocumentAction(_ selector: Selector, _ work: @escaping () async -> Bool) {
+        canvasView.commitTextEditing()
+        guard permits(selector) else { return }
         guard !isPerformingAction else {
             NSSound.beep()
             return
@@ -362,15 +338,10 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
                                  customRevision: fill == .customImage ? CustomBackgroundRevision.shared.count : 0)
     }
 
-    /// Renders the fill again whenever its key changes, re-registering on each change as
-    /// `observeEdited` does. The display is not observable; `windowDidChangeScreen` covers it.
+    /// Renders the fill again whenever its key changes. The display is not observable;
+    /// `windowDidChangeScreen` covers it.
     private func observeBackgroundFill() {
-        let key = withObservationTracking {
-            backgroundFillKey
-        } onChange: { [weak self] in
-            Task { @MainActor in self?.observeBackgroundFill() }
-        }
-        renderBackgroundFill(for: key)
+        follow({ $0.backgroundFillKey }) { $0.renderBackgroundFill(for: $1) }
     }
 
     /// The fill for `key`, rendered off the main actor at most 2,048 px on its long side, then
@@ -541,3 +512,5 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSUser
 }
 
 extension EditorWindowController: EditorPresenting {}
+
+extension EditorWindowController: ModelObserving {}

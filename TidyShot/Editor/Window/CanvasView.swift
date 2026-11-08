@@ -107,7 +107,6 @@ final class CanvasView: NSView {
     override var undoManager: UndoManager? { model.undoManager }
 
     private var backingScale: CGFloat { window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2 }
-    private var imagePixelSize: CGSize { CGSize(width: model.base.width, height: model.base.height) }
 
     // MARK: Zoom and pan
 
@@ -115,7 +114,7 @@ final class CanvasView: NSView {
     /// cropping or with no crop, else the applied crop. While cropping no background is shown.
     private func fitRect(document: AnnotationDocument, cropDraft: CGRect?, background: ShownBackground?) -> CGRect {
         if let background { return background.canvasRect }
-        let whole = CGRect(origin: .zero, size: imagePixelSize)
+        let whole = CGRect(origin: .zero, size: model.imageSize)
         return cropDraft == nil ? (document.crop ?? whole) : whole
     }
 
@@ -205,7 +204,7 @@ final class CanvasView: NSView {
         // anything hidden, except a handle of the selection that sits outside the crop.
         let pressed = input(for: event, clamped: false)
         let handling = CropGeometry.press(at: pressed.point, crop: appliedCrop, tool: model.tool,
-                                          selected: model.selection.flatMap { model.document.annotation(id: $0) },
+                                          selected: model.selectedAnnotation,
                                           tolerance: HitTester.tolerance(zoom: model.zoom))
         switch handling {
         case .ignore:
@@ -423,9 +422,7 @@ final class CanvasView: NSView {
         }
     }
 
-    private var hasSelectedAnnotation: Bool {
-        model.selection.flatMap { model.document.annotation(id: $0) } != nil
-    }
+    private var hasSelectedAnnotation: Bool { model.selectedAnnotation != nil }
 
     /// ⌘C with a selection: the selected annotation goes on the pasteboard under the private type
     /// only. No notification, and the coordinator's clipboard owner is left alone.
@@ -506,25 +503,22 @@ final class CanvasView: NSView {
 
     // MARK: Model to screen
 
-    /// Re-registers on every change (Observation reports one change per registration, before it
-    /// happens) and refreshes on the next main-actor turn, as StatusMenuController.updateIcon does.
-    /// This covers changes this view did not make: undo and redo, the toolbar, the controller's
-    /// zoom actions.
+    /// Refreshes on the next main-actor turn after a change this view did not make: undo and redo,
+    /// the toolbar, the controller's zoom actions. Not during a drag: the event path refreshes
+    /// synchronously and refuses a tool change, so the observed refresh would only rebuild `Shown`
+    /// to find nothing new.
     private func observeModel() {
-        withObservationTracking {
-            _ = model.document
-            _ = model.transient
-            _ = model.selection
-            _ = model.transform
-            _ = model.tool
-            _ = model.textEditing
-            _ = model.cropDraft
-            _ = model.backgroundDraft
-        } onChange: { [weak self] in
-            Task { @MainActor in
-                self?.observeModel()
-                self?.refresh()
-            }
+        follow({ view in
+            _ = view.model.document
+            _ = view.model.transient
+            _ = view.model.selection
+            _ = view.model.transform
+            _ = view.model.tool
+            _ = view.model.textEditing
+            _ = view.model.cropDraft
+            _ = view.model.backgroundDraft
+        }) { view, _ in
+            if !view.isTrackingMouse { view.refresh() }
         }
     }
 
@@ -578,7 +572,7 @@ final class CanvasView: NSView {
         Shown(document: model.document, transient: model.transient, selection: model.selection,
               transform: model.transform, editingID: model.textEditing?.box.id, cropDraft: model.cropDraft,
               background: model.shownBackground,
-              hasSpotlights: !SpotlightGeometry.displayedSpotlights(in: model.document, transient: model.transient).isEmpty,
+              hasSpotlights: !model.document.spotlights.isEmpty || model.transient?.isSpotlight == true,
               showsSpotlightOutlines: model.tool == .spotlight)
     }
 
@@ -599,7 +593,7 @@ final class CanvasView: NSView {
             let margin = AnnotationGeometry.antialiasMargin
             return strokeGeometry(stroke).bounds.insetBy(dx: -margin, dy: -margin)
         default:
-            return annotation.effectRect ?? AnnotationGeometry.bounds(of: annotation, scale: model.scale)
+            return AnnotationGeometry.displayBounds(of: annotation, scale: model.scale)
         }
     }
 
@@ -637,7 +631,7 @@ final class CanvasView: NSView {
                 layers.append((id: effect.id, rect: tile.rect, image: tile.image))
             } else {
                 pending.insert(effect.id)
-                layers.append((id: effect.id, rect: ImageRects.integral(effect.effectRect ?? .zero, clippedTo: imagePixelSize),
+                layers.append((id: effect.id, rect: ImageRects.integral(effect.effectRect ?? .zero, clippedTo: model.imageSize),
                                image: nil))
             }
         }
@@ -662,7 +656,7 @@ final class CanvasView: NSView {
     /// placeholder is the finished tile's pixels. A blur or pixelate shows the last stored tile at
     /// the rect it was rendered for, so a dragged one never flashes to its grey placeholder.
     private func shownTile(for effect: Annotation) -> (rect: CGRect, image: CGImage)? {
-        let size = imagePixelSize
+        let size = model.imageSize
         if case .redact = effect {
             guard let image = model.tileCache.currentTile(for: effect.id), let rect = effect.effectRect else { return nil }
             return (rect: ImageRects.integral(rect, clippedTo: size), image: image)
@@ -680,7 +674,7 @@ final class CanvasView: NSView {
     /// The spotlights the overlay shows: the document's, with `transient` in place of its document
     /// copy or last when it is new, so a drag, move or resize dims live.
     private var displayedSpotlights: [Annotation] {
-        SpotlightGeometry.displayedSpotlights(in: model.document, transient: model.transient)
+        model.document.displayed(inLayer: { $0.isSpotlight }, transient: model.transient)
     }
 
     /// Drawings in creation order, with `transient` in place of its document copy and drawn last
@@ -907,7 +901,7 @@ final class CanvasView: NSView {
         context.saveGState()
         context.interpolationQuality = backdropInterpolationQuality
         AnnotationDrawing.drawSpotlightOverlay(shapes, dim: model.document.effectiveSpotlightDim, in: context,
-                                               imageRect: CGRect(origin: .zero, size: imagePixelSize),
+                                               imageRect: CGRect(origin: .zero, size: model.imageSize),
                                                coverage: baseHasAlpha ? coverage : [])
         context.restoreGState()
     }
@@ -954,7 +948,7 @@ final class CanvasView: NSView {
         context.restoreGState()
         if let draft = model.cropDraft {
             // Cropping: dim, edge, handles and readout; no selection is shown.
-            AnnotationDrawing.drawCropChrome(crop: draft, imageSize: imagePixelSize, transform: transform,
+            AnnotationDrawing.drawCropChrome(crop: draft, imageSize: model.imageSize, transform: transform,
                                              scale: backingScale, in: context)
             drawCropReadout(for: draft)
             return
@@ -982,7 +976,7 @@ final class CanvasView: NSView {
     /// bottom-left corner, or inside the crop's bottom edge when the pill would leave the view.
     private func drawCropReadout(for draft: CGRect) {
         let label = NSAttributedString(
-            string: CropGeometry.readout(for: CropGeometry.snapped(draft, in: imagePixelSize)),
+            string: CropGeometry.readout(for: CropGeometry.snapped(draft, in: model.imageSize)),
             attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium),
                          .foregroundColor: NSColor.white])
         let text = label.size()
@@ -1035,3 +1029,5 @@ extension CanvasView: NSTextViewDelegate {
         }
     }
 }
+
+extension CanvasView: ModelObserving {}

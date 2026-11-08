@@ -32,6 +32,20 @@ nonisolated struct AnnotationDocument: Codable, Equatable, Sendable {
     /// Every other annotation, in creation order, drawn above all effects and the spotlight overlay.
     var drawings: [Annotation] { annotations.filter { !$0.isEffect && !$0.isSpotlight } }
 
+    /// The annotations `layer` picks, in creation order, with `transient` in place of its document
+    /// copy (one being moved or resized) or last when it is new. A transient of another layer is
+    /// ignored. The tile cache shows the effects this way, the overlay the spotlights.
+    func displayed(inLayer layer: (Annotation) -> Bool, transient: Annotation?) -> [Annotation] {
+        var shown = annotations.filter(layer)
+        guard let transient, layer(transient) else { return shown }
+        if let index = shown.firstIndex(where: { $0.id == transient.id }) {
+            shown[index] = transient
+        } else {
+            shown.append(transient)
+        }
+        return shown
+    }
+
     /// The number a new counter gets (spec 2.12, Number): one more than the largest counter number,
     /// or 1 with none. Deleting a counter renumbers nothing.
     var nextCounterNumber: Int {

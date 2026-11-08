@@ -1,6 +1,5 @@
 import CoreGraphics
 import Foundation
-import Synchronization
 
 /// Burns the effect tiles, the spotlight overlay and the drawings into a copy of the capture, at
 /// the capture's own pixel size, or at the crop's when the document has one, for Save, Save As…,
@@ -24,7 +23,6 @@ nonisolated enum EditorFlattener {
         let height = base.height
         let size = CGSize(width: width, height: height)
         guard let context = makeContext(width: width, height: height, preferred: base.colorSpace) else { return nil }
-        logColourSpaceOnce(base: base, output: context)
         context.interpolationQuality = .none
 
         // 1. The base, copied in, in `ImageTiling` strips: drawing converts the pixels through a
@@ -88,19 +86,5 @@ nonisolated enum EditorFlattener {
         guard let sRGB = CGColorSpace(name: CGColorSpace.sRGB) else { return nil }
         return CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
                          space: sRGB, bitmapInfo: info)
-    }
-
-    #if DEBUG
-    /// Set by the first flatten, so the colour space real captures carry is logged once per run.
-    private static let loggedColourSpace = Atomic<Bool>(false)
-    #endif
-
-    private static func logColourSpaceOnce(base: CGImage, output: CGContext) {
-        #if DEBUG
-        guard !loggedColourSpace.exchange(true, ordering: .relaxed) else { return }
-        let baseName = base.colorSpace?.name.map { $0 as String } ?? "none"
-        let outputName = output.colorSpace?.name.map { $0 as String } ?? "none"
-        NSLog("EditorFlattener: base colour space \(baseName), flattened in \(outputName)")
-        #endif
     }
 }

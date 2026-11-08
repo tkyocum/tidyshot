@@ -50,6 +50,12 @@ nonisolated enum AnnotationGeometry {
     /// Anti-aliasing can touch one pixel past the geometry.
     static let antialiasMargin: CGFloat = 1
 
+    /// What an annotation covers on the canvas: an effect's rect, else its painted bounds. The
+    /// crop rule (`EditorModel.selectAll`, `CanvasAccessibility.items`) and the repaint rect use it.
+    static func displayBounds(of annotation: Annotation, scale: CGFloat) -> CGRect {
+        annotation.effectRect ?? bounds(of: annotation, scale: scale)
+    }
+
     static func bounds(of annotation: Annotation, scale: CGFloat) -> CGRect {
         let painted: CGRect
         switch annotation {

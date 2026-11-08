@@ -76,11 +76,8 @@ nonisolated enum EditorTool: String, CaseIterable, Sendable {
 
     /// Select, then Redact first among the drawing tools, because it is the only safe redaction.
     /// Spotlight follows the effects, since it works on the picture as they do, and Counter follows
-    /// Text.
-    static var toolbarOrder: [EditorTool] {
-        [.select, .redact, .pixelate, .blur, .spotlight, .rectangle, .arrow, .ellipse, .line, .pencil, .highlighter,
-         .text, .counter, .crop]
-    }
+    /// Text: the case order, under its own name so the toolbar could depart from it.
+    static let toolbarOrder: [EditorTool] = allCases
 
     /// The tool whose letter is `key`, in either case; nil for any other key.
     static func tool(forKey key: Character) -> EditorTool? {

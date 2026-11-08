@@ -69,14 +69,14 @@ struct EditorWindowGeometryTests {
     /// buttons, the prominent Upload, the 84 pt zoom pop-up and one fixed space. Seven items, so
     /// six gaps.
     @Test func toolbarWidthCountsEveryItem() {
-        let width = EditorWindowGeometry.toolbarWidth(windowButtonsMaxX: 76, titleWidth: 230, toolSegments: 6,
+        let width = EditorWindowGeometry.toolbarWidth(windowButtonsMaxX: 76, titleWidth: 230,
                                                       buttons: 4, prominentButtons: 1, viewWidths: [84], fixedSpaces: 1)
-        // 76 + 12 + 96 + 12 (leading and title), 6 * 36 + 8 (tools), 4 * 36, 44, 84 + 16 (zoom),
-        // 6 * 10 (gaps), 16 (space), 16 (trailing).
-        #expect(width == 800)
+        // 76 + 12 + 96 + 12 (leading and title), 4 * 36, 44, 84 + 16 (zoom), 5 * 10 (gaps), 16 (space),
+        // 16 (trailing).
+        #expect(width == 566)
         // A short title counts at its own width.
-        #expect(EditorWindowGeometry.toolbarWidth(windowButtonsMaxX: 76, titleWidth: 40, toolSegments: 6, buttons: 4,
-                                                  prominentButtons: 1, viewWidths: [84], fixedSpaces: 1) == 744)
+        #expect(EditorWindowGeometry.toolbarWidth(windowButtonsMaxX: 76, titleWidth: 40, buttons: 4,
+                                                  prominentButtons: 1, viewWidths: [84], fixedSpaces: 1) == 510)
     }
 
     /// The window never gets narrower than its toolbar, nor than the 640 pt floor.
@@ -84,28 +84,6 @@ struct EditorWindowGeometryTests {
         #expect(EditorWindowGeometry.minimumContentWidth(toolbarWidth: 800) == 800)
         #expect(EditorWindowGeometry.minimumContentWidth(toolbarWidth: 700.2) == 701)
         #expect(EditorWindowGeometry.minimumContentWidth(toolbarWidth: 500) == 640)
-    }
-
-    /// Every tool in `EditorTool.toolbarOrder` is one more segment, so each new tool widens the
-    /// toolbar by `ToolbarMetrics.segment`. With the widest title, the toolbar for the tools the
-    /// editor has must still fit 90 % of a 1280 pt wide display, or the 90 % cap would win over
-    /// the minimum and the toolbar would overflow.
-    @Test func toolbarWithEveryToolFitsASmallDisplay() {
-        func width(segments: Int) -> CGFloat {
-            EditorWindowGeometry.toolbarWidth(windowButtonsMaxX: EditorWindowGeometry.ToolbarMetrics.windowButtons,
-                                              titleWidth: 230, toolSegments: segments, buttons: 5,
-                                              prominentButtons: 1, viewWidths: [84], fixedSpaces: 1)
-        }
-        #expect(width(segments: 8) - width(segments: 6) == 2 * EditorWindowGeometry.ToolbarMetrics.segment)
-        // The 4a toolbar is 800 pt wide. Each 4b task that adds a tool updates these two lines:
-        // 8 tools and 872 pt (Task 1), 10 and 944 (Task 2), 11 and 980 (Task 3), 12 and 1016 (Task 4).
-        // 7c's Background button (Colour, Options, Background, Copy and Save) makes it 1062.
-        // 4c's Spotlight and Counter make it 14 tools and 1134 pt.
-        #expect(EditorTool.toolbarOrder.count == 14)
-        #expect(width(segments: EditorTool.toolbarOrder.count) == 1134)
-        let widest = EditorWindowGeometry.minimumContentWidth(toolbarWidth: width(segments: EditorTool.toolbarOrder.count))
-        let ninetyPercent = (1280 * EditorWindowGeometry.screenFraction).rounded(.down)
-        #expect(widest <= ninetyPercent)
     }
 
     /// A small capture opens at the toolbar's width, not at 640 pt.

@@ -100,14 +100,11 @@ struct ToolOptionsView: View {
 
     /// The effect the sliders act on: the selected annotation's kind, else the active tool's.
     private var effectTool: EditorTool? {
-        if let id = model.selection, let annotation = model.document.annotation(id: id) {
-            switch annotation {
-            case .blur: return .blur
-            case .pixelate: return .pixelate
-            default: break
-            }
+        switch model.selectedAnnotation {
+        case .blur?: .blur
+        case .pixelate?: .pixelate
+        default: model.tool == .blur || model.tool == .pixelate ? model.tool : nil
         }
-        return model.tool == .blur || model.tool == .pixelate ? model.tool : nil
     }
 
     private var lineWidth: Binding<CGFloat> {

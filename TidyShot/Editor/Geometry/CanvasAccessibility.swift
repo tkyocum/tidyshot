@@ -21,7 +21,7 @@ nonisolated enum CanvasAccessibility {
         var counts: [String: Int] = [:]
         let listed = (document.effects + document.spotlights + document.drawings).filter { annotation in
             guard let crop = document.crop else { return true }
-            let bounds = annotation.effectRect ?? AnnotationGeometry.bounds(of: annotation, scale: scale)
+            let bounds = AnnotationGeometry.displayBounds(of: annotation, scale: scale)
             return bounds.intersects(crop)
         }
         return listed.map { annotation in

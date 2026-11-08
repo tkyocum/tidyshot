@@ -47,9 +47,6 @@ nonisolated enum EditorWindowGeometry {
     enum ToolbarMetrics {
         /// The window buttons' trailing edge, for a window whose buttons are not laid out yet.
         static let windowButtons: CGFloat = 76
-        /// One segment per tool in EditorTool.toolbarOrder: six in 4a, eight with Ellipse and Line, twelve after 4b, fourteen in 4c.
-        static let segment: CGFloat = 36
-        static let groupPadding: CGFloat = 8
         static let button: CGFloat = 36
         static let prominentButton: CGFloat = 44
         /// Glass around an item with its own view, such as the zoom pop-up.
@@ -65,19 +62,17 @@ nonisolated enum EditorWindowGeometry {
     }
 
     /// The width the editor toolbar needs to show every item, in points: the window buttons'
-    /// trailing edge and the title (both measured), the tool group's segments, the plain and
-    /// prominent buttons, the items with their own views (measured), one gap between neighbouring
+    /// trailing edge and the title (both measured), the plain and prominent buttons, the items
+    /// with their own views (measured; the tools control among them), one gap between neighbouring
     /// items, and fixed spaces. A flexible space can shrink to nothing.
-    static func toolbarWidth(windowButtonsMaxX: CGFloat, titleWidth: CGFloat, toolSegments: Int, buttons: Int,
+    static func toolbarWidth(windowButtonsMaxX: CGFloat, titleWidth: CGFloat, buttons: Int,
                              prominentButtons: Int, viewWidths: [CGFloat], fixedSpaces: Int) -> CGFloat {
         typealias M = ToolbarMetrics
         let leading = windowButtonsMaxX + 2 * M.titleGap + min(max(titleWidth, 0), M.titleAllowance)
-        let tools = toolSegments > 0 ? CGFloat(toolSegments) * M.segment + M.groupPadding : 0
         let plain = CGFloat(buttons) * M.button + CGFloat(prominentButtons) * M.prominentButton
         let views = viewWidths.reduce(0) { $0 + $1 + M.viewPadding }
-        let itemCount = (toolSegments > 0 ? 1 : 0) + buttons + prominentButtons + viewWidths.count
-        let gaps = CGFloat(max(itemCount - 1, 0)) * M.itemGap
-        return leading + tools + plain + views + gaps + CGFloat(fixedSpaces) * M.fixedSpace + M.trailingInset
+        let gaps = CGFloat(max(buttons + prominentButtons + viewWidths.count - 1, 0)) * M.itemGap
+        return leading + plain + views + gaps + CGFloat(fixedSpaces) * M.fixedSpace + M.trailingInset
     }
 
     /// The window's `contentMinSize` width: the toolbar's width in whole points, at least the

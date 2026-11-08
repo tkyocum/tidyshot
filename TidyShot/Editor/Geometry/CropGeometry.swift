@@ -50,14 +50,7 @@ nonisolated enum CropGeometry {
 
     /// The nearest of `rect`'s eight handles (`HitTester.boxHandles` order) within `tolerance`.
     static func handle(of rect: CGRect, at point: CGPoint, tolerance: CGFloat) -> Int? {
-        var best: (index: Int, distance: CGFloat)?
-        for (index, handle) in HitTester.boxHandles(rect).enumerated() {
-            let distance = hypot(point.x - handle.x, point.y - handle.y)
-            if distance <= tolerance, distance < (best?.distance ?? .infinity) {
-                best = (index, distance)
-            }
-        }
-        return best?.index
+        HitTester.nearestHandle(in: HitTester.boxHandles(rect), to: point, tolerance: tolerance)
     }
 
     /// What a press does when an applied crop dims part of the capture.

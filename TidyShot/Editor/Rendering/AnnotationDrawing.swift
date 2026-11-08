@@ -22,11 +22,11 @@ nonisolated enum AnnotationDrawing {
     static func draw(_ annotation: Annotation, in context: CGContext, scale: CGFloat, strokePath: CGPath? = nil) {
         switch annotation {
         case .rectangle(let box):
-            drawRectangle(box, in: context)
+            strokeBox(box, ellipse: false, in: context)
         case .arrow(let segment):
             drawArrow(segment, in: context, scale: scale)
         case .ellipse(let box):
-            strokeEllipse(box, in: context)
+            strokeBox(box, ellipse: true, in: context)
         case .line(let segment):
             strokeLine(segment, in: context)
         case .pencil(let stroke):
@@ -214,22 +214,28 @@ nonisolated enum AnnotationDrawing {
                       width: snap(rect.maxX) - snap(rect.minX), height: snap(rect.maxY) - snap(rect.minY))
     }
 
-    /// Stroked inset by half the line width, so the stroke sits inside the rect. A box no wider
-    /// or taller than the line is filled instead, because the inset rect would be empty.
-    private static func drawRectangle(_ box: ShapeBox, in context: CGContext) {
+    /// A rectangle or an ellipse stroked inset by half the line width, so the stroke sits inside
+    /// the rect. A box no wider or taller than the line is filled instead, because the inset shape
+    /// would be empty.
+    private static func strokeBox(_ box: ShapeBox, ellipse: Bool, in context: CGContext) {
         let rect = box.rect.standardized
         guard rect.width > 0, rect.height > 0, box.lineWidth > 0 else { return }
         context.saveGState()
         defer { context.restoreGState() }
         if rect.width <= box.lineWidth || rect.height <= box.lineWidth {
             context.setFillColor(box.color.cgColor)
-            context.fill(rect)
+            if ellipse { context.fillEllipse(in: rect) } else { context.fill(rect) }
             return
         }
         context.setStrokeColor(box.color.cgColor)
         context.setLineWidth(box.lineWidth)
-        context.setLineJoin(.miter)
-        context.stroke(rect.insetBy(dx: box.lineWidth / 2, dy: box.lineWidth / 2))
+        let inset = rect.insetBy(dx: box.lineWidth / 2, dy: box.lineWidth / 2)
+        if ellipse {
+            context.strokeEllipse(in: inset)
+        } else {
+            context.setLineJoin(.miter)
+            context.stroke(inset)
+        }
     }
 
     /// A round-capped shaft from the tail to `ArrowGeometry.shaftEnd`, then the filled head
@@ -327,24 +333,6 @@ nonisolated enum AnnotationDrawing {
         context.setLineJoin(.round)
         context.addPath(path ?? StrokeSmoothing.path(for: stroke.points))
         context.strokePath()
-    }
-
-    /// Stroked inset by half the line width, so the stroke sits inside the rect, as the rectangle's
-    /// does. An ellipse no wider or taller than the line is filled instead, because the inset
-    /// ellipse would be empty.
-    private static func strokeEllipse(_ box: ShapeBox, in context: CGContext) {
-        let rect = box.rect.standardized
-        guard rect.width > 0, rect.height > 0, box.lineWidth > 0 else { return }
-        context.saveGState()
-        defer { context.restoreGState() }
-        if rect.width <= box.lineWidth || rect.height <= box.lineWidth {
-            context.setFillColor(box.color.cgColor)
-            context.fillEllipse(in: rect)
-            return
-        }
-        context.setStrokeColor(box.color.cgColor)
-        context.setLineWidth(box.lineWidth)
-        context.strokeEllipse(in: rect.insetBy(dx: box.lineWidth / 2, dy: box.lineWidth / 2))
     }
 
     /// A straight stroke from `from` to `to` with round caps and no head.

@@ -49,7 +49,7 @@ extension EditorWindowController: NSToolbarDelegate, NSToolbarItemValidation {
         // The tools are a segmented control of our own, so their width is measured, not estimated.
         let toolsWidth = (toolbarItem(.tools)?.view ?? Self.makeToolsControl(selected: model.tool)).fittingSize.width
         let width = EditorWindowGeometry.toolbarWidth(
-            windowButtonsMaxX: windowButtonsMaxX, titleWidth: titleWidth, toolSegments: 0,
+            windowButtonsMaxX: windowButtonsMaxX, titleWidth: titleWidth,
             buttons: [NSToolbarItem.Identifier.color, .toolOptions, .background, .copyImage, .save].count,
             prominentButtons: 1,
             viewWidths: [Self.zoomPopUpWidth, toolsWidth],
@@ -189,25 +189,19 @@ extension EditorWindowController: NSToolbarDelegate, NSToolbarItemValidation {
         model.tool = EditorTool.toolbarOrder[control.selectedSegment]
     }
 
-    /// The menu form's items send this, with the tool's index as the tag.
-    @objc func selectToolFromMenu(_ sender: NSMenuItem) {
-        guard EditorTool.toolbarOrder.indices.contains(sender.tag) else { return }
-        model.tool = EditorTool.toolbarOrder[sender.tag]
-    }
-
     @objc func showColorPalette(_ sender: Any?) {
-        colorPopover = showPopover(ColorPaletteView(model: model), from: .color)
+        popover = showPopover(ColorPaletteView(model: model), from: .color)
     }
 
     @objc func showToolOptions(_ sender: Any?) {
-        optionsPopover = showPopover(ToolOptionsView(model: model), from: .toolOptions)
+        popover = showPopover(ToolOptionsView(model: model), from: .toolOptions)
     }
 
     @objc func showBackgroundOptions(_ sender: Any?) {
         let view = BackgroundPopoverView(model: model) { [weak self] fileName in
             self?.reportUnusableBackgroundImage(named: fileName)
         }
-        backgroundPopover = showPopover(view, from: .background)
+        popover = showPopover(view, from: .background)
     }
 
     /// 50 %, 200 % and 400 % from the zoom pop-up: `tag` percent of natural size, around the
@@ -219,13 +213,9 @@ extension EditorWindowController: NSToolbarDelegate, NSToolbarItemValidation {
     }
 
     /// One popover at a time. `.transient` closes it on a click elsewhere; values apply live, so
-    /// there is nothing to confirm. `show(relativeTo:)` anchors to the item, or to the overflow
-    /// chevron when the item has moved into the overflow menu. The item is looked up by identifier
-    /// because the overflow menu sends an `NSMenuItem`.
+    /// there is nothing to confirm.
     private func showPopover(_ content: some View, from identifier: NSToolbarItem.Identifier) -> NSPopover? {
-        colorPopover?.close()
-        optionsPopover?.close()
-        backgroundPopover?.close()
+        popover?.close()
         guard let item = toolbarItem(identifier) else { return nil }
         let host = NSHostingController(rootView: content)
         host.sizingOptions = .preferredContentSize
@@ -240,8 +230,8 @@ extension EditorWindowController: NSToolbarDelegate, NSToolbarItemValidation {
 
     /// A segmented control of our own rather than an `NSToolbarItemGroup`: the group draws its
     /// segments in a private picker view and shows no sub-item tool tips, so hovering a tool told
-    /// the user nothing. The window is never narrower than the toolbar, so the item never collapses
-    /// into its menu form.
+    /// the user nothing. The window is never narrower than the toolbar (`minimumToolbarContentWidth`),
+    /// so no item ever collapses into an overflow menu, and none has a menu form.
     private func makeToolsItem() -> NSToolbarItem {
         let control = Self.makeToolsControl(selected: model.tool)
         control.target = self
@@ -249,16 +239,6 @@ extension EditorWindowController: NSToolbarDelegate, NSToolbarItemValidation {
         let item = NSToolbarItem(itemIdentifier: .tools)
         item.label = "Tools"
         item.view = control
-        let form = NSMenuItem(title: "Tools", action: nil, keyEquivalent: "")
-        let menu = NSMenu(title: "Tools")
-        for (index, tool) in EditorTool.toolbarOrder.enumerated() {
-            let entry = NSMenuItem(title: tool.title, action: #selector(selectToolFromMenu(_:)), keyEquivalent: "")
-            entry.target = self
-            entry.tag = index
-            menu.addItem(entry)
-        }
-        form.submenu = menu
-        item.menuFormRepresentation = form
         return item
     }
 
@@ -292,27 +272,22 @@ extension EditorWindowController: NSToolbarDelegate, NSToolbarItemValidation {
 
     private func makeZoomItem() -> NSToolbarItem {
         let popUp = NSPopUpButton(frame: .zero, pullsDown: true)
-        popUp.menu = zoomMenu(withTitleItem: true)
+        popUp.menu = zoomMenu()
         // The title changes; the width does not.
         popUp.widthAnchor.constraint(equalToConstant: Self.zoomPopUpWidth).isActive = true
         let item = NSToolbarItem(itemIdentifier: .zoom)
         item.label = "Zoom"
         item.toolTip = "Zoom"
         item.view = popUp
-        let form = NSMenuItem(title: "Zoom", action: nil, keyEquivalent: "")
-        form.submenu = zoomMenu(withTitleItem: false)
-        item.menuFormRepresentation = form
         return item
     }
 
     /// Fit, 50 %, 100 %, 200 % and 400 %. A pull-down's first item is its title, so the pop-up
     /// adds one showing the current percent. Zoom is always available.
-    private func zoomMenu(withTitleItem: Bool) -> NSMenu {
+    private func zoomMenu() -> NSMenu {
         let menu = NSMenu(title: "Zoom")
         menu.autoenablesItems = false
-        if withTitleItem {
-            menu.addItem(withTitle: "\(model.transform.percent(captureScale: model.scale)) %", action: nil, keyEquivalent: "")
-        }
+        menu.addItem(withTitle: "\(model.transform.percent(captureScale: model.scale)) %", action: nil, keyEquivalent: "")
         for (title, selector, tag) in [("Fit", #selector(zoomToFit(_:)), 0),
                                        ("50 %", #selector(zoomToPercent(_:)), 50),
                                        ("100 %", #selector(zoomToActualSize(_:)), 100),

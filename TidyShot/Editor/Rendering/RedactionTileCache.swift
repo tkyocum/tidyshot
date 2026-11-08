@@ -45,14 +45,7 @@ final class RedactionTileCache {
     /// the document (one being moved or resized) takes that effect's place; a new one comes last.
     /// A transient drawing is ignored.
     nonisolated static func orderedEffects(in document: AnnotationDocument, transient: Annotation?) -> [Annotation] {
-        var effects = document.effects
-        guard let transient, transient.isEffect else { return effects }
-        if let index = effects.firstIndex(where: { $0.id == transient.id }) {
-            effects[index] = transient
-        } else {
-            effects.append(transient)
-        }
-        return effects
+        document.displayed(inLayer: { $0.isEffect }, transient: transient)
     }
 
     /// The key each effect's tile needs, by id. A redact's tile is its fill alone, so its `beneath`
