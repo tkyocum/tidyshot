@@ -45,29 +45,31 @@ struct CaptureSettingsView: View {
         CameraChoice.Stored(value: settings.recordingCamera, name: settings.recordingCameraName)
     }
 
+    /// The note under a device picker while TidyShot's access to that kind of device is off, with
+    /// the way to its pane.
+    private func accessNote(_ text: String, pane: PrivacyPane) -> some View {
+        HStack {
+            Caption(text)
+            Spacer()
+            Button("Privacy Settings…") {
+                NSWorkspace.shared.open(pane.url)
+            }
+        }
+    }
+
     var body: some View {
         Form {
             Section {
                 Toggle("Freeze screen while selecting", isOn: $settings.freezeScreen)
-                Text("Area selections show a still image of the screen and the capture is cut from it, so menus, tooltips and video stay as they were when you pressed the shortcut.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Caption("Area selections show a still image of the screen and the capture is cut from it, so menus, tooltips and video stay as they were when you pressed the shortcut.")
                 Toggle("Show cursor in screenshots", isOn: $settings.showsCursor)
-                Text("Fullscreen, previous-area, self-timer and URL captures show the pointer where it is. Area captures show it only with Freeze screen on. TidyShot never captures its own crosshair.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Caption("Fullscreen, previous-area, self-timer and URL captures show the pointer where it is. Area captures show it only with Freeze screen on. TidyShot never captures its own crosshair.")
                 Toggle("Include window shadow", isOn: $settings.windowShadow)
-                Text("Window captures keep transparent rounded corners either way.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Caption("Window captures keep transparent rounded corners either way.")
                 Toggle("Hide desktop icons while capturing", isOn: $settings.hideDesktopIconsWhileCapturing)
-                Text("Covers desktop icons and widgets with the desktop picture during area, window, fullscreen, previous-area, All-in-One and self-timer captures, and area and fullscreen recordings. While covered, the desktop does not take clicks.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Caption("Covers desktop icons and widgets with the desktop picture during area, window, fullscreen, previous-area, All-in-One and self-timer captures, and area and fullscreen recordings. While covered, the desktop does not take clicks.")
                 Toggle("Add background to window captures", isOn: $settings.windowBackground)
-                Text("Puts each window capture on the background below, as the editor's Background tool would.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Caption("Puts each window capture on the background below, as the editor's Background tool would.")
                 Button("Edit Background…") { editingBackground = true }
                 Picker("Self-timer", selection: $settings.selfTimerSeconds) {
                     ForEach(AppSettings.selfTimerChoices, id: \.self) { seconds in
@@ -91,9 +93,7 @@ struct CaptureSettingsView: View {
                             Text(side == 0 ? "Full size" : "\(side) px").tag(side)
                         }
                     }
-                    Text(RecordingSettingsLayout.fullSizeCaption)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    Caption(RecordingSettingsLayout.fullSizeCaption)
                 }
                 if recordingLayout.showsFrameRate {
                     Picker("Frame rate", selection: $settings.recordingFrameRate) {
@@ -106,9 +106,7 @@ struct CaptureSettingsView: View {
                     Text("Retina").tag(true)
                     Text("Standard").tag(false)
                 }
-                Text("Retina is capped at 4096 px on the longer side.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Caption("Retina is capped at 4096 px on the longer side.")
                 Toggle("Record system audio", isOn: $settings.recordingSystemAudio)
                     .disabled(!recordingLayout.audioRowsEnabled)
                 Picker("Microphone", selection: Binding(get: { settings.recordingMicrophone }, set: pickMicrophone)) {
@@ -118,20 +116,10 @@ struct CaptureSettingsView: View {
                 }
                 .disabled(!recordingLayout.audioRowsEnabled)
                 if MicrophoneChoice.showsAccessNote(stored: storedMicrophone, access: microphoneAccess) {
-                    HStack {
-                        Text(MicrophoneChoice.accessOffText)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        Button("Privacy Settings…") {
-                            NSWorkspace.shared.open(MicrophoneChoice.privacySettingsURL)
-                        }
-                    }
+                    accessNote(MicrophoneChoice.accessOffText, pane: .microphone)
                 }
                 if recordingLayout.showsGIFCaption {
-                    Text(RecordingSettingsLayout.gifCaption)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    Caption(RecordingSettingsLayout.gifCaption)
                 }
                 Toggle("Show cursor in recordings", isOn: $settings.recordingShowsCursor)
                 Toggle("Count down before recording", isOn: $settings.recordingCountdown)
@@ -144,15 +132,7 @@ struct CaptureSettingsView: View {
                 }
                 .disabled(!recordingLayout.cameraRowsEnabled)
                 if CameraChoice.showsAccessNote(bubble: settings.recordingWebcamBubble, access: cameraAccess) {
-                    HStack {
-                        Text(CameraChoice.accessOffText)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        Button("Privacy Settings…") {
-                            NSWorkspace.shared.open(CameraChoice.privacySettingsURL)
-                        }
-                    }
+                    accessNote(CameraChoice.accessOffText, pane: .camera)
                 }
                 Picker("Bubble size", selection: $settings.recordingBubbleSize) {
                     ForEach(BubbleSize.allCases, id: \.self) { size in
@@ -162,14 +142,10 @@ struct CaptureSettingsView: View {
                 .pickerStyle(.segmented)
                 .disabled(!recordingLayout.cameraRowsEnabled)
                 if recordingLayout.showsBubbleGIFCaption {
-                    Text(RecordingSettingsLayout.bubbleGIFCaption)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    Caption(RecordingSettingsLayout.bubbleGIFCaption)
                 }
                 if recordingLayout.showsOverlayCaption {
-                    Text(RecordingSettingsLayout.overlayCaption)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    Caption(RecordingSettingsLayout.overlayCaption)
                 }
             }
         }

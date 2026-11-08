@@ -23,9 +23,7 @@ struct GeneralSettingsView: View {
                 }
                 TextField("File name", text: $settings.fileNameTemplate)
                 TextField("Recording file name", text: $settings.recordingFileNameTemplate)
-                Text("Tokens: \(TemplateExpander.tokenList)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Caption("Tokens: \(TemplateExpander.tokenList)")
                 Picker("After capture", selection: $settings.afterCaptureAction) {
                     ForEach(AfterCaptureAction.allCases) { action in
                         Text(action.title).tag(action)
@@ -36,27 +34,19 @@ struct GeneralSettingsView: View {
                 } else {
                     Toggle("Copy image to clipboard", isOn: $settings.copyImageToClipboard)
                 }
-                Text("For recordings, the file is copied.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Caption("For recordings, the file is copied.")
                 if settings.afterCaptureAction == .uploadOnly {
-                    Text("The file is kept inside TidyShot only until the upload succeeds. Recent Captures keeps a thumbnail and the URL; a failed upload keeps the file until you retry or delete it.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    Caption("The file is kept inside TidyShot only until the upload succeeds. Recent Captures keeps a thumbnail and the URL; a failed upload keeps the file until you retry or delete it.")
                 }
                 Toggle("Show notification", isOn: $settings.showNotification)
                 Toggle("Play sound", isOn: $settings.playSound)
                 Toggle("Ask before deleting", isOn: $settings.confirmBeforeDeleting)
-                Text("Delete removes the file, the upload and the Recent Captures entry. When this is off, Delete acts at once.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Caption("Delete removes the file, the upload and the Recent Captures entry. When this is off, Delete acts at once.")
             }
             Section("Optimization") {
                 Toggle("Optimize images and videos with Clop", isOn: $settings.optimiseWithClop)
                     .disabled(!clopInstalled)
-                Text("Clop greatly reduces file size. It keeps its own copy of each image and video it optimizes, so long recordings also take space in Clop's cache.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Caption("Clop greatly reduces file size. It keeps its own copy of each image and video it optimizes, so long recordings also take space in Clop's cache.")
                 if !clopInstalled {
                     Link("Get Clop", destination: URL(string: "https://lowtechguys.com/clop")!)
                         .font(.caption)
@@ -66,9 +56,7 @@ struct GeneralSettingsView: View {
                 Toggle("Allow URL commands (tidyshot://)", isOn: $settings.urlCommandsEnabled)
                 Toggle("Allow URL commands that capture without a selection", isOn: $settings.urlCommandsAllowSilent)
                     .disabled(!settings.urlCommandsEnabled)
-                Text("capture-fullscreen, capture-previous-area, and capture-area or capture-text with x, y, width and height capture at once. Any app on this Mac, and any web page you let open TidyShot, can send them, and an allowed command lets the sending app read the result from the clipboard.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Caption("capture-fullscreen, capture-previous-area, and capture-area or capture-text with x, y, width and height capture at once. Any app on this Mac, and any web page you let open TidyShot, can send them, and an allowed command lets the sending app read the result from the clipboard.")
             }
         }
         .formStyle(.grouped)

@@ -24,3 +24,23 @@ struct SettingsView: View {
         }
     }
 }
+
+/// A note under a control, as every tab shows its examples, token lists and warnings: the caption
+/// font in the secondary colour.
+struct Caption: View {
+    private let text: Text
+
+    init(_ text: String) {
+        self.text = Text(text)
+    }
+
+    init(verbatim: String) {
+        self.text = Text(verbatim: verbatim)
+    }
+
+    var body: some View {
+        text
+            .font(.caption)
+            .foregroundStyle(.secondary)
+    }
+}

@@ -22,23 +22,15 @@ struct UploadSettingsView: View {
                 // Verbatim, because a string literal is parsed as Markdown and the URL would become
                 // a blue, clickable link instead of grey caption text.
                 TextField("Endpoint", text: $draft.endpoint, prompt: Text("Required"))
-                Text(verbatim: "Example: https://s3.us-west-2.amazonaws.com")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Caption(verbatim: "Example: https://s3.us-west-2.amazonaws.com")
                 TextField("Region", text: $draft.region, prompt: Text("us-west-2, or auto for R2"))
                 TextField("Bucket", text: $draft.bucket)
                 Toggle("Use path-style URLs (MinIO)", isOn: $draft.usePathStyle)
-                Text("Buckets whose name contains a dot always use path-style URLs; the provider's TLS certificate cannot cover them as a subdomain.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Caption("Buckets whose name contains a dot always use path-style URLs; the provider's TLS certificate cannot cover them as a subdomain.")
                 Toggle("Send public-read ACL with each upload", isOn: $draft.sendPublicReadACL)
                 TextField("Public URL", text: $draft.publicURLTemplate, prompt: Text("Required"))
-                Text(verbatim: "Example: https://snap.tky.io/{key}")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Text("{key} is replaced with the full object key, including any folders from the key template.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Caption(verbatim: "Example: https://snap.tky.io/{key}")
+                Caption("{key} is replaced with the full object key, including any folders from the key template.")
             }
             Section("Credentials") {
                 TextField("Access key ID", text: $accessKeyID)
@@ -50,26 +42,20 @@ struct UploadSettingsView: View {
                         .foregroundStyle(.red)
                         .textSelection(.enabled)
                 }
-                Text("Stored in your login keychain, never in preferences. A session token is only needed for temporary credentials.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Caption("Stored in your login keychain, never in preferences. A session token is only needed for temporary credentials.")
                 Button("Forget Credentials", role: .destructive) { forgetCredentials() }
                     .disabled(isTesting)
             }
             Section("Object keys") {
                 TextField("Key template", text: $draft.keyTemplate, prompt: Text(ObjectKeyNamer.defaultTemplate))
                     .font(.body.monospaced())
-                Text("Tokens: \(TemplateExpander.tokenList). Letters, digits, . _ - and / between tokens; / makes folders. The file's extension (.png or .mp4) is added.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Caption("Tokens: \(TemplateExpander.tokenList). Letters, digits, . _ - and / between tokens; / makes folders. The file's extension (.png or .mp4) is added.")
                 if let problem = ObjectKeyNamer.validate(draft.keyTemplate) {
                     Text(problem.localizedDescription)
                         .font(.caption)
                         .foregroundStyle(.red)
                 } else {
-                    Text("Example: \(exampleKey)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    Caption("Example: \(exampleKey)")
                     if let warning = ObjectKeyNamer.collisionWarning(for: draft.keyTemplate) {
                         Label(warning, systemImage: "exclamationmark.triangle")
                             .font(.caption)
