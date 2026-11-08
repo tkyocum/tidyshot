@@ -30,43 +30,40 @@ final class ClickRingOverlay: OverlayPanel, ClickRingDrawing {
     /// Moves the overlay to the recorded display's frame, AppKit global points.
     func setScreenFrame(_ frame: CGRect) {
         setFrame(frame, display: false)
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        ringContainer.frame = CGRect(origin: .zero, size: frame.size)
-        CATransaction.commit()
+        CATransaction.withoutActions {
+            ringContainer.frame = CGRect(origin: .zero, size: frame.size)
+        }
     }
 
+    /// Explicit animations only: a held ring sits on the pointer instead of trailing it.
     func apply(_ change: ClickRingChange) {
-        CATransaction.begin()
-        // Explicit animations only: a held ring sits on the pointer instead of trailing it.
-        CATransaction.setDisableActions(true)
-        switch change {
-        case .begin(let ring):
-            if held[ring.button] != nil { end(ring.button) }
-            let layer = Self.makeRingLayer(colour: ring.colour, scale: backingScaleFactor)
-            layer.position = ring.point
-            let grow = CABasicAnimation(keyPath: "transform.scale")
-            grow.fromValue = ClickRingTiming.startScale
-            grow.toValue = 1.0 as CGFloat
-            grow.duration = ClickRingTiming.grow
-            grow.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            layer.add(grow, forKey: Self.growKey)
-            ringContainer.addSublayer(layer)
-            held[ring.button] = (layer, CACurrentMediaTime())
-        case .move(let button, let point):
-            held[button]?.layer.position = point
-        case .end(let button):
-            end(button)
+        CATransaction.withoutActions {
+            switch change {
+            case .begin(let ring):
+                if held[ring.button] != nil { end(ring.button) }
+                let layer = Self.makeRingLayer(colour: ring.colour, scale: backingScaleFactor)
+                layer.position = ring.point
+                let grow = CABasicAnimation(keyPath: "transform.scale")
+                grow.fromValue = ClickRingTiming.startScale
+                grow.toValue = 1.0 as CGFloat
+                grow.duration = ClickRingTiming.grow
+                grow.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                layer.add(grow, forKey: Self.growKey)
+                ringContainer.addSublayer(layer)
+                held[ring.button] = (layer, CACurrentMediaTime())
+            case .move(let button, let point):
+                held[button]?.layer.position = point
+            case .end(let button):
+                end(button)
+            }
         }
-        CATransaction.commit()
     }
 
     func removeAllRings() {
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        held = [:]
-        for layer in ringContainer.sublayers ?? [] { layer.removeFromSuperlayer() }
-        CATransaction.commit()
+        CATransaction.withoutActions {
+            held = [:]
+            for layer in ringContainer.sublayers ?? [] { layer.removeFromSuperlayer() }
+        }
     }
 
     /// Once the grow has finished, the ring expands and fades to clear, then goes.

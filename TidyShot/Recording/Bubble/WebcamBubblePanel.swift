@@ -127,50 +127,47 @@ final class WebcamBubblePanel: OverlayPanel {
         updatePicture()
     }
 
+    /// No fade: nothing is filmed after the picture goes.
     private func updatePicture() {
-        CATransaction.begin()
-        // No fade: nothing is filmed after the picture goes.
-        CATransaction.setDisableActions(true)
-        contentView?.layer?.backgroundColor = isPictureShown ? Self.grey : nil
-        preview.isHidden = !isPictureShown || isLost
-        border.isHidden = !isPictureShown
-        lossSymbol.isHidden = !isPictureShown || !isLost
-        CATransaction.commit()
+        CATransaction.withoutActions {
+            contentView?.layer?.backgroundColor = isPictureShown ? Self.grey : nil
+            preview.isHidden = !isPictureShown || isLost
+            border.isHidden = !isPictureShown
+            lossSymbol.isHidden = !isPictureShown || !isLost
+        }
     }
 
     private func layoutLayers() {
         guard let view = contentView, let circle = view.layer else { return }
         let bounds = view.bounds
         let side = bounds.width
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        circle.cornerRadius = side / 2
-        preview.frame = bounds
-        border.frame = bounds
-        // The stroke lies inside the circle's edge.
-        let inset = border.lineWidth / 2
-        border.path = CGPath(ellipseIn: bounds.insetBy(dx: inset, dy: inset), transform: nil)
-        let symbol = side * Self.lossSymbolFraction
-        lossSymbol.frame = CGRect(x: (side - symbol) / 2, y: (side - symbol) / 2, width: symbol, height: symbol)
-        lossSymbol.mask?.frame = lossSymbol.bounds
-        CATransaction.commit()
+        CATransaction.withoutActions {
+            circle.cornerRadius = side / 2
+            preview.frame = bounds
+            border.frame = bounds
+            // The stroke lies inside the circle's edge.
+            let inset = border.lineWidth / 2
+            border.path = CGPath(ellipseIn: bounds.insetBy(dx: inset, dy: inset), transform: nil)
+            let symbol = side * Self.lossSymbolFraction
+            lossSymbol.frame = CGRect(x: (side - symbol) / 2, y: (side - symbol) / 2, width: symbol, height: symbol)
+            lossSymbol.mask?.frame = lossSymbol.bounds
+        }
     }
 
     /// Every layer at the screen's backing scale, the symbol drawn again at it.
     private func updateScale() {
         let scale = backingScaleFactor
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        for layer in [preview, border, lossSymbol] { layer.contentsScale = scale }
-        if let mask = lossSymbol.mask {
-            // Drawn once at Large's size, so every size scales it down.
-            let pointSize = BubbleSize.large.diameter * Self.lossSymbolFraction
-            let image = NSImage(systemSymbolName: Self.lossSymbolName, accessibilityDescription: nil)?
-                .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: pointSize, weight: .regular))
-            mask.contents = image?.layerContents(forContentsScale: scale)
-            mask.contentsScale = scale
+        CATransaction.withoutActions {
+            for layer in [preview, border, lossSymbol] { layer.contentsScale = scale }
+            if let mask = lossSymbol.mask {
+                // Drawn once at Large's size, so every size scales it down.
+                let pointSize = BubbleSize.large.diameter * Self.lossSymbolFraction
+                let image = NSImage(systemSymbolName: Self.lossSymbolName, accessibilityDescription: nil)?
+                    .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: pointSize, weight: .regular))
+                mask.contents = image?.layerContents(forContentsScale: scale)
+                mask.contentsScale = scale
+            }
         }
-        CATransaction.commit()
     }
 }
 

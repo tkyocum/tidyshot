@@ -53,10 +53,7 @@ final class BaseImageView: NSView {
     var backgroundFill: CGImage? {
         didSet {
             guard backgroundFill !== oldValue else { return }
-            CATransaction.begin()
-            CATransaction.setDisableActions(true)
-            backgroundLayer.contents = backgroundFill
-            CATransaction.commit()
+            CATransaction.withoutActions { backgroundLayer.contents = backgroundFill }
         }
     }
     let backgroundLayer = CALayer()
@@ -129,37 +126,35 @@ final class BaseImageView: NSView {
     /// draws its placeholder. Layers for ids no longer listed are removed; a layer whose image is
     /// the same object keeps its contents.
     func setTiles(_ shown: [(id: UUID, rect: CGRect, image: CGImage?)]) {
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        var existing = Dictionary(tiles.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
-        tiles = shown.map { entry in
-            var tile = existing.removeValue(forKey: entry.id)
-                ?? Tile(id: entry.id, layer: makeTileLayer(), image: nil, rect: .zero)
-            if tile.image !== entry.image { tile.layer.contents = entry.image }
-            tile.layer.isHidden = entry.image == nil
-            tile.image = entry.image
-            tile.rect = entry.rect
-            return tile
+        CATransaction.withoutActions {
+            var existing = Dictionary(tiles.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
+            tiles = shown.map { entry in
+                var tile = existing.removeValue(forKey: entry.id)
+                    ?? Tile(id: entry.id, layer: makeTileLayer(), image: nil, rect: .zero)
+                if tile.image !== entry.image { tile.layer.contents = entry.image }
+                tile.layer.isHidden = entry.image == nil
+                tile.image = entry.image
+                tile.rect = entry.rect
+                return tile
+            }
+            installLayers()
+            contentLayer.sublayers = imageLayers + tiles.map(\.layer)
         }
-        installLayers()
-        contentLayer.sublayers = imageLayers + tiles.map(\.layer)
-        CATransaction.commit()
         layoutLayers()
     }
 
     /// Replaces the image layers with one per tile, under the effect tiles.
     private func setBaseTiles(_ crops: [(rect: CGRect, image: CGImage)]) {
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        baseTiles = crops
-        imageLayers = crops.map { crop in
-            let imageLayer = makeTileLayer()
-            imageLayer.contents = crop.image
-            return imageLayer
+        CATransaction.withoutActions {
+            baseTiles = crops
+            imageLayers = crops.map { crop in
+                let imageLayer = makeTileLayer()
+                imageLayer.contents = crop.image
+                return imageLayer
+            }
+            installLayers()
+            contentLayer.sublayers = imageLayers + tiles.map(\.layer)
         }
-        installLayers()
-        contentLayer.sublayers = imageLayers + tiles.map(\.layer)
-        CATransaction.commit()
         layoutLayers()
     }
 
@@ -177,23 +172,22 @@ final class BaseImageView: NSView {
     /// when the zoom crosses 2 device pixels per image pixel. The background's layers follow the
     /// same transform.
     private func layoutLayers() {
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        installLayers()
-        contentLayer.frame = bounds
-        layoutBackground()
-        let filter: CALayerContentsFilter = transform.zoom * (window?.backingScaleFactor ?? 2) >= 2 ? .nearest : .linear
-        let filterChanged = filter != magnificationFilter
-        magnificationFilter = filter
-        for (imageLayer, crop) in zip(imageLayers, baseTiles) {
-            imageLayer.frame = transform.viewRect(crop.rect)
-            if filterChanged { imageLayer.magnificationFilter = filter }
+        CATransaction.withoutActions {
+            installLayers()
+            contentLayer.frame = bounds
+            layoutBackground()
+            let filter: CALayerContentsFilter = transform.zoom * (window?.backingScaleFactor ?? 2) >= 2 ? .nearest : .linear
+            let filterChanged = filter != magnificationFilter
+            magnificationFilter = filter
+            for (imageLayer, crop) in zip(imageLayers, baseTiles) {
+                imageLayer.frame = transform.viewRect(crop.rect)
+                if filterChanged { imageLayer.magnificationFilter = filter }
+            }
+            for tile in tiles {
+                tile.layer.frame = transform.viewRect(tile.rect)
+                if filterChanged { tile.layer.magnificationFilter = filter }
+            }
         }
-        for tile in tiles {
-            tile.layer.frame = transform.viewRect(tile.rect)
-            if filterChanged { tile.layer.magnificationFilter = filter }
-        }
-        CATransaction.commit()
     }
 
     /// The fill at the background's rect; the shadow and the mask at the rounded content rect,
