@@ -154,13 +154,8 @@ nonisolated enum RecordingMute {
     /// or a cancel removes what was written.
     @concurrent
     static func apply(_ source: URL, intervals: [MuteInterval], to output: URL) async throws {
-        try prepareOutput(output)
-        do {
+        try await TrackPass.writing(to: output) {
             try await rewrite(source, segments: intervals, to: output)
-        } catch {
-            removeOutput(output)
-            if Task.isCancelled { throw CancellationError() }
-            throw error
         }
     }
 
@@ -169,8 +164,7 @@ nonisolated enum RecordingMute {
     /// replaced, and a throw or a cancel removes the partial file the export leaves.
     @concurrent
     static func stripAudio(_ source: URL, to output: URL) async throws {
-        try prepareOutput(output)
-        do {
+        try await TrackPass.writing(to: output) {
             let asset = AVURLAsset(url: source)
             guard let track = try await asset.loadTracks(withMediaType: .video).first else {
                 throw RecordingMuteError.couldNotRead
@@ -187,10 +181,6 @@ nonisolated enum RecordingMute {
                 throw RecordingMuteError.couldNotWrite
             }
             try await session.export(to: output, as: .mp4)
-        } catch {
-            removeOutput(output)
-            if Task.isCancelled { throw CancellationError() }
-            throw error
         }
     }
 
@@ -206,13 +196,6 @@ nonisolated enum RecordingMute {
             guard !manager.fileExists(atPath: original.path(percentEncoded: false)),
                   (try? manager.moveItem(at: output, to: original)) != nil else { throw error }
         }
-    }
-
-    /// Makes `output`'s folder when it is missing (`tmp/Mute` exists only once a log write has
-    /// succeeded, and the launch clear removes `tmp/Trim`), and removes any file at `output`.
-    private static func prepareOutput(_ output: URL) throws {
-        try FileManager.default.createDirectory(at: output.deletingLastPathComponent(), withIntermediateDirectories: true)
-        removeOutput(output)
     }
 
     // MARK: The rewrite
@@ -233,85 +216,62 @@ nonisolated enum RecordingMute {
         let videoInput = AVAssetWriterInput(mediaType: .video, outputSettings: nil, sourceFormatHint: videoFormats.first)
         videoInput.transform = transform
         videoInput.expectsMediaDataInRealTime = false
-        let video = Passage(from: reader.outputProvider(for: AVAssetReaderTrackOutput(track: videoTrack, outputSettings: nil)),
-                            to: writer.inputReceiver(for: videoInput))
+        let video = Passage(provider: reader.outputProvider(for: AVAssetReaderTrackOutput(track: videoTrack, outputSettings: nil)),
+                            receiver: writer.inputReceiver(for: videoInput), sound: nil)
 
         var audio: Passage?
         if let audioTrack {
-            let (formats, range) = try await audioTrack.load(.formatDescriptions, .timeRange)
-            guard let format = formats.first,
-                  let description = CMAudioFormatDescriptionGetStreamBasicDescription(format)?.pointee else {
-                throw RecordingMuteError.couldNotRead
-            }
-            let decoder = try AudioDecoder(format: format, end: range.end)
-            let audioInput = AVAssetWriterInput(mediaType: .audio, outputSettings: TrackPass.aacSettings(for: description))
-            audioInput.expectsMediaDataInRealTime = false
-            audio = Passage(from: reader.outputProvider(for: AVAssetReaderTrackOutput(track: audioTrack, outputSettings: nil)),
-                            to: writer.inputReceiver(for: audioInput), decoder: decoder)
+            let lane = try await TrackPass.audioLane(of: audioTrack, reader: reader, writer: writer,
+                                                     readError: RecordingMuteError.couldNotRead)
+            audio = Passage(provider: lane.provider, receiver: lane.receiver, sound: (lane.decoder, segments))
         }
 
         // Each passage on a task of its own (`TrackPass.run`).
-        var tracks: [() async throws -> Void] = [{ try await video.run(silencing: nil) }]
+        var tracks: [() async throws -> Void] = [{ try await video.run() }]
         if let audio {
-            tracks.append { try await audio.run(silencing: segments) }
+            tracks.append { try await audio.run() }
         }
         try await TrackPass.run(reader: reader, writer: writer, tracks: tracks,
                                 readError: RecordingMuteError.couldNotRead, writeError: RecordingMuteError.couldNotWrite)
     }
 
-    /// One track's way from the reader to the writer, through `decoder` for the audio.
+    /// One track's way from the reader to the writer: the video's samples as read, or, with
+    /// `sound`, the audio decoded and silenced inside its segments.
     private struct Passage {
         let provider: AVAssetReaderOutput.Provider<ReadySample>
         let receiver: AVAssetWriterInput.SampleBufferReceiver
-        let decoder: AudioDecoder?
+        let sound: (decoder: AudioDecoder, segments: [MuteInterval])?
 
-        init(from provider: AVAssetReaderOutput.Provider<ReadySample>, to receiver: AVAssetWriterInput.SampleBufferReceiver,
-             decoder: AudioDecoder? = nil) {
-            self.provider = provider
-            self.receiver = receiver
-            self.decoder = decoder
-        }
-
-        /// Appends every sample, decoded when there is a decoder and with `segments` silenced when
-        /// given, then the decoder's silence to the track's end, and finishes the input. A failure
-        /// finishes it too, so the writer stops holding the other track back for it.
-        func run(silencing segments: [MuteInterval]?) async throws {
-            do {
-                while true {
-                    // Before each read, so a passage cancelled while the writer held its append
-                    // ends here instead of reading on.
-                    try Task.checkCancellation()
-                    guard let read = try await provider.next() else { break }
-                    if let decoder {
-                        try decoder.decode(read)
-                        try await append(from: decoder, silencing: segments)
-                    } else {
-                        try await append(read, silencing: segments)
-                    }
-                }
+        /// Appends every sample, then the decoder's silence to the track's end, and finishes the
+        /// input. A failure finishes it too, so the writer stops holding the other track back for it.
+        func run() async throws {
+            defer { receiver.finish() }
+            while true {
+                // Before each read, so a passage cancelled while the writer held its append
+                // ends here instead of reading on.
                 try Task.checkCancellation()
-                if let decoder {
-                    try decoder.finish()
-                    try await append(from: decoder, silencing: segments)
+                guard let read = try await provider.next() else { break }
+                if let sound {
+                    try sound.decoder.decode(read)
+                    try await appendDecoded(sound)
+                } else {
+                    try await receiver.append(read)
                 }
-            } catch {
-                receiver.finish()
-                throw error
             }
-            receiver.finish()
-        }
-
-        /// Appends what `decoder` holds, a buffer at a time; a marker, or packets the trims take
-        /// whole, leave it nothing.
-        private func append(from decoder: AudioDecoder, silencing segments: [MuteInterval]?) async throws {
-            while let sample = try decoder.nextBuffer() {
-                try Task.checkCancellation()
-                try await append(sample, silencing: segments)
+            try Task.checkCancellation()
+            if let sound {
+                try sound.decoder.finish()
+                try await appendDecoded(sound)
             }
         }
 
-        private func append(_ sample: ReadySample, silencing segments: [MuteInterval]?) async throws {
-            try await receiver.append(try segments.map { try silenced(sample, segments: $0) } ?? sample)
+        /// Appends what the decoder holds, a buffer at a time, silenced; a marker, or packets the
+        /// trims take whole, leave it nothing.
+        private func appendDecoded(_ sound: (decoder: AudioDecoder, segments: [MuteInterval])) async throws {
+            while let sample = try sound.decoder.nextBuffer() {
+                try Task.checkCancellation()
+                try await receiver.append(try silenced(sample, segments: sound.segments))
+            }
         }
     }
 

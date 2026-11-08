@@ -53,7 +53,6 @@ struct RecordingTrimTests {
         #expect(RecordingTrim.notTrimmedTitle == "Not trimmed")
         #expect(RecordingTrim.tooShortText == "The trimmed recording would be too short.")
         #expect(RecordingTrim.notEnoughSpaceText == "Not enough disk space.")
-        #expect(TrimRefusal.tooShort.message == RecordingTrim.tooShortText)
         #expect(RecordingTrimError.notEnoughSpace.localizedDescription == "Not enough disk space.")
         #expect(EditorAvailability.trimmingRefusal == "This capture is being trimmed.")
         #expect(CaptureDeletion.trimmingRefusal == "This capture is being trimmed. Delete it when the trim finishes.")
@@ -62,53 +61,31 @@ struct RecordingTrimTests {
     // MARK: The range
 
     @Test func rangeKeepsAValidRange() throws {
-        let range = try RecordingTrim.range(start: t(1), end: t(3.5), duration: t(10)).get()
+        let range = try #require(RecordingTrim.range(start: t(1), end: t(3.5), duration: t(10)))
         #expect(range == CMTimeRange(start: t(1), end: t(3.5)))
     }
 
     @Test func rangeReadsAnInvalidTimeAsTheFilesStartOrEnd() throws {
-        #expect(try RecordingTrim.range(start: .invalid, end: t(4), duration: t(10)).get()
+        #expect(try #require(RecordingTrim.range(start: .invalid, end: t(4), duration: t(10)))
                 == CMTimeRange(start: .zero, end: t(4)))
-        #expect(try RecordingTrim.range(start: t(2), end: .invalid, duration: t(10)).get()
+        #expect(try #require(RecordingTrim.range(start: t(2), end: .invalid, duration: t(10)))
                 == CMTimeRange(start: t(2), end: t(10)))
-        #expect(try RecordingTrim.range(start: .invalid, end: .indefinite, duration: t(10)).get()
+        #expect(try #require(RecordingTrim.range(start: .invalid, end: .indefinite, duration: t(10)))
                 == CMTimeRange(start: .zero, end: t(10)))
     }
 
     @Test func rangeClampsToTheFile() throws {
-        #expect(try RecordingTrim.range(start: t(-1), end: t(12), duration: t(10)).get()
+        #expect(try #require(RecordingTrim.range(start: t(-1), end: t(12), duration: t(10)))
                 == CMTimeRange(start: .zero, end: t(10)))
     }
 
     @Test func rangeRefusesUnderHalfASecond() throws {
-        #expect(RecordingTrim.range(start: t(2), end: t(2.4), duration: t(10)) == .failure(.tooShort))
-        #expect(RecordingTrim.range(start: t(9.8), end: .invalid, duration: t(10)) == .failure(.tooShort))
-        #expect(RecordingTrim.range(start: t(5), end: t(3), duration: t(10)) == .failure(.tooShort))
-        #expect(RecordingTrim.range(start: t(11), end: t(12), duration: t(10)) == .failure(.tooShort))
-        #expect(try RecordingTrim.range(start: t(2), end: t(2.5), duration: t(10)).get()
+        #expect(RecordingTrim.range(start: t(2), end: t(2.4), duration: t(10)) == nil)
+        #expect(RecordingTrim.range(start: t(9.8), end: .invalid, duration: t(10)) == nil)
+        #expect(RecordingTrim.range(start: t(5), end: t(3), duration: t(10)) == nil)
+        #expect(RecordingTrim.range(start: t(11), end: t(12), duration: t(10)) == nil)
+        #expect(try #require(RecordingTrim.range(start: t(2), end: t(2.5), duration: t(10)))
                 == CMTimeRange(start: t(2), end: t(2.5)))
-    }
-
-    // MARK: The source file
-
-    @Test func sourceFollowsEditorInputsOrder() {
-        #expect(RecordingTrim.source(for: pending, saveFolder: folder) == .pendingFile(pendingFile))
-        #expect(RecordingTrim.source(for: pending, saveFolder: nil) == .pendingFile(pendingFile))
-        #expect(RecordingTrim.source(for: saved, saveFolder: folder) == .saveFolderFile(savedFile, folder: folder))
-        // A file outside the folder, or with no folder, downloads when it was uploaded.
-        let outsideUploaded = recording(outsideFile, state: .uploaded(url: link, key: "rec.mp4"), located: true)
-        #expect(RecordingTrim.source(for: outsideUploaded, saveFolder: folder) == .download(key: "rec.mp4", location: location))
-        #expect(RecordingTrim.source(for: savedAndUploaded, saveFolder: nil) == .download(key: "rec.mp4", location: location))
-        #expect(RecordingTrim.source(for: uploadOnly, saveFolder: folder) == .download(key: "rec.mp4", location: location))
-    }
-
-    @Test func sourceIsUnavailableWithEditorInputsTexts() {
-        #expect(RecordingTrim.source(for: recording(outsideFile), saveFolder: folder)
-                == .unavailable(EditorInput.outsideSaveFolderText))
-        #expect(RecordingTrim.source(for: saved, saveFolder: nil) == .unavailable(EditorInput.outsideSaveFolderText))
-        #expect(RecordingTrim.source(for: recording(nil), saveFolder: folder) == .unavailable(EditorInput.neverUploadedText))
-        let unknown = recording(nil, state: .uploaded(url: link, key: "rec.mp4"))
-        #expect(RecordingTrim.source(for: unknown, saveFolder: folder) == .unavailable(EditorInput.unknownLocationText))
     }
 
     // MARK: The sheet
@@ -199,7 +176,7 @@ struct RecordingTrimTests {
     /// save over with no destination (the sheet would have no button but `Cancel`).
     @Test func openRefusalGivesTheSourcesOrTheSaveTargetsReason() {
         func refusal(_ record: CaptureRecord, folder: URL?, destination: Bool) -> String? {
-            RecordingTrim.openRefusal(for: record, source: RecordingTrim.source(for: record, saveFolder: folder),
+            RecordingTrim.openRefusal(for: record, source: EditorInput.fileSource(for: record, saveFolder: folder),
                                       saveFolder: folder, hasDestination: destination)
         }
         #expect(refusal(saved, folder: folder, destination: false) == nil)

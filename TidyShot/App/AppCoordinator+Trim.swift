@@ -31,7 +31,7 @@ extension AppCoordinator {
             return
         }
         guard !openingTrimIDs.contains(recordID), let record = history.record(id: recordID) else { return }
-        let source = RecordingTrim.source(for: record, saveFolder: saveLocation.currentURL)
+        let source = EditorInput.fileSource(for: record, saveFolder: saveLocation.currentURL)
         if let reason = RecordingTrim.openRefusal(for: record, source: source, saveFolder: saveLocation.currentURL,
                                                   hasDestination: hasUploadDestination) {
             notifier.notifyError(reason, title: RecordingTrim.notTrimmedTitle)
@@ -42,14 +42,17 @@ extension AppCoordinator {
         switch source {
         case .pendingFile(let fileURL):
             presentTrimWindow(for: record, fileURL: fileURL, scope: nil)
-        case .saveFolderFile(let fileURL, let folder):
+        case .saveFolderFile(let fileURL):
+            // `fileSource` gives a save-folder file only with a folder.
+            guard let folder = saveLocation.currentURL else { return }
             let accessing = folder.startAccessingSecurityScopedResource()
             presentTrimWindow(for: record, fileURL: fileURL, scope: accessing ? folder : nil)
         case .download:
             openingTrimIDs.insert(recordID)
             Task { await downloadAndPresentTrimWindow(for: record) }
-        case .unavailable:
-            // Never reached: `openRefusal` gives this source's reason, posted above.
+        case .retained, .unavailable:
+            // Never reached: `fileSource` never gives `.retained`, and `openRefusal` posted
+            // `.unavailable`'s reason above.
             break
         }
     }
@@ -116,14 +119,10 @@ extension AppCoordinator {
             controller.close()
             return
         }
-        let range: CMTimeRange
-        switch RecordingTrim.range(start: start, end: end, duration: duration) {
-        case .failure(let refusal):
-            notifier.notifyError(refusal.message, title: RecordingTrim.notTrimmedTitle)
+        guard let range = RecordingTrim.range(start: start, end: end, duration: duration) else {
+            notifier.notifyError(RecordingTrim.tooShortText, title: RecordingTrim.notTrimmedTitle)
             controller.close()
             return
-        case .success(let chosen):
-            range = chosen
         }
         guard let record = history.record(id: id) else {
             controller.close()

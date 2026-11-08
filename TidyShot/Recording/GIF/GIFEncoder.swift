@@ -50,7 +50,7 @@ nonisolated struct GIFEncoder<Sink: GIFSink> {
     private var opaqueFrameCount = 0
 
     /// Writes the header, the logical screen, the global table and the loop block.
-    init(sink: Sink, width: Int, height: Int, fps: Int, palette: GIFPalette, hysteresis: Int = 4) throws {
+    init(sink: Sink, width: Int, height: Int, fps: Int, palette: GIFPalette) throws {
         precondition((1...0xFFFF).contains(width) && (1...0xFFFF).contains(height), "GIF sizes are 16-bit")
         precondition(fps > 0)
         self.sink = sink
@@ -59,7 +59,7 @@ nonisolated struct GIFEncoder<Sink: GIFSink> {
         self.fps = fps
         transparentIndex = palette.transparentIndex
         minimumCodeSize = max(2, palette.tableBits)
-        differ = GIFFrameDiffer(width: width, height: height, palette: palette, hysteresis: hysteresis)
+        differ = GIFFrameDiffer(width: width, height: height, palette: palette)
 
         var start = Array("GIF89a".utf8)
         // Logical screen: a global table of 2^tableBits entries, 8 bits a channel, unsorted.

@@ -99,18 +99,12 @@ nonisolated extension RecordingTrim {
         guard range.isValid, range.start.isNumeric, range.duration.isNumeric, range.duration > .zero else {
             throw RecordingTrimError.couldNotRead
         }
-        try FileManager.default.createDirectory(at: output.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? FileManager.default.removeItem(at: output)
-        do {
+        try await TrackPass.writing(to: output) {
             try Task.checkCancellation()
             switch method {
             case .passthrough: try await passthrough(source, range: range, to: output)
             case .reencode: try await reencode(source, range: range, to: output, progress: progress)
             }
-        } catch {
-            try? FileManager.default.removeItem(at: output)
-            if Task.isCancelled { throw CancellationError() }
-            throw error
         }
         progress(1)
     }
@@ -176,21 +170,15 @@ nonisolated extension RecordingTrim {
         ])
         videoOutput.alwaysCopiesSampleData = false
         let video = VideoCut(provider: reader.outputProvider(for: videoOutput),
-                             receiver: writer.inputReceiver(for: videoInput), range: range, progress: progress)
+                             receiver: writer.inputReceiver(for: videoInput), range: range,
+                             reporter: ProgressReporter(progress))
 
         var audio: AudioCut?
         if let audioTrack {
-            let (formats, audioRange) = try await audioTrack.load(.formatDescriptions, .timeRange)
-            guard let format = formats.first,
-                  let description = CMAudioFormatDescriptionGetStreamBasicDescription(format)?.pointee else {
-                throw RecordingTrimError.couldNotRead
-            }
-            let decoder = try AudioDecoder(format: format, end: audioRange.end)
-            let audioInput = AVAssetWriterInput(mediaType: .audio, outputSettings: TrackPass.aacSettings(for: description))
-            audioInput.expectsMediaDataInRealTime = false
-            audio = AudioCut(provider: reader.outputProvider(for: AVAssetReaderTrackOutput(track: audioTrack, outputSettings: nil)),
-                             receiver: writer.inputReceiver(for: audioInput), decoder: decoder,
-                             frames: try frames(of: range, rate: description.mSampleRate), rate: description.mSampleRate)
+            let lane = try await TrackPass.audioLane(of: audioTrack, reader: reader, writer: writer,
+                                                     readError: RecordingTrimError.couldNotRead)
+            audio = AudioCut(provider: lane.provider, receiver: lane.receiver, decoder: lane.decoder,
+                             frames: try frames(of: range, rate: lane.rate), rate: lane.rate)
         }
 
         // Each track on a task of its own, as in `RecordingMute.apply`, and the session to the range's
@@ -259,70 +247,57 @@ nonisolated extension RecordingTrim {
     /// `range` in whole frames at `rate`, as `AudioDecoder` places them: from the frame at its start to
     /// the one at its end.
     static func frames(of range: CMTimeRange, rate: Double) throws -> Range<Int> {
-        let start = (range.start.seconds * rate).rounded()
-        let end = (range.end.seconds * rate).rounded()
-        guard range.start.isNumeric, range.end.isNumeric, start >= 0, end >= start, end <= 0x1p53 else {
+        // `AudioDecoder.frames` refuses a time that is not numeric or past 2^53 frames.
+        guard let start = try? AudioDecoder.frames(range.start, rate: rate),
+              let end = try? AudioDecoder.frames(range.end, rate: rate), start >= 0, end >= start else {
             throw RecordingTrimError.couldNotRead
         }
-        return Int(start)..<Int(end)
+        return start..<end
     }
 
     /// The video's way through a re-encode: decoded frames, each written at its presentation time
     /// minus the range's start, the frame shown at the start at 0, and none from before it or from the
     /// range's end on. Each is shown until the next or the range's end, so a last frame held over a
-    /// still screen lasts to the end. `progress` gets the last written frame's time over the range's
-    /// duration, at most every 0.1 s and never less than before.
+    /// still screen lasts to the end. `reporter` gets the last written frame's time over the range's
+    /// duration, which it passes on at most every 0.1 s and never less than before.
     private struct VideoCut {
         let provider: AVAssetReaderOutput.Provider<ReadySample>
         let receiver: AVAssetWriterInput.SampleBufferReceiver
         let range: CMTimeRange
-        let progress: @Sendable (Double) -> Void
+        let reporter: ProgressReporter
 
         /// Writes the frames, then finishes the input. A failure finishes it too, so the writer stops
         /// holding the other track back for it. A range with no frame to show throws, rather than give
         /// a file with no picture.
         func run() async throws {
-            do {
-                // The latest frame at or before the start: the one shown there.
-                var shown: ReadySample?
-                var last: CMTime?
-                var reported = 0.0
-                var reportedAt: ContinuousClock.Instant?
-                while true {
-                    // Before each read, as in `RecordingMute.apply`.
-                    try Task.checkCancellation()
-                    guard let read = try await provider.next() else { break }
-                    let time = read.presentationTimeStamp
-                    guard read.withUnsafeSampleBuffer({ CMSampleBufferGetImageBuffer($0) != nil }), time.isNumeric else {
-                        continue
-                    }
-                    if time <= range.start {
-                        shown = read
-                        continue
-                    }
-                    guard time < range.end else { break }
-                    if let frame = shown {
-                        last = try await write(frame, at: .zero, after: last)
-                        shown = nil
-                    }
-                    last = try await write(read, at: time - range.start, after: last)
-                    let fraction = (time - range.start).seconds / range.duration.seconds
-                    let now = ContinuousClock.now
-                    if fraction > reported, fraction < 1, reportedAt.map({ now - $0 >= .milliseconds(100) }) ?? true {
-                        progress(fraction)
-                        reported = fraction
-                        reportedAt = now
-                    }
+            defer { receiver.finish() }
+            // The latest frame at or before the start: the one shown there.
+            var shown: ReadySample?
+            var last: CMTime?
+            while true {
+                // Before each read, as in `RecordingMute.apply`.
+                try Task.checkCancellation()
+                guard let read = try await provider.next() else { break }
+                let time = read.presentationTimeStamp
+                guard read.withUnsafeSampleBuffer({ CMSampleBufferGetImageBuffer($0) != nil }), time.isNumeric else {
+                    continue
                 }
+                if time <= range.start {
+                    shown = read
+                    continue
+                }
+                guard time < range.end else { break }
                 if let frame = shown {
                     last = try await write(frame, at: .zero, after: last)
+                    shown = nil
                 }
-                guard last != nil else { throw RecordingTrimError.couldNotRead }
-            } catch {
-                receiver.finish()
-                throw error
+                last = try await write(read, at: time - range.start, after: last)
+                reporter.report((time - range.start).seconds / range.duration.seconds)
             }
-            receiver.finish()
+            if let frame = shown {
+                last = try await write(frame, at: .zero, after: last)
+            }
+            guard last != nil else { throw RecordingTrimError.couldNotRead }
         }
 
         /// Appends `frame` retimed to `time`, unless that is not after `last`; gives the last time
@@ -358,25 +333,20 @@ nonisolated extension RecordingTrim {
 
         /// Appends the range's sound, then finishes the input. A failure finishes it too.
         func run() async throws {
-            do {
-                var ended = false
-                while !ended {
-                    try Task.checkCancellation()
-                    guard let read = try await provider.next() else { break }
-                    try decoder.decode(read)
-                    ended = try await appendDecoded()
-                }
-                if !ended {
-                    // Silence to the track's end, where an empty edit ends the sound.
-                    try Task.checkCancellation()
-                    try decoder.finish()
-                    _ = try await appendDecoded()
-                }
-            } catch {
-                receiver.finish()
-                throw error
+            defer { receiver.finish() }
+            var ended = false
+            while !ended {
+                try Task.checkCancellation()
+                guard let read = try await provider.next() else { break }
+                try decoder.decode(read)
+                ended = try await appendDecoded()
             }
-            receiver.finish()
+            if !ended {
+                // Silence to the track's end, where an empty edit ends the sound.
+                try Task.checkCancellation()
+                try decoder.finish()
+                _ = try await appendDecoded()
+            }
         }
 
         /// Appends what `decoder` holds inside the range; true once it reaches the range's end, after

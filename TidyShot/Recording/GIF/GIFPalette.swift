@@ -66,8 +66,10 @@ nonisolated struct GIFPalette: Equatable, Sendable {
 nonisolated struct GIFPaletteBuilder {
     private static let binCount = 1 << 18
 
-    let minimumBoxSpread: Double
-    let refinementPasses: Int
+    /// A box with less spread than this is codec noise, and is never split (R2 design, Palette).
+    private static let minimumBoxSpread = 2.0
+    /// The k-means passes over the boxes' means.
+    private static let refinementPasses = 4
 
     /// Pixels per bin. 32 frames of 4096 × 4096 fit in 32 bits.
     private var counts: [UInt32]
@@ -75,9 +77,7 @@ nonisolated struct GIFPaletteBuilder {
     /// fell in it.
     private var sums: [UInt64]
 
-    init(minimumBoxSpread: Double = 2, refinementPasses: Int = 4) {
-        self.minimumBoxSpread = minimumBoxSpread
-        self.refinementPasses = refinementPasses
+    init() {
         counts = [UInt32](repeating: 0, count: Self.binCount)
         sums = [UInt64](repeating: 0, count: Self.binCount * 3)
     }
@@ -126,7 +126,7 @@ nonisolated struct GIFPaletteBuilder {
             var pick = -1
             var worst = 0.0
             for (index, box) in boxes.enumerated()
-            where box.hi - box.lo >= 2 && box.error > worst && box.spread >= minimumBoxSpread {
+            where box.hi - box.lo >= 2 && box.error > worst && box.spread >= Self.minimumBoxSpread {
                 worst = box.error
                 pick = index
             }
@@ -144,7 +144,7 @@ nonisolated struct GIFPaletteBuilder {
 
         // Each box's population-weighted mean, so a dominant exact colour stays exact.
         var means = boxes.map { points.mean(order[$0.lo..<$0.hi]) }
-        for _ in 0..<refinementPasses {
+        for _ in 0..<Self.refinementPasses {
             means = points.refine(means)
         }
         var colours = reserved

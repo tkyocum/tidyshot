@@ -180,7 +180,8 @@ nonisolated final class AudioDecoder {
 
     /// `time` in whole frames at `rate`. A time that is not numeric, or past the 2^53 frames a
     /// `Double` counts exactly (thousands of years), throws, so no sum of a few of them overflows.
-    private static func frames(_ time: CMTime, rate: Double) throws -> Int {
+    /// The trim's `frames(of:rate:)` places its range with it too.
+    static func frames(_ time: CMTime, rate: Double) throws -> Int {
         let frames = (time.seconds * rate).rounded()
         guard time.isNumeric, abs(frames) <= 0x1p53 else { throw RecordingMuteError.couldNotRead }
         return Int(frames)

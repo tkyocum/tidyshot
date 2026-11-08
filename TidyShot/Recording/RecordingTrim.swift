@@ -2,19 +2,6 @@ import AVFoundation
 import CoreMedia
 import Foundation
 
-/// Why a trim's range was refused (design, Trim): the part kept would be under
-/// `RecordingTrim.minimumDuration`.
-nonisolated enum TrimRefusal: Error, Equatable, Sendable {
-    case tooShort
-
-    /// The body of `Not trimmed`.
-    var message: String {
-        switch self {
-        case .tooShort: RecordingTrim.tooShortText
-        }
-    }
-}
-
 /// Why a trim's export failed (design, Trim, Export): `Not trimmed` posts its text.
 nonisolated enum RecordingTrimError: LocalizedError, Equatable, Sendable {
     /// The disk check refused before anything was written.
@@ -70,43 +57,21 @@ nonisolated enum RecordingTrim {
 
     /// The trim bar's range, from `reversePlaybackEndTime` to `forwardPlaybackEndTime`: an invalid
     /// (or infinite) time is the file's start or end, and both ends are clamped to the file. A range
-    /// under `minimumDuration` is refused.
-    static func range(start: CMTime, end: CMTime, duration: CMTime) -> Result<CMTimeRange, TrimRefusal> {
+    /// under `minimumDuration` is refused: nil, and `Not trimmed` posts `tooShortText`.
+    static func range(start: CMTime, end: CMTime, duration: CMTime) -> CMTimeRange? {
         func clamped(_ time: CMTime) -> CMTime { CMTimeMaximum(.zero, CMTimeMinimum(time, duration)) }
         let from = clamped(start.isNumeric ? start : .zero)
         let to = clamped(end.isNumeric ? end : duration)
-        guard CMTimeSubtract(to, from).seconds >= minimumDuration else { return .failure(.tooShort) }
-        return .success(CMTimeRange(start: from, end: to))
+        guard CMTimeSubtract(to, from).seconds >= minimumDuration else { return nil }
+        return CMTimeRange(start: from, end: to)
     }
 
     // MARK: The source file
 
-    /// Where the Trim window reads the recording from.
-    enum Source: Equatable, Sendable {
-        /// `pending/<id>.mp4`, read directly.
-        case pendingFile(URL)
-        /// A file inside the current save folder, read under that folder's scope while the window is open.
-        case saveFolderFile(URL, folder: URL)
-        /// The uploaded object, downloaded to `downloadURL(for:)`.
-        case download(key: String, location: ObjectLocation)
-        /// Nothing to read, with `EditorInput`'s reason.
-        case unavailable(String)
-    }
-
-    /// `EditorInput.fileSource`, so Trim keeps the editor's order and texts: a pending file; a file
-    /// in the current save folder, with that folder; the uploaded object when its location is known
-    /// (also for a file outside the folder, or with no folder); otherwise unavailable.
-    static func source(for record: CaptureRecord, saveFolder: URL?) -> Source {
-        switch (EditorInput.fileSource(for: record, saveFolder: saveFolder), saveFolder) {
-        case (.pendingFile(let fileURL), _): .pendingFile(fileURL)
-        case (.saveFolderFile(let fileURL), let folder?): .saveFolderFile(fileURL, folder: folder)
-        case (.download(let key, let location), _): .download(key: key, location: location)
-        case (.unavailable(let reason), _): .unavailable(reason)
-        // `fileSource` gives neither: a save-folder file comes only with a folder, and the
-        // retained image is the editor's own. Nothing to read, as for a file outside the folder.
-        case (.saveFolderFile, nil), (.retained, _): .unavailable(EditorInput.outsideSaveFolderText)
-        }
-    }
+    // The Trim window reads the recording from where the editor would (`EditorInput.fileSource`): a
+    // pending file, read directly; a file in the current save folder, read under the folder's scope
+    // while the window is open; the uploaded object, downloaded to `downloadURL(for:)`; or nothing,
+    // with the editor's reason. `fileSource` never gives `.retained` for a recording.
 
     // MARK: The sheet
 
@@ -170,16 +135,17 @@ nonisolated enum RecordingTrim {
     static func canTrim(_ record: CaptureRecord, saveFolder: URL?, hasDestination: Bool, isDeleting: Bool,
                         isTrimming: Bool) -> Bool {
         guard showsTrim(record), !record.isUploading, !isDeleting, !isTrimming else { return false }
-        return openRefusal(for: record, source: source(for: record, saveFolder: saveFolder), saveFolder: saveFolder,
-                           hasDestination: hasDestination) == nil
+        return openRefusal(for: record, source: EditorInput.fileSource(for: record, saveFolder: saveFolder),
+                           saveFolder: saveFolder, hasDestination: hasDestination) == nil
     }
 
-    /// Why the window cannot open on the record, from its `source` (`source(for:saveFolder:)`, which
+    /// Why the window cannot open on the record, from its `source` (`EditorInput.fileSource`, which
     /// `trimCapture` works out once and then opens), the save folder and the destination alone, or
     /// nil: nothing to read (the source's reason), or a sheet with no button but `Cancel`, with
     /// nothing to save over and no destination (the Save target's reason). A card drawn before a
     /// change in Settings can still offer `Trim…`, so `trimCapture` posts it as `Not trimmed`.
-    static func openRefusal(for record: CaptureRecord, source: Source, saveFolder: URL?, hasDestination: Bool) -> String? {
+    static func openRefusal(for record: CaptureRecord, source: EditorInput.Source, saveFolder: URL?,
+                            hasDestination: Bool) -> String? {
         if case .unavailable(let reason) = source { return reason }
         let plan = EditorSaveTarget.plan(for: record, saveFolder: saveFolder)
         guard sheet(plan: plan, hasDestination: hasDestination, hasLink: record.linkURL != nil) == nil,

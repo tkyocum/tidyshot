@@ -21,6 +21,44 @@ nonisolated enum TrackPass {
         ]
     }
 
+    /// The sound's lane of a pass: `track` read as stored, decoded by `AudioDecoder`, and written
+    /// again as AAC at the source's rate and channel count (`aacSettings`).
+    struct AudioLane {
+        let provider: AVAssetReaderOutput.Provider<ReadySample>
+        let receiver: AVAssetWriterInput.SampleBufferReceiver
+        let decoder: AudioDecoder
+        /// The source's sample rate.
+        let rate: Double
+    }
+
+    /// Builds the audio lane both passes use. A track with no format description throws `readError`.
+    static func audioLane(of track: AVAssetTrack, reader: AVAssetReader, writer: AVAssetWriter,
+                          readError: any Error) async throws -> AudioLane {
+        let (formats, range) = try await track.load(.formatDescriptions, .timeRange)
+        guard let format = formats.first,
+              let description = CMAudioFormatDescriptionGetStreamBasicDescription(format)?.pointee else { throw readError }
+        let decoder = try AudioDecoder(format: format, end: range.end)
+        let input = AVAssetWriterInput(mediaType: .audio, outputSettings: aacSettings(for: description))
+        input.expectsMediaDataInRealTime = false
+        return AudioLane(provider: reader.outputProvider(for: AVAssetReaderTrackOutput(track: track, outputSettings: nil)),
+                         receiver: writer.inputReceiver(for: input), decoder: decoder, rate: description.mSampleRate)
+    }
+
+    /// Makes `output`'s folder when it is missing, removes any file at `output`, and runs `body`,
+    /// which writes it. A throw removes what was written and is rethrown, as `CancellationError`
+    /// when the task was cancelled.
+    static func writing(to output: URL, _ body: () async throws -> Void) async throws {
+        try FileManager.default.createDirectory(at: output.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? FileManager.default.removeItem(at: output)
+        do {
+            try await body()
+        } catch {
+            try? FileManager.default.removeItem(at: output)
+            if Task.isCancelled { throw CancellationError() }
+            throw error
+        }
+    }
+
     /// Starts `reader` and `writer`, the writer's session from 0, and runs each of `tracks` on a task
     /// of its own. At the first failure, or a cancel, the other tracks' tasks are cancelled and each
     /// ends at its next sample: a failed track has finished its writer input, so the writer holds no
