@@ -152,7 +152,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
             }
         } else if let string = userInfo[Self.copyURLKey] as? String, let url = URL(string: string) {
             await MainActor.run {
-                _ = Pasteboard.copy(url: url)
+                _ = SystemClipboard().copy(url: url)
             }
         }
     }

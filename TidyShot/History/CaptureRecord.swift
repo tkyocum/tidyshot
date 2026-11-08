@@ -140,16 +140,6 @@ nonisolated struct CaptureRecord: Codable, Identifiable, Equatable, Sendable {
         self.multipart = multipart
     }
 
-    private enum CodingKeys: String, CodingKey {
-        case id, timestamp, fileURL, fileIsTemporary, thumbnailFileName, pixelWidth, pixelHeight, appName, uploadState
-        case objectLocation, pendingObjectKey, editedAt, uploadIsStale
-        case supersededObjects, priorUpload
-        case mediaKind, durationSeconds
-        case byteCount
-        case unmutedIntervals
-        case multipart
-    }
-
     /// Phase 2 history files have no `fileIsTemporary`, `thumbnailFileName`, `objectLocation` or
     /// `pendingObjectKey`, and always have a `fileURL`; Phase 3 files have no `editedAt` or
     /// `uploadIsStale`. They decode with the defaults. Files from before Phase 4 have no

@@ -131,9 +131,7 @@ nonisolated enum RecordingRecovery {
                                                          directoryHint: .notDirectory)
             guard !manager.fileExists(atPath: recording.path(percentEncoded: false)) else { continue }
             do {
-                try manager.removeItem(at: url)
-            } catch CocoaError.fileNoSuchFile {
-                // A recovered file's log, removed meanwhile.
+                try manager.removeItemIfPresent(at: url)
             } catch {
                 RecordingLog.note("Recording: \(url.lastPathComponent) could not be removed from tmp/Mute: \(error.localizedDescription)")
             }

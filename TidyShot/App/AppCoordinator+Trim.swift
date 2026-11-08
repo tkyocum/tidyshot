@@ -343,9 +343,7 @@ extension AppCoordinator {
     /// The trimmed recording's first frame, read holding `scope` when the file is in the save folder.
     @concurrent
     nonisolated private static func posterFrame(of fileURL: URL, scope: URL?) async -> CGImage? {
-        let accessing = scope?.startAccessingSecurityScopedResource() ?? false
-        defer { if accessing { scope?.stopAccessingSecurityScopedResource() } }
-        return await PosterFrame.image(of: fileURL)
+        await scope.withSecurityScope { await PosterFrame.image(of: fileURL) }
     }
 
     /// The window closed, for any reason: the pass is cancelled, which stops it before its put; once it

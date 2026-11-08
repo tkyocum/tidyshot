@@ -168,18 +168,17 @@ extension AppCoordinator {
     /// replaced with `replaceItemAt` and a failed copy leaves it as it was. Runs in a detached task.
     nonisolated private static func copyVideo(from local: (file: URL, scope: URL?)?, orDragCopyOf id: UUID,
                                               in dragFiles: DragFileStore, to destination: URL) throws -> Bool {
-        let fileManager = FileManager.default
-        var source: URL?
-        let accessing = local?.scope?.startAccessingSecurityScopedResource() ?? false
-        defer { if accessing { local?.scope?.stopAccessingSecurityScopedResource() } }
-        if let file = local?.file, fileManager.isReadableFile(atPath: file.path(percentEncoded: false)) {
-            source = file
-        } else {
-            source = dragFiles.stagedFile(id: id)
+        try (local?.scope).withSecurityScope {
+            let fileManager = FileManager.default
+            let source: URL? = if let file = local?.file, fileManager.isReadableFile(atPath: file.path(percentEncoded: false)) {
+                file
+            } else {
+                dragFiles.stagedFile(id: id)
+            }
+            guard let source else { return false }
+            try FileReplacement.put(at: destination) { try fileManager.copyItem(at: source, to: $0) }
+            return true
         }
-        guard let source else { return false }
-        try FileReplacement.put(at: destination) { try fileManager.copyItem(at: source, to: $0) }
-        return true
     }
 
     /// Activates the app, asks for a place with the editor's suggestion, then writes the capture's

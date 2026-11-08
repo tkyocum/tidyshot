@@ -34,21 +34,21 @@ nonisolated struct CustomBackgroundStore: Sendable {
     /// it was, when the file cannot be decoded. `url` comes from the open panel, whose
     /// user-selected access covers the read.
     func store(contentsOf url: URL) throws {
-        let accessing = url.startAccessingSecurityScopedResource()
-        defer { if accessing { url.stopAccessingSecurityScopedResource() } }
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
-              CGImageSourceGetCount(source) > 0
-        else { throw StoreError.notAnImage }
-        // ImageIO never upscales, and applies the EXIF orientation.
-        let options: [CFString: Any] = [
-            kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceThumbnailMaxPixelSize: Self.maximumSide,
-            kCGImageSourceCreateThumbnailWithTransform: true,
-            kCGImageSourceShouldCacheImmediately: true,
-        ]
-        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
-        else { throw StoreError.notAnImage }
-        let png = try ImageEncoder.pngData(from: image, scale: 1)
+        let png = try url.withSecurityScope { () throws -> Data in
+            guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+                  CGImageSourceGetCount(source) > 0
+            else { throw StoreError.notAnImage }
+            // ImageIO never upscales, and applies the EXIF orientation.
+            let options: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceThumbnailMaxPixelSize: Self.maximumSide,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceShouldCacheImmediately: true,
+            ]
+            guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+            else { throw StoreError.notAnImage }
+            return try ImageEncoder.pngData(from: image, scale: 1)
+        }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try png.write(to: fileURL, options: .atomic)
     }

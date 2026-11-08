@@ -10,7 +10,7 @@ final class DesktopCoverController {
 
     private let source: WallpaperSource
     private let reportFailure: @MainActor () -> Void
-    private var reasons = DesktopCoverReasons()
+    private var reasons: Set<Reason> = []
     private var panels: [CGDirectDisplayID: DesktopCoverPanel] = [:]
     /// The panels are on screen.
     private var isShowing = false
@@ -29,8 +29,18 @@ final class DesktopCoverController {
         self.reportFailure = reportFailure
     }
 
+    /// Why the covers are up. They show while any reason is active, so a capture that ends
+    /// leaves a persistent cover in place, and turning the persistent cover off during a capture
+    /// keeps the covers until the capture ends.
+    nonisolated enum Reason: Hashable, Sendable {
+        /// A capture flow is running with `Hide desktop icons while capturing` on.
+        case capture
+        /// `Hide Desktop Icons` is on until turned off.
+        case persistent
+    }
+
     /// Whether `Hide Desktop Icons` is on until turned off.
-    var isPersistent: Bool { reasons.active.contains(.persistent) }
+    var isPersistent: Bool { reasons.contains(.persistent) }
 
     /// The covers on screen by display, for a recording's filter: they are TidyShot windows the
     /// recording keeps in the picture.
@@ -40,16 +50,16 @@ final class DesktopCoverController {
 
     /// Adds `reason`. When the covers were not already up, or a screen has none, captures the
     /// wallpapers, orders the panels front and returns once a capture would see them.
-    func show(for reason: DesktopCoverReasons.Reason) async {
+    func show(for reason: Reason) async {
         reasons.insert(reason)
         while true {
             if let bringingUp {
                 await bringingUp.value
                 // A hide and a show while it ran can leave the covers down; then go again.
-                if isShowing || !reasons.showsCovers { return }
+                if isShowing || reasons.isEmpty { return }
                 continue
             }
-            guard reasons.showsCovers else { return }
+            guard !reasons.isEmpty else { return }
             if isShowing, DesktopCoverPlan.needingCapture(screens: screenIDs, covered: Set(panels.keys)).isEmpty { return }
             bringingUp = Task {
                 await bringUp()
@@ -59,9 +69,9 @@ final class DesktopCoverController {
     }
 
     /// Removes `reason`, and orders the panels out when no reason is left.
-    func hide(for reason: DesktopCoverReasons.Reason) {
+    func hide(for reason: Reason) {
         reasons.remove(reason)
-        guard !reasons.showsCovers else { return }
+        guard reasons.isEmpty else { return }
         stopRefreshing()
         refreshPending = false
         for panel in panels.values {
@@ -79,7 +89,7 @@ final class DesktopCoverController {
         let wasShowing = isShowing
         let wallpapers = await captureWallpapers()
         // Hidden again while capturing.
-        guard reasons.showsCovers else { return }
+        guard !reasons.isEmpty else { return }
         update(with: wallpapers, kind: wasShowing && isShowing ? .showWhileUp : .show)
         isShowing = true
         startRefreshing()

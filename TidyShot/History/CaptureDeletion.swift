@@ -16,18 +16,11 @@ nonisolated enum CaptureDeletion {
     /// Posted, titled "Not deleted", in place of the first alert while a Trim pass runs on the record.
     static let trimmingRefusal = "This capture is being trimmed. Delete it when the trim finishes."
 
-    /// Whether Delete shows the first alert, from General's `Ask before deleting` (spec 2.13). Off,
-    /// the card's, pin's and row's Delete act at once. Nothing else reads the setting: the second
-    /// alert asks what to do about something that could not be deleted, which a routine
-    /// confirmation does not cover, so it shows either way; retention pruning never asks.
-    static func asksFirst(confirmBeforeDeleting: Bool) -> Bool {
-        confirmBeforeDeleting
-    }
-
-    /// The card's and row's Delete label: `Delete…` while it asks first, `Delete` when it acts at
-    /// once, since the ellipsis promises a further step.
+    /// The card's and row's Delete label: `Delete…` while General's `Ask before deleting` (spec
+    /// 2.13) is on and Delete shows its first alert, `Delete` when it acts at once, since the
+    /// ellipsis promises a further step.
     static func actionTitle(confirmBeforeDeleting: Bool) -> String {
-        asksFirst(confirmBeforeDeleting: confirmBeforeDeleting) ? "Delete…" : "Delete"
+        confirmBeforeDeleting ? "Delete…" : "Delete"
     }
 
     /// The keys at `record.objectLocation` that may hold the capture, in order and without

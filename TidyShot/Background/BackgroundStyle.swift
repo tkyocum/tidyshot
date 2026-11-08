@@ -11,27 +11,18 @@ nonisolated struct BackgroundStyle: Codable, Equatable, Sendable {
     var cornerRadius: Double = 12
     var shadow: Bool = true
     var aspect: BackgroundAspect = .auto
+}
 
-    init(fill: BackgroundFill = .gradient(0), padding: Double = 48, cornerRadius: Double = 12,
-         shadow: Bool = true, aspect: BackgroundAspect = .auto) {
-        self.fill = fill
-        self.padding = padding
-        self.cornerRadius = cornerRadius
-        self.shadow = shadow
-        self.aspect = aspect
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case fill, padding, cornerRadius, shadow, aspect
-    }
-
+nonisolated extension BackgroundStyle {
+    /// In an extension, so the memberwise `init(fill:padding:cornerRadius:shadow:aspect:)` stays.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        fill = try container.decodeIfPresent(BackgroundFill.self, forKey: .fill) ?? .gradient(0)
-        padding = try container.decodeIfPresent(Double.self, forKey: .padding) ?? 48
-        cornerRadius = try container.decodeIfPresent(Double.self, forKey: .cornerRadius) ?? 12
-        shadow = try container.decodeIfPresent(Bool.self, forKey: .shadow) ?? true
-        aspect = try container.decodeIfPresent(BackgroundAspect.self, forKey: .aspect) ?? .auto
+        self.init()
+        fill = try container.decodeIfPresent(BackgroundFill.self, forKey: .fill) ?? fill
+        padding = try container.decodeIfPresent(Double.self, forKey: .padding) ?? padding
+        cornerRadius = try container.decodeIfPresent(Double.self, forKey: .cornerRadius) ?? cornerRadius
+        shadow = try container.decodeIfPresent(Bool.self, forKey: .shadow) ?? shadow
+        aspect = try container.decodeIfPresent(BackgroundAspect.self, forKey: .aspect) ?? aspect
     }
 }
 

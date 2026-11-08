@@ -27,14 +27,10 @@ final class ThumbnailProvider {
     private let history: HistoryStore
     private let saveFolder: () -> URL?
     private let readFile: FileReader
-    private var thumbnails: [UUID: NSImage] = [:]
-    /// Ids in `thumbnails`, oldest first, each at most once.
-    private var thumbnailOrder: [UUID] = []
+    private var thumbnails = RecentCache(limit: ThumbnailProvider.thumbnailCacheLimit)
     /// Records whose thumbnail could not be made from their file; tried once per launch.
     private var unavailable: Set<UUID> = []
-    private var previews: [UUID: NSImage] = [:]
-    /// Ids in `previews`, oldest first, each at most once.
-    private var previewOrder: [UUID] = []
+    private var previews = RecentCache(limit: ThumbnailProvider.previewCacheLimit)
     /// Bumped by `forget`. A load compares the value from its start with the one at its end, so
     /// a load still running for a deleted record is discarded.
     private var generations: [UUID: Int] = [:]
@@ -60,7 +56,7 @@ final class ThumbnailProvider {
             let data = await Task.detached(priority: .userInitiated) { try? Data(contentsOf: url) }.value
             guard generations[id, default: 0] == generation else { return nil }
             if let data, let image = NSImage(data: data) {
-                remember(image, for: id)
+                thumbnails.insert(image, for: id)
                 return image
             }
         }
@@ -91,7 +87,7 @@ final class ThumbnailProvider {
         }
         history.update(id: id) { $0.thumbnailFileName = name }
         let image = NSImage(cgImage: small, size: .zero)
-        remember(image, for: id)
+        thumbnails.insert(image, for: id)
         return image
     }
 
@@ -118,35 +114,17 @@ final class ThumbnailProvider {
         guard !Task.isCancelled, generations[id, default: 0] == generation else { return nil }
         guard let decoded else { return await thumbnail(for: record) }
         let image = NSImage(cgImage: decoded, size: .zero)
-        previews[id] = image
-        // Two overlapping loads for one id must not leave it in the order twice.
-        previewOrder.removeAll { $0 == id }
-        previewOrder.append(id)
-        if previewOrder.count > Self.previewCacheLimit {
-            previews[previewOrder.removeFirst()] = nil
-        }
+        previews.insert(image, for: id)
         return image
     }
 
     /// Drops everything cached for a deleted or pruned record and discards any load still
     /// running for it.
     func forget(_ id: UUID) {
-        thumbnails[id] = nil
-        thumbnailOrder.removeAll { $0 == id }
+        thumbnails.remove(id)
         unavailable.remove(id)
-        previews[id] = nil
-        previewOrder.removeAll { $0 == id }
+        previews.remove(id)
         generations[id, default: 0] += 1
-    }
-
-    /// Caches a decoded thumbnail, dropping the oldest beyond `thumbnailCacheLimit`.
-    private func remember(_ image: NSImage, for id: UUID) {
-        thumbnails[id] = image
-        thumbnailOrder.removeAll { $0 == id }
-        thumbnailOrder.append(id)
-        if thumbnailOrder.count > Self.thumbnailCacheLimit {
-            thumbnails[thumbnailOrder.removeFirst()] = nil
-        }
     }
 
     /// What `readFile` needs for the record, resolved on the main actor: the file and, for a
@@ -157,5 +135,33 @@ final class ThumbnailProvider {
         if record.fileIsTemporary { return (fileURL, nil) }
         guard let folder = saveFolder() else { return nil }
         return (fileURL, folder)
+    }
+
+    /// The newest `limit` images by record id; the oldest goes as a newer one arrives.
+    private struct RecentCache {
+        let limit: Int
+        private var images: [UUID: NSImage] = [:]
+        /// Ids in `images`, oldest first, each at most once.
+        private var order: [UUID] = []
+
+        init(limit: Int) { self.limit = limit }
+
+        subscript(id: UUID) -> NSImage? { images[id] }
+
+        /// Stores `image` as the newest. Two overlapping loads for one id must not leave it in the
+        /// order twice.
+        mutating func insert(_ image: NSImage, for id: UUID) {
+            images[id] = image
+            order.removeAll { $0 == id }
+            order.append(id)
+            if order.count > limit {
+                images[order.removeFirst()] = nil
+            }
+        }
+
+        mutating func remove(_ id: UUID) {
+            images[id] = nil
+            order.removeAll { $0 == id }
+        }
     }
 }

@@ -67,21 +67,21 @@ nonisolated struct DragFileStore: Sendable {
     func stage(id: UUID, name: String, from source: URL, scope: URL?, reusingMatch: Bool = false) throws -> URL {
         let fileManager = FileManager.default
         let destination = folder(for: id).appending(path: name)
-        let accessing = scope?.startAccessingSecurityScopedResource() ?? false
-        defer { if accessing { scope?.stopAccessingSecurityScopedResource() } }
-        guard fileManager.fileExists(atPath: source.path(percentEncoded: false)) else {
-            throw CocoaError(.fileNoSuchFile)
-        }
-        if source.standardizedFileURL.path(percentEncoded: false) == destination.standardizedFileURL.path(percentEncoded: false) {
-            return destination
-        }
-        if reusingMatch {
-            let copies = Self.entries(in: folder(for: id)).sorted { $0.lastPathComponent < $1.lastPathComponent }
-            if let copy = ([destination] + copies).first(where: { Self.sameSizeAndDate(source, $0) }) {
-                return copy
+        return try scope.withSecurityScope {
+            guard fileManager.fileExists(atPath: source.path(percentEncoded: false)) else {
+                throw CocoaError(.fileNoSuchFile)
             }
+            if source.standardizedFileURL.path(percentEncoded: false) == destination.standardizedFileURL.path(percentEncoded: false) {
+                return destination
+            }
+            if reusingMatch {
+                let copies = Self.entries(in: folder(for: id)).sorted { $0.lastPathComponent < $1.lastPathComponent }
+                if let copy = ([destination] + copies).first(where: { Self.sameSizeAndDate(source, $0) }) {
+                    return copy
+                }
+            }
+            return try place(destination) { try fileManager.copyItem(at: source, to: $0) }
         }
-        return try place(destination) { try fileManager.copyItem(at: source, to: $0) }
     }
 
     /// The file in `id`'s folder when it is a copy of `source`, the record's file now: the same size
@@ -90,10 +90,10 @@ nonisolated struct DragFileStore: Sendable {
     /// it is. Nil otherwise, as for a copy of a recording made before a trim rewrote it.
     func copy(id: UUID, matching source: URL?, scope: URL?) -> URL? {
         guard let source else { return stagedFile(id: id) }
-        let accessing = scope?.startAccessingSecurityScopedResource() ?? false
-        defer { if accessing { scope?.stopAccessingSecurityScopedResource() } }
-        return Self.entries(in: folder(for: id)).sorted { $0.lastPathComponent < $1.lastPathComponent }
-            .first { Self.sameSizeAndDate(source, $0) }
+        return scope.withSecurityScope {
+            Self.entries(in: folder(for: id)).sorted { $0.lastPathComponent < $1.lastPathComponent }
+                .first { Self.sameSizeAndDate(source, $0) }
+        }
     }
 
     /// Moves an upload-only capture's pending file to `Drag/<id>/<name>` (a rename: `pending` and
@@ -164,9 +164,7 @@ nonisolated struct DragFileStore: Sendable {
 
     private static func removeLogged(_ url: URL) {
         do {
-            try FileManager.default.removeItem(at: url)
-        } catch let error as CocoaError where error.code == .fileNoSuchFile {
-            return
+            try FileManager.default.removeItemIfPresent(at: url)
         } catch {
             NSLog("Could not remove \(url.lastPathComponent) from the drag folder: \(error.localizedDescription)")
         }

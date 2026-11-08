@@ -3,7 +3,9 @@ import AppKit
 // The one delete path, and the teardown that pruning shares with it. Its state is declared in AppCoordinator.swift.
 extension AppCoordinator {
     /// The one delete path, shared by the overlay and Recent Captures. One confirmation, Delete or
-    /// Cancel, unless General's `Ask before deleting` is off (`CaptureDeletion.asksFirst`). Delete
+    /// Cancel, unless General's `Ask before deleting` (spec 2.13) is off. Nothing else reads that
+    /// setting: the second alert below asks what to do about something that could not be deleted,
+    /// which a routine confirmation does not cover, and retention pruning never asks. Delete
     /// stops an in-flight upload, aborts its stored multipart upload (`CaptureDeletion.aborts(for:)`),
     /// removes its objects, each from the bucket the record names for it
     /// (`CaptureDeletion.objects(for:)`), then the local file, the thumbnail, the multipart files
@@ -28,7 +30,7 @@ extension AppCoordinator {
             deletingIDs.remove(recordID)
             refreshOverlay(for: recordID)
         }
-        if CaptureDeletion.asksFirst(confirmBeforeDeleting: settings.confirmBeforeDeleting) {
+        if settings.confirmBeforeDeleting {
             guard await environment.confirm(.delete(record)) else { return }
         }
 

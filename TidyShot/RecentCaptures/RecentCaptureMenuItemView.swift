@@ -24,11 +24,9 @@ final class RecentCaptureMenuItemView: NSView {
         self.onThumbnailHover = onThumbnailHover
         super.init(frame: CGRect(origin: .zero, size: RecentCaptureRow.size))
         let name = RecentCaptureFormatting.name(for: record)
-        let detail = RecentCaptureFormatting.detail(for: record, now: now, isOptimizing: isOptimizing,
-                                                    isDownloading: isDownloading)
-        let row = RecentCaptureRow(record: record, name: name, detail: detail,
-                                   detailWithoutSize: RecentCaptureFormatting.detailWithoutSize(
-                                       for: record, now: now, isOptimizing: isOptimizing, isDownloading: isDownloading),
+        let detail = RecentCaptureFormatting.details(for: record, now: now, isOptimizing: isOptimizing,
+                                                     isDownloading: isDownloading)
+        let row = RecentCaptureRow(record: record, name: name, detail: detail.text, detailWithoutSize: detail.withoutSize,
                                    canCopyLink: RecentCaptureFormatting.canCopyLink(record),
                                    canCopyImage: RecentCaptureFormatting.canCopyImage(record),
                                    canAnnotate: RecentCaptureFormatting.canAnnotate(record, retainedID: retainedID,

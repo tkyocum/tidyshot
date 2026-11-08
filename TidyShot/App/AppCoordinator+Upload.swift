@@ -347,12 +347,12 @@ extension AppCoordinator {
     }
 
     nonisolated private static func fileAttributes(of fileURL: URL, scope: URL?) -> (byteCount: Int?, modified: Date?) {
-        let accessing = scope?.startAccessingSecurityScopedResource() ?? false
-        defer { if accessing { scope?.stopAccessingSecurityScopedResource() } }
-        var url = fileURL
-        url.removeAllCachedResourceValues()
-        let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
-        return (values?.fileSize, values?.contentModificationDate)
+        scope.withSecurityScope { () -> (byteCount: Int?, modified: Date?) in
+            var url = fileURL
+            url.removeAllCachedResourceValues()
+            let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+            return (values?.fileSize, values?.contentModificationDate)
+        }
     }
 
     /// Whether `payload`, of `byteCount` bytes, can be uploaded: up to 625 GiB
@@ -545,9 +545,7 @@ extension AppCoordinator {
             return .data(record.fileIsTemporary ? try Data(contentsOf: fileURL) : try saveLocation.read(contentsOf: fileURL))
         case .video, .gif:
             return try UploadPayload.video(for: record, saveFolder: saveLocation.currentURL) { url, folder in
-                let accessing = folder?.startAccessingSecurityScopedResource() ?? false
-                defer { if accessing { folder?.stopAccessingSecurityScopedResource() } }
-                return FileManager.default.fileExists(atPath: url.path(percentEncoded: false))
+                folder.withSecurityScope { FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) }
             }
         }
     }

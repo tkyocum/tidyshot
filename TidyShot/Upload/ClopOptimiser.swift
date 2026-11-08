@@ -146,27 +146,26 @@ nonisolated struct ClopOptimiser: Sendable {
     /// are on one volume), holding `scope` for both. This runs inside `optimisedVideo`, so never on
     /// the main actor. Returns why Clop is skipped, or nil when the copy is made.
     private func makeWorkCopy(of source: URL, at work: URL, scope: URL?) -> ClopSkipReason? {
-        let accessing = scope?.startAccessingSecurityScopedResource() ?? false
-        defer { if accessing { scope?.stopAccessingSecurityScopedResource() } }
-
-        let size: Int64
-        do {
-            size = Int64(try source.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0)
-        } catch {
-            return .failed("could not read the recording: \(error.localizedDescription)")
+        scope.withSecurityScope { () -> ClopSkipReason? in
+            let size: Int64
+            do {
+                size = Int64(try source.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0)
+            } catch {
+                return .failed("could not read the recording: \(error.localizedDescription)")
+            }
+            if let free = freeBytes(workDirectory), free < size + Self.videoHeadroomBytes {
+                return .notEnoughSpace
+            }
+            do {
+                try FileManager.default.createDirectory(at: workDirectory, withIntermediateDirectories: true)
+                try FileManager.default.copyItem(at: source, to: work)
+            } catch {
+                // A copy that failed part way leaves a partial file.
+                try? FileManager.default.removeItem(at: work)
+                return .failed("could not copy the recording: \(error.localizedDescription)")
+            }
+            return nil
         }
-        if let free = freeBytes(workDirectory), free < size + Self.videoHeadroomBytes {
-            return .notEnoughSpace
-        }
-        do {
-            try FileManager.default.createDirectory(at: workDirectory, withIntermediateDirectories: true)
-            try FileManager.default.copyItem(at: source, to: work)
-        } catch {
-            // A copy that failed part way leaves a partial file.
-            try? FileManager.default.removeItem(at: work)
-            return .failed("could not copy the recording: \(error.localizedDescription)")
-        }
-        return nil
     }
 
     /// The acceptance checks, in the design's order, against what the work file was before Clop.

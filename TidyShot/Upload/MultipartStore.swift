@@ -106,9 +106,7 @@ nonisolated struct MultipartStore: Sendable {
 
     private static func removeLogged(_ url: URL) {
         do {
-            try FileManager.default.removeItem(at: url)
-        } catch let error as CocoaError where error.code == .fileNoSuchFile {
-            return
+            try FileManager.default.removeItemIfPresent(at: url)
         } catch {
             NSLog("%@", "Could not remove \(url.lastPathComponent) from the multipart folder: \(error.localizedDescription)")
         }

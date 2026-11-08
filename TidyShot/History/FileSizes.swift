@@ -22,11 +22,11 @@ nonisolated enum FileSizes {
     /// when the file is gone or its size cannot be read. Any size cached on the URL is dropped
     /// first, so a file rewritten in place is measured again.
     static func byteCount(of fileURL: URL, scope: URL? = nil) -> Int? {
-        let accessing = scope?.startAccessingSecurityScopedResource() ?? false
-        defer { if accessing { scope?.stopAccessingSecurityScopedResource() } }
-        var url = fileURL
-        url.removeAllCachedResourceValues()
-        return try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize
+        scope.withSecurityScope { () -> Int? in
+            var url = fileURL
+            url.removeAllCachedResourceValues()
+            return try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize
+        }
     }
 
     /// The records with no `byteCount` and a local file TidyShot can reach, in order: a file in

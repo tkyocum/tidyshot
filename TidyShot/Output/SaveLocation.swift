@@ -69,7 +69,7 @@ final class SaveLocation {
     /// Writes `data` as `baseName.ext` (or `baseName 2.ext`, ...) inside `folder`, holding
     /// security-scoped access for both the uniqueness check and the write. Returns the file URL.
     func write(_ data: Data, baseName: String, ext: String, in folder: URL) throws -> URL {
-        try withAccess(to: folder) {
+        try folder.withSecurityScope {
             let url = FileNamer.uniqueURL(baseName: baseName, ext: ext, in: folder)
             try data.write(to: url, options: .atomic)
             return url
@@ -82,28 +82,24 @@ final class SaveLocation {
     /// source left where it was, when the move fails. Touches no instance state, so it runs in a
     /// detached task (a finished recording).
     nonisolated static func moveInScoped(_ source: URL, baseName: String, ext: String, folder: URL) throws -> URL {
-        let accessing = folder.startAccessingSecurityScopedResource()
-        defer { if accessing { folder.stopAccessingSecurityScopedResource() } }
-        let url = FileNamer.uniqueURL(baseName: baseName, ext: ext, in: folder)
-        // Never replaces: a file that appeared at `url` since the check makes this throw.
-        try FileManager.default.moveItem(at: source, to: url)
-        return url
+        try folder.withSecurityScope {
+            let url = FileNamer.uniqueURL(baseName: baseName, ext: ext, in: folder)
+            // Never replaces: a file that appeared at `url` since the check makes this throw.
+            try FileManager.default.moveItem(at: source, to: url)
+            return url
+        }
     }
 
     /// Reads a file inside the save folder (for upload retries), holding security-scoped access.
     func read(contentsOf fileURL: URL) throws -> Data {
         guard let currentURL else { throw CocoaError(.fileNoSuchFile) }
-        return try withAccess(to: currentURL) {
-            try Data(contentsOf: fileURL)
-        }
+        return try currentURL.withSecurityScope { try Data(contentsOf: fileURL) }
     }
 
     /// Reads `fileURL` inside `folder`, holding that folder's security-scoped access for the read.
     /// Touches no instance state, so it can run off the main actor (thumbnail and preview loads).
     nonisolated static func readScoped(_ fileURL: URL, folder: URL) throws -> Data {
-        let accessing = folder.startAccessingSecurityScopedResource()
-        defer { if accessing { folder.stopAccessingSecurityScopedResource() } }
-        return try Data(contentsOf: fileURL)
+        try folder.withSecurityScope { try Data(contentsOf: fileURL) }
     }
 
     /// True when `fileURL` lies inside `folder`, at any depth. Paths are compared component by
@@ -125,9 +121,7 @@ final class SaveLocation {
             throw CocoaError(.fileWriteNoPermission,
                              userInfo: [NSLocalizedDescriptionKey: "\(fileURL.lastPathComponent) is not in the save folder."])
         }
-        let accessing = folder.startAccessingSecurityScopedResource()
-        defer { if accessing { folder.stopAccessingSecurityScopedResource() } }
-        try data.write(to: fileURL, options: .atomic)
+        try folder.withSecurityScope { try data.write(to: fileURL, options: .atomic) }
     }
 
     /// The path's components with `.` dropped and `..` applied, from the text alone.
@@ -151,19 +145,7 @@ final class SaveLocation {
             throw CocoaError(.fileWriteNoPermission,
                              userInfo: [NSLocalizedDescriptionKey: "No save folder is set, so TidyShot cannot reach this file."])
         }
-        try withAccess(to: currentURL) {
-            do {
-                try FileManager.default.removeItem(at: fileURL)
-            } catch let error as CocoaError where error.code == .fileNoSuchFile {
-                return
-            }
-        }
-    }
-
-    private func withAccess<T>(to folder: URL, _ body: () throws -> T) rethrows -> T {
-        let accessing = folder.startAccessingSecurityScopedResource()
-        defer { if accessing { folder.stopAccessingSecurityScopedResource() } }
-        return try body()
+        try currentURL.withSecurityScope { try FileManager.default.removeItemIfPresent(at: fileURL) }
     }
 
     private static func resolveBookmark(from defaults: UserDefaults) -> URL? {
@@ -173,10 +155,10 @@ final class SaveLocation {
             return nil
         }
         if isStale {
-            let accessing = url.startAccessingSecurityScopedResource()
-            defer { if accessing { url.stopAccessingSecurityScopedResource() } }
-            if let fresh = try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil) {
-                defaults.set(fresh, forKey: bookmarkKey)
+            url.withSecurityScope {
+                if let fresh = try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil) {
+                    defaults.set(fresh, forKey: bookmarkKey)
+                }
             }
         }
         return url

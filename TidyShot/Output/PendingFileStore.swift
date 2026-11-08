@@ -38,11 +38,7 @@ nonisolated struct PendingFileStore: Sendable {
     /// because this file may be the capture's only copy and Delete must not drop its record
     /// while the file stays behind.
     func remove(_ url: URL) throws {
-        do {
-            try FileManager.default.removeItem(at: url)
-        } catch let error as CocoaError where error.code == .fileNoSuchFile {
-            return
-        }
+        try FileManager.default.removeItemIfPresent(at: url)
     }
 
     /// The folder's files, hidden ones skipped; nothing when the folder is missing. The launch step lists

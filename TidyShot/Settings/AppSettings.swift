@@ -111,13 +111,13 @@ final class AppSettings {
     var historyRetentionDays: Int { didSet { defaults.set(historyRetentionDays, forKey: Keys.historyRetentionDays) } }
     /// Nil until the Upload tab has been saved once. Stored as JSON.
     var s3Config: S3DestinationConfig? {
-        didSet { storeS3Config() }
+        didSet { storeJSON(s3Config, forKey: Keys.s3Config, "Upload settings") }
     }
     /// The annotation editor's last colours (sRGB, stored as JSON), sizes in points and spotlight
     /// shape. An editor reads them once, as `editorDefaults`, when it opens. There is no Settings
     /// tab for them.
-    var editorStrokeColor: RGBA { didSet { storeColor(editorStrokeColor, forKey: Keys.editorStrokeColor) } }
-    var editorRedactColor: RGBA { didSet { storeColor(editorRedactColor, forKey: Keys.editorRedactColor) } }
+    var editorStrokeColor: RGBA { didSet { storeJSON(editorStrokeColor, forKey: Keys.editorStrokeColor, "An editor colour") } }
+    var editorRedactColor: RGBA { didSet { storeJSON(editorRedactColor, forKey: Keys.editorRedactColor, "An editor colour") } }
     var editorLineWidthPoints: Double { didSet { defaults.set(editorLineWidthPoints, forKey: Keys.editorLineWidthPoints) } }
     var editorBlurRadiusPoints: Double { didSet { defaults.set(editorBlurRadiusPoints, forKey: Keys.editorBlurRadiusPoints) } }
     var editorPixelBlockPoints: Double { didSet { defaults.set(editorPixelBlockPoints, forKey: Keys.editorPixelBlockPoints) } }
@@ -130,7 +130,7 @@ final class AppSettings {
     var scrollingAutoScroll: Bool { didSet { defaults.set(scrollingAutoScroll, forKey: Keys.scrollingAutoScroll) } }
     /// The rect of the last area capture (Capture Area, Capture Scrolling, and the later area
     /// kinds), for Capture Previous Area. Stored as JSON; nil until an area has been captured.
-    var lastAreaRect: StoredRect? { didSet { storeLastAreaRect() } }
+    var lastAreaRect: StoredRect? { didSet { storeJSON(lastAreaRect, forKey: Keys.lastAreaRect, "The last area") } }
     /// The Capture tab's Include window shadow. Off keeps window shots without a shadow.
     var windowShadow: Bool { didSet { defaults.set(windowShadow, forKey: Keys.windowShadow) } }
     /// The Capture tab's Freeze screen while selecting (spec 2.9). Area selections then show a still image.
@@ -161,7 +161,7 @@ final class AppSettings {
     var windowBackground: Bool { didSet { defaults.set(windowBackground, forKey: Keys.windowBackground) } }
     /// The Capture tab's background style, which the editor's Background tool also starts from.
     /// Stored as JSON.
-    var backgroundStyle: BackgroundStyle { didSet { storeBackgroundStyle() } }
+    var backgroundStyle: BackgroundStyle { didSet { storeJSON(backgroundStyle, forKey: Keys.backgroundStyle, "The background style") } }
     /// The Capture tab's Recording section: frames per second, one of `recordingFrameRates`.
     var recordingFrameRate: Int { didSet { defaults.set(recordingFrameRate, forKey: Keys.recordingFrameRate) } }
     static let recordingFrameRates = [30, 60]
@@ -333,10 +333,10 @@ final class AppSettings {
         historyRetentionDays = defaults.integer(forKey: Keys.historyRetentionDays)
         // Decoding drops `{app}` from the key template (see `S3DestinationConfig.init(from:)`).
         let storedConfig = defaults.data(forKey: Keys.s3Config)
-        s3Config = storedConfig.flatMap { try? JSONDecoder().decode(S3DestinationConfig.self, from: $0) }
+        s3Config = Self.decoded(storedConfig)
         // Colours are not registered: a missing or unreadable value means the default.
-        editorStrokeColor = Self.storedColor(defaults.data(forKey: Keys.editorStrokeColor)) ?? EditorDefaults.standard.strokeColor
-        editorRedactColor = Self.storedColor(defaults.data(forKey: Keys.editorRedactColor)) ?? EditorDefaults.standard.redactColor
+        editorStrokeColor = Self.decoded(defaults.data(forKey: Keys.editorStrokeColor)) ?? EditorDefaults.standard.strokeColor
+        editorRedactColor = Self.decoded(defaults.data(forKey: Keys.editorRedactColor)) ?? EditorDefaults.standard.redactColor
         editorLineWidthPoints = defaults.double(forKey: Keys.editorLineWidthPoints)
         editorBlurRadiusPoints = defaults.double(forKey: Keys.editorBlurRadiusPoints)
         editorPixelBlockPoints = defaults.double(forKey: Keys.editorPixelBlockPoints)
@@ -346,7 +346,7 @@ final class AppSettings {
             ? storedCounterDiameter : Double(EditorPalette.defaultCounterDiameterPoints)
         scrollingAutoScroll = defaults.bool(forKey: Keys.scrollingAutoScroll)
         // Not registered: a missing or unreadable value means no previous area.
-        lastAreaRect = defaults.data(forKey: Keys.lastAreaRect).flatMap { try? JSONDecoder().decode(StoredRect.self, from: $0) }
+        lastAreaRect = Self.decoded(defaults.data(forKey: Keys.lastAreaRect))
         windowShadow = defaults.bool(forKey: Keys.windowShadow)
         freezeScreen = defaults.bool(forKey: Keys.freezeScreen)
         urlCommandsEnabled = defaults.bool(forKey: Keys.urlCommandsEnabled)
@@ -389,8 +389,7 @@ final class AppSettings {
         recordingBubbleInsetBottom = storedInset(Keys.recordingBubbleInsetBottom)
         // Not registered: a missing value, or one that does not decode (a fill or aspect from a
         // newer build), means the default style.
-        backgroundStyle = defaults.data(forKey: Keys.backgroundStyle)
-            .flatMap { try? JSONDecoder().decode(BackgroundStyle.self, from: $0) } ?? BackgroundStyle()
+        backgroundStyle = Self.decoded(defaults.data(forKey: Keys.backgroundStyle)) ?? BackgroundStyle()
 
         // Property observers do not run during init, so templates rewritten by
         // `TemplateMigration` are stored here, once.
@@ -399,61 +398,28 @@ final class AppSettings {
         }
         if let storedConfig, s3Config != nil,
            String(decoding: storedConfig, as: UTF8.self).contains(TemplateMigration.removedAppToken) {
-            storeS3Config()
+            storeJSON(s3Config, forKey: Keys.s3Config, "Upload settings")
         }
     }
 
-    /// Writes `s3Config` as JSON, or removes it when nil. An encoding failure is logged and leaves
-    /// the stored value as it was: `try?` would have stored nil, which deletes the key and with it
-    /// the destination.
-    private func storeS3Config() {
-        guard let s3Config else {
-            defaults.removeObject(forKey: Keys.s3Config)
+    /// Writes `value` as JSON under `key`, or removes the key for nil. An encoding failure is
+    /// logged, naming `what`, and leaves the stored value as it was: `try?` would have stored nil,
+    /// which deletes the key and, for `s3Config`, the destination with it.
+    private func storeJSON<T: Encodable>(_ value: T?, forKey key: String, _ what: String) {
+        guard let value else {
+            defaults.removeObject(forKey: key)
             return
         }
         do {
-            defaults.set(try JSONEncoder().encode(s3Config), forKey: Keys.s3Config)
+            defaults.set(try JSONEncoder().encode(value), forKey: key)
         } catch {
-            NSLog("Upload settings could not be encoded, so the stored ones are kept: \(error.localizedDescription)")
+            NSLog("\(what) could not be encoded, so the stored one is kept: \(error.localizedDescription)")
         }
     }
 
-    /// Writes `lastAreaRect` as JSON, or removes it when nil. An encoding failure is logged and
-    /// leaves the stored value as it was.
-    private func storeLastAreaRect() {
-        guard let lastAreaRect else {
-            defaults.removeObject(forKey: Keys.lastAreaRect)
-            return
-        }
-        do {
-            defaults.set(try JSONEncoder().encode(lastAreaRect), forKey: Keys.lastAreaRect)
-        } catch {
-            NSLog("The last area could not be encoded, so the stored one is kept: \(error.localizedDescription)")
-        }
-    }
-
-    /// Writes `backgroundStyle` as JSON. An encoding failure is logged and leaves the stored value
-    /// as it was.
-    private func storeBackgroundStyle() {
-        do {
-            defaults.set(try JSONEncoder().encode(backgroundStyle), forKey: Keys.backgroundStyle)
-        } catch {
-            NSLog("The background style could not be encoded, so the stored one is kept: \(error.localizedDescription)")
-        }
-    }
-
-    /// An `RGBA` written by `storeColor(_:forKey:)`, or nil when there is none or it does not decode.
-    private static func storedColor(_ data: Data?) -> RGBA? {
-        data.flatMap { try? JSONDecoder().decode(RGBA.self, from: $0) }
-    }
-
-    /// Writes `color` as JSON. An encoding failure is logged and leaves the stored value as it was.
-    private func storeColor(_ color: RGBA, forKey key: String) {
-        do {
-            defaults.set(try JSONEncoder().encode(color), forKey: key)
-        } catch {
-            NSLog("An editor colour could not be encoded, so the stored one is kept: \(error.localizedDescription)")
-        }
+    /// A value `storeJSON` wrote, or nil when there is none or it does not decode.
+    private static func decoded<T: Decodable>(_ data: Data?) -> T? {
+        data.flatMap { try? JSONDecoder().decode(T.self, from: $0) }
     }
 
     /// The persistent capture counter as it stands, without drawing the next one. The editor's

@@ -19,9 +19,7 @@ nonisolated enum RecentCaptureFormatting {
     /// middle dot with a space either side, and an unknown or zero size leaves its part out.
     static func detail(for record: CaptureRecord, now: Date, locale: Locale = .current,
                        isOptimizing: Bool = false, isDownloading: Bool = false) -> String {
-        let parts = detailParts(for: record, now: now, locale: locale, isOptimizing: isOptimizing,
-                                isDownloading: isDownloading)
-        return [parts.time, parts.size, parts.state].compactMap { $0 }.joined(separator: " · ")
+        details(for: record, now: now, locale: locale, isOptimizing: isOptimizing, isDownloading: isDownloading).text
     }
 
     /// The detail with the size left out: "2 minutes ago · Upload failed". The row shows it when the
@@ -29,14 +27,17 @@ nonisolated enum RecentCaptureFormatting {
     /// when there is no size to leave out.
     static func detailWithoutSize(for record: CaptureRecord, now: Date, locale: Locale = .current,
                                   isOptimizing: Bool = false, isDownloading: Bool = false) -> String? {
-        let parts = detailParts(for: record, now: now, locale: locale, isOptimizing: isOptimizing,
-                                isDownloading: isDownloading)
-        guard parts.size != nil else { return nil }
-        return [parts.time, parts.state].compactMap { $0 }.joined(separator: " · ")
+        details(for: record, now: now, locale: locale, isOptimizing: isOptimizing, isDownloading: isDownloading).withoutSize
     }
 
-    private static func detailParts(for record: CaptureRecord, now: Date, locale: Locale,
-                                    isOptimizing: Bool, isDownloading: Bool) -> (time: String, size: String?, state: String?) {
+    /// `detail` and `detailWithoutSize` from one pass over the record; a row's build takes both.
+    nonisolated struct Detail: Equatable {
+        let text: String
+        let withoutSize: String?
+    }
+
+    static func details(for record: CaptureRecord, now: Date, locale: Locale = .current,
+                        isOptimizing: Bool = false, isDownloading: Bool = false) -> Detail {
         let formatter = RelativeDateTimeFormatter()
         formatter.locale = locale
         formatter.unitsStyle = .full
@@ -53,7 +54,10 @@ nonisolated enum RecentCaptureFormatting {
             case .none: nil
             }
         }
-        return (formatter.localizedString(for: record.timestamp, relativeTo: now), sizeText(record.byteCount), state)
+        let time = formatter.localizedString(for: record.timestamp, relativeTo: now)
+        let size = sizeText(record.byteCount)
+        let joined = { (parts: [String?]) in parts.compactMap { $0 }.joined(separator: " · ") }
+        return Detail(text: joined([time, size, state]), withoutSize: size == nil ? nil : joined([time, state]))
     }
 
     /// "999 bytes", "5 KB", "1.2 MB": `ByteCountFormatter`'s `.file` style, the decimal units Finder

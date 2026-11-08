@@ -269,9 +269,9 @@ nonisolated enum RecordingTrim {
     /// folder and swapped in with `replaceItemAt`, as `FileReplacement` does, holding `scope` throughout.
     /// A failed put leaves the file at `destination` as it was. Runs in a detached task.
     static func putTrimmed(_ trimmed: URL, over destination: URL, scope: URL?) throws {
-        let accessing = scope?.startAccessingSecurityScopedResource() ?? false
-        defer { if accessing { scope?.stopAccessingSecurityScopedResource() } }
-        try FileReplacement.put(at: destination) { try FileManager.default.moveItem(at: trimmed, to: $0) }
+        try scope.withSecurityScope {
+            try FileReplacement.put(at: destination) { try FileManager.default.moveItem(at: trimmed, to: $0) }
+        }
     }
 
     /// Whether the pass sets `uploadIsStale` before its put: the record has a link (`linkURL`, so also
