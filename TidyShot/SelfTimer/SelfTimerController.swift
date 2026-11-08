@@ -27,12 +27,8 @@ nonisolated enum SelfTimerGeometry {
     /// The badge centred on `subject` (the area or window), whole-point origin, kept inside
     /// `screenFrame` so a subject at the edge of its display still shows it.
     static func badgeFrame(around subject: CGRect, in screenFrame: CGRect) -> CGRect {
-        let side = badgeSide
-        var x = (subject.midX - side / 2).rounded()
-        var y = (subject.midY - side / 2).rounded()
-        x = min(max(x, screenFrame.minX), screenFrame.maxX - side)
-        y = min(max(y, screenFrame.minY), screenFrame.maxY - side)
-        return CGRect(x: x, y: y, width: side, height: side)
+        CGRect.centred(CGSize(width: badgeSide, height: badgeSide), on: CGPoint(x: subject.midX, y: subject.midY),
+                       within: screenFrame)
     }
 }
 

@@ -22,7 +22,7 @@ struct QuickAccessView: View {
             VStack(spacing: 8) {
                 if model.showsImageActions {
                     Button {
-                        model.onAnnotate()
+                        model.actions.annotate(model.record.id)
                     } label: {
                         Image(systemName: "pencil.tip.crop.circle")
                             .foregroundStyle(.secondary)
@@ -31,7 +31,7 @@ struct QuickAccessView: View {
                     .help("Annotate")
                     .accessibilityLabel("Annotate")
                     Button {
-                        model.onPin()
+                        model.actions.pin(model.record.id)
                     } label: {
                         Image(systemName: "pin")
                             .foregroundStyle(.secondary)
@@ -41,7 +41,7 @@ struct QuickAccessView: View {
                     .accessibilityLabel("Pin to screen")
                 }
                 Button {
-                    model.onDelete()
+                    model.actions.delete(model.record.id)
                 } label: {
                     Image(systemName: "trash")
                         .foregroundStyle(.secondary)
@@ -89,35 +89,35 @@ struct QuickAccessView: View {
 
     @ViewBuilder
     private var menuItems: some View {
-        Button("Copy URL") { model.onCopy() }
+        Button("Copy URL") { model.actions.copy(model.record.id) }
             .disabled(model.record.linkURL == nil)
         if model.showsImageActions {
-            Button("Copy Image") { model.onCopyImage() }
+            Button("Copy Image") { model.actions.copyImage(model.record.id) }
         }
         if model.canCopyFile {
-            Button("Copy File") { model.onCopyFile() }
+            Button("Copy File") { model.actions.copyFile(model.record.id) }
         }
         if model.canSaveAs {
-            Button("Save As…") { model.onSaveAs() }
+            Button("Save As…") { model.actions.saveAs(model.record.id) }
         }
         if model.showsImageActions {
-            Button("Annotate") { model.onAnnotate() }
-            Button("Pin to Screen") { model.onPin() }
+            Button("Annotate") { model.actions.annotate(model.record.id) }
+            Button("Pin to Screen") { model.actions.pin(model.record.id) }
         }
         if model.trimState.showsTrim {
-            Button("Trim…") { model.onTrim() }
+            Button("Trim…") { model.actions.trim(model.record.id) }
                 .disabled(!model.trimState.canTrim)
         }
         if model.trimState.showsUploadTrimmed {
-            Button("Upload Trimmed") { model.onUploadTrimmed() }
+            Button("Upload Trimmed") { model.actions.uploadTrimmed(model.record.id) }
                 .disabled(!model.trimState.canUploadTrimmed)
         }
         if model.canReveal {
-            Button("Reveal in Finder") { model.onReveal() }
+            Button("Reveal in Finder") { model.actions.reveal(model.record.id) }
         }
         Divider()
         Button("Close") { model.onClose() }
-        Button(CaptureDeletion.actionTitle(confirmBeforeDeleting: AppSettings.shared.confirmBeforeDeleting)) { model.onDelete() }
+        Button(CaptureDeletion.actionTitle(confirmBeforeDeleting: AppSettings.shared.confirmBeforeDeleting)) { model.actions.delete(model.record.id) }
             .disabled(!model.canDelete)
     }
 
@@ -127,15 +127,15 @@ struct QuickAccessView: View {
         HStack(spacing: 6) {
             switch model.record.uploadState {
             case .uploaded:
-                Button("Copy URL") { model.onCopy() }
+                Button("Copy URL") { model.actions.copy(model.record.id) }
             case .failed:
-                Button("Retry") { model.onRetry() }
+                Button("Retry") { model.actions.retry(model.record.id) }
                     .disabled(!model.canRetry)
             case .uploading, .none:
                 EmptyView()
             }
             if model.canSaveAs {
-                Button("Save As…") { model.onSaveAs() }
+                Button("Save As…") { model.actions.saveAs(model.record.id) }
             }
         }
         .controlSize(.small)
@@ -175,9 +175,9 @@ struct QuickAccessView: View {
     /// the browser when only the upload is left; this replaces Reveal, which stays in the menu.
     private var thumbnailClick: (action: () -> Void, toolTip: String)? {
         if model.record.isTimeBased {
-            return model.canOpen ? ({ model.onOpen() }, "Open") : nil
+            return model.canOpen ? ({ model.actions.open(model.record.id) }, "Open") : nil
         }
-        return model.canReveal ? ({ model.onReveal() }, "Reveal in Finder") : nil
+        return model.canReveal ? ({ model.actions.reveal(model.record.id) }, "Reveal in Finder") : nil
     }
 
     /// The card's tooltip: a failed upload's or download's message, why a recording is only kept in
@@ -209,100 +209,68 @@ struct QuickAccessView: View {
     private var statusContent: some View {
         switch model.status {
         case .uploading(let fraction):
-            HStack(spacing: 8) {
-                ProgressView(value: fraction)
-                    .progressViewStyle(.circular)
-                    .controlSize(.small)
-                Text("Uploading…")
-            }
-            Text(fileLabel)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
+            progressRow("Uploading…", fraction: fraction)
+            detail(fileLabel)
         case .downloading(let fraction):
-            HStack(spacing: 8) {
-                ProgressView(value: fraction)
-                    .progressViewStyle(.circular)
-                    .controlSize(.small)
-                Text("Downloading…")
-            }
-            Text(fileLabel)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
+            progressRow("Downloading…", fraction: fraction)
+            detail(fileLabel)
         case .optimizing:
-            HStack(spacing: 8) {
-                ProgressView()
-                    .progressViewStyle(.circular)
-                    .controlSize(.small)
-                Text("Optimizing…")
-            }
-            Text(fileLabel)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
+            progressRow("Optimizing…", fraction: nil)
+            detail(fileLabel)
         case .urlCopied(let url):
-            Label("URL copied", systemImage: "checkmark.circle.fill")
-                .foregroundStyle(.green)
-            Text(url.absoluteString)
-                .font(.caption)
-                .lineLimit(1)
-                .truncationMode(.middle)
+            headline("URL copied", symbol: "checkmark.circle.fill", tint: .green)
+            detail(url.absoluteString, secondary: false)
         case .uploaded(let url):
-            Label("Uploaded", systemImage: "checkmark.circle.fill")
-                .foregroundStyle(.green)
-            Text(url.absoluteString)
-                .font(.caption)
-                .lineLimit(1)
-                .truncationMode(.middle)
+            headline("Uploaded", symbol: "checkmark.circle.fill", tint: .green)
+            detail(url.absoluteString, secondary: false)
         case .linkNotUpdated(let url):
-            Label(RecentCaptureFormatting.linkNotUpdatedText, systemImage: "exclamationmark.circle.fill")
-                .foregroundStyle(.orange)
-            Text(url.absoluteString)
-                .font(.caption)
-                .lineLimit(1)
-                .truncationMode(.middle)
+            headline(RecentCaptureFormatting.linkNotUpdatedText, symbol: "exclamationmark.circle.fill", tint: .orange)
+            detail(url.absoluteString, secondary: false)
         case .failed(let message):
-            Label("Upload failed", systemImage: "exclamationmark.triangle.fill")
-                .foregroundStyle(.red)
-            Text(message)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+            headline("Upload failed", symbol: "exclamationmark.triangle.fill", tint: .red)
+            detail(message, truncation: .tail)
         case .downloadFailed:
-            Label("Download failed", systemImage: "exclamationmark.triangle.fill")
-                .foregroundStyle(.red)
-            Text(fileLabel)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
+            headline("Download failed", symbol: "exclamationmark.triangle.fill", tint: .red)
+            detail(fileLabel)
         case .saved(let name):
-            Label("Saved", systemImage: "checkmark.circle.fill")
-                .foregroundStyle(.green)
-            Text(name)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
+            headline("Saved", symbol: "checkmark.circle.fill", tint: .green)
+            detail(name)
         case .kept:
-            Label("Kept in TidyShot", systemImage: "exclamationmark.circle.fill")
-                .foregroundStyle(.orange)
-            Text(Self.keptText)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
+            headline("Kept in TidyShot", symbol: "exclamationmark.circle.fill", tint: .orange)
+            detail(Self.keptText, lines: 2, truncation: .tail)
         case .soundNotMuted:
-            Label(CaptureRecord.soundNotMutedTitle, systemImage: "exclamationmark.triangle.fill")
-                .foregroundStyle(.orange)
-            Text(CaptureRecord.soundNotMutedBody)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
+            headline(CaptureRecord.soundNotMutedTitle, symbol: "exclamationmark.triangle.fill", tint: .orange)
+            detail(CaptureRecord.soundNotMutedBody, lines: 2, truncation: .tail)
         }
+    }
+
+    /// The state's title with its symbol, in the state's colour.
+    private func headline(_ title: String, symbol: String, tint: Color) -> some View {
+        Label(title, systemImage: symbol)
+            .foregroundStyle(tint)
+    }
+
+    /// A small circular progress ring (indeterminate for nil) beside `title`.
+    private func progressRow(_ title: String, fraction: Double?) -> some View {
+        HStack(spacing: 8) {
+            Group {
+                if let fraction { ProgressView(value: fraction) } else { ProgressView() }
+            }
+            .progressViewStyle(.circular)
+            .controlSize(.small)
+            Text(title)
+        }
+    }
+
+    /// A caption line under the headline: the file or the link, cut in the middle when it does not
+    /// fit, or a message, which keeps its start.
+    private func detail(_ text: String, secondary: Bool = true, lines: Int = 1,
+                        truncation: Text.TruncationMode = .middle) -> some View {
+        Text(text)
+            .font(.caption)
+            .foregroundStyle(secondary ? HierarchicalShapeStyle.secondary : .primary)
+            .lineLimit(lines)
+            .truncationMode(truncation)
     }
 }
 

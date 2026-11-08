@@ -596,7 +596,7 @@ extension AppCoordinator {
         if let screen = CaptureEngine.screen(forDisplayID: id) {
             return screen.visibleFrame
         }
-        return Geometry.appKitRect(fromCG: cgFrame, primaryHeight: NSScreen.screens.first?.frame.height ?? 0)
+        return Geometry.appKitRect(fromCG: cgFrame)
     }
 
     /// After the capture lock: a kept file is handed to `saveRecording`, with `Recording stopped`

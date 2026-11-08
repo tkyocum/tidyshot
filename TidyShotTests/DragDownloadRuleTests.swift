@@ -66,14 +66,6 @@ struct DragDownloadRuleTests {
         #expect(!DragDownloadRule.usesResumeData(signedAt: signedAt, now: signedAt.addingTimeInterval(14 * 60)))
     }
 
-    /// The auto-close countdown waits during a download as it does during a drag.
-    @Test func keepsTheCardOpenWhileDraggingOrDownloading() {
-        #expect(!DragDownloadRule.keepsCardOpen(isDraggingOut: false, isDownloading: false))
-        #expect(DragDownloadRule.keepsCardOpen(isDraggingOut: true, isDownloading: false))
-        #expect(DragDownloadRule.keepsCardOpen(isDraggingOut: false, isDownloading: true))
-        #expect(DragDownloadRule.keepsCardOpen(isDraggingOut: true, isDownloading: true))
-    }
-
     /// The partial file URLSession names in resume data, keyed-archive or plain, found in the
     /// temporary folder, so a resume that is dropped unused can remove it.
     @Test func findsThePartialFileTheResumeDataNames() throws {

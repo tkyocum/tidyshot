@@ -48,9 +48,4 @@ nonisolated enum DragDownloadRule {
         }
         return nil
     }
-
-    /// The auto-close countdown waits during a download as it does during a drag-out session.
-    static func keepsCardOpen(isDraggingOut: Bool, isDownloading: Bool) -> Bool {
-        isDraggingOut || isDownloading
-    }
 }

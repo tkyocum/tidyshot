@@ -40,7 +40,6 @@ final class SelectionView: NSView {
         didSet { if presetRect != oldValue { needsDisplay = true } }
     }
     /// True while the current press started inside `presetRect`.
-    private var pressInPreset = false
 
     private var dragStart: CGPoint?
     private var dragRect: CGRect?
@@ -73,8 +72,8 @@ final class SelectionView: NSView {
     var isAspectLocked = false
     /// Width over height kept while locked. Set when the lock goes on and when a new rect is set while locked.
     private var lockedRatio: CGFloat?
-    /// The Timer button's seconds; nil leaves it out (Task 3 sets it).
-    var timerSeconds: Int?
+    /// The Timer button's seconds, for its tooltip (`settings.selfTimerSeconds`).
+    var timerSeconds = 0
     /// A new rect: `fromWindow` is true for a window click. The controller clears the other displays.
     var onAdjustRectSet: ((_ fromWindow: Bool) -> Void)?
     /// A press that resolved to nothing (no drag, no window, no rect here). The controller cancels
@@ -94,7 +93,6 @@ final class SelectionView: NSView {
     private let labelFont = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
 
     override var acceptsFirstResponder: Bool { true }
-    override var isFlipped: Bool { false }
 
     /// Clicks on a non-key overlay window (another screen) must register as mouseDown, not just activate.
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
@@ -133,16 +131,25 @@ final class SelectionView: NSView {
         invalidatePointerArtwork()
     }
 
+    /// The pointer in AppKit global coordinates, for the controller's hover (`onMouseMoved`).
+    private func reportPointer(_ event: NSEvent) {
+        guard let window else { return }
+        onMouseMoved?(window.convertToScreen(CGRect(origin: event.locationInWindow, size: .zero)).origin)
+    }
+
+    /// The whole-point rect between the press and the pointer.
+    private static func dragRect(from start: CGPoint, to point: CGPoint) -> CGRect {
+        CGRect(x: min(start.x, point.x), y: min(start.y, point.y),
+               width: abs(point.x - start.x), height: abs(point.y - start.y)).integral
+    }
+
     override func mouseMoved(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         cursor = point
         updateAllInOneCursor(at: point)
         restyle(at: point)
         invalidatePointerArtwork()
-        if let window {
-            let global = window.convertToScreen(CGRect(origin: event.locationInWindow, size: .zero)).origin
-            onMouseMoved?(global)
-        }
+        reportPointer(event)
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -159,7 +166,6 @@ final class SelectionView: NSView {
         let point = convert(event.locationInWindow, from: nil)
         dragStart = point
         dragRect = nil
-        pressInPreset = presetRect?.contains(point) ?? false
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -171,13 +177,9 @@ final class SelectionView: NSView {
         let point = convert(event.locationInWindow, from: nil)
         cursor = point
         restyle(at: point)
-        dragRect = CGRect(x: min(start.x, point.x), y: min(start.y, point.y),
-                          width: abs(point.x - start.x), height: abs(point.y - start.y)).integral
+        dragRect = Self.dragRect(from: start, to: point)
         invalidatePointerArtwork()
-        if let window {
-            let global = window.convertToScreen(CGRect(origin: event.locationInWindow, size: .zero)).origin
-            onMouseMoved?(global)
-        }
+        reportPointer(event)
     }
 
     override func mouseUp(with event: NSEvent) {
@@ -190,7 +192,6 @@ final class SelectionView: NSView {
         defer {
             dragStart = nil
             dragRect = nil
-            pressInPreset = false
             needsDisplay = true
         }
         switch SelectionOutcome.resolve(mode: mode, dragRect: dragRect, hasHighlight: highlightedRect != nil,
@@ -212,7 +213,7 @@ final class SelectionView: NSView {
     /// The preset rect when the press and the release were both inside it and there was no real
     /// drag; nil otherwise.
     private func clickInPreset(releasedAt point: CGPoint) -> CGRect? {
-        guard pressInPreset, let presetRect, presetRect.contains(point) else { return nil }
+        guard let dragStart, let presetRect, presetRect.contains(dragStart), presetRect.contains(point) else { return nil }
         if let dragRect, dragRect.width >= SelectionOutcome.minimumDragSide,
            dragRect.height >= SelectionOutcome.minimumDragSide {
             return nil
@@ -566,15 +567,12 @@ extension SelectionView {
                                                bounds: bounds)
         case nil:
             guard let start = dragStart else { return }
-            dragRect = CGRect(x: min(start.x, point.x), y: min(start.y, point.y),
-                              width: abs(point.x - start.x), height: abs(point.y - start.y)).integral
+            dragRect = Self.dragRect(from: start, to: point)
         }
         toolbar?.isHidden = true
         updateAllInOneCursor(at: point)
         invalidatePointerArtwork()
-        if let window {
-            onMouseMoved?(window.convertToScreen(CGRect(origin: event.locationInWindow, size: .zero)).origin)
-        }
+        reportPointer(event)
     }
 
     fileprivate func allInOneMouseUp(_ event: NSEvent) {

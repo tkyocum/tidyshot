@@ -16,8 +16,8 @@ final class AllInOneToolbar: NSVisualEffectView, NSTextFieldDelegate {
     private let lockButton: NSButton
     private var actionButtons: [AllInOneAction: NSButton] = [:]
 
-    /// `timerSeconds` nil leaves the Timer button out.
-    init(timerSeconds: Int?) {
+    /// `timerSeconds` is the Timer button's tooltip.
+    init(timerSeconds: Int) {
         lockButton = Self.makeButton(symbolName: AllInOneLock.symbolName(locked: false),
                                      description: AllInOneLock.help)
         super.init(frame: .zero)
@@ -42,9 +42,9 @@ final class AllInOneToolbar: NSVisualEffectView, NSTextFieldDelegate {
         separator.translatesAutoresizingMaskIntoConstraints = false
 
         var views: [NSView] = [Self.makeLabel("W"), widthField, Self.makeLabel("H"), heightField, lockButton, separator]
-        for action in AllInOneAction.allCases where action != .timer || timerSeconds != nil {
+        for action in AllInOneAction.allCases {
             let button = Self.makeButton(symbolName: action.symbolName, description: action.title)
-            button.toolTip = action.help(timerSeconds: timerSeconds ?? 0)
+            button.toolTip = action.help(timerSeconds: timerSeconds)
             button.setAccessibilityLabel(action.title)
             button.target = self
             button.action = #selector(actionClicked(_:))

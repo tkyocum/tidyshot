@@ -29,37 +29,37 @@ nonisolated enum QuickAccessCloseReason: Equatable, Sendable {
 /// settled, restarted while the pointer is over it.
 final class QuickAccessController {
     struct Actions {
-        var copy: (UUID) -> Void
-        var retry: (UUID) -> Void
-        var reveal: (UUID) -> Void
+        var copy: (UUID) -> Void = { _ in }
+        var retry: (UUID) -> Void = { _ in }
+        var reveal: (UUID) -> Void = { _ in }
         /// Deletes the capture everywhere after one confirmation (none with `Ask before deleting`
         /// off); see `AppCoordinator.deleteCapture`.
-        var delete: (UUID) -> Void
+        var delete: (UUID) -> Void = { _ in }
         /// Opens the annotation editor; see `AppCoordinator.openEditor(recordID:)`. Stays enabled
         /// while the upload runs.
-        var annotate: (UUID) -> Void
+        var annotate: (UUID) -> Void = { _ in }
         /// Pins the capture on screen; see AppCoordinator.pin(recordID:).
-        var pin: (UUID) -> Void
+        var pin: (UUID) -> Void = { _ in }
         /// Save As… for the card's button and menu item; see `AppCoordinator.saveAs(recordID:)`.
-        var saveAs: (UUID) -> Void
+        var saveAs: (UUID) -> Void = { _ in }
         /// Copy Image for the card's menu item; see `AppCoordinator.copyImage(recordID:)`.
-        var copyImage: (UUID) -> Void
+        var copyImage: (UUID) -> Void = { _ in }
         /// A recording's thumbnail click: the file in its default app, or the link; see
         /// `AppCoordinator.openCapture(recordID:)`.
-        var open: (UUID) -> Void
+        var open: (UUID) -> Void = { _ in }
         /// Copy File for a recording's menu item; see `AppCoordinator.copyFile(recordID:)`.
-        var copyFile: (UUID) -> Void
+        var copyFile: (UUID) -> Void = { _ in }
         /// `Trim…` for an MP4's menu item; see `AppCoordinator.trimCapture(recordID:)`.
-        var trim: (UUID) -> Void
+        var trim: (UUID) -> Void = { _ in }
         /// `Upload Trimmed` for a trimmed MP4 whose link is stale; see `AppCoordinator.uploadTrimmed(recordID:)`.
-        var uploadTrimmed: (UUID) -> Void
+        var uploadTrimmed: (UUID) -> Void = { _ in }
         /// Stages the card's drag file; see `AppCoordinator.prepareDragFile(recordID:)`.
-        var prepareDrag: (UUID) -> Void
+        var prepareDrag: (UUID) -> Void = { _ in }
         /// A drag-out ended; true when a receiver took the file.
-        var dragEnded: (UUID, Bool) -> Void
+        var dragEnded: (UUID, Bool) -> Void = { _, _ in }
         /// A drag past the threshold with no drag file: downloads an uploaded recording that has no
         /// local file; see `AppCoordinator.downloadDragFile(recordID:)`.
-        var downloadForDrag: (UUID) -> Void
+        var downloadForDrag: (UUID) -> Void = { _ in }
     }
 
     /// One card: its panel, its model and its auto-close countdown.
@@ -76,6 +76,11 @@ final class QuickAccessController {
         }
 
         var id: UUID { model.record.id }
+
+        func cancelClose() {
+            closeTask?.cancel()
+            closeTask = nil
+        }
     }
 
     /// Called with the record's id and the reason each time a card closes.
@@ -90,8 +95,8 @@ final class QuickAccessController {
     /// The union of the frames from the last layout. The pointer inside it (plus the spacing)
     /// holds back the slide after a close.
     private var stackRegion = CGRect.null
-    /// A close happened with the pointer over the stack; the cards close the gap once it leaves.
-    private var relayoutPending = false
+    /// Polls the pointer after a close that happened with it over the stack; the cards close the
+    /// gap once it leaves.
     private var pointerWatch: Task<Void, Never>?
     /// Lives as long as the controller, which `AppCoordinator.shared` owns for the app's life.
     private var screenObserver: (any NSObjectProtocol)?
@@ -145,24 +150,19 @@ final class QuickAccessController {
         }
         cancelPendingRelayout()
         layout(on: screen, animated: sameScreen)
-        if card.model.isSettled {
-            scheduleClose(card)
-        } else {
-            card.closeTask?.cancel()
-            card.closeTask = nil
-        }
+        syncAutoClose(card)
+    }
+
+    /// The countdown runs only while the card's state is settled.
+    private func syncAutoClose(_ card: Card) {
+        if card.model.isSettled { scheduleClose(card) } else { card.cancelClose() }
     }
 
     /// Pushes a new record state into the card that shows that record, if any.
     func update(record: CaptureRecord) {
         guard let card = cards.first(where: { $0.id == record.id }) else { return }
         card.model.record = record
-        if card.model.isSettled {
-            scheduleClose(card)
-        } else {
-            card.closeTask?.cancel()
-            card.closeTask = nil
-        }
+        syncAutoClose(card)
     }
 
     /// Tells the card showing `recordID` whether its recording waits for Clop (`Optimizing…`).
@@ -214,22 +214,7 @@ final class QuickAccessController {
 
     private func makeCard(record: CaptureRecord, thumbnail: NSImage?, autoCloseSeconds: Double, actions: Actions) -> Card {
         let model = QuickAccessModel(record: record, thumbnail: thumbnail)
-        let id = record.id
-        model.onCopy = { actions.copy(id) }
-        model.onRetry = { actions.retry(id) }
-        model.onReveal = { actions.reveal(id) }
-        model.onDelete = { actions.delete(id) }
-        model.onAnnotate = { actions.annotate(id) }
-        model.onPin = { actions.pin(id) }
-        model.onSaveAs = { actions.saveAs(id) }
-        model.onCopyImage = { actions.copyImage(id) }
-        model.onOpen = { actions.open(id) }
-        model.onCopyFile = { actions.copyFile(id) }
-        model.onTrim = { actions.trim(id) }
-        model.onUploadTrimmed = { actions.uploadTrimmed(id) }
-        model.onPrepareDrag = { actions.prepareDrag(id) }
-        model.onDragEnded = { accepted in actions.dragEnded(id, accepted) }
-        model.onDownloadForDrag = { actions.downloadForDrag(id) }
+        model.actions = actions
         let card = Card(model: model, autoCloseSeconds: autoCloseSeconds)
         model.onClose = { [weak self, weak card] in
             // After the context menu's tracking, and outside the hosting view's own click.
@@ -249,8 +234,7 @@ final class QuickAccessController {
     private func closeCard(_ card: Card, reason: QuickAccessCloseReason) {
         guard let index = cards.firstIndex(where: { $0 === card }) else { return }
         cards.remove(at: index)
-        card.closeTask?.cancel()
-        card.closeTask = nil
+        card.cancelClose()
         card.panel.orderOut(nil)
         onDidClose?(card.id, reason)
     }
@@ -293,7 +277,6 @@ final class QuickAccessController {
             return
         }
         if pointerIsOverStack {
-            relayoutPending = true
             watchPointer()
         } else {
             cancelPendingRelayout()
@@ -314,10 +297,6 @@ final class QuickAccessController {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(250))
                 guard let self, !Task.isCancelled else { return }
-                guard self.relayoutPending else {
-                    self.pointerWatch = nil
-                    return
-                }
                 if !self.pointerIsOverStack {
                     self.pointerWatch = nil
                     self.closeGap()
@@ -328,7 +307,6 @@ final class QuickAccessController {
     }
 
     private func cancelPendingRelayout() {
-        relayoutPending = false
         pointerWatch?.cancel()
         pointerWatch = nil
     }
@@ -352,8 +330,7 @@ final class QuickAccessController {
     /// from it or its drag-out download runs, the countdown restarts (as `scheduleClose` did for
     /// the one panel).
     private func scheduleClose(_ card: Card) {
-        card.closeTask?.cancel()
-        card.closeTask = nil
+        card.cancelClose()
         let seconds = card.autoCloseSeconds
         guard seconds > 0 else { return }
         card.closeTask = Task { [weak self, weak card] in
@@ -364,9 +341,7 @@ final class QuickAccessController {
                 // under a still pointer is judged where it is. A card never closes under a
                 // running drag-out session or download.
                 if let panel = card?.panel, panel.frame.contains(NSEvent.mouseLocation) { continue }
-                if let model = card?.model,
-                   DragDownloadRule.keepsCardOpen(isDraggingOut: model.isDraggingOut,
-                                                  isDownloading: model.isDownloadingForDrag) { continue }
+                if card?.model.holdsAutoClose == true { continue }
                 break
             }
             guard !Task.isCancelled, let self, let card else { return }

@@ -59,7 +59,7 @@ final class QuickAccessCardDragView: NSView, NSDraggingSource {
         dragStarted = false
         movedPastThreshold = false
         askedForDownload = false
-        model?.onPrepareDrag()
+        if let model { model.actions.prepareDrag(model.record.id) }
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -71,7 +71,7 @@ final class QuickAccessCardDragView: NSView, NSDraggingSource {
         guard let fileURL = model.dragFileURL else {
             if !askedForDownload {
                 askedForDownload = true
-                model.onDownloadForDrag()
+                model.actions.downloadForDrag(model.record.id)
             }
             return
         }
@@ -115,6 +115,6 @@ final class QuickAccessCardDragView: NSView, NSDraggingSource {
         mouseDownEvent = nil
         dragStarted = false
         model?.isDraggingOut = false
-        model?.onDragEnded(operation != [])
+        if let model { model.actions.dragEnded(model.record.id, operation != []) }
     }
 }

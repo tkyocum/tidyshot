@@ -28,10 +28,9 @@ extension AppCoordinator {
                                                failureTitle: "Could not pin the capture") else { return }
             image = loaded
         }
-        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
         var preferred: CGRect?
         if let area = latestCaptureArea, area.id == recordID {
-            preferred = Geometry.appKitRect(fromCG: area.rect, primaryHeight: primaryHeight)
+            preferred = Geometry.appKitRect(fromCG: area.rect)
         }
         guard let screen = pinScreen(preferred: preferred) else { return }
         var shown = image.image

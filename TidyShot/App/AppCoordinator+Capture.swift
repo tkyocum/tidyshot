@@ -308,9 +308,8 @@ extension AppCoordinator {
     private func runSelfTimer(_ target: CaptureTarget, intent: CaptureIntent) async {
         selector.dismiss()
         NSApplication.shared.deactivate()
-        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
         guard let screenFrame = CaptureEngine.screen(forDisplayID: target.displayID)?.frame ?? NSScreen.main?.frame else { return }
-        let stage = SelfTimerScreenStage(subject: Geometry.appKitRect(fromCG: target.cgFrame, primaryHeight: primaryHeight),
+        let stage = SelfTimerScreenStage(subject: Geometry.appKitRect(fromCG: target.cgFrame),
                                          screenFrame: screenFrame)
         _ = await selfTimer.run(seconds: settings.selfTimerSeconds, stage: stage) { [self] in
             await captureAfterCountdown(target, intent: intent)

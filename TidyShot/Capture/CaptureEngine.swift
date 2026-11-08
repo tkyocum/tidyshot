@@ -103,8 +103,7 @@ final class CaptureEngine {
 
     /// The display under an AppKit-global point, falling back to the first display.
     static func display(under appKitPoint: CGPoint, in displays: [CaptureDisplay]) -> CaptureDisplay? {
-        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
-        let cgPoint = Geometry.cgPoint(fromAppKit: appKitPoint, primaryHeight: primaryHeight)
+        let cgPoint = Geometry.cgPoint(fromAppKit: appKitPoint)
         return displays.first { $0.frame.contains(cgPoint) } ?? displays.first
     }
 }

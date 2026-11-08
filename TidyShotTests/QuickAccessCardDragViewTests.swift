@@ -27,8 +27,8 @@ struct QuickAccessCardDragViewTests {
                                    mediaKind: .video, durationSeconds: 10)
         let model = QuickAccessModel(record: record, thumbnail: nil)
         let asked = Asked()
-        model.onPrepareDrag = { asked.prepares += 1 }
-        model.onDownloadForDrag = { asked.downloads += 1 }
+        model.actions.prepareDrag = { _ in asked.prepares += 1 }
+        model.actions.downloadForDrag = { _ in asked.downloads += 1 }
         let view = QuickAccessCardDragView()
         // The view holds its model weakly; the test keeps it.
         view.model = model

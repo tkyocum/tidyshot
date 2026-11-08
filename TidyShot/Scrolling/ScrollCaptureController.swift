@@ -35,7 +35,7 @@ final class ScrollCaptureController {
     func run(rect: CGRect, display: SCDisplay, makesPanelKey: Bool = true,
              readyTimeout: Duration? = nil) async -> ScrollCaptureOutcome {
         guard session == nil else { return .cancelled }
-        appKitArea = Geometry.appKitRect(fromCG: rect, primaryHeight: NSScreen.screens.first?.frame.height ?? 0)
+        appKitArea = Geometry.appKitRect(fromCG: rect)
         visibleFrame = (CaptureEngine.screen(forDisplayID: display.displayID) ?? NSScreen.main ?? NSScreen.screens[0])
             .visibleFrame
 

@@ -14,8 +14,21 @@ final class PinController {
         let panel: PinPanel
         let view: PinView
         let imagePoints: CGSize
-        var opacity = 1.0
-        var isLocked = false
+        var opacity: Double {
+            get { panel.alphaValue }
+            set { panel.alphaValue = newValue }
+        }
+        /// A locked pin is click-through and borderless; the status menu is the way back.
+        var isLocked = false {
+            didSet {
+                panel.ignoresMouseEvents = isLocked
+                view.showsBorder = !isLocked
+            }
+        }
+        /// The visible frame of the pin's screen, or of the main screen when it is off all of them.
+        var visibleFrame: CGRect {
+            (panel.screen ?? NSScreen.main)?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
+        }
 
         init(recordID: UUID, panel: PinPanel, view: PinView, imagePoints: CGSize) {
             self.recordID = recordID
@@ -55,13 +68,13 @@ final class PinController {
                 pin.panel.setFrame(PinGeometry.nudged(pin.panel.frame, dx: dx, dy: dy, shift: shift), display: true)
             case .zoomIn:
                 pin.panel.setFrame(PinGeometry.zoomed(pin.panel.frame, factor: PinGeometry.zoomStep,
-                                                      visibleFrame: Self.visibleFrame(of: pin)), display: true)
+                                                      visibleFrame: pin.visibleFrame), display: true)
             case .zoomOut:
                 pin.panel.setFrame(PinGeometry.zoomed(pin.panel.frame, factor: 1 / PinGeometry.zoomStep,
-                                                      visibleFrame: Self.visibleFrame(of: pin)), display: true)
+                                                      visibleFrame: pin.visibleFrame), display: true)
             case .actualSize:
                 pin.panel.setFrame(PinGeometry.actualSize(pin.panel.frame, imagePoints: pin.imagePoints,
-                                                          visibleFrame: Self.visibleFrame(of: pin)), display: true)
+                                                          visibleFrame: pin.visibleFrame), display: true)
             case .copyImage:
                 actions.copyImage(pin.recordID)
             case .close:
@@ -70,19 +83,13 @@ final class PinController {
         }
         view.onOpacitySteps = { [weak pin] steps in
             guard let pin else { return }
-            Self.setOpacity(PinOpacity.changed(pin.opacity, steps: steps), of: pin)
+            pin.opacity = PinOpacity.changed(pin.opacity, steps: steps)
         }
-        view.onOpacity = { [weak pin] opacity in
-            guard let pin else { return }
-            Self.setOpacity(opacity, of: pin)
-        }
+        view.onOpacity = { [weak pin] opacity in pin?.opacity = opacity }
         view.menuState = { [weak pin] in pin?.opacity ?? 1.0 }
         view.onSaveAs = { actions.saveAs(recordID) }
         view.onAnnotate = { actions.annotate(recordID) }
-        view.onLock = { [weak pin] in
-            guard let pin else { return }
-            Self.lock(pin)
-        }
+        view.onLock = { [weak pin] in pin?.isLocked = true }
 
         pins.append(pin)
         panel.orderFrontRegardless()
@@ -101,32 +108,11 @@ final class PinController {
 
     /// Makes every locked pin take clicks again, with its border.
     func unlockAll() {
-        for pin in pins where pin.isLocked {
-            pin.isLocked = false
-            pin.panel.ignoresMouseEvents = false
-            pin.view.showsBorder = true
-        }
+        for pin in pins where pin.isLocked { pin.isLocked = false }
     }
 
     private func close(_ pin: Pin) {
         pin.panel.orderOut(nil)
         pins.removeAll { $0 === pin }
-    }
-
-    /// The visible frame of the pin's screen, or of the main screen when it is off all of them.
-    private static func visibleFrame(of pin: Pin) -> CGRect {
-        (pin.panel.screen ?? NSScreen.main)?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
-    }
-
-    private static func setOpacity(_ opacity: Double, of pin: Pin) {
-        pin.opacity = opacity
-        pin.panel.alphaValue = opacity
-    }
-
-    /// A locked pin is click-through and borderless; the status menu is the way back.
-    private static func lock(_ pin: Pin) {
-        pin.isLocked = true
-        pin.panel.ignoresMouseEvents = true
-        pin.view.showsBorder = false
     }
 }

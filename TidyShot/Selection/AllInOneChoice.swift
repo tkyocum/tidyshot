@@ -12,7 +12,7 @@ enum AllInOneChoice {
     /// The display the rect is on.
     case fullscreen(CaptureDisplay)
     case scrolling(rect: CGRect, display: CaptureDisplay)
-    /// The Self-Timer countdown over the rect (Task 3).
+    /// The Self-Timer countdown over the rect.
     case timer(rect: CGRect, display: CaptureDisplay)
 }
 
@@ -43,7 +43,7 @@ nonisolated enum AllInOneAction: CaseIterable, Equatable, Sendable {
         }
     }
 
-    /// The tooltip. `timerSeconds` is `settings.selfTimerSeconds` (Task 3).
+    /// The tooltip. `timerSeconds` is `settings.selfTimerSeconds`.
     func help(timerSeconds: Int) -> String {
         switch self {
         case .capture: "Capture area (Return)"

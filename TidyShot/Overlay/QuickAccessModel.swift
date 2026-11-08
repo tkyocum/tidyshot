@@ -55,30 +55,11 @@ final class QuickAccessModel {
     /// All false until then, so neither item shows.
     var trimState = RecordingTrim.MenuState()
 
-    @ObservationIgnored var onCopy: () -> Void = {}
-    @ObservationIgnored var onRetry: () -> Void = {}
-    @ObservationIgnored var onReveal: () -> Void = {}
-    @ObservationIgnored var onDelete: () -> Void = {}
-    @ObservationIgnored var onAnnotate: () -> Void = {}
-    @ObservationIgnored var onPin: () -> Void = {}
+    /// The card's buttons, menu items and drag surface, each given the record's id; set by
+    /// `QuickAccessController.makeCard`.
+    @ObservationIgnored var actions = QuickAccessController.Actions()
+    /// Close is the controller's own: it takes the card off the stack.
     @ObservationIgnored var onClose: () -> Void = {}
-    /// The card's Save As… and Copy Image: `AppCoordinator.saveAs(recordID:)` and `copyImage(recordID:)`.
-    @ObservationIgnored var onSaveAs: () -> Void = {}
-    @ObservationIgnored var onCopyImage: () -> Void = {}
-    /// A recording's thumbnail click and Copy File: `AppCoordinator.openCapture(recordID:)` and
-    /// `copyFile(recordID:)`.
-    @ObservationIgnored var onOpen: () -> Void = {}
-    @ObservationIgnored var onCopyFile: () -> Void = {}
-    /// A recording's `Trim…` and `Upload Trimmed`: `AppCoordinator.trimCapture(recordID:)` and
-    /// `uploadTrimmed(recordID:)`.
-    @ObservationIgnored var onTrim: () -> Void = {}
-    @ObservationIgnored var onUploadTrimmed: () -> Void = {}
-    /// A press on the card's drag surface: stage the drag file now.
-    @ObservationIgnored var onPrepareDrag: () -> Void = {}
-    /// A drag-out session ended; true when a receiver took the file.
-    @ObservationIgnored var onDragEnded: (Bool) -> Void = { _ in }
-    /// A drag past the threshold with no drag file: download an uploaded recording for it.
-    @ObservationIgnored var onDownloadForDrag: () -> Void = {}
 
     init(record: CaptureRecord, thumbnail: NSImage?) {
         self.record = record
@@ -90,6 +71,9 @@ final class QuickAccessModel {
         if case .running = dragDownload { return true }
         return false
     }
+
+    /// The auto-close countdown waits during a drag-out session and during its download.
+    var holdsAutoClose: Bool { isDraggingOut || isDownloadingForDrag }
 
     /// True once the upload has finished (or there was none), which starts the auto-close timer.
     var isSettled: Bool {

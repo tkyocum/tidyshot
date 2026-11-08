@@ -9,7 +9,6 @@ final class SelectionController {
     /// The Quick Access cards on screen, left out of every capture and snapshot taken here.
     private let cardWindowNumbers: () -> Set<CGWindowID>
     private var windows: [SelectionWindow] = []
-    private var views: [SelectionView] = []
     private var continuation: CheckedContinuation<Selection?, Never>?
     private var displays: [SCDisplay] = []
     private var mode: SelectionMode = .area
@@ -74,7 +73,7 @@ final class SelectionController {
 
         for screen in NSScreen.screens {
             let window = SelectionWindow(screen: screen)
-            let view = SelectionView(frame: CGRect(origin: .zero, size: screen.frame.size))
+            let view = window.view
             view.mode = mode
             view.keyCaptureArmed = armed
             if let frozen = frozenSnapshots[window.displayID] {
@@ -95,11 +94,9 @@ final class SelectionController {
                 let picked = self?.hoveredWindow
                 Task { self?.finishPick(picked) }
             }
-            window.contentView = view
             window.makeFirstResponder(view)
             window.makeKeyAndOrderFront(nil)
             windows.append(window)
-            views.append(view)
         }
 
         // Called from a global hotkey while another app is active; cooperative activation can refuse
@@ -133,7 +130,7 @@ final class SelectionController {
         view.onAspectLockChanged = { [weak self] locked in
             guard let self else { return }
             settings.allInOneAspectLock = locked
-            for other in views { other.isAspectLocked = locked }
+            for window in windows { window.view.isAspectLocked = locked }
         }
     }
 
@@ -141,46 +138,42 @@ final class SelectionController {
     /// Not `armed` (a URL command), Return and the double-click wait for a press or a toolbar
     /// control (spec 2.9). Nothing when it is on no screen: the overlay opens with no rect.
     private func placePreselected(_ cgRect: CGRect, armed: Bool) {
-        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
-        let appKitRect = Geometry.appKitRect(fromCG: cgRect, primaryHeight: primaryHeight)
+        let appKitRect = Geometry.appKitRect(fromCG: cgRect)
         guard let rect = SelectionAdjust.restored(appKitRect, displayFrames: windows.map(\.frame)),
               let index = windows.firstIndex(where: { $0.frame.contains(CGPoint(x: rect.midX, y: rect.midY)) })
         else { return }
         let frame = windows[index].frame
         // A URL command's overlay takes the key from whatever app the user is typing in, so a
         // Return there must not capture before the user has touched the overlay.
-        views[index].beginAdjusting(rect.offsetBy(dx: -frame.minX, dy: -frame.minY), fromWindow: false, armed: armed)
+        windows[index].view.beginAdjusting(rect.offsetBy(dx: -frame.minX, dy: -frame.minY), fromWindow: false, armed: armed)
         windows[index].makeKey()
     }
 
     /// Record Screen's preset (a URL command's rect) on the view whose screen holds its centre,
     /// in that view's coordinates. Nothing when it is on no screen: the selection opens as the shortcut's.
     private func placePreset(_ cgRect: CGRect) {
-        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
-        let appKitRect = Geometry.appKitRect(fromCG: cgRect, primaryHeight: primaryHeight)
+        let appKitRect = Geometry.appKitRect(fromCG: cgRect)
         let centre = CGPoint(x: appKitRect.midX, y: appKitRect.midY)
         guard let index = windows.firstIndex(where: { $0.frame.contains(centre) }) else { return }
         let frame = windows[index].frame
-        views[index].presetRect = appKitRect.offsetBy(dx: -frame.minX, dy: -frame.minY)
+        windows[index].view.presetRect = appKitRect.offsetBy(dx: -frame.minX, dy: -frame.minY)
     }
 
     /// A new rect on `view`: the other displays drop theirs, the window it came from is
     /// remembered (or forgotten), and its window becomes key so Return and the arrows reach it.
     private func allInOneRectSet(on view: SelectionView, fromWindow: Bool) {
         pickedWindow = fromWindow ? hoveredWindow : nil
-        for other in views where other !== view {
-            other.clearAdjustRect()
+        for window in windows where window.view !== view {
+            window.view.clearAdjustRect()
         }
-        if let index = views.firstIndex(where: { $0 === view }) {
-            windows[index].makeKey()
-        }
+        windows.first { $0.view === view }?.makeKey()
     }
 
     /// A click that selected nothing: cancels while no display holds a rect, otherwise gives the
     /// key back to the display that does.
     private func allInOneEmptyClick() {
-        if let index = views.firstIndex(where: { $0.adjustRect != nil }) {
-            windows[index].makeKey()
+        if let window = windows.first(where: { $0.view.adjustRect != nil }) {
+            window.makeKey()
         } else {
             cancel()
         }
@@ -193,8 +186,7 @@ final class SelectionController {
             if let pickedWindow { resumeAllInOne(.window(CaptureWindow(pickedWindow))) }
             return
         }
-        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
-        guard case let (rect, display)? = clippedToDisplay(Geometry.cgRect(fromAppKit: appKitRect, primaryHeight: primaryHeight)) else {
+        guard case let (rect, display)? = clippedToDisplay(Geometry.cgRect(fromAppKit: appKitRect)) else {
             resumeAllInOne(nil)
             return
         }
@@ -210,13 +202,17 @@ final class SelectionController {
     /// Resumes All-in-One's caller. Cancel dismisses the overlay at once; a choice leaves it up.
     private func resumeAllInOne(_ choice: AllInOneChoice?) {
         guard let allInOneContinuation else { return }
+        self.allInOneContinuation = nil
+        settle(dismissing: choice == nil)
+        allInOneContinuation.resume(returning: choice)
+    }
+
+    /// What both waiters do before resuming: the loupe snapshots stop, and a cancel takes the
+    /// overlay down.
+    private func settle(dismissing: Bool) {
         snapshotTask?.cancel()
         snapshotTask = nil
-        self.allInOneContinuation = nil
-        if choice == nil {
-            dismiss()
-        }
-        allInOneContinuation.resume(returning: choice)
+        if dismissing { dismiss() }
     }
 
     /// Escape, Cancel, or an empty click: whichever caller waits gets nil.
@@ -289,9 +285,9 @@ final class SelectionController {
             guard let result = try? await engine.capture(.display(CaptureDisplay(display)),
                                                          options: CaptureOptions(showsCursor: false),
                                                          excludingWindows: overlays) else { continue }
-            guard !Task.isCancelled, index < views.count else { return }
-            views[index].snapshotScale = result.scale
-            views[index].snapshot = result.image
+            guard !Task.isCancelled, index < windows.count else { return }
+            windows[index].view.snapshotScale = result.scale
+            windows[index].view.snapshot = result.image
         }
     }
 
@@ -306,7 +302,6 @@ final class SelectionController {
             window.contentView = nil
         }
         windows = []
-        views = []
         displays = []
         picker = nil
         hoveredWindow = nil
@@ -316,12 +311,12 @@ final class SelectionController {
     /// `globalPoint` is in AppKit global coordinates. No-op in area mode.
     private func updateHover(at globalPoint: CGPoint) {
         guard mode != .area else { return }
-        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
-        let cgPoint = Geometry.cgPoint(fromAppKit: globalPoint, primaryHeight: primaryHeight)
+        let cgPoint = Geometry.cgPoint(fromAppKit: globalPoint)
         hoveredWindow = picker?.window(at: cgPoint)
 
-        let appKitFrame = hoveredWindow.map { Geometry.appKitRect(fromCG: $0.frame, primaryHeight: primaryHeight) }
-        for (window, view) in zip(windows, views) {
+        let appKitFrame = hoveredWindow.map { Geometry.appKitRect(fromCG: $0.frame) }
+        for window in windows {
+            let view = window.view
             guard let appKitFrame, window.frame.intersects(appKitFrame) else {
                 view.highlightedRect = nil
                 continue
@@ -346,8 +341,7 @@ final class SelectionController {
     }
 
     private func finishArea(_ appKitRect: CGRect) {
-        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
-        finishArea(cgRect: Geometry.cgRect(fromAppKit: appKitRect, primaryHeight: primaryHeight))
+        finishArea(cgRect: Geometry.cgRect(fromAppKit: appKitRect))
     }
 
     /// `cgRect` (CoreGraphics global points) clipped to the display under its centre, or the
@@ -363,12 +357,8 @@ final class SelectionController {
     /// Resumes the waiting caller. Cancel dismisses the overlay at once; success leaves it up.
     private func finish(_ selection: Selection?) {
         guard let continuation else { return }
-        snapshotTask?.cancel()
-        snapshotTask = nil
         self.continuation = nil
-        if selection == nil {
-            dismiss()
-        }
+        settle(dismissing: selection == nil)
         continuation.resume(returning: selection)
     }
 }

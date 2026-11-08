@@ -21,11 +21,7 @@ nonisolated enum PinGeometry {
                       visibleFrame.height * fitFraction / imagePoints.height)
         let size = CGSize(width: imagePoints.width * fit, height: imagePoints.height * fit)
         let centre = preferred.map { CGPoint(x: $0.midX, y: $0.midY) } ?? CGPoint(x: visibleFrame.midX, y: visibleFrame.midY)
-        var x = (centre.x - size.width / 2).rounded()
-        var y = (centre.y - size.height / 2).rounded()
-        x = min(max(x, visibleFrame.minX), visibleFrame.maxX - size.width)
-        y = min(max(y, visibleFrame.minY), visibleFrame.maxY - size.height)
-        return CGRect(origin: CGPoint(x: x, y: y), size: size)
+        return CGRect.centred(size, on: centre, within: visibleFrame)
     }
 
     /// An arrow key: one point, or ten with Shift, in the direction (`dx`, `dy`), up being +1.
